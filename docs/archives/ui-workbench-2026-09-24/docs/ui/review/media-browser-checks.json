@@ -1,0 +1,38 @@
+[
+  {
+    "name": "physical document preview",
+    "pass": true
+  },
+  {
+    "name": "document layout 1024",
+    "pass": true,
+    "pool": 247.0625
+  },
+  {
+    "name": "document layout 736",
+    "pass": true,
+    "pool": 247.0625
+  },
+  {
+    "name": "document layout 500",
+    "pass": true,
+    "pool": 155.125
+  },
+  {
+    "name": "document layout 320",
+    "pass": true,
+    "pool": 169.0625
+  },
+  {
+    "name": "physical search focus",
+    "pass": true
+  },
+  {
+    "name": "library keyboard never seeks timeline",
+    "pass": true
+  },
+  {
+    "name": "video thumbnail browser has useful height",
+    "pass": true
+  }
+]

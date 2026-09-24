@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reviewer", "summary", "findings"],
+  "properties": {
+    "reviewer": {
+      "type": "string",
+      "description": "Which CLI/model produced this review, e.g. 'claude/opus', 'grok', 'agy/gemini'."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One short paragraph: overall assessment of the reviewed scope."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "severity",
+          "confidence",
+          "category",
+          "file",
+          "line",
+          "evidence",
+          "impact",
+          "recommendation"
+        ],
+        "properties": {
+          "title": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "category": {
+            "type": "string",
+            "description": "e.g. correctness, security, performance, data-loss, api-misuse, style."
+          },
+          "file": { "type": "string" },
+          "line": {
+            "type": ["integer", "null"],
+            "description": "1-indexed line, or null if not line-specific."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete quote/reference from the provided scope supporting the finding."
+          },
+          "impact": { "type": "string" },
+          "recommendation": { "type": "string" }
+        }
+      }
+    }
+  }
+}

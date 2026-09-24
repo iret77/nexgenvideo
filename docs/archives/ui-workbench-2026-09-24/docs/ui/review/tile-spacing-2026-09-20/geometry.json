@@ -1,0 +1,377 @@
+[
+  {
+    "width": 1048,
+    "scale": 100,
+    "requestedColumns": 2,
+    "columns": "262.5px 262.5px",
+    "overflow": false,
+    "tiles": [
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 190.578125,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 190.578125,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 190.578125,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 190.578125,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 191.171875,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 191.796875,
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 1440,
+    "scale": 100,
+    "requestedColumns": 3,
+    "columns": "306.656px 306.672px 306.656px",
+    "overflow": false,
+    "tiles": [
+      {
+        "width": 306.65625,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 234.734375,
+        "overflow": false
+      },
+      {
+        "width": 306.671875,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 234.75,
+        "overflow": false
+      },
+      {
+        "width": 306.65625,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 234.734375,
+        "overflow": false
+      },
+      {
+        "width": 306.65625,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 234.734375,
+        "overflow": false
+      },
+      {
+        "width": 306.671875,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 235.34375,
+        "overflow": false
+      },
+      {
+        "width": 306.65625,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 235.953125,
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 1048,
+    "scale": 130,
+    "requestedColumns": 3,
+    "columns": "262.5px 262.5px",
+    "overflow": false,
+    "tiles": [
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 179.21875,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 179.21875,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 179.21875,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 179.21875,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 180,
+        "overflow": false
+      },
+      {
+        "width": 262.5,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 180.8125,
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 900,
+    "scale": 100,
+    "requestedColumns": 2,
+    "columns": "196px 196px",
+    "overflow": false,
+    "tiles": [
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 124.078125,
+        "overflow": false
+      },
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 124.078125,
+        "overflow": false
+      },
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 124.078125,
+        "overflow": false
+      },
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 124.078125,
+        "overflow": false
+      },
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 124.671875,
+        "overflow": false
+      },
+      {
+        "width": 196,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 7,
+        "noteBottom": 10.390625,
+        "titleVisible": true,
+        "titleWidth": 125.296875,
+        "overflow": false
+      }
+    ]
+  },
+  {
+    "width": 768,
+    "scale": 130,
+    "requestedColumns": 3,
+    "columns": "265px",
+    "overflow": false,
+    "tiles": [
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 181.71875,
+        "overflow": false
+      },
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 181.71875,
+        "overflow": false
+      },
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 181.71875,
+        "overflow": false
+      },
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 181.71875,
+        "overflow": false
+      },
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 182.5,
+        "overflow": false
+      },
+      {
+        "width": 265,
+        "titleInset": 8,
+        "idTitleGap": 8,
+        "titleDurationGap": 8,
+        "noteGap": 8,
+        "noteBottom": 10.015625,
+        "titleVisible": true,
+        "titleWidth": 183.3125,
+        "overflow": false
+      }
+    ]
+  }
+]

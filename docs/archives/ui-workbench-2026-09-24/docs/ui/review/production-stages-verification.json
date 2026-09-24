@@ -1,0 +1,450 @@
+{
+  "scope": "In-memory clickdummy only; no native runtime verification",
+  "viewport": "500 \u00d7 1100; first pass also at 1024 \u00d7 960",
+  "checks": [
+    {
+      "check": "New project contains no images",
+      "pass": true
+    },
+    {
+      "check": "Action: create",
+      "pass": true
+    },
+    {
+      "check": "Generic begins in empty briefing",
+      "pass": true
+    },
+    {
+      "check": "Briefing does not invent intention",
+      "pass": true
+    },
+    {
+      "check": "Absent brief cannot be approved",
+      "pass": true
+    },
+    {
+      "check": "Future storyboard has no phantom sketches",
+      "pass": true
+    },
+    {
+      "check": "Future artifact explicitly absent",
+      "pass": true
+    },
+    {
+      "check": "Action: current",
+      "pass": true
+    },
+    {
+      "check": "Action: example",
+      "pass": true
+    },
+    {
+      "check": "Action: save-brief",
+      "pass": true
+    },
+    {
+      "check": "Saved briefing has no story illustrations",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Treatment starts empty",
+      "pass": true
+    },
+    {
+      "check": "Uncreated treatment cannot approve",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Treatment remains a story document, not previz",
+      "pass": true
+    },
+    {
+      "check": "Treatment has causal progression",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Script starts without pictures",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Script contains scenes",
+      "pass": true
+    },
+    {
+      "check": "Script never contains shot artwork",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Storyboard starts without sketches",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Explicit storyboard creation makes first six sketches",
+      "pass": true
+    },
+    {
+      "check": "Storyboard has no rendered production assets",
+      "pass": true
+    },
+    {
+      "check": "Action: save-shot",
+      "pass": true
+    },
+    {
+      "check": "Action: animatic",
+      "pass": true
+    },
+    {
+      "check": "Animatic uses shared changed shot timing",
+      "pass": true
+    },
+    {
+      "check": "Action: board",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Shot planning output is not precreated",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Shot planning uses sketches, not future anchors",
+      "pass": true
+    },
+    {
+      "check": "Shot plan lists missing reference requirements",
+      "pass": true
+    },
+    {
+      "check": "Shot planning has no second timing editor",
+      "pass": true
+    },
+    {
+      "check": "Action: save-plan",
+      "pass": true
+    },
+    {
+      "check": "Missing imported source blocks gate",
+      "pass": true
+    },
+    {
+      "check": "Action: assign-source",
+      "pass": true
+    },
+    {
+      "check": "Action: blocking",
+      "pass": true
+    },
+    {
+      "check": "Action: camera",
+      "pass": true
+    },
+    {
+      "check": "Blocking updates axis warning",
+      "pass": true
+    },
+    {
+      "check": "Action: board",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "References begins with no rendered images",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Reference requirements are not reference images",
+      "pass": true
+    },
+    {
+      "check": "Action: identities",
+      "pass": true
+    },
+    {
+      "check": "Identity images appear only after creation",
+      "pass": true
+    },
+    {
+      "check": "Action: anchors",
+      "pass": true
+    },
+    {
+      "check": "Unreviewed anchors cannot approve",
+      "pass": true
+    },
+    {
+      "check": "Action: accept-anchor",
+      "pass": true
+    },
+    {
+      "check": "Action: accept-anchor",
+      "pass": true
+    },
+    {
+      "check": "Action: accept-anchor",
+      "pass": true
+    },
+    {
+      "check": "Action: accept-anchor",
+      "pass": true
+    },
+    {
+      "check": "Action: accept-anchor",
+      "pass": true
+    },
+    {
+      "check": "Only generated shots require anchor approval",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Action: spend",
+      "pass": true
+    },
+    {
+      "check": "Production needs spending consent",
+      "pass": true
+    },
+    {
+      "check": "Action: run",
+      "pass": true
+    },
+    {
+      "check": "Rewind unavailable during job",
+      "pass": true
+    },
+    {
+      "check": "Action: cancel",
+      "pass": true
+    },
+    {
+      "check": "Action: spend",
+      "pass": true
+    },
+    {
+      "check": "Action: run",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: keep",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Selected takes enter edit",
+      "pass": true
+    },
+    {
+      "check": "Action: trim",
+      "pass": true
+    },
+    {
+      "check": "Action: finish-edit",
+      "pass": true
+    },
+    {
+      "check": "Action: export",
+      "pass": true
+    },
+    {
+      "check": "Export follows finished edit",
+      "pass": true
+    },
+    {
+      "check": "Action: restart",
+      "pass": true
+    },
+    {
+      "check": "Action: import",
+      "pass": true
+    },
+    {
+      "check": "Action: confirm-import",
+      "pass": true
+    },
+    {
+      "check": "Import enters first missing step: script",
+      "pass": true
+    },
+    {
+      "check": "Import does not fabricate a brief",
+      "pass": true
+    },
+    {
+      "check": "Imported early development has no invented pictures",
+      "pass": true
+    },
+    {
+      "check": "Action: restart",
+      "pass": true
+    },
+    {
+      "check": "Action: import",
+      "pass": true
+    },
+    {
+      "check": "Action: confirm-import",
+      "pass": true
+    },
+    {
+      "check": "Import enters first missing step: board",
+      "pass": true
+    },
+    {
+      "check": "Import does not fabricate a brief",
+      "pass": true
+    },
+    {
+      "check": "Imported early development has no invented pictures",
+      "pass": true
+    },
+    {
+      "check": "Action: restart",
+      "pass": true
+    },
+    {
+      "check": "Action: import",
+      "pass": true
+    },
+    {
+      "check": "Action: confirm-import",
+      "pass": true
+    },
+    {
+      "check": "Import enters first missing step: full",
+      "pass": true
+    },
+    {
+      "check": "Import does not fabricate a brief",
+      "pass": true
+    },
+    {
+      "check": "Imported early development has no invented pictures",
+      "pass": true
+    },
+    {
+      "check": "Action: restart",
+      "pass": true
+    },
+    {
+      "check": "Action: create",
+      "pass": true
+    },
+    {
+      "check": "Music pack requires track",
+      "pass": true
+    },
+    {
+      "check": "Pack accent remains explicit",
+      "pass": true
+    },
+    {
+      "check": "Action: track",
+      "pass": true
+    },
+    {
+      "check": "Action: skip-lyrics",
+      "pass": true
+    },
+    {
+      "check": "Action: develop",
+      "pass": true
+    },
+    {
+      "check": "Visual music analysis preserved",
+      "pass": true
+    },
+    {
+      "check": "Missing beat data blocks approval",
+      "pass": true
+    },
+    {
+      "check": "Missing grid does not fabricate tempo",
+      "pass": true
+    },
+    {
+      "check": "Action: approve",
+      "pass": true
+    },
+    {
+      "check": "Music analysis leads to empty brief",
+      "pass": true
+    },
+    {
+      "check": "Music does not invent story or visuals",
+      "pass": true
+    },
+    {
+      "check": "Embedded root retains usable height",
+      "pass": true
+    },
+    {
+      "check": "PASS",
+      "pass": true
+    }
+  ]
+}

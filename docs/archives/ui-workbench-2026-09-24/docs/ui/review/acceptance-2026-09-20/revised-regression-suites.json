@@ -1,0 +1,18 @@
+[
+  {
+    "suite": "acceptance",
+    "exit": 0
+  },
+  {
+    "suite": "guards",
+    "exit": 0
+  },
+  {
+    "suite": "workbench",
+    "exit": 0
+  },
+  {
+    "suite": "polish",
+    "exit": 0
+  }
+]

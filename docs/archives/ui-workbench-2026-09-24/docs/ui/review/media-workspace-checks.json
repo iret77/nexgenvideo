@@ -1,0 +1,42 @@
+[
+  {
+    "name": "media workspace 1024",
+    "pass": true,
+    "columns": "149.656px 149.672px 149.672px",
+    "height": 850
+  },
+  {
+    "name": "media workspace 736",
+    "pass": true,
+    "columns": "185px",
+    "height": 850
+  },
+  {
+    "name": "media workspace 500",
+    "pass": true,
+    "columns": "241.406px",
+    "height": 1120
+  },
+  {
+    "name": "media workspace 320",
+    "pass": true,
+    "columns": "251px",
+    "height": 1325
+  },
+  {
+    "name": "physical multi selection",
+    "pass": true
+  },
+  {
+    "name": "physical search focus",
+    "pass": true
+  },
+  {
+    "name": "physical reveal",
+    "pass": true
+  },
+  {
+    "name": "physical return to source preview",
+    "pass": true
+  }
+]

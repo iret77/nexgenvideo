@@ -1,0 +1,3170 @@
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 7551210b..55e1cabf 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -223,6 +223,9 @@ final class AgentService {
+     var messages: [AgentMessage] = [] {
+         didSet { captureDiagnosticTranscript() }
+     }
++
++    @ObservationIgnored
++    private var pendingHostStates: [UUID: [AgentHostStateRecord]] = [:]
+     var isStreaming: Bool = false {
+         didSet {
+             captureDiagnosticTranscript()
+@@ -1259,6 +1262,132 @@ final class AgentService {
+         checkpointCurrentSession()
+     }
+ 
++    func recordHostState(
++        _ record: AgentHostStateRecord,
++        origin: ToolCallOrigin,
++        toolUseID: String? = nil
++    ) {
++        guard let sessionID = origin.chatSessionID else { return }
++        if sessionID == currentSessionId {
++            guard Self.attachHostState(
++                record,
++                toolUseID: toolUseID,
++                to: &messages
++            ) else {
++                upsertPendingHostState(
++                    record.associated(with: toolUseID),
++                    sessionID: sessionID
++                )
++                return
++            }
++            syncMessagesIntoCurrentSession()
++            onSessionsChanged?()
++            return
++        }
++        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
++            return
++        }
++        guard Self.attachHostState(
++            record,
++            toolUseID: toolUseID,
++            to: &sessions[index].messages
++        ) else {
++            upsertPendingHostState(
++                record.associated(with: toolUseID),
++                sessionID: sessionID
++            )
++            return
++        }
++        sessions[index].updatedAt = Date()
++        onSessionsChanged?()
++    }
++
++    private func upsertPendingHostState(
++        _ record: AgentHostStateRecord,
++        sessionID: UUID
++    ) {
++        var records = pendingHostStates[sessionID] ?? []
++        if let index = records.firstIndex(where: { $0.id == record.id }) {
++            records[index] = record.associated(with: record.toolUseID, retaining: records[index].id)
++        } else {
++            records.append(record)
++        }
++        pendingHostStates[sessionID] = records
++    }
++
++    private func attachPendingHostStates(
++        sessionID: UUID,
++        toolUseID: String,
++        toolName: String
++    ) {
++        guard var records = pendingHostStates[sessionID] else { return }
++        guard let matching = records.first(where: {
++            ($0.toolUseID == nil || $0.toolUseID == toolUseID)
++                && ToolRunPresentation.baseName(for: $0.toolName)
++                    == ToolRunPresentation.baseName(for: toolName)
++        }) else { return }
++        _ = Self.attachHostState(
++            matching,
++            toolUseID: toolUseID,
++            to: &messages
++        )
++        records.removeAll { $0.id == matching.id }
++        pendingHostStates[sessionID] = records.isEmpty ? nil : records
++        syncMessagesIntoCurrentSession()
++        onSessionsChanged?()
++    }
++
++    @discardableResult
++    private static func attachHostState(
++        _ record: AgentHostStateRecord,
++        toolUseID: String?,
++        to messages: inout [AgentMessage]
++    ) -> Bool {
++        if let messageIndex = messages.indices.reversed().first(where: { index in
++            messages[index].hostStateRecords.contains { $0.id == record.id }
++        }), let stateIndex = messages[messageIndex].hostStateRecords.firstIndex(where: {
++            $0.id == record.id
++        }) {
++            let prior = messages[messageIndex].hostStateRecords[stateIndex]
++            messages[messageIndex].hostStateRecords[stateIndex] = record.associated(
++                with: toolUseID ?? prior.toolUseID,
++                retaining: prior.id
++            )
++            return true
++        }
++        let requestedID = toolUseID ?? record.toolUseID
++        let match: (index: Int, toolUseID: String)? = messages.indices.reversed().compactMap { index in
++            guard messages[index].role == .assistant else { return nil }
++            for block in messages[index].blocks {
++                guard case .toolUse(let id, let name, _) = block else { continue }
++                if let requestedID {
++                    if id == requestedID { return (index, id) }
++                } else if ToolRunPresentation.baseName(for: name)
++                    == ToolRunPresentation.baseName(for: record.toolName),
++                    !messages[index].hostStateRecords.contains(where: {
++                        $0.toolUseID == id
++                    }) {
++                    return (index, id)
++                }
++            }
++            return nil
++        }.first
++        guard let match else { return false }
++        let associated = record.associated(with: match.toolUseID)
++        if let index = messages[match.index].hostStateRecords.firstIndex(where: {
++            $0.toolUseID == match.toolUseID && $0.phase == associated.phase
++        }) {
++            let priorID = messages[match.index].hostStateRecords[index].id
++            messages[match.index].hostStateRecords[index] = associated.associated(
++                with: match.toolUseID,
++                retaining: priorID
++            )
++        } else {
++            messages[match.index].hostStateRecords.append(associated)
++        }
++        return true
++    }
++
+     /// The compact intent line for a generation dialog — picked chip labels then the free-text
+     /// direction, comma-joined (matches the music tab's original composition).
+     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
+@@ -1337,12 +1466,25 @@ final class AgentService {
+     private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
+ 
+     func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
++        guard batch.totalEUR != nil else {
++            let unpricedItemIDs = batch.payload.items.compactMap {
++                $0.package.payload.estimate == nil ? $0.id : nil
++            }
++            let payload = try NativeCockpitReader.serialize([
++                "status": "preparation_incomplete",
++                "reason": "missing_cost_estimates",
++                "unpriced_item_ids": unpricedItemIDs,
++                "message": "No approval was opened. Repair or re-prepare the listed items with host-verified prices.",
++            ])
++            return .error(String(decoding: payload, as: UTF8.self))
++        }
+         if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
+         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
+             throw ToolError("Finish the current native decision before reviewing a generation batch.")
+         }
+         let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
+         generationBatchOrigins[batch.id] = (origin, marker)
++        editor.agentPanelVisible = true
+         editor.generationBatchCoordinator.pending = batch
+         suspendToolCalls(from: origin)
+         return .suspended(marker)
+@@ -2080,9 +2222,11 @@ final class AgentService {
+                 return .error("The approval is already being applied.")
+             }
+             guard let toolExecutor else {
+-                let message = "The gate writer is unavailable. The approval request remains open."
+-                gateApprovalError = message
+-                return .error(message)
++                return recordGateApprovalFailure(
++                    "The gate writer is unavailable. The approval request remains open.",
++                    kind: .hostBusy,
++                    approval: approval
++                )
+             }
+             gateApprovalIsWriting = true
+             defer { gateApprovalIsWriting = false }
+@@ -2092,6 +2236,22 @@ final class AgentService {
+                 pendingGateOrigin = nil
+                 gateApprovalError = nil
+                 if approval.sessionId != nil {
++                    recordHostState(
++                        AgentHostStateRecord(
++                            id: approval.sourceHostStateID,
++                            toolUseID: approval.sourceToolUseID,
++                            state: .approved,
++                            phase: approval.phase,
++                            toolName: approval.sourceToolName,
++                            action: .none,
++                            artifactPath: nil,
++                            byteComparison: nil,
++                            previousSHA256: nil,
++                            currentSHA256: nil
++                        ),
++                        origin: origin,
++                        toolUseID: approval.sourceToolUseID
++                    )
+                     enqueueGateFollowUp(
+                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                             + "Continue from the updated project state; do not request this approval again.",
+@@ -2103,21 +2263,59 @@ final class AgentService {
+                 }
+                 return .ok(payload)
+             } catch let error as ToolError {
+-                return recordGateApprovalFailure(error.message, approval: approval)
++                return recordGateApprovalFailure(
++                    error.message,
++                    kind: error.kind,
++                    approval: approval
++                )
+             } catch {
+-                return recordGateApprovalFailure(error.localizedDescription, approval: approval)
++                return recordGateApprovalFailure(
++                    error.localizedDescription,
++                    kind: .agentCorrection,
++                    approval: approval
++                )
+             }
+         }
+     }
+ 
+-    private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
++    private func recordGateApprovalFailure(
++        _ reason: String,
++        kind: ToolFailureKind,
++        approval: GateApproval
++    ) -> ToolResult {
+         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
+         gateApprovalError = message
++        let origin = pendingGateOrigin ?? .direct
++        if kind == .approvalStructure
++            || kind == .reviewChangedSource
++            || kind == .agentCorrection
++            || kind == .phaseRecordRepair {
++            pendingGateApproval = nil
++            pendingGateOrigin = nil
++        }
++        recordHostState(
++            AgentHostStateRecord(
++                id: approval.sourceHostStateID,
++                toolUseID: approval.sourceToolUseID,
++                state: .approvalFailed,
++                phase: approval.phase,
++                toolName: approval.sourceToolName,
++                action: kind.hostAction,
++                artifactPath: nil,
++                byteComparison: nil,
++                previousSHA256: nil,
++                currentSHA256: nil
++            ),
++            origin: origin,
++            toolUseID: approval.sourceToolUseID
++        )
+         enqueueGateFollowUp(
+             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
+-                + "The approval card remains open. Address the stated cause without claiming approval, "
+-                + "inventing a support team, or asking the user to restart the app.",
+-            origin: pendingGateOrigin ?? .direct
++                + (pendingGateApproval == nil
++                    ? "Correct the stated cause before requesting approval again. "
++                    : "The approval card remains open. Address the stated cause before retrying. ")
++                + "Do not claim approval, invent a support team, or ask the user to restart the app.",
++            origin: origin
+         )
+         return .error(message)
+     }
+@@ -2413,6 +2611,7 @@ final class AgentService {
+         pendingSpendFollowUps.removeAll()
+         currentTask?.cancel()
+         currentTask = nil
++        pendingHostStates.removeAll()
+         rotateRuntime()
+         composerStates.removeAll()
+         sessions = ChatSessionStore.load(from: projectURL)
+@@ -2455,6 +2654,9 @@ final class AgentService {
+     }
+ 
+     func newChat() {
++        if let currentSessionId {
++            pendingHostStates.removeValue(forKey: currentSessionId)
++        }
+         saveComposerState()
+         currentTask?.cancel()
+         abandonSessionDialog()
+@@ -2606,6 +2808,7 @@ final class AgentService {
+             resumeToolCalls(from: followUp.origin)
+         }
+         sessions.removeAll { $0.id == id }
++        pendingHostStates.removeValue(forKey: id)
+         composerStates.removeValue(forKey: id)
+         if deletingActive {
+             currentTask?.cancel()
+@@ -2912,7 +3115,8 @@ final class AgentService {
+                 return await executor.execute(
+                     name: name,
+                     args: Self.parseJSONObject(inputJSON),
+-                    origin: .inAppChat(sessionID: sessionID)
++                    origin: .inAppChat(sessionID: sessionID),
++                    toolUseID: id
+                 )
+             }
+         )
+@@ -2961,6 +3165,11 @@ final class AgentService {
+                 defaultAssistantID: &defaultAssistantID
+             )
+             appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
++            attachPendingHostStates(
++                sessionID: sessionID,
++                toolUseID: id,
++                toolName: name
++            )
+         case .toolResult(let id, let content, let isError):
+             let block = AgentContentBlock.toolResult(
+                 toolUseId: id,
+@@ -2968,6 +3177,8 @@ final class AgentService {
+                 isError: isError
+             )
+             if messages.last?.role == .user,
++               messages.last?.userPresentation == nil,
++               messages.last?.blocks.isEmpty == false,
+                messages.last?.blocks.allSatisfy({
+                    if case .toolResult = $0 { return true }
+                    return false
+@@ -3161,7 +3372,8 @@ final class AgentService {
+             let result = await executor.execute(
+                 name: use.name,
+                 args: Self.parseJSONObject(use.input),
+-                origin: origin
++                origin: origin,
++                toolUseID: use.id
+             )
+             resultBlocks.append(.toolResult(toolUseId: use.id, content: result.content, isError: result.isError))
+             turnSuspended = result.turnDisposition == .suspendTurn
+@@ -3173,12 +3385,33 @@ final class AgentService {
+     }
+ 
+     private func resolvedToolUseIds(afterAssistantAt index: Int) -> Set<String> {
+-        let next = index + 1
+-        guard next < messages.count, messages[next].role == .user else { return [] }
+-        return Set(messages[next].blocks.compactMap {
+-            if case let .toolResult(id, _, _) = $0 { return id }
+-            return nil
+-        })
++        Self.resolvedToolUseIds(afterAssistantAt: index, in: messages)
++    }
++
++    private static func resolvedToolUseIds(
++        afterAssistantAt index: Int,
++        in messages: [AgentMessage]
++    ) -> Set<String> {
++        var resolved: Set<String> = []
++        var cursor = index + 1
++        while cursor < messages.count, messages[cursor].role == .user {
++            let message = messages[cursor]
++            if message.blocks.isEmpty {
++                guard message.userPresentation?.hostStateRecord != nil else { break }
++            } else {
++                guard message.blocks.allSatisfy({
++                    if case .toolResult = $0 { return true }
++                    return false
++                }) else { break }
++                for block in message.blocks {
++                    if case let .toolResult(id, _, _) = block {
++                        resolved.insert(id)
++                    }
++                }
++            }
++            cursor += 1
++        }
++        return resolved
+     }
+ 
+     private func resolveOrphanToolUses(reason: String = "Cancelled") {
+@@ -3193,18 +3426,10 @@ final class AgentService {
+             guard !toolUseIds.isEmpty else { continue }
+ 
+             let next = i + 1
+-            let nextIsToolResult = next < messages.count
+-                && messages[next].role == .user
+-                && messages[next].blocks.contains(where: {
+-                    if case .toolResult = $0 { return true }
+-                    return false
+-                })
+-            let resolved: Set<String> = nextIsToolResult
+-                ? Set(messages[next].blocks.compactMap {
+-                    if case let .toolResult(id, _, _) = $0 { return id }
+-                    return nil
+-                })
+-                : []
++            let resolved = Self.resolvedToolUseIds(
++                afterAssistantAt: i,
++                in: messages
++            )
+ 
+             let orphans = toolUseIds.filter { !resolved.contains($0) }
+             guard !orphans.isEmpty else { continue }
+@@ -3212,14 +3437,39 @@ final class AgentService {
+             let synthetic: [AgentContentBlock] = orphans.map {
+                 .toolResult(toolUseId: $0, content: [.text(reason)], isError: true)
+             }
+-            if nextIsToolResult {
+-                messages[next].blocks.insert(contentsOf: synthetic, at: 0)
++            if let resultIndex = Self.firstToolResultMessageIndex(
++                afterAssistantAt: i,
++                in: messages
++            ) {
++                messages[resultIndex].blocks.insert(contentsOf: synthetic, at: 0)
+             } else {
+                 messages.insert(AgentMessage(role: .user, blocks: synthetic), at: next)
+             }
+         }
+     }
+ 
++    private static func firstToolResultMessageIndex(
++        afterAssistantAt index: Int,
++        in messages: [AgentMessage]
++    ) -> Int? {
++        var cursor = index + 1
++        while cursor < messages.count, messages[cursor].role == .user {
++            let message = messages[cursor]
++            if message.blocks.isEmpty {
++                guard message.userPresentation?.hostStateRecord != nil else { return nil }
++            } else if message.blocks.allSatisfy({
++                if case .toolResult = $0 { return true }
++                return false
++            }) {
++                return cursor
++            } else {
++                return nil
++            }
++            cursor += 1
++        }
++        return nil
++    }
++
+     private static func parseJSONObject(_ json: String) -> [String: Any] {
+         guard let data = json.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+@@ -3410,6 +3660,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
+     var hidden: Bool = false
+     /// Optional rendering for a structured user action whose blocks remain model-facing.
+     var userPresentation: AgentUserPresentation?
++    /// Host-authored tool-call metadata that never becomes provider-facing user content.
++    var hostStateRecords: [AgentHostStateRecord]
+ 
+     init(
+         id: UUID = UUID(),
+@@ -3418,7 +3670,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
+         mentions: [AgentMention] = [],
+         contextHint: String? = nil,
+         hidden: Bool = false,
+-        userPresentation: AgentUserPresentation? = nil
++        userPresentation: AgentUserPresentation? = nil,
++        hostStateRecords: [AgentHostStateRecord] = []
+     ) {
+         self.id = id
+         self.role = role
+@@ -3427,10 +3680,11 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
+         self.contextHint = contextHint
+         self.hidden = hidden
+         self.userPresentation = userPresentation
++        self.hostStateRecords = hostStateRecords
+     }
+ 
+     private enum CodingKeys: String, CodingKey {
+-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
++        case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords
+     }
+ 
+     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
+@@ -3444,6 +3698,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
+         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
+         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
++        hostStateRecords = try c.decodeIfPresent(
++            [AgentHostStateRecord].self,
++            forKey: .hostStateRecords
++        ) ?? []
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift b/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
+index a568d9a3..dd7fa205 100644
+--- a/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
++++ b/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
+@@ -81,22 +81,124 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
+     }
+ }
+ 
++struct AgentHostStateRecord: Codable, Equatable, Sendable {
++    enum State: String, Codable, Equatable, Sendable {
++        case draft
++        case writeBlocked
++        case writeRejected
++        case writeOutcomeUnavailable
++        case persisted
++        case persistedPhaseRecordFailed
++        case checked
++        case approved
++        case approvalFailed
++    }
++
++    enum Action: String, Codable, Equatable, Sendable {
++        case none
++        case agentCorrection
++        case reviewChangedSource
++        case reviewForApproval
++        case reopenProject
++        case retryAfterHostRecovery
++    }
++
++    enum ByteComparison: String, Codable, Equatable, Sendable {
++        case created
++        case unchanged
++        case changed
++        case unavailable
++    }
++
++    let id: UUID
++    let toolUseID: String?
++    let state: State
++    let phase: String
++    let toolName: String
++    let action: Action
++    let artifactPath: String?
++    let byteComparison: ByteComparison?
++    let previousSHA256: String?
++    let currentSHA256: String?
++
++    init(
++        id: UUID = UUID(),
++        toolUseID: String? = nil,
++        state: State,
++        phase: String,
++        toolName: String,
++        action: Action,
++        artifactPath: String?,
++        byteComparison: ByteComparison?,
++        previousSHA256: String?,
++        currentSHA256: String?
++    ) {
++        self.id = id
++        self.toolUseID = toolUseID
++        self.state = state
++        self.phase = phase
++        self.toolName = toolName
++        self.action = action
++        self.artifactPath = artifactPath
++        self.byteComparison = byteComparison
++        self.previousSHA256 = previousSHA256
++        self.currentSHA256 = currentSHA256
++    }
++
++    func associated(with toolUseID: String?, retaining id: UUID? = nil) -> Self {
++        Self(
++            id: id ?? self.id,
++            toolUseID: toolUseID ?? self.toolUseID,
++            state: state,
++            phase: phase,
++            toolName: toolName,
++            action: action,
++            artifactPath: artifactPath,
++            byteComparison: byteComparison,
++            previousSHA256: previousSHA256,
++            currentSHA256: currentSHA256
++        )
++    }
++
++    private enum CodingKeys: String, CodingKey {
++        case id, toolUseID, state, phase, toolName, action, artifactPath
++        case byteComparison, previousSHA256, currentSHA256
++    }
++
++    init(from decoder: Decoder) throws {
++        let container = try decoder.container(keyedBy: CodingKeys.self)
++        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
++        toolUseID = try container.decodeIfPresent(String.self, forKey: .toolUseID)
++        state = try container.decode(State.self, forKey: .state)
++        phase = try container.decode(String.self, forKey: .phase)
++        toolName = try container.decode(String.self, forKey: .toolName)
++        action = try container.decode(Action.self, forKey: .action)
++        artifactPath = try container.decodeIfPresent(String.self, forKey: .artifactPath)
++        byteComparison = try container.decodeIfPresent(ByteComparison.self, forKey: .byteComparison)
++        previousSHA256 = try container.decodeIfPresent(String.self, forKey: .previousSHA256)
++        currentSHA256 = try container.decodeIfPresent(String.self, forKey: .currentSHA256)
++    }
++}
++
+ struct AgentUserPresentation: Codable, Equatable, Sendable {
+     let choiceRecord: AgentChoiceRecord?
+     let typedText: String?
+     let notice: String?
+     let workflowRecord: AgentWorkflowRecord?
++    let hostStateRecord: AgentHostStateRecord?
+ 
+     init(
+         choiceRecord: AgentChoiceRecord?,
+         typedText: String?,
+         notice: String? = nil,
+-        workflowRecord: AgentWorkflowRecord? = nil
++        workflowRecord: AgentWorkflowRecord? = nil,
++        hostStateRecord: AgentHostStateRecord? = nil
+     ) {
+         self.choiceRecord = choiceRecord
+         self.typedText = typedText
+         self.notice = notice
+         self.workflowRecord = workflowRecord
++        self.hostStateRecord = hostStateRecord
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/Agent/GateApproval.swift b/Sources/NexGenVideo/Agent/GateApproval.swift
+index d7416524..c2765eff 100644
+--- a/Sources/NexGenVideo/Agent/GateApproval.swift
++++ b/Sources/NexGenVideo/Agent/GateApproval.swift
+@@ -30,6 +30,9 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+     let action: Action
+     let declaredPack: String?
+     let declaredBinding: ProjectPackBinding?
++    let sourceToolName: String
++    let sourceToolUseID: String?
++    let sourceHostStateID: UUID
+     /// Set only for an in-app turn that can be resumed automatically.
+     let sessionId: UUID?
+ 
+@@ -40,6 +43,9 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         action: Action = .approve,
+         declaredPack: String? = nil,
+         declaredBinding: ProjectPackBinding? = nil,
++        sourceToolName: String = ToolName.approveGate.rawValue,
++        sourceToolUseID: String? = nil,
++        sourceHostStateID: UUID = UUID(),
+         sessionId: UUID? = nil,
+         id: String = UUID().uuidString
+     ) {
+@@ -51,6 +57,9 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         self.action = action
+         self.declaredPack = declaredPack
+         self.declaredBinding = declaredBinding
++        self.sourceToolName = sourceToolName
++        self.sourceToolUseID = sourceToolUseID
++        self.sourceHostStateID = sourceHostStateID
+         self.sessionId = sessionId
+     }
+ 
+@@ -62,6 +71,9 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+             action: action,
+             declaredPack: declaredPack,
+             declaredBinding: declaredBinding,
++            sourceToolName: sourceToolName,
++            sourceToolUseID: sourceToolUseID,
++            sourceHostStateID: sourceHostStateID,
+             sessionId: sessionId,
+             id: id
+         )
+@@ -74,6 +86,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+             && action == other.action
+             && declaredPack == other.declaredPack
+             && declaredBinding == other.declaredBinding
++            && sourceToolName == other.sourceToolName
+             && sessionId == other.sessionId
+     }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift b/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+index 4323773f..3e91d8dd 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+@@ -16,6 +16,8 @@ struct AgentTranscriptTurnView: View {
+                     AgentMessageView(message: message, toolResults: toolResults)
+                 case .activity(let activity):
+                     AgentActivityView(activity: activity, toolResults: toolResults)
++                case .hostState(let state):
++                    AgentHostStateView(state: state)
+                 case .receipts(let group):
+                     AgentReceiptGroupView(group: group)
+                 case .notice(let notice):
+@@ -29,6 +31,232 @@ struct AgentTranscriptTurnView: View {
+     }
+ }
+ 
++private struct AgentHostStateView: View {
++    let state: AgentHostState
++    @Environment(EditorViewModel.self) private var editor
++    @State private var showsDiagnostics = false
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
++                Image(systemName: symbol)
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(color)
++                    .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text(title)
++                        .interfaceFont(
++                            size: AppTheme.Typography.ui,
++                            weight: AppTheme.FontWeight.semibold
++                        )
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                    Text(detail)
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.secondaryColor)
++                        .fixedSize(horizontal: false, vertical: true)
++                }
++            }
++            if showsReviewAction {
++                Button("Review \(PhaseDisplay.label(state.record.phase))") {
++                    editor.revealCockpit(cockpitTab(for: state.record.phase))
++                }
++                .buttonStyle(.capsule(.secondary, size: .regular))
++                .controlSize(.small)
++            }
++            if hasDiagnostics {
++                DisclosureGroup(isExpanded: $showsDiagnostics) {
++                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                        diagnosticRow("Tool", state.record.toolName)
++                        if let path = state.record.artifactPath {
++                            diagnosticRow("Artifact", path)
++                        }
++                        if let comparison = state.record.byteComparison {
++                            diagnosticRow("Byte comparison", byteComparisonLabel(comparison))
++                        }
++                        if let previous = state.record.previousSHA256 {
++                            diagnosticRow("Previous fingerprint", previous)
++                        }
++                        if let current = state.record.currentSHA256 {
++                            diagnosticRow("Current fingerprint", current)
++                        }
++                    }
++                    .padding(.top, AppTheme.Spacing.xxs)
++                } label: {
++                    Text("Diagnostics")
++                        .interfaceFont(size: AppTheme.Typography.metadata)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
++            }
++        }
++        .padding(AppTheme.Spacing.md)
++        .background(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
++                .fill(AppTheme.Background.raisedColor)
++        )
++        .overlay(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
++                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
++        )
++        .accessibilityElement(children: .contain)
++        .accessibilityLabel("\(title). \(detail)")
++    }
++
++    private var title: String {
++        let phase = PhaseDisplay.label(state.record.phase)
++        return switch state.record.state {
++        case .draft: String(localized: "\(phase) draft")
++        case .writeBlocked: String(localized: "\(phase) write blocked")
++        case .writeRejected: String(localized: "\(phase) not saved")
++        case .writeOutcomeUnavailable: String(localized: "\(phase) write unverified")
++        case .persisted: String(localized: "\(phase) saved")
++        case .persistedPhaseRecordFailed: String(localized: "\(phase) saved; repair required")
++        case .checked: String(localized: "\(phase) saved and checked")
++        case .approved: String(localized: "\(phase) approved")
++        case .approvalFailed: String(localized: "\(phase) not approved")
++        }
++    }
++
++    private var detail: String {
++        switch state.record.state {
++        case .draft:
++            String(localized: "The draft has not been written to the project.")
++        case .writeBlocked:
++            switch state.record.action {
++            case .reviewChangedSource:
++                String(localized: "Review the changed project source before writing again.")
++            case .reopenProject:
++                String(localized: "Reopen the project before writing again.")
++            case .retryAfterHostRecovery:
++                String(localized: "The write did not start. Wait for the current project operation to finish.")
++            default:
++                String(localized: "The write did not start. The agent can correct the request.")
++            }
++        case .writeRejected:
++            switch state.record.action {
++            case .reviewChangedSource:
++                String(localized: "The new draft was not saved. Review the changed project source before continuing.")
++            case .reopenProject:
++                String(localized: "The new draft was not saved. Reopen the project before trying again.")
++            case .retryAfterHostRecovery:
++                String(localized: "The new draft was not saved. Wait for the current project operation to finish.")
++            default:
++                String(localized: "The new draft was not saved. The stored artifact is unchanged.")
++            }
++        case .writeOutcomeUnavailable:
++            switch state.record.action {
++            case .reviewChangedSource:
++                String(localized: "The writer failed, and the host could not verify the artifact bytes. Review the changed source before approval.")
++            case .reopenProject:
++                String(localized: "The writer failed, and the host could not verify the artifact bytes. Reopen the project before approval.")
++            case .retryAfterHostRecovery:
++                String(localized: "The writer failed, and the host could not verify the artifact bytes. Wait for the current project operation to finish.")
++            default:
++                String(localized: "The writer failed, and the host could not verify the artifact bytes. The agent must inspect and repair the project state before approval.")
++            }
++        case .persisted:
++            switch state.record.byteComparison {
++            case .unchanged:
++                String(localized: "The host compared the exact bytes. The artifact is unchanged; checks are still pending.")
++            case .changed:
++                String(localized: "The artifact changed. Review it before approval.")
++            default:
++                String(localized: "The artifact is stored. Host checks are still pending.")
++            }
++        case .persistedPhaseRecordFailed:
++            String(localized: "The artifact bytes changed, but phase bookkeeping failed. The agent must repair it before approval.")
++        case .checked:
++            hasLiveGateDecision
++                ? String(localized: "Host checks passed. The approval decision is open below.")
++                : String(localized: "Host checks passed. Review the artifact before approval.")
++        case .approved:
++            String(localized: "The host recorded the user approval.")
++        case .approvalFailed:
++            switch state.record.action {
++            case .reopenProject:
++                String(localized: "The host could not record approval. Reopen the project, then try again.")
++            case .retryAfterHostRecovery:
++                String(localized: "The host could not record approval. Wait for the current project operation to finish, then try again.")
++            case .reviewChangedSource:
++                String(localized: "The reviewed source changed. Review it again after host checks pass.")
++            default:
++                String(localized: "The artifact no longer passes host checks. The agent must correct it before approval.")
++            }
++        }
++    }
++
++    private var symbol: String {
++        switch state.record.state {
++        case .writeBlocked, .writeRejected, .writeOutcomeUnavailable,
++             .persistedPhaseRecordFailed, .approvalFailed:
++            "exclamationmark.triangle.fill"
++        case .approved: "checkmark.seal.fill"
++        case .checked: "checkmark.circle.fill"
++        case .draft, .persisted: "doc.badge.clock"
++        }
++    }
++
++    private var color: Color {
++        switch state.record.state {
++        case .writeBlocked, .writeRejected, .writeOutcomeUnavailable,
++             .persistedPhaseRecordFailed, .approvalFailed:
++            AppTheme.Status.warningColor
++        case .approved, .checked: AppTheme.Status.successColor
++        case .draft, .persisted: AppTheme.Text.tertiaryColor
++        }
++    }
++
++    private var hasDiagnostics: Bool {
++        !state.record.toolName.isEmpty
++            || state.record.artifactPath != nil
++            || state.record.byteComparison != nil
++            || state.record.previousSHA256 != nil
++            || state.record.currentSHA256 != nil
++    }
++
++    private var hasLiveGateDecision: Bool {
++        editor.agentService.pendingGateApproval?.phase == state.record.phase
++    }
++
++    private var showsReviewAction: Bool {
++        guard state.record.action == .reviewChangedSource
++            || state.record.action == .reviewForApproval else { return false }
++        return !hasLiveGateDecision
++    }
++
++    private func cockpitTab(for phase: String) -> CockpitTab {
++        switch phase {
++        case "brief", "production_design", "treatment", "storyboard": .story
++        case "bible": .bible
++        case "shotlist": .shotlist
++        case "frames", "sanity", "render", "finish": .review
++        default: .pipeline
++        }
++    }
++
++    private func diagnosticRow(_ label: LocalizedStringKey, _ value: String) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
++            Text(label)
++                .interfaceFont(size: AppTheme.Typography.metadata)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++            Text(value)
++                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++                .textSelection(.enabled)
++        }
++    }
++
++    private func byteComparisonLabel(
++        _ comparison: AgentHostStateRecord.ByteComparison
++    ) -> String {
++        switch comparison {
++        case .created: String(localized: "Created")
++        case .unchanged: String(localized: "Unchanged")
++        case .changed: String(localized: "Changed")
++        case .unavailable: String(localized: "Unavailable")
++        }
++    }
++}
++
+ private struct AgentUserIntentView: View {
+     let text: String
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+index 7be9cd62..87ce4fc4 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+@@ -45,10 +45,16 @@ struct AgentNoticeReceipt: Identifiable {
+     let text: String
+ }
+ 
++struct AgentHostState: Identifiable {
++    let record: AgentHostStateRecord
++    var id: UUID { record.id }
++}
++
+ enum AgentTranscriptItem: Identifiable {
+     case userIntent(AgentUserIntent)
+     case assistantResult(AgentMessage)
+     case activity(AgentActivity)
++    case hostState(AgentHostState)
+     case receipts(AgentReceiptGroup)
+     case notice(AgentNoticeReceipt)
+ 
+@@ -57,6 +63,7 @@ enum AgentTranscriptItem: Identifiable {
+         case .userIntent(let intent): "intent-\(intent.id.uuidString)"
+         case .assistantResult(let message): "result-\(message.id.uuidString)"
+         case .activity(let activity): "activity-\(activity.id.uuidString)"
++        case .hostState(let state): "host-state-\(state.id.uuidString)"
+         case .receipts(let group): "receipts-\(group.id.uuidString)"
+         case .notice(let notice): "notice-\(notice.id.uuidString)"
+         }
+@@ -102,16 +109,26 @@ enum AgentTranscriptProjection {
+         let activity = makeActivity(messages, isRunning: isRunning)
+         var intents: [AgentTranscriptItem] = []
+         var resultMessage: AgentMessage?
++        var hostStates: [AgentHostState] = []
+         var receipts: [AgentTranscriptItem] = []
+         var notices: [AgentTranscriptItem] = []
+ 
+         for message in messages {
++            for hostState in message.hostStateRecords {
++                appendHostState(.init(record: hostState), to: &hostStates)
++            }
+             switch message.role {
+             case .user:
+                 if !message.hidden, let text = authoredText(message) {
+                     intents.append(.userIntent(.init(id: message.id, text: text)))
+                 }
+                 if let presentation = message.userPresentation {
++                    if let hostState = presentation.hostStateRecord {
++                        appendHostState(
++                            .init(record: hostState),
++                            to: &hostStates
++                        )
++                    }
+                     if let workflow = presentation.workflowRecord {
+                         appendReceipt(
+                             .init(id: message.id, content: .workflow(workflow)),
+@@ -152,11 +169,52 @@ enum AgentTranscriptProjection {
+ 
+         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
+         let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
+-        let output = intents + results + activityItems + receipts + notices
++        let stateItems = hostStates.map(AgentTranscriptItem.hostState)
++        let output = intents + stateItems + results + activityItems + receipts + notices
+         guard !output.isEmpty else { return nil }
+         return AgentTranscriptTurn(id: first.id, items: output)
+     }
+ 
++    private static func appendHostState(
++        _ state: AgentHostState,
++        to output: inout [AgentHostState]
++    ) {
++        if let exact = output.firstIndex(where: { $0.id == state.id }) {
++            output[exact] = state
++            return
++        }
++        let samePhase = output.indices.filter {
++            output[$0].record.phase == state.record.phase
++        }
++        switch state.record.state {
++        case .approved, .checked, .persisted, .approvalFailed,
++             .persistedPhaseRecordFailed:
++            for index in samePhase.reversed() {
++                output.remove(at: index)
++            }
++        case .draft, .writeBlocked, .writeRejected, .writeOutcomeUnavailable:
++            let hasDurableState = samePhase.contains {
++                switch output[$0].record.state {
++                case .persisted, .checked, .approved: true
++                default: false
++                }
++            }
++            for index in samePhase.reversed() {
++                if !hasDurableState || !isDurableState(output[index].record.state) {
++                    output.remove(at: index)
++                }
++            }
++        }
++        output.append(state)
++    }
++
++    private static func isDurableState(_ state: AgentHostStateRecord.State) -> Bool {
++        switch state {
++        case .persisted, .checked, .approved: true
++        default: false
++        }
++    }
++
+     private static func appendReceipt(
+         _ receipt: AgentTranscriptReceipt,
+         phase: String?,
+diff --git a/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift b/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
+index 958d0bf8..8e9c1974 100644
+--- a/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
++++ b/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
+@@ -13,6 +13,7 @@ struct GateApprovalCard: View {
+     @Environment(EditorViewModel.self) private var editor
+     @State private var review = GateReviewModel()
+     @State private var showsStoryboard = false
++    @State private var showsDiagnostics = false
+ 
+     private var reviewHint: String? {
+         if approval.phase == "analysis" {
+@@ -42,6 +43,12 @@ struct GateApprovalCard: View {
+                 }
+                 .buttonStyle(.capsule(.secondary, size: .regular))
+                 .disabled(isWorking || isBlocked)
++            } else {
++                Button("Review \(approval.phaseLabel)") {
++                    editor.revealCockpit(reviewDestination)
++                }
++                .buttonStyle(.capsule(.secondary, size: .regular))
++                .disabled(isWorking || isBlocked)
+             }
+             if let blocker = review.blocker, !isBlocked {
+                 Text(blocker)
+@@ -112,15 +119,22 @@ struct GateApprovalCard: View {
+ 
+     private var summary: some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+-            Text("The agent is asking you to approve \(approval.phaseLabel).")
++            Text("\(approval.phaseLabel) passed host checks. Review it before approval.")
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .fixedSize(horizontal: false, vertical: true)
+             if let notes = approval.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+-                Text(notes)
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+-                    .fixedSize(horizontal: false, vertical: true)
++                DisclosureGroup(isExpanded: $showsDiagnostics) {
++                    Text(notes)
++                        .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                        .fixedSize(horizontal: false, vertical: true)
++                        .textSelection(.enabled)
++                } label: {
++                    Text("Approval notes")
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
+             }
+             if let reviewHint {
+                 Text(reviewHint)
+@@ -142,6 +156,16 @@ struct GateApprovalCard: View {
+         }
+     }
+ 
++    private var reviewDestination: CockpitTab {
++        switch approval.phase {
++        case "brief", "production_design", "treatment", "storyboard": .story
++        case "bible": .bible
++        case "shotlist": .shotlist
++        case "frames", "sanity", "render", "finish": .review
++        default: .pipeline
++        }
++    }
++
+     private var footerRow: some View {
+         ViewThatFits(in: .horizontal) {
+             approvalActions(horizontal: true)
+diff --git a/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift b/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
+index 849603d1..5f1c10c9 100644
+--- a/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
++++ b/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
+@@ -7,7 +7,10 @@ struct GenerationBatchCard: View {
+         let coordinator = editor.generationBatchCoordinator
+         if let batch = coordinator.pending {
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+-                Text("Review \(batch.payload.items.count) generations").fontWeight(AppTheme.FontWeight.semibold)
++                Text(batch.totalEUR == nil
++                    ? String(localized: "Prepare \(batch.payload.items.count) generations")
++                    : String(localized: "Review \(batch.payload.items.count) generations"))
++                    .fontWeight(AppTheme.FontWeight.semibold)
+                 ScrollView {
+                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                         ForEach(Array(batch.payload.items.enumerated()), id: \.element.id) { index, item in
+@@ -26,18 +29,23 @@ struct GenerationBatchCard: View {
+                 if let total = batch.totalEUR {
+                     Text("Estimated total: €\(total, specifier: "%.2f")")
+                 } else {
+-                    Text("Every generation needs a monetary estimate before this batch can run unattended.")
++                    Text("Cost estimates are missing. Approval is unavailable until every generation is priced.")
+                         .foregroundStyle(AppTheme.Status.warningColor)
+                 }
+                 if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
+                 HStack {
+-                    Button("Decline") { coordinator.decline(editor: editor) }
++                    Button(batch.totalEUR == nil ? "Dismiss" : "Decline") {
++                        coordinator.decline(editor: editor)
++                    }
+                         .buttonStyle(.capsule(.secondary, size: .regular)).disabled(coordinator.approving)
+-                    Spacer()
+-                    Button("Approve \(batch.payload.items.count) generations") {
+-                        Task { await coordinator.approve(editor: editor) }
+-                    }.buttonStyle(.capsule(.prominent, size: .regular))
+-                        .disabled(coordinator.approving || batch.totalEUR == nil)
++                    if batch.totalEUR != nil {
++                        Spacer()
++                        Button("Approve \(batch.payload.items.count) generations") {
++                            Task { await coordinator.approve(editor: editor) }
++                        }
++                        .buttonStyle(.capsule(.prominent, size: .regular))
++                        .disabled(coordinator.approving)
++                    }
+                 }
+             }
+             .padding(AppTheme.Spacing.md)
+diff --git a/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift b/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
+index 99b96d87..6a2d4b06 100644
+--- a/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
++++ b/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
+@@ -78,6 +78,14 @@ enum ToolRunPresentation {
+         "list_phases": "Reading the phase plan",
+         "get_ui_contract": "Reading the phase's interaction plan",
+         "run_phase": "Running a pipeline phase",
++        "write_analysis_interpretation": "Saving analysis interpretation",
++        "write_brief": "Saving the brief",
++        "write_production_design": "Saving production design",
++        "write_treatment": "Saving the treatment",
++        "write_storyboard": "Saving the storyboard",
++        "write_bible": "Saving the Bible",
++        "write_shotlist": "Saving the shot list",
++        "write_phase_extension": "Saving phase work",
+         "approve_gate": "Requesting phase-gate approval",
+         "set_gate_state": "Updating the phase gate",
+         "rewind": "Rewinding the pipeline",
+@@ -95,6 +103,9 @@ enum ToolRunPresentation {
+         "lock_ledger_attribute": "Locking creative intent",
+         "remove_ledger_attribute": "Removing a ledger entry",
+         "send_feedback": "Recording feedback",
++        "copy_project_file": "Checking a project reference",
++        "prepare_generation_batch": "Preparing a generation batch",
++        "get_generation_batches": "Reading generation batches",
+         // Claude Code runtime built-ins
+         "ToolSearch": "Loading tools",
+         "Task": "Delegating a subtask",
+diff --git a/Sources/NexGenVideo/Agent/Pipeline/PipelineAgentHarness.swift b/Sources/NexGenVideo/Agent/Pipeline/PipelineAgentHarness.swift
+index 08afeb4f..df831de2 100644
+--- a/Sources/NexGenVideo/Agent/Pipeline/PipelineAgentHarness.swift
++++ b/Sources/NexGenVideo/Agent/Pipeline/PipelineAgentHarness.swift
+@@ -613,17 +613,30 @@ final class PipelineAgentHarness {
+                 declaredPack: declaredPack,
+                 declaredBinding: declaredBinding
+             )
+-            if let tool,
+-               let contract,
+-               !contract.allowsPhaseBound(tool, phase: phase) {
+-                throw GateBlocked(
+-                    "\(tool.rawValue) is not part of the "
+-                        + "\(PhaseDisplay.label(phase)) phase contract."
+-                )
+-            }
++        } catch let blocked as GateBlocked {
++            throw ToolError(blocked.message, kind: .agentCorrection)
++        } catch {
++            throw ToolError(error.localizedDescription, kind: .agentCorrection)
++        }
++        if let tool,
++           let contract,
++           !contract.allowsPhaseBound(tool, phase: phase) {
++            throw ToolError(
++                "\(tool.rawValue) is not part of the "
++                    + "\(PhaseDisplay.label(phase)) phase contract.",
++                kind: .agentCorrection
++            )
++        }
++        do {
+             try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
+-            if let index = order.firstIndex(of: phase), index > 0 {
+-                let prior = order[index - 1]
++        } catch let blocked as GateBlocked {
++            throw ToolError(blocked.message, kind: .reviewChangedSource)
++        } catch {
++            throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
++        }
++        if let index = order.firstIndex(of: phase), index > 0 {
++            let prior = order[index - 1]
++            do {
+                 try GateGuard.checkApprovable(
+                     phase: prior,
+                     dataRoot: dataRoot,
+@@ -633,9 +646,11 @@ final class PipelineAgentHarness {
+                         registry: registry
+                     )
+                 )
++            } catch let blocked as GateBlocked {
++                throw ToolError(blocked.message, kind: .reviewChangedSource)
++            } catch {
++                throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
+             }
+-        } catch let blocked as GateBlocked {
+-            throw ToolError(blocked.message)
+         }
+     }
+ 
+@@ -986,7 +1001,7 @@ final class PipelineAgentHarness {
+                 declaredPack: declaredPack
+             )
+         } catch {
+-            throw ToolError(error.localizedDescription)
++            throw ToolError(error.localizedDescription, kind: .reopenProject)
+         }
+     }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+index 86638fcf..a343d56a 100644
+--- a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+@@ -315,6 +315,12 @@ enum AgentInstructions {
+           (needs_revision / pending don't ask — they aren't approvals.)
+         - The planning phases are agent-driven but their artifacts are host-written: use the matching \
+           write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
++          A draft is not saved until its writer returns success. If a failed writer reports unchanged \
++          bytes, correct the cause and retry without narrating each mechanical recovery step. If the \
++          host reports changed bytes with incomplete phase bookkeeping, repair that state before approval. \
++          Never describe a phase as saved, checked, ready, or approved from your own prose: the \
++          host writer result, gate readiness, and recorded user decision own those states. Missing batch \
++          prices mean preparation is incomplete, not that approval is waiting. \
+           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
+           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
+           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 1e182b9c..3534db15 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -149,6 +149,17 @@ enum ToolName: String, CaseIterable, Sendable {
+         }
+     }
+ 
++    var isCanonicalArtifactWriter: Bool {
++        switch self {
++        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
++             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
++             .writePhaseExtension:
++            true
++        default:
++            false
++        }
++    }
++
+     func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
+         guard isDurableWrite else { return false }
+         switch self {
+@@ -189,7 +200,7 @@ struct AgentTool: @unchecked Sendable {
+ enum ToolDefinitions {
+     static let all: [AgentTool] = base + [
+         AgentTool(name: .prepareGenerationBatch,
+-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
++            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, this returns preparation_incomplete with its item ID and opens no approval. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+             inputSchema: objectSchema(properties: [
+                 "requestID": ["type": "string"],
+                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+GenerationBatch.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+GenerationBatch.swift
+index d48ea19f..47d91686 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+GenerationBatch.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+GenerationBatch.swift
+@@ -98,7 +98,6 @@ extension ToolExecutor {
+         }
+         let batch = try GenerationBatch(payload: .init(nonce: nonce, projectKey: projectKey, phase: phase,
+             items: items, requestSHA256: requestHash))
+-        editor.agentPanelVisible = true
+         return try editor.agentService.presentGenerationBatch(batch, origin: origin, editor: editor)
+     }
+ }
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+index e0c95fe6..8a2d1e8a 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+@@ -554,7 +554,7 @@ extension ToolExecutor {
+                 declaredBinding: declaration.binding
+             )
+         } catch {
+-            throw ToolError(error.localizedDescription)
++            throw ToolError(error.localizedDescription, kind: .reopenProject)
+         }
+         let extraDirs = PackCatalog.projectDirs(activePack: editor.activePluginName)
+         do {
+@@ -841,7 +841,9 @@ extension ToolExecutor {
+     func approveGateTool(
+         _ editor: EditorViewModel,
+         _ args: [String: Any],
+-        origin: ToolCallOrigin
++        origin: ToolCallOrigin,
++        toolUseID: String? = nil,
++        hostStateID: UUID = UUID()
+     ) async throws -> ToolResult {
+         let root = try resolveDataRoot(args, editor: editor)
+         let phase = try args.requireString("phase")
+@@ -865,7 +867,9 @@ extension ToolExecutor {
+                 dataRoot: root,
+                 action: .approve,
+                 declaredPack: declaredPack,
+-                declaredBinding: declaredBinding
++                declaredBinding: declaredBinding,
++                sourceToolUseID: toolUseID,
++                sourceHostStateID: hostStateID
+             ),
+             origin: origin
+         )
+@@ -875,7 +879,9 @@ extension ToolExecutor {
+     func setGateStateTool(
+         _ editor: EditorViewModel,
+         _ args: [String: Any],
+-        origin: ToolCallOrigin
++        origin: ToolCallOrigin,
++        toolUseID: String? = nil,
++        hostStateID: UUID = UUID()
+     ) async throws -> ToolResult {
+         let root = try resolveDataRoot(args, editor: editor)
+         let phase = try args.requireString("phase")
+@@ -914,7 +920,7 @@ extension ToolExecutor {
+                 declaredBinding: declaredBinding
+             )
+         } catch {
+-            throw ToolError(error.localizedDescription)
++            throw ToolError(error.localizedDescription, kind: .reopenProject)
+         }
+         let resolvedPack = declaredPack
+         // Approving states defer their write to the durable user card.
+@@ -933,7 +939,10 @@ extension ToolExecutor {
+                     dataRoot: root,
+                     action: .setState(state),
+                     declaredPack: declaredPack,
+-                    declaredBinding: declaredBinding
++                    declaredBinding: declaredBinding,
++                    sourceToolName: ToolName.setGateState.rawValue,
++                    sourceToolUseID: toolUseID,
++                    sourceHostStateID: hostStateID
+                 ),
+                 origin: origin
+             )
+@@ -951,7 +960,11 @@ extension ToolExecutor {
+             )
+         }
+         if let key = editor.openWorkingCopyKey {
+-            try ProjectWorkingCopy.markDirty(key: key)
++            do {
++                try ProjectWorkingCopy.markDirty(key: key)
++            } catch {
++                throw ToolError(error.localizedDescription, kind: .reopenProject)
++            }
+         }
+         let gates = try mutateGates(
+             dataRoot: root,
+@@ -1003,9 +1016,14 @@ extension ToolExecutor {
+ 
+     /// Revalidates and commits a durable approval after the user acts.
+     func commitGateApproval(_ approval: GateApproval) async throws -> String {
+-        guard let editor else { throw ToolError("Editor not available") }
++        guard let editor else {
++            throw ToolError("Editor not available", kind: .hostBusy)
++        }
+         guard let root = approval.dataRoot else {
+-            throw ToolError("The approval request no longer identifies its project data root.")
++            throw ToolError(
++                "The approval request no longer identifies its project data root.",
++                kind: .reopenProject
++            )
+         }
+         let mutationID = try reservePipelineMutation(
+             label: "Approve \(approval.phase)",
+@@ -1025,7 +1043,8 @@ extension ToolExecutor {
+         guard currentDeclaration.packName == approval.declaredPack,
+               currentDeclaration.binding == approval.declaredBinding else {
+             throw ToolError(
+-                "The project format changed while this approval was open. Review it again."
++                "The project format changed while this approval was open. Review it again.",
++                kind: .reviewChangedSource
+             )
+         }
+         do {
+@@ -1037,7 +1056,8 @@ extension ToolExecutor {
+         } catch {
+             throw ToolError(
+                 "The project format changed while this approval was open: "
+-                    + error.localizedDescription
++                    + error.localizedDescription,
++                kind: .reopenProject
+             )
+         }
+         try await enforceGateRequirement(
+@@ -1046,27 +1066,39 @@ extension ToolExecutor {
+             declaredPack: approval.declaredPack,
+             declaredBinding: approval.declaredBinding,
+             editor: editor,
+-            mutationID: mutationID
++            mutationID: mutationID,
++            failureKind: .approvalStructure
+         )
+         if let key = editor.openWorkingCopyKey {
+-            try ProjectWorkingCopy.markDirty(key: key)
++            do {
++                try ProjectWorkingCopy.markDirty(key: key)
++            } catch {
++                throw ToolError(error.localizedDescription, kind: .reopenProject)
++            }
+         }
+-        let gates = try mutateGates(
+-            dataRoot: root,
+-            declaredPack: approval.declaredPack,
+-            declaredBinding: approval.declaredBinding
+-        ) { gates in
+-            switch approval.action {
+-            case .approve:
+-                GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
+-            case .setState(let state):
+-                GatesOperations.setState(
+-                    &gates,
+-                    phase: approval.phase,
+-                    state: state,
+-                    notes: approval.notes
+-                )
++        let gates: Gates
++        do {
++            gates = try mutateGates(
++                dataRoot: root,
++                declaredPack: approval.declaredPack,
++                declaredBinding: approval.declaredBinding
++            ) { gates in
++                switch approval.action {
++                case .approve:
++                    GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
++                case .setState(let state):
++                    GatesOperations.setState(
++                        &gates,
++                        phase: approval.phase,
++                        state: state,
++                        notes: approval.notes
++                    )
++                }
+             }
++        } catch let error as ToolError {
++            throw ToolError(error.message, kind: .approvalStructure)
++        } catch {
++            throw ToolError(error.localizedDescription, kind: .approvalStructure)
+         }
+         editor.onPipelineChanged?()
+         let gate = gates.get(approval.phase)
+@@ -1080,7 +1112,10 @@ extension ToolExecutor {
+             "approved_by": gate.approvedBy.map { $0 as Any } ?? NSNull(),
+             "notes": gate.notes.map { $0 as Any } ?? NSNull(),
+         ]) else {
+-            throw ToolError("The updated gate could not be encoded.")
++            throw ToolError(
++                "The updated gate could not be encoded.",
++                kind: .approvalStructure
++            )
+         }
+         return payload
+     }
+@@ -1092,7 +1127,8 @@ extension ToolExecutor {
+         declaredPack: String?,
+         declaredBinding: ProjectPackBinding?,
+         editor: EditorViewModel,
+-        mutationID: UUID? = nil
++        mutationID: UUID? = nil,
++        failureKind: ToolFailureKind = .agentCorrection
+     ) async throws {
+         do {
+             try await NativeGateWriter.requireApprovalReady(
+@@ -1104,7 +1140,7 @@ extension ToolExecutor {
+                 mutationID: mutationID
+             )
+         } catch {
+-            throw ToolError(error.localizedDescription)
++            throw ToolError(error.localizedDescription, kind: failureKind)
+         }
+     }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+index dbd7ccf5..6b3da08d 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+@@ -1,9 +1,33 @@
+ import Foundation
+ import NexGenEngine
+ 
++enum ToolFailureKind: Sendable, Equatable {
++    case agentCorrection
++    case reviewChangedSource
++    case reopenProject
++    case hostBusy
++    case phaseRecordRepair
++    case approvalStructure
++
++    var hostAction: AgentHostStateRecord.Action {
++        switch self {
++        case .reviewChangedSource: .reviewChangedSource
++        case .reopenProject: .reopenProject
++        case .hostBusy: .retryAfterHostRecovery
++        case .agentCorrection, .phaseRecordRepair, .approvalStructure: .agentCorrection
++        }
++    }
++}
++
+ struct ToolError: LocalizedError, Sendable {
+     let message: String
+-    init(_ message: String) { self.message = message }
++    let kind: ToolFailureKind
++
++    init(_ message: String, kind: ToolFailureKind = .agentCorrection) {
++        self.message = message
++        self.kind = kind
++    }
++
+     var errorDescription: String? { message }
+ }
+ 
+@@ -11,10 +35,20 @@ struct ToolError: LocalizedError, Sendable {
+ /// Tool implementations live in the `ToolExecutor+*.swift` extension files.
+ @MainActor
+ final class ToolExecutor {
++    typealias PhaseMutationRecorder = @MainActor (
++        _ editor: EditorViewModel,
++        _ phase: String,
++        _ dataRoot: URL,
++        _ captureLineage: Bool,
++        _ declaredPack: String?,
++        _ declaredBinding: ProjectPackBinding?
++    ) async throws -> Void
++
+     private let editorProvider: () -> EditorViewModel?
+     let providerActivation: () -> ProviderActivation
+     let productionRouteCandidates: ProductionRouteCandidateProvider
+     let modelCatalog: ModelCatalog
++    private let phaseMutationRecorder: PhaseMutationRecorder
+     var editor: EditorViewModel? { editorProvider() }
+ 
+     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
+@@ -27,12 +61,14 @@ final class ToolExecutor {
+         enforceHardGates: Bool = true,
+         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
+         modelCatalog: ModelCatalog = .shared,
+-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
++        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
++        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+     ) {
+         self.editorProvider = { [weak editor] in editor }
+         self.enforceHardGates = enforceHardGates
+         self.providerActivation = providerActivation
+         self.modelCatalog = modelCatalog
++        self.phaseMutationRecorder = phaseMutationRecorder
+         self.productionRouteCandidates = productionRouteCandidates ?? {
+             modelCatalog.productionRouteCandidates(activation: $0)
+         }
+@@ -43,17 +79,35 @@ final class ToolExecutor {
+         enforceHardGates: Bool = true,
+         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
+         modelCatalog: ModelCatalog = .shared,
+-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
++        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
++        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+     ) {
+         self.editorProvider = editorProvider
+         self.enforceHardGates = enforceHardGates
+         self.providerActivation = providerActivation
+         self.modelCatalog = modelCatalog
++        self.phaseMutationRecorder = phaseMutationRecorder
+         self.productionRouteCandidates = productionRouteCandidates ?? {
+             modelCatalog.productionRouteCandidates(activation: $0)
+         }
+     }
+ 
++    static let defaultPhaseMutationRecorder: PhaseMutationRecorder = {
++        editor,
++        phase,
++        dataRoot,
++        captureLineage,
++        declaredPack,
++        declaredBinding in
++        try await editor.pipelineAgentHarness.recordPhaseMutation(
++            phase: phase,
++            dataRoot: dataRoot,
++            captureLineage: captureLineage,
++            declaredPack: declaredPack,
++            declaredBinding: declaredBinding
++        )
++    }
++
+     private var agentUndoStack: [String] = []
+     var feedbackState = FeedbackState()
+     let imageObservations = ImageObservationCache()
+@@ -66,7 +120,8 @@ final class ToolExecutor {
+             projectRoot: dataRoot
+         ) else { return }
+         throw ToolError(
+-            "Can't change pipeline state while \(running) is running. Wait for the phase to finish."
++            "Can't change pipeline state while \(running) is running. Wait for the phase to finish.",
++            kind: .hostBusy
+         )
+     }
+ 
+@@ -92,9 +147,13 @@ final class ToolExecutor {
+                 binding: editor.declaredPluginBinding
+             )
+         }
+-        return try ProjectPackGate.captureMutationDeclaration(
+-            projectURL: projectURL
+-        )
++        do {
++            return try ProjectPackGate.captureMutationDeclaration(
++                projectURL: projectURL
++            )
++        } catch {
++            throw ToolError(error.localizedDescription, kind: .reopenProject)
++        }
+     }
+ 
+     func reserveDurablePipelineMutation(
+@@ -125,7 +184,8 @@ final class ToolExecutor {
+             ) ?? "pipeline phase"
+             throw ToolError(
+                 "Can't change pipeline state while \(active) is running. "
+-                    + "Wait for the phase to finish."
++                    + "Wait for the phase to finish.",
++                kind: .hostBusy
+             )
+         }
+         return id
+@@ -180,7 +240,8 @@ final class ToolExecutor {
+     func execute(
+         name: String,
+         args: [String: Any],
+-        origin: ToolCallOrigin = .direct
++        origin: ToolCallOrigin = .direct,
++        toolUseID: String? = nil
+     ) async -> ToolResult {
+         guard let tool = ToolName(rawValue: name) else {
+             return .error("Unknown tool: \(name)")
+@@ -192,7 +253,16 @@ final class ToolExecutor {
+         var guardedPhase: String?
+         var guardedRoot: URL?
+         var guardedDeclaration: ProjectPackGate.MutationDeclaration?
++        var hostStatePhase: String?
++        var hostStateRoot: URL?
+         var mutationLease: (root: URL, id: UUID)?
++        var artifactBefore: HostArtifactSnapshot?
++        var writerEntered = false
++        var writerReturnedSuccess = false
++        var phaseRecordFailed = false
++        var failureKind: ToolFailureKind = .agentCorrection
++        let hostStateID = UUID()
++        let hostToolUseID = toolUseID
+         defer {
+             if let mutationLease {
+                 editor.pipelinePhaseRunCoordinator.endMutation(
+@@ -220,6 +290,10 @@ final class ToolExecutor {
+             }
+             try validateToolInput(in: args, against: schema, path: tool.rawValue)
+             let resolved = try expandingIdPrefixes(in: args, editor: editor)
++            if tool.isCanonicalArtifactWriter {
++                hostStatePhase = tool.advancingPhase(args: resolved)
++                hostStateRoot = try? resolveDataRoot(resolved, editor: editor)
++            }
+             if enforceHardGates {
+                 if let phase = tool.advancingPhase(args: resolved) {
+                     let root = try resolveDataRoot(resolved, editor: editor)
+@@ -227,6 +301,9 @@ final class ToolExecutor {
+                         editor,
+                         dataRoot: root
+                     )
++                    guardedPhase = phase
++                    guardedRoot = root
++                    guardedDeclaration = declaration
+                     try editor.pipelineAgentHarness.guardPhaseWork(
+                         tool: tool,
+                         phase: phase,
+@@ -234,9 +311,6 @@ final class ToolExecutor {
+                         declaredPack: declaration.packName,
+                         declaredBinding: declaration.binding
+                     )
+-                    guardedPhase = phase
+-                    guardedRoot = root
+-                    guardedDeclaration = declaration
+                 } else if tool.usesCurrentPipelinePhase {
+                     let root = try resolveDataRoot(resolved, editor: editor)
+                     let declaration = try mutationPackDeclaration(
+@@ -278,23 +352,71 @@ final class ToolExecutor {
+                         dataRoot: mutationRoot
+                     )
+                 }
+-                _ = try ProjectPackGate.requireLiveMutation(
+-                    projectURL: FrameInventory.projectHome(of: mutationRoot),
+-                    declaredPack: declaration.packName,
+-                    declaredBinding: declaration.binding
+-                )
++                do {
++                    _ = try ProjectPackGate.requireLiveMutation(
++                        projectURL: FrameInventory.projectHome(of: mutationRoot),
++                        declaredPack: declaration.packName,
++                        declaredBinding: declaration.binding
++                    )
++                } catch {
++                    throw ToolError(error.localizedDescription, kind: .reopenProject)
++                }
+             }
+             if tool.isDurableWrite,
+                tool != .writeShotlist,
+                editor.projectURL != nil {
+                 guard let key = editor.openWorkingCopyKey else {
+                     throw ToolError(
+-                        "The project working copy is unavailable. Reopen the project before writing."
++                        "The project working copy is unavailable. Reopen the project before writing.",
++                        kind: .reopenProject
+                     )
+                 }
+-                try ProjectWorkingCopy.markDirty(key: key)
++                do {
++                    try ProjectWorkingCopy.markDirty(key: key)
++                } catch {
++                    throw ToolError(error.localizedDescription, kind: .reopenProject)
++                }
++            }
++            if tool.isCanonicalArtifactWriter,
++               artifactBefore == nil,
++               let hostStateRoot {
++                artifactBefore = await hostArtifactSnapshot(
++                    phase: hostStatePhase,
++                    dataRoot: hostStateRoot
++                )
++            }
++            if tool.isCanonicalArtifactWriter, let phase = hostStatePhase {
++                editor.agentService.recordHostState(
++                    AgentHostStateRecord(
++                        id: hostStateID,
++                        toolUseID: hostToolUseID,
++                        state: .draft,
++                        phase: phase,
++                        toolName: tool.rawValue,
++                        action: .none,
++                        artifactPath: artifactBefore?.path,
++                        byteComparison: nil,
++                        previousSHA256: artifactBefore?.bytes.map {
++                            FileDigest.sha256(of: $0)
++                        },
++                        currentSHA256: nil
++                    ),
++                    origin: origin,
++                    toolUseID: hostToolUseID
++                )
+             }
+-            result = try await run(tool, editor, resolved, origin: origin)
++            writerEntered = tool.isCanonicalArtifactWriter
++            result = try await run(
++                tool,
++                editor,
++                resolved,
++                origin: origin,
++                toolUseID: hostToolUseID,
++                hostStateID: hostStateID
++            )
++            writerReturnedSuccess = tool.isCanonicalArtifactWriter
++                && !result.isError
++                && result.turnDisposition == .continueTurn
+             if tool != .runPhase,
+                tool != .writeShotlist,
+                !result.isError,
+@@ -314,17 +436,28 @@ final class ToolExecutor {
+                         dataRoot: root
+                     )
+                 }
+-                try await editor.pipelineAgentHarness.recordPhaseMutation(
+-                    phase: phase,
+-                    dataRoot: root,
+-                    captureLineage: tool.writesPhaseArtifact(
+-                        args: resolved,
+-                        dataRoot: root
+-                    ),
+-                    declaredPack: declaration.packName,
+-                    declaredBinding: declaration.binding
+-                )
+-                await editor.refreshEngineState()
++                do {
++                    try await phaseMutationRecorder(
++                        editor,
++                        phase,
++                        root,
++                        tool.writesPhaseArtifact(
++                            args: resolved,
++                            dataRoot: root
++                        ),
++                        declaration.packName,
++                        declaration.binding
++                    )
++                    await editor.refreshEngineState()
++                } catch {
++                    phaseRecordFailed = true
++                    failureKind = .phaseRecordRepair
++                    result = .error(
++                        "The artifact bytes were written, but the host could not record the "
++                            + "phase mutation. The written bytes remain in the working copy. "
++                            + "Repair the phase record before approval: \(error.localizedDescription)"
++                    )
++                }
+             }
+             // Record any edit that actually changed the timeline so `undo` can revert it.
+             if tool != .undo, !result.isError, editor.timeline != before,
+@@ -332,13 +465,49 @@ final class ToolExecutor {
+                 agentUndoStack.append(actionName)
+             }
+         } catch let err as ToolError {
++            failureKind = err.kind
+             result = .error(err.message)
+         } catch {
+             result = .error(error.localizedDescription)
+         }
++        let state = await hostStateRecord(
++            tool: tool,
++            args: args,
++            result: result,
++            phase: hostStatePhase ?? guardedPhase,
++            dataRoot: hostStateRoot ?? guardedRoot,
++            artifactBefore: artifactBefore,
++            writerEntered: writerEntered,
++            writerReturnedSuccess: writerReturnedSuccess,
++            phaseRecordFailed: phaseRecordFailed,
++            failureKind: failureKind,
++            pendingApproval: editor.agentService.pendingGateApproval,
++            toolUseID: hostToolUseID,
++            hostStateID: hostStateID
++        )
++        if let state {
++            editor.agentService.recordHostState(
++                state,
++                origin: origin,
++                toolUseID: hostToolUseID
++            )
++            if state.state == .persistedPhaseRecordFailed,
++               !phaseRecordFailed {
++                let detail = result.content.compactMap { block -> String? in
++                    guard case .text(let text) = block else { return nil }
++                    return text
++                }.joined(separator: " ")
++                result = .error(
++                    "The writer reported an error after the project artifact bytes changed. "
++                        + "The changed bytes remain in the working copy, but phase bookkeeping "
++                        + "must be repaired before approval. Writer error: \(detail)"
++                )
++            }
++        }
+         // A successful pipeline write diverges the working copy from the saved package — mark the
+         // document edited so ⌘S persists it and the user is warned before closing without saving.
+-        if !result.isError,
++        if (!result.isError || writerReturnedSuccess
++            || state?.state == .persistedPhaseRecordFailed),
+            result.turnDisposition == .continueTurn,
+            tool.isDurableWrite {
+             editor.onPipelineChanged?()
+@@ -368,6 +537,226 @@ final class ToolExecutor {
+         return shorteningIds(in: result, editor: editor)
+     }
+ 
++    struct HostArtifactSnapshot: Sendable {
++        let path: String
++        let exists: Bool
++        let bytes: Data?
++    }
++
++    private func hostStateRecord(
++        tool: ToolName,
++        args: [String: Any],
++        result: ToolResult,
++        phase guardedPhase: String?,
++        dataRoot: URL?,
++        artifactBefore: HostArtifactSnapshot?,
++        writerEntered: Bool,
++        writerReturnedSuccess: Bool,
++        phaseRecordFailed: Bool,
++        failureKind: ToolFailureKind,
++        pendingApproval: GateApproval?,
++        toolUseID: String?,
++        hostStateID: UUID
++    ) async -> AgentHostStateRecord? {
++        let phase = guardedPhase ?? tool.advancingPhase(args: args)
++        if tool.isCanonicalArtifactWriter, let phase {
++            guard writerEntered else {
++                let action = failureKind.hostAction
++                guard action != .agentCorrection else { return nil }
++                return AgentHostStateRecord(
++                    id: hostStateID,
++                    toolUseID: toolUseID,
++                    state: .writeBlocked,
++                    phase: phase,
++                    toolName: tool.rawValue,
++                    action: action,
++                    artifactPath: nil,
++                    byteComparison: nil,
++                    previousSHA256: nil,
++                    currentSHA256: nil
++                )
++            }
++            let artifactAfter: HostArtifactSnapshot?
++            if let dataRoot {
++                artifactAfter = await hostArtifactSnapshot(
++                    phase: phase,
++                    dataRoot: dataRoot
++                )
++            } else {
++                artifactAfter = nil
++            }
++            let comparison = compare(before: artifactBefore, after: artifactAfter)
++            let state: AgentHostStateRecord.State
++            let action: AgentHostStateRecord.Action
++            if writerReturnedSuccess, !phaseRecordFailed {
++                state = .persisted
++                action = .reviewForApproval
++            } else if phaseRecordFailed
++                || comparison == .created
++                || comparison == .changed {
++                state = .persistedPhaseRecordFailed
++                action = .agentCorrection
++            } else if comparison == .unchanged {
++                state = .writeRejected
++                action = failureKind.hostAction
++            } else {
++                state = .writeOutcomeUnavailable
++                action = failureKind.hostAction
++            }
++            return AgentHostStateRecord(
++                id: hostStateID,
++                toolUseID: toolUseID,
++                state: state,
++                phase: phase,
++                toolName: tool.rawValue,
++                action: action,
++                artifactPath: artifactAfter?.path ?? artifactBefore?.path,
++                byteComparison: comparison,
++                previousSHA256: artifactBefore?.bytes.map {
++                    FileDigest.sha256(of: $0)
++                },
++                currentSHA256: artifactAfter?.bytes.map {
++                    FileDigest.sha256(of: $0)
++                }
++            )
++        }
++
++        let requestsApproval = tool == .approveGate || (
++            tool == .setGateState
++                && (args["state"] as? String).flatMap(GateState.init(rawValue:))
++                    .map(GateApproval.isApproval) == true
++        )
++        guard requestsApproval,
++              !result.isError,
++              result.turnDisposition == .suspendTurn,
++              let phase = (args["phase"] as? String)?.trimmingCharacters(
++                  in: .whitespacesAndNewlines
++              ),
++              !phase.isEmpty,
++              let payload = result.content.compactMap({ block -> String? in
++                  guard case .text(let text) = block else { return nil }
++                  return text
++              }).first.flatMap({ text -> [String: Any]? in
++                  guard let data = text.data(using: .utf8) else { return nil }
++                  guard let object = try? JSONSerialization.jsonObject(with: data) else {
++                      return nil
++                  }
++                  return object as? [String: Any]
++              }),
++              payload["status"] as? String == "approval_pending",
++              payload["phase"] as? String == phase,
++              payload["requested_phase"] as? String == phase,
++              payload["new_request"] as? Bool == true,
++              pendingApproval?.phase == phase else { return nil }
++        return AgentHostStateRecord(
++            id: hostStateID,
++            toolUseID: toolUseID,
++            state: .checked,
++            phase: phase,
++            toolName: tool.rawValue,
++            action: .reviewForApproval,
++            artifactPath: nil,
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        )
++    }
++
++    func hostArtifactSnapshot(
++        phase: String?,
++        dataRoot: URL
++    ) async -> HostArtifactSnapshot? {
++        guard let phase, let url = currentArtifactURL(phase: phase, dataRoot: dataRoot) else {
++            return nil
++        }
++        return await Task.detached(priority: .utility) {
++            let root = dataRoot.standardizedFileURL
++            let candidate = url.standardizedFileURL
++            let lexicalPrefix = root.path + "/"
++            guard candidate.path.hasPrefix(lexicalPrefix) else { return nil }
++            let relativePath = String(candidate.path.dropFirst(lexicalPrefix.count))
++            let resolvedRoot = root.resolvingSymlinksInPath()
++            let target = candidate.resolvingSymlinksInPath()
++            let resolvedPrefix = resolvedRoot.path + "/"
++            guard target.path.hasPrefix(resolvedPrefix) else { return nil }
++            let manager = FileManager.default
++            guard manager.fileExists(atPath: target.path) else {
++                return HostArtifactSnapshot(
++                    path: relativePath,
++                    exists: false,
++                    bytes: nil
++                )
++            }
++            let values = try? target.resourceValues(forKeys: [
++                .isRegularFileKey,
++                .fileSizeKey,
++            ])
++            let maximumBytes = 16 * 1_024 * 1_024
++            guard values?.isRegularFile == true,
++                  let fileSize = values?.fileSize,
++                  fileSize >= 0,
++                  fileSize <= maximumBytes else {
++                return HostArtifactSnapshot(
++                    path: relativePath,
++                    exists: true,
++                    bytes: nil
++                )
++            }
++            guard let handle = try? FileHandle(forReadingFrom: target) else {
++                return HostArtifactSnapshot(
++                    path: relativePath,
++                    exists: true,
++                    bytes: nil
++                )
++            }
++            defer { try? handle.close() }
++            guard let bytes = try? handle.read(upToCount: maximumBytes + 1),
++                  bytes.count <= maximumBytes else {
++                return HostArtifactSnapshot(
++                    path: relativePath,
++                    exists: true,
++                    bytes: nil
++                )
++            }
++            return HostArtifactSnapshot(
++                path: relativePath,
++                exists: true,
++                bytes: bytes
++            )
++        }.value
++    }
++
++    private func currentArtifactURL(phase: String, dataRoot: URL) -> URL? {
++        let relative: String?
++        switch phase {
++        case "analysis":
++            return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
++        case "brief": relative = PipelineLayout.briefFile
++        case "production_design": relative = PipelineLayout.productionDesignFile
++        case "treatment": relative = PipelineLayout.treatmentCurrentFile
++        case "storyboard": relative = PipelineLayout.storyboardCurrentFile
++        case "bible": relative = PipelineLayout.bibleFile
++        case "shotlist":
++            guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
++            relative = PipelineLayout.shotlistVersionFile(version)
++        default: relative = nil
++        }
++        return relative.map { PipelineLayout.url($0, in: dataRoot) }
++    }
++
++    private func compare(
++        before: HostArtifactSnapshot?,
++        after: HostArtifactSnapshot?
++    ) -> AgentHostStateRecord.ByteComparison {
++        guard let before, let after else { return .unavailable }
++        if !before.exists, !after.exists { return .unchanged }
++        if before.exists, !after.exists { return .changed }
++        guard after.exists, let current = after.bytes else { return .unavailable }
++        if !before.exists { return .created }
++        guard let previous = before.bytes else { return .unavailable }
++        return previous == current ? .unchanged : .changed
++    }
++
+     private func normalizedToolCallOrigin(
+         _ origin: ToolCallOrigin,
+         editor: EditorViewModel
+@@ -383,7 +772,9 @@ final class ToolExecutor {
+         _ tool: ToolName,
+         _ editor: EditorViewModel,
+         _ args: [String: Any],
+-        origin: ToolCallOrigin
++        origin: ToolCallOrigin,
++        toolUseID: String?,
++        hostStateID: UUID
+     ) async throws -> ToolResult {
+         switch tool {
+         case .getProductionKnowledge: return try getProductionKnowledge(args)
+@@ -459,7 +850,14 @@ final class ToolExecutor {
+         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
+         case .getPattern:           return try getPatternTool(editor, args)
+         case .initProject:          return try initProjectTool(editor, args)
+-        case .approveGate:          return try await approveGateTool(editor, args, origin: origin)
++        case .approveGate:
++            return try await approveGateTool(
++                editor,
++                args,
++                origin: origin,
++                toolUseID: toolUseID,
++                hostStateID: hostStateID
++            )
+         case .rewind:               return try rewindTool(editor, args)
+         case .estimateCost:         return try estimateCostTool(editor, args)
+         case .showArtifact:         return try showArtifactTool(editor, args)
+@@ -482,7 +880,14 @@ final class ToolExecutor {
+         case .removeLedgerAttribute: return try removeLedgerAttributeTool(editor, args)
+         case .resolveModel:         return try resolveModelTool(editor, args)
+         case .getUIContract:        return try getUIContractTool(editor)
+-        case .setGateState:         return try await setGateStateTool(editor, args, origin: origin)
++        case .setGateState:
++            return try await setGateStateTool(
++                editor,
++                args,
++                origin: origin,
++                toolUseID: toolUseID,
++                hostStateID: hostStateID
++            )
+         case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
+         }
+     }
+diff --git a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+index 089e71a2..62242fa3 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import NexGenEngine
+ import Testing
+ @testable import NexGenVideo
+ 
+@@ -342,6 +343,267 @@ struct AgentServiceRuntimeContractTests {
+         #expect(service.streamError == nil)
+     }
+ 
++    @Test("writer host state preserves one tool result and rich follow-up on both backends")
++    func writerHostStateKeepsCanonicalHistory() async throws {
++        for backend in AgentBackend.allCases {
++            let cleanup = FileManager.default.temporaryDirectory
++                .appendingPathComponent("runtime-host-state-\(UUID().uuidString)")
++            defer { try? FileManager.default.removeItem(at: cleanup) }
++            let dataRoot = try ProjectScaffold.initProject(
++                home: cleanup.appendingPathComponent("project"),
++                name: "runtime",
++                mode: .beat
++            )
++            let store = YAMLArtifactStore(dataRoot: dataRoot)
++            var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
++            GatesOperations.approve(&gates, phase: "project_init")
++            try store.save(gates, to: PipelineLayout.gatesFile)
++
++            let adapter = FakeRuntimeAdapter(
++                backend: backend,
++                toolNames: Set(ToolDefinitions.all.map { $0.name.rawValue })
++            )
++            let service = makeService(
++                backend: backend,
++                adapter: adapter,
++                context: .hostOwned(tools: ToolDefinitions.all)
++            )
++            let editor = EditorViewModel(agentService: service)
++            let writerArgs: [String: Any] = [
++                "project_dir": dataRoot.path,
++                "mission": "single_release",
++                "target_platform": "YouTube",
++                "aspect_ratio": "16:9",
++                "project_mode": "section",
++                "concept_type": "narrative",
++                "visual_medium": "live_action_realistic",
++                "figures": "artist_only",
++                "lyrics_integration": "literal",
++            ]
++            let writerJSON = String(decoding: try JSONSerialization.data(
++                withJSONObject: writerArgs,
++                options: [.sortedKeys]
++            ), as: UTF8.self)
++
++            #expect(service.send(text: "Write the brief.", mentions: []))
++            await waitUntil { adapter.sendRequests.count == 1 }
++            let turn = try #require(adapter.sendRequests.first)
++            if backend == .anthropicAPI {
++                adapter.emit(.toolCall(
++                    messageID: "writer-message",
++                    id: "writer",
++                    name: "write_brief",
++                    inputJSON: writerJSON
++                ), for: turn)
++                await waitUntil {
++                    service.messages.contains { message in
++                        message.blocks.contains {
++                            if case .toolUse(let id, _, _) = $0 { return id == "writer" }
++                            return false
++                        }
++                    }
++                }
++            }
++            let session = try #require(
++                adapter.startRequests.first ?? adapter.resumeRequests.first
++            )
++            let writerResult: ToolResult
++            if backend == .claudeCode {
++                writerResult = await ToolExecutor(editor: editor).execute(
++                    name: "write_brief",
++                    args: writerArgs,
++                    origin: .embeddedRuntime(
++                        chatSessionID: turn.sessionID,
++                        mcpSessionID: UUID()
++                    )
++                )
++            } else {
++                writerResult = await session.executeTool(
++                    "writer",
++                    "write_brief",
++                    writerJSON
++                )
++            }
++            #expect(!writerResult.isError)
++            if backend == .claudeCode {
++                adapter.emit(.toolCall(
++                    messageID: "writer-message",
++                    id: "writer",
++                    name: "write_brief",
++                    inputJSON: writerJSON
++                ), for: turn)
++                await waitUntil {
++                    service.messages.flatMap(\.hostStateRecords).contains {
++                        $0.toolUseID == "writer"
++                    }
++                }
++            }
++            adapter.emit(.toolResult(
++                id: "writer",
++                content: writerResult.content,
++                isError: writerResult.isError
++            ), for: turn)
++            adapter.emit(.text(
++                messageID: "final-message",
++                value: "The brief keeps the performance central.",
++                isDelta: false
++            ), for: turn)
++            let richJSON = #"{"blocks":[{"type":"text","body":"Review the performance direction."}]}"#
++            adapter.emit(.toolCall(
++                messageID: "final-message",
++                id: "rich",
++                name: ToolName.showBlocks.rawValue,
++                inputJSON: richJSON
++            ), for: turn)
++            let richResult = await session.executeTool(
++                "rich",
++                ToolName.showBlocks.rawValue,
++                richJSON
++            )
++            #expect(!richResult.isError)
++            adapter.emit(.toolResult(
++                id: "rich",
++                content: richResult.content,
++                isError: richResult.isError
++            ), for: turn)
++            adapter.emit(.terminal(.completed(.endTurn)), for: turn)
++            adapter.finish(turn)
++            await waitUntil { !service.isStreaming }
++
++            #expect(service.messages.flatMap(\.hostStateRecords).map(\.state) == [.persisted])
++            #expect(!service.messages.contains { $0.role == .user && $0.blocks.isEmpty })
++            let projected = AgentTranscriptProjection.turns(
++                messages: service.messages,
++                isStreaming: false
++            ).flatMap(\.items)
++            let assistant = try #require(projected.compactMap { item -> AgentMessage? in
++                guard case .assistantResult(let message) = item else { return nil }
++                return message
++            }.first)
++            #expect(assistant.blocks.contains(.text("The brief keeps the performance central.")))
++            #expect(assistant.blocks.contains {
++                if case .toolUse(let id, let name, _) = $0 {
++                    return id == "rich" && name == ToolName.showBlocks.rawValue
++                }
++                return false
++            })
++
++            #expect(service.send(text: "Continue.", mentions: []))
++            await waitUntil { adapter.sendRequests.count == 2 }
++            let followUp = adapter.sendRequests[1]
++            let writerResults = followUp.messages.flatMap(\.content).compactMap {
++                content -> AgentRuntimeContent? in
++                guard case .toolResult(let id, _, _) = content, id == "writer" else {
++                    return nil
++                }
++                return content
++            }
++            #expect(writerResults.count == 1)
++            #expect(!followUp.messages.flatMap(\.content).contains { content in
++                guard case .toolResult(_, let blocks, _) = content else { return false }
++                return blocks.contains(.text("Cancelled"))
++            })
++            adapter.emit(.terminal(.completed(.endTurn)), for: followUp)
++            adapter.finish(followUp)
++            await waitUntil { !service.isStreaming }
++            withExtendedLifetime(editor) {}
++        }
++    }
++
++    @Test("legacy empty host records do not orphan completed tool calls")
++    func legacyHostRecordDoesNotCreateCancelledResult() async throws {
++        for backend in AgentBackend.allCases {
++            let adapter = FakeRuntimeAdapter(backend: backend)
++            let service = makeService(backend: backend, adapter: adapter)
++            let legacyState = AgentHostStateRecord(
++                state: .persisted,
++                phase: "brief",
++                toolName: "write_brief",
++                action: .reviewForApproval,
++                artifactPath: PipelineLayout.briefFile,
++                byteComparison: .changed,
++                previousSHA256: nil,
++                currentSHA256: String(repeating: "a", count: 64)
++            )
++            service.messages = [
++                AgentMessage(role: .user, blocks: [.text("Earlier")]),
++                AgentMessage(role: .assistant, blocks: [
++                    .toolUse(id: "legacy-writer", name: "write_brief", inputJSON: "{}"),
++                ]),
++                AgentMessage(
++                    role: .user,
++                    blocks: [],
++                    userPresentation: .init(
++                        choiceRecord: nil,
++                        typedText: nil,
++                        hostStateRecord: legacyState
++                    )
++                ),
++                AgentMessage(role: .user, blocks: [
++                    .toolResult(
++                        toolUseId: "legacy-writer",
++                        content: [.text("written")],
++                        isError: false
++                    ),
++                ]),
++            ]
++
++            #expect(service.send(text: "Resume.", mentions: []))
++            await waitUntil { adapter.sendRequests.count == 1 }
++            let request = try #require(adapter.sendRequests.first)
++            let results = request.messages.flatMap(\.content).filter {
++                if case .toolResult(let id, _, _) = $0 { return id == "legacy-writer" }
++                return false
++            }
++            #expect(results.count == 1)
++            #expect(!results.contains { content in
++                guard case .toolResult(_, let blocks, _) = content else { return false }
++                return blocks.contains(.text("Cancelled"))
++            })
++            adapter.emit(.terminal(.completed(.endTurn)), for: request)
++            adapter.finish(request)
++            await waitUntil { !service.isStreaming }
++        }
++    }
++
++    @Test("same-name host events bind one-to-one to their tool calls")
++    func sameNameHostEventsKeepDistinctToolIdentity() throws {
++        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
++        let service = makeService(backend: .claudeCode, adapter: adapter)
++        let sessionID = try #require(service.currentSessionId)
++        service.messages = [AgentMessage(role: .assistant, blocks: [
++            .toolUse(id: "first", name: "write_brief", inputJSON: "{}"),
++            .toolUse(id: "second", name: "write_brief", inputJSON: "{}"),
++        ])]
++        let first = AgentHostStateRecord(
++            state: .writeRejected,
++            phase: "brief",
++            toolName: "write_brief",
++            action: .agentCorrection,
++            artifactPath: nil,
++            byteComparison: .unchanged,
++            previousSHA256: nil,
++            currentSHA256: nil
++        )
++        let second = AgentHostStateRecord(
++            state: .persisted,
++            phase: "brief",
++            toolName: "write_brief",
++            action: .reviewForApproval,
++            artifactPath: PipelineLayout.briefFile,
++            byteComparison: .created,
++            previousSHA256: nil,
++            currentSHA256: String(repeating: "a", count: 64)
++        )
++
++        service.recordHostState(first, origin: .inAppChat(sessionID: sessionID))
++        service.recordHostState(second, origin: .inAppChat(sessionID: sessionID))
++
++        let records = service.messages.flatMap(\.hostStateRecords)
++        #expect(records.map(\.toolUseID) == ["first", "second"])
++        #expect(records.map(\.id) == [first.id, second.id])
++    }
++
+     private func makeService(
+         backend: AgentBackend,
+         adapter: FakeRuntimeAdapter,
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+index 869ca491..7b767d10 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+@@ -333,6 +333,28 @@ struct AgentTranscriptLayoutPolicyTests {
+         #expect(!summary.contains("AppTheme.Text.mutedColor"))
+     }
+ 
++    @Test func hostStateOwnsWriteTruthAndKeepsDiagnosticsExpandable() throws {
++        let message = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
++        )
++        let projection = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift"
++        )
++        let batch = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift"
++        )
++
++        #expect(message.contains("private struct AgentHostStateView"))
++        #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
++        #expect(message.contains("Previous fingerprint"))
++        #expect(message.contains("editor.revealCockpit"))
++        #expect(projection.contains("let results = resultMessage.map"))
++        #expect(projection.contains("isDurableState"))
++        #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
++        #expect(!batch.contains("Waiting for cost estimates"))
++        #expect(batch.contains("batch.totalEUR == nil"))
++    }
++
+     @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
+         let card = try sourceFile(
+             "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+index 580dfec8..ada783fa 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+@@ -339,6 +339,250 @@ struct AgentTranscriptProjectionTests {
+         #expect(result.id == rich.id)
+         #expect(result.blocks.count == 2)
+     }
++
++    @Test("resume recovery keeps host truth and the final creative result")
++    func resumeRecoveryUsesLatestHostState() throws {
++        let resume = AgentMessage(
++            role: .user,
++            blocks: [.text("Resume the storyboard phase.")],
++            hidden: true
++        )
++        let copiedReference = AgentMessage(role: .assistant, blocks: [
++            .text("Checking the resumed reference."),
++            .toolUse(id: "copy", name: "copy_project_file", inputJSON: "{}"),
++        ])
++        let copiedReferenceResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "copy",
++                content: [.text("reference copied")],
++                isError: false
++            ),
++        ])
++        let rejectedWrite = AgentMessage(role: .assistant, blocks: [
++            .text("The storyboard is written and ready."),
++            .toolUse(id: "rejected", name: "write_storyboard", inputJSON: "{}"),
++        ])
++        let draftState = hostStateMessage(.init(
++            state: .draft,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .none,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: nil
++        ))
++        let rejectedState = hostStateMessage(.init(
++            state: .writeRejected,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewChangedSource,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: nil
++        ))
++        let rejectedResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "rejected",
++                content: [.text("Approved source lineage changed.")],
++                isError: true
++            ),
++        ])
++        let zoneRepair = AgentMessage(role: .assistant, blocks: [
++            .text("Repairing visible zones."),
++            .toolUse(id: "zone", name: "write_storyboard", inputJSON: "{}"),
++        ])
++        let zoneState = hostStateMessage(.init(
++            state: .writeRejected,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .agentCorrection,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        ))
++        let zoneResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "zone",
++                content: [.text("visible_zones needs a blocking anchor.")],
++                isError: true
++            ),
++        ])
++        let successfulWrite = AgentMessage(role: .assistant, blocks: [
++            .text("The recovery is complete."),
++            .toolUse(id: "written", name: "write_storyboard", inputJSON: "{}"),
++            .toolUse(id: "checked", name: "approve_gate", inputJSON: #"{"phase":"storyboard"}"#),
++        ])
++        let persistedState = hostStateMessage(.init(
++            state: .persisted,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewForApproval,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        ))
++        let checkedState = hostStateMessage(.init(
++            state: .checked,
++            phase: "storyboard",
++            toolName: "approve_gate",
++            action: .reviewForApproval,
++            artifactPath: nil,
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        ))
++        let unpricedBatch = AgentMessage(role: .assistant, blocks: [
++            .text("Preparing the next generation batch."),
++            .toolUse(id: "batch", name: "prepare_generation_batch", inputJSON: "{}"),
++        ])
++        let unpricedBatchResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "batch",
++                content: [.text("Generation batch review is open.")],
++                isError: false
++            ),
++        ])
++        let finalResult = AgentMessage(role: .assistant, blocks: [
++            .text("The revised storyboard keeps the chorus reveal and clarifies the blocking."),
++            .toolUse(
++                id: "review",
++                name: ToolName.showBlocks.rawValue,
++                inputJSON: #"{"blocks":[{"type":"text","body":"Review the chorus reveal."}]}"#
++            ),
++        ])
++
++        let turns = AgentTranscriptProjection.turns(
++            messages: [
++                resume, copiedReference, copiedReferenceResult,
++                rejectedWrite, draftState, rejectedState, rejectedResult,
++                zoneRepair, zoneState, zoneResult, successfulWrite,
++                persistedState, checkedState, unpricedBatch, unpricedBatchResult,
++                finalResult,
++            ],
++            isStreaming: false
++        )
++
++        #expect(turns.count == 1)
++        let items = turns[0].items
++        let states = items.compactMap { item -> AgentHostStateRecord? in
++            guard case .hostState(let state) = item else { return nil }
++            return state.record
++        }
++        #expect(states.count == 1)
++        #expect(states.first?.state == .checked)
++        let result = try #require(items.compactMap { item -> AgentMessage? in
++            guard case .assistantResult(let message) = item else { return nil }
++            return message
++        }.first)
++        #expect(result.blocks == finalResult.blocks)
++        let activity = try #require(items.compactMap(\.activity).first)
++        #expect(activity.steps.map(\.id) == [
++            "copy", "rejected", "zone", "written", "checked", "batch",
++        ])
++    }
++
++    @Test("host state records never become authored user turns")
++    func hostStateIsNotAUserIntent() {
++        let record = AgentHostStateRecord(
++            toolUseID: "writer",
++            state: .persisted,
++            phase: "brief",
++            toolName: "write_brief",
++            action: .reviewForApproval,
++            artifactPath: "brief.yaml",
++            byteComparison: .unchanged,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "a", count: 64)
++        )
++        let message = AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")],
++            hostStateRecords: [record]
++        )
++
++        let turns = AgentTranscriptProjection.turns(messages: [message], isStreaming: false)
++
++        #expect(turns.count == 1)
++        #expect(!turns[0].items.contains {
++            if case .userIntent = $0 { return true }
++            return false
++        })
++        guard let state = turns[0].items.compactMap({ item -> AgentHostState? in
++            guard case .hostState(let state) = item else { return nil }
++            return state
++        }).first else {
++            Issue.record("host state must use its own projection")
++            return
++        }
++        #expect(state.record.byteComparison == .unchanged)
++    }
++
++    @Test("a rejected later attempt does not erase the stored phase state")
++    func rejectedAttemptKeepsStoredState() {
++        let persisted = AgentHostStateRecord(
++            toolUseID: "saved",
++            state: .persisted,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewForApproval,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        )
++        let rejected = AgentHostStateRecord(
++            toolUseID: "retry",
++            state: .writeRejected,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .agentCorrection,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .unchanged,
++            previousSHA256: String(repeating: "b", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        )
++        let messages = [
++            AgentMessage(
++                role: .assistant,
++                blocks: [.toolUse(id: "saved", name: "write_storyboard", inputJSON: "{}")],
++                hostStateRecords: [persisted]
++            ),
++            AgentMessage(role: .user, blocks: [
++                .toolResult(toolUseId: "saved", content: [.text("ok")], isError: false),
++            ]),
++            AgentMessage(
++                role: .assistant,
++                blocks: [.toolUse(id: "retry", name: "write_storyboard", inputJSON: "{}")],
++                hostStateRecords: [rejected]
++            ),
++        ]
++
++        let states = AgentTranscriptProjection.turns(
++            messages: messages,
++            isStreaming: false
++        ).flatMap(\.items).compactMap { item -> AgentHostStateRecord? in
++            guard case .hostState(let state) = item else { return nil }
++            return state.record
++        }
++
++        #expect(states.map(\.state) == [.persisted, .writeRejected])
++    }
++
++    private func hostStateMessage(_ record: AgentHostStateRecord) -> AgentMessage {
++        AgentMessage(
++            role: .user,
++            blocks: [],
++            userPresentation: .init(
++                choiceRecord: nil,
++                typedText: nil,
++                hostStateRecord: record
++            )
++        )
++    }
+ }
+ 
+ private extension AgentTranscriptItem {
+diff --git a/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift b/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
+index 05596b51..5b8e3c87 100644
+--- a/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
+@@ -124,6 +124,88 @@ struct BriefWriteContractTests {
+         #expect(project.budgetEur == brief.budgetEur)
+     }
+ 
++    @Test("a successful writer records draft then exact persisted host state")
++    func successfulWriterRecordsHostState() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++        h.editor.agentService.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
++        )]
++
++        let result = await h.executor.execute(
++            name: "write_brief",
++            args: validArgs(dataRoot: dataRoot),
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "writer"
++        )
++
++        #expect(!result.isError)
++        let states = h.editor.agentService.messages.flatMap(\.hostStateRecords)
++        #expect(states.map(\.state) == [.persisted])
++        #expect(states.last?.artifactPath == PipelineLayout.briefFile)
++        #expect(states.last?.byteComparison == .created)
++        #expect(states.last?.currentSHA256?.count == 64)
++        #expect(!h.editor.agentService.messages.contains {
++            $0.role == .user && $0.blocks.isEmpty
++        })
++    }
++
++    @Test("a writer validation failure keeps the stored-byte result separate")
++    func writerValidationFailureRecordsUnchangedAttempt() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++        h.editor.agentService.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
++        )]
++        var args = validArgs(dataRoot: dataRoot)
++        args["visual_medium"] = "2d_animation"
++
++        let result = await h.executor.execute(
++            name: "write_brief",
++            args: args,
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "writer"
++        )
++
++        #expect(result.isError)
++        let state = try #require(
++            h.editor.agentService.messages.flatMap(\.hostStateRecords).last
++        )
++        #expect(state.state == .writeRejected)
++        #expect(state.byteComparison == .unchanged)
++        #expect(state.action == .agentCorrection)
++    }
++
++    @Test("artifact snapshots reject project-local symlink escapes")
++    func artifactSnapshotRejectsSymlinkEscape() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        let outside = cleanup.appendingPathComponent("outside-brief.yaml")
++        try Data("outside".utf8).write(to: outside)
++        let artifact = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
++        try FileManager.default.createDirectory(
++            at: artifact.deletingLastPathComponent(),
++            withIntermediateDirectories: true
++        )
++        try FileManager.default.createSymbolicLink(
++            at: artifact,
++            withDestinationURL: outside
++        )
++
++        let snapshot = await h.executor.hostArtifactSnapshot(
++            phase: "brief",
++            dataRoot: dataRoot
++        )
++
++        #expect(snapshot?.path == nil)
++    }
++
+     @Test("an invalid enum value is rejected and names the field")
+     func invalidEnumRejected() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+diff --git a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+index ef057dc5..e8ae7fb2 100644
+--- a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+@@ -86,6 +86,39 @@ struct ChatSessionStoreTests {
+         #expect(back.messages.first?.userPresentation?.workflowRecord == record)
+     }
+ 
++    @Test("host artifact state round-trips without becoming model prose")
++    func hostStateRoundTrips() throws {
++        let record = AgentHostStateRecord(
++            state: .persisted,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewForApproval,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        )
++        let session = ChatSession(
++            title: "t",
++            messages: [AgentMessage(
++                role: .assistant,
++                blocks: [.toolUse(
++                    id: "storyboard-writer",
++                    name: "write_storyboard",
++                    inputJSON: "{}"
++                )],
++                hostStateRecords: [record.associated(with: "storyboard-writer")]
++            )]
++        )
++
++        let data = try #require(ChatSessionStore.encodeSession(session))
++        let back = try decoder.decode(ChatSession.self, from: data)
++
++        #expect(back.messages.first?.role == .assistant)
++        #expect(back.messages.first?.hostStateRecords.first?.state == .persisted)
++        #expect(back.messages.first?.hostStateRecords.first?.toolUseID == "storyboard-writer")
++    }
++
+     @Test("conversation titles preserve distinguishing text at both ends")
+     func conversationTitleUsesMiddleCompaction() {
+         let source = String(repeating: "opening detail ", count: 8)
+diff --git a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+index 2cf684ef..9ec402ce 100644
+--- a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
++++ b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+@@ -17,11 +17,23 @@ struct GateApprovalTests {
+         #expect(approval.phaseLabel == PhaseDisplay.label("brief"))
+         #expect(approval.phaseLabel == "Brief")
+         #expect(approval.notes == "looks good")
++        #expect(approval.sourceToolName == ToolName.approveGate.rawValue)
+ 
+         // A snake_case id resolves to its curated title, never leaking the raw key to the card.
+         #expect(GateApproval(phase: "production_design").phaseLabel == "Production Design")
+     }
+ 
++    @Test("gate approvals preserve the requesting tool for diagnostics")
++    func preservesSourceTool() {
++        let approval = GateApproval(
++            phase: "brief",
++            sourceToolName: ToolName.setGateState.rawValue
++        )
++
++        #expect(approval.scoped(to: UUID()).sourceToolName == ToolName.setGateState.rawValue)
++        #expect(!approval.matchesRequest(GateApproval(phase: "brief")))
++    }
++
+     @Test("Only the approving states surface a user confirmation")
+     func onlyApprovingStatesNeedConfirmation() {
+         #expect(GateApproval.isApproval(.approved))
+@@ -280,6 +292,32 @@ struct GateApprovalTests {
+         #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
+     }
+ 
++    @Test("a pending gate records checked without recording approval")
++    func pendingGateRecordsCheckedState() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++        h.editor.agentService.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
++        )]
++
++        let result = await h.executor.execute(
++            name: "approve_gate",
++            args: ["project_dir": dataRoot.path, "phase": "project_init"],
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "gate"
++        )
++
++        #expect(!result.isError)
++        #expect(result.turnDisposition == .suspendTurn)
++        let state = h.editor.agentService.messages.flatMap(\.hostStateRecords).last
++        #expect(state?.state == .checked)
++        #expect(state?.state != .approved)
++        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
++    }
++
+     @Test("set_gate_state approval request does not mark the project edited")
+     func setStateApprovalRequestDoesNotDirty() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+@@ -332,8 +370,8 @@ struct GateApprovalTests {
+         #expect(ToolHarness.textOf(result).contains("future phase"))
+     }
+ 
+-    @Test("A failed host write leaves the card open with the real reason")
+-    func failedWriteKeepsCard() async throws {
++    @Test("a missing project keeps approval open for reopen recovery")
++    func missingProjectKeepsApprovalOpen() async throws {
+         let editor = EditorViewModel()
+         let service = editor.agentService
+         let missingRoot = FileManager.default.temporaryDirectory
+@@ -350,6 +388,67 @@ struct GateApprovalTests {
+         #expect(service.gateApprovalError?.isEmpty == false)
+     }
+ 
++    @Test("a competing approval never records checked for the requested phase")
++    func competingApprovalDoesNotRecordChecked() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        let service = h.editor.agentService
++        service.newChat()
++        let sessionID = try #require(service.currentSessionId)
++        let origin = ToolCallOrigin.inAppChat(sessionID: sessionID)
++        service.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "competing", name: "approve_gate", inputJSON: "{}")]
++        )]
++        _ = try service.requestGateApproval(
++            GateApproval(phase: "brief"),
++            origin: origin
++        )
++
++        let result = await h.executor.execute(
++            name: "approve_gate",
++            args: ["project_dir": dataRoot.path, "phase": "project_init"],
++            origin: origin,
++            toolUseID: "competing"
++        )
++
++        #expect(!result.isError)
++        #expect(result.turnDisposition == .suspendTurn)
++        #expect(service.pendingGateApproval?.phase == "brief")
++        #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
++    }
++
++    @Test("gate structure failure is agent correction, not wait-and-retry")
++    func gateStructureFailureIsAgentCorrection() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        let service = h.editor.agentService
++        service.newChat()
++        let sessionID = try #require(service.currentSessionId)
++        service.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
++        )]
++        let pending = await h.executor.execute(
++            name: "approve_gate",
++            args: ["project_dir": dataRoot.path, "phase": "project_init"],
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "gate"
++        )
++        #expect(!pending.isError)
++        try FileManager.default.removeItem(
++            at: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
++        )
++
++        let result = await service.resolveGate(.approved)
++
++        #expect(result?.isError == true)
++        #expect(service.pendingGateApproval == nil)
++        let state = try #require(service.messages.flatMap(\.hostStateRecords).last)
++        #expect(state.state == .approvalFailed)
++        #expect(state.action == .agentCorrection)
++    }
++
+     @Test("An approved gate cannot resume the agent across a host-owned intake card")
+     func approvalDefersFollowUpUntilIntakeCompletes() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+diff --git a/Tests/NexGenVideoTests/Agent/HardGateTests.swift b/Tests/NexGenVideoTests/Agent/HardGateTests.swift
+index d83f4b02..cc1ae09e 100644
+--- a/Tests/NexGenVideoTests/Agent/HardGateTests.swift
++++ b/Tests/NexGenVideoTests/Agent/HardGateTests.swift
+@@ -93,12 +93,21 @@ struct HardGateTests {
+         )
+     }
+ 
+-    private func scaffold() throws -> (ToolHarness, String, URL) {
++    private func scaffold(
++        phaseMutationRecorder: @escaping ToolExecutor.PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
++    ) throws -> (ToolHarness, String, URL) {
+         let tmp = FileManager.default.temporaryDirectory
+             .appendingPathComponent("hard-gate-\(UUID().uuidString)", isDirectory: true)
+         let home = tmp.appendingPathComponent("proj", isDirectory: true)
+         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
+-        return (ToolHarness(enforceHardGates: true), dataRoot.path, tmp)
++        return (
++            ToolHarness(
++                enforceHardGates: true,
++                phaseMutationRecorder: phaseMutationRecorder
++            ),
++            dataRoot.path,
++            tmp
++        )
+     }
+ 
+     private func briefArgs(projectDir: String) -> [String: Any] {
+@@ -134,4 +143,41 @@ struct HardGateTests {
+         let after = await h.runRaw("write_brief", args: briefArgs(projectDir: dir))
+         #expect(!ToolHarness.textOf(after).contains("project_init"))
+     }
++
++    @Test("written bytes remain explicit when phase mutation recording fails")
++    func phaseRecordFailureIsNotApprovalReady() async throws {
++        let (h, dir, cleanup) = try scaffold { _, _, _, _, _, _ in
++            throw ToolError("injected phase record failure")
++        }
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        _ = try await h.runGateOK(
++            "approve_gate",
++            args: ["project_dir": dir, "phase": "project_init"]
++        )
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++        h.editor.agentService.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
++        )]
++
++        let result = await h.executor.execute(
++            name: "write_brief",
++            args: briefArgs(projectDir: dir),
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "writer"
++        )
++
++        #expect(result.isError)
++        #expect(ToolHarness.textOf(result).contains("bytes were written"))
++        #expect(FileManager.default.fileExists(
++            atPath: PipelineLayout.url(PipelineLayout.briefFile, in: URL(fileURLWithPath: dir)).path
++        ))
++        let state = try #require(
++            h.editor.agentService.messages.flatMap(\.hostStateRecords).last
++        )
++        #expect(state.state == .persistedPhaseRecordFailed)
++        #expect(state.action == .agentCorrection)
++        #expect(state.currentSHA256?.count == 64)
++    }
+ }
+diff --git a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+index d20b014c..f1e0e242 100644
+--- a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+@@ -18,7 +18,8 @@ final class ToolHarness {
+             ProviderActivation.current()
+         },
+         modelCatalog: ModelCatalog = .shared,
+-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
++        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
++        phaseMutationRecorder: @escaping ToolExecutor.PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+     ) {
+         let editor = EditorViewModel()
+         editor.timeline = timeline
+@@ -28,7 +29,8 @@ final class ToolHarness {
+             enforceHardGates: enforceHardGates,
+             providerActivation: providerActivation,
+             modelCatalog: modelCatalog,
+-            productionRouteCandidates: productionRouteCandidates
++            productionRouteCandidates: productionRouteCandidates,
++            phaseMutationRecorder: phaseMutationRecorder
+         )
+     }
+ 
+@@ -97,6 +99,41 @@ final class ToolHarness {
+ @MainActor
+ struct ToolExecutorSmokeTests {
+ 
++    @Test("a call blocked before writer entry does not replace artifact state")
++    func preWriterBlockDoesNotRecordArtifactState() async throws {
++        let harness = ToolHarness()
++        harness.editor.agentService.newChat()
++        let sessionID = try #require(harness.editor.agentService.currentSessionId)
++        harness.editor.agentService.messages = [AgentMessage(
++            role: .assistant,
++            blocks: [.toolUse(id: "writer", name: "write_storyboard", inputJSON: "{}")]
++        )]
++
++        let result = await harness.executor.execute(
++            name: "write_storyboard",
++            args: [:],
++            origin: .inAppChat(sessionID: sessionID),
++            toolUseID: "writer"
++        )
++
++        #expect(result.isError)
++        #expect(harness.editor.agentService.messages.flatMap(\.hostStateRecords).isEmpty)
++    }
++
++    @Test("host actions come from typed failures, never message substrings")
++    func hostActionsAreTyped() {
++        #expect(ToolError("lineage changed").kind.hostAction == .agentCorrection)
++        #expect(
++            ToolError("opaque", kind: .reviewChangedSource).kind.hostAction
++                == .reviewChangedSource
++        )
++        #expect(ToolError("opaque", kind: .reopenProject).kind.hostAction == .reopenProject)
++        #expect(
++            ToolError("opaque", kind: .hostBusy).kind.hostAction
++                == .retryAfterHostRecovery
++        )
++    }
++
+     @Test func unknownToolReturnsError() async {
+         let h = ToolHarness()
+         let result = await h.runRaw("nonexistent_tool")
+diff --git a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+index 4429f894..dc8a7910 100644
+--- a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
++++ b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+@@ -227,7 +227,7 @@ struct GenerationBatchTests {
+     }
+ 
+     @Test func unknownPricingCannotCreateAnUnattendedAuthorization() async throws {
+-        let (root, _, batch) = try await fixture()
++        let (root, editor, batch) = try await fixture()
+         defer { cleanup(root) }
+         let original = batch.payload.items[0].package
+         var payloadJSON = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(original.payload)) as? [String: Any])
+@@ -238,6 +238,19 @@ struct GenerationBatchTests {
+             items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
+         #expect(manifest.totalEUR == nil)
+         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
++        let result = try editor.agentService.presentGenerationBatch(
++            manifest,
++            origin: .direct,
++            editor: editor
++        )
++        #expect(result.isError)
++        #expect(result.turnDisposition == .continueTurn)
++        #expect(editor.generationBatchCoordinator.pending == nil)
++        let payload = try #require(JSONSerialization.jsonObject(
++            with: Data(ToolHarness.textOf(result).utf8)
++        ) as? [String: Any])
++        #expect(payload["status"] as? String == "preparation_incomplete")
++        #expect(payload["unpriced_item_ids"] as? [String] == manifest.payload.items.map(\.id))
+     }
+ 
+     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {

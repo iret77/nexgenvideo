@@ -1,0 +1,2295 @@
+{
+  "files": [
+    {
+      "source": "/tmp/ngv-153-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-153-parent-scope.md",
+      "source_sha256": "f28a5f42bd10fd19aee6426bfcdc9300bbfce98c4ca20e76a41fe95fa8c15f5f",
+      "git_sha256": "f28a5f42bd10fd19aee6426bfcdc9300bbfce98c4ca20e76a41fe95fa8c15f5f",
+      "redactions": [],
+      "size": 2620
+    },
+    {
+      "source": "/tmp/ngv-156-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-156-parent-scope.md",
+      "source_sha256": "4c97709c966ec21689aa6be388f8dd05d944183c2e874336c6c5fda049be13ad",
+      "git_sha256": "4c97709c966ec21689aa6be388f8dd05d944183c2e874336c6c5fda049be13ad",
+      "redactions": [],
+      "size": 1996
+    },
+    {
+      "source": "/tmp/ngv-216-review-v2.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-216-review-v2.diff",
+      "source_sha256": "165618d582e92e6d04dd165c5a6f3f1544d72f23cfad7874fc2dad48b0b93c47",
+      "git_sha256": "165618d582e92e6d04dd165c5a6f3f1544d72f23cfad7874fc2dad48b0b93c47",
+      "redactions": [],
+      "size": 147054
+    },
+    {
+      "source": "/tmp/ngv-220-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-220-parent-scope.md",
+      "source_sha256": "ac96bf3c9ede0d3c42d19f783ba13aa936cdd04795b66be97ba76dbe6e693925",
+      "git_sha256": "ac96bf3c9ede0d3c42d19f783ba13aa936cdd04795b66be97ba76dbe6e693925",
+      "redactions": [],
+      "size": 1213
+    },
+    {
+      "source": "/tmp/ngv-455-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-455-review.diff",
+      "source_sha256": "3d4c183b261c2d30d5cbe6308354b61cd0ac9ee370c22f3251eebd88457707b6",
+      "git_sha256": "3d4c183b261c2d30d5cbe6308354b61cd0ac9ee370c22f3251eebd88457707b6",
+      "redactions": [],
+      "size": 4048
+    },
+    {
+      "source": "/tmp/ngv-455-testfix.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-455-testfix.diff",
+      "source_sha256": "7858ae30ee6393b01b2f28599627ad421c693ee146dce50c461bc35bc2890937",
+      "git_sha256": "7858ae30ee6393b01b2f28599627ad421c693ee146dce50c461bc35bc2890937",
+      "redactions": [],
+      "size": 2337
+    },
+    {
+      "source": "/tmp/ngv-456-boundary-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-boundary-followup-task.txt",
+      "source_sha256": "5b6a6be3aafa6c5d59a7089cfd2475a56a6140e05388e73ca056cd096aad4022",
+      "git_sha256": "5b6a6be3aafa6c5d59a7089cfd2475a56a6140e05388e73ca056cd096aad4022",
+      "redactions": [],
+      "size": 3343
+    },
+    {
+      "source": "/tmp/ngv-456-finaldelta-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-finaldelta-review.diff",
+      "source_sha256": "412a555d24c4f96b3698bf86806a3dd2fbb04bec71345eadc4cb4aa62bd75a60",
+      "git_sha256": "412a555d24c4f96b3698bf86806a3dd2fbb04bec71345eadc4cb4aa62bd75a60",
+      "redactions": [],
+      "size": 69048
+    },
+    {
+      "source": "/tmp/ngv-456-native-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-native-review.diff",
+      "source_sha256": "6b9bb1784ee12bedf5160575b95ce986022ab30a772a0604c0ebcc6759c4e43c",
+      "git_sha256": "6b9bb1784ee12bedf5160575b95ce986022ab30a772a0604c0ebcc6759c4e43c",
+      "redactions": [],
+      "size": 21157
+    },
+    {
+      "source": "/tmp/ngv-456-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-review.diff",
+      "source_sha256": "d155b627649261d0e5fbe16de7c4f25edb47b07fd044a611fff93b5fa726cedc",
+      "git_sha256": "d155b627649261d0e5fbe16de7c4f25edb47b07fd044a611fff93b5fa726cedc",
+      "redactions": [],
+      "size": 109868
+    },
+    {
+      "source": "/tmp/ngv-456-reviewfix-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-reviewfix-review.diff",
+      "source_sha256": "e82a51f5312a9fcce29f927dfbd3d0a1228d85892c12014542d3a4aa2fff1229",
+      "git_sha256": "e82a51f5312a9fcce29f927dfbd3d0a1228d85892c12014542d3a4aa2fff1229",
+      "redactions": [],
+      "size": 133506
+    },
+    {
+      "source": "/tmp/ngv-456-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-task-draft.txt",
+      "source_sha256": "eceba177754d9e92964d075affe19f057612d168e19c254f107333d0bfa89820",
+      "git_sha256": "eceba177754d9e92964d075affe19f057612d168e19c254f107333d0bfa89820",
+      "redactions": [],
+      "size": 4527
+    },
+    {
+      "source": "/tmp/ngv-456-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-456-task.txt",
+      "source_sha256": "c3c44b3688dd3872bff0a6c6b7f94810d50b829a68c50b95c644b0d7e08731bd",
+      "git_sha256": "07de4a9ff2d636d69652cae36f3e2fc93616f83df611a2fdc6573267efaa934f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4724
+    },
+    {
+      "source": "/tmp/ngv-457-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-457-parent-scope.md",
+      "source_sha256": "db884ec79f115fab5990e874be092417362a1a2c6ded7dee456cf2996b83db42",
+      "git_sha256": "db884ec79f115fab5990e874be092417362a1a2c6ded7dee456cf2996b83db42",
+      "redactions": [],
+      "size": 1365
+    },
+    {
+      "source": "/tmp/ngv-476-native-feature-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-476-native-feature-review.diff",
+      "source_sha256": "dfa18f0a359c53eed495a894a1e617e829c8f3db00d1e26b1b0d49f760247809",
+      "git_sha256": "dfa18f0a359c53eed495a894a1e617e829c8f3db00d1e26b1b0d49f760247809",
+      "redactions": [],
+      "size": 153189
+    },
+    {
+      "source": "/tmp/ngv-476-parent-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-476-parent-followup-task.txt",
+      "source_sha256": "6d04fc42c15858d429a001bef4b90474fb4113b575aad9185509f5b586be2da6",
+      "git_sha256": "6d04fc42c15858d429a001bef4b90474fb4113b575aad9185509f5b586be2da6",
+      "redactions": [],
+      "size": 1970
+    },
+    {
+      "source": "/tmp/ngv-476-second-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-476-second-review.diff",
+      "source_sha256": "2864339645dc8772278ff70c7678482118f492c66545e68be57e34bf8bd76794",
+      "git_sha256": "2864339645dc8772278ff70c7678482118f492c66545e68be57e34bf8bd76794",
+      "redactions": [],
+      "size": 62418
+    },
+    {
+      "source": "/tmp/ngv-476-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-476-task-draft.txt",
+      "source_sha256": "9f105dd8c0b1d74e04d5f16e2a2962fb2a996cf0d21657e3b03631b9da594f99",
+      "git_sha256": "9f105dd8c0b1d74e04d5f16e2a2962fb2a996cf0d21657e3b03631b9da594f99",
+      "redactions": [],
+      "size": 3040
+    },
+    {
+      "source": "/tmp/ngv-476-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-476-task.txt",
+      "source_sha256": "35caa1a6d49288e9138662da18ea033d07a74f2ad31af1b78fc5ac09f97f04b0",
+      "git_sha256": "59fa33d46a960b5c073a12babc83dff822d99d7763121c6c196c33ff2c3c5a4f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3217
+    },
+    {
+      "source": "/tmp/ngv-507-axis-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-axis-review.diff",
+      "source_sha256": "f21c81237b79e90c32dc43a28956947848b9fe4a77a8c48a199cc184eb4a5073",
+      "git_sha256": "f21c81237b79e90c32dc43a28956947848b9fe4a77a8c48a199cc184eb4a5073",
+      "redactions": [],
+      "size": 34897
+    },
+    {
+      "source": "/tmp/ngv-507-axis-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-axis-task.txt",
+      "source_sha256": "5815c0ed5c48ef336efd4e36add69c51a83448f51720f23317becd0b23e85dfb",
+      "git_sha256": "5952ea0fd475adcf20ea1d8cf22ca41d951ad7e6c06cbea2125a61b76de3d39f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2621
+    },
+    {
+      "source": "/tmp/ngv-507-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-final-review.diff",
+      "source_sha256": "1e0f60566ec647d2c19d0e3a2748892e04f6a8d6ff0b8d297471e29122dde2e6",
+      "git_sha256": "1e0f60566ec647d2c19d0e3a2748892e04f6a8d6ff0b8d297471e29122dde2e6",
+      "redactions": [],
+      "size": 36993
+    },
+    {
+      "source": "/tmp/ngv-507-finalfix-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-finalfix-task.txt",
+      "source_sha256": "3af62e6f7667abc04c4400d13bb8f42658275575074b322b78a70093b08fbf81",
+      "git_sha256": "3af62e6f7667abc04c4400d13bb8f42658275575074b322b78a70093b08fbf81",
+      "redactions": [],
+      "size": 3319
+    },
+    {
+      "source": "/tmp/ngv-507-labels-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-labels-review.diff",
+      "source_sha256": "8eaf8971b51296edf031740aac9574a705ed93527c0d498d0a887bad229b4974",
+      "git_sha256": "8eaf8971b51296edf031740aac9574a705ed93527c0d498d0a887bad229b4974",
+      "redactions": [],
+      "size": 18838
+    },
+    {
+      "source": "/tmp/ngv-507-labels-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-labels-task.txt",
+      "source_sha256": "a3f3e616ba99124b2a9bebe2787cb7ace421434db2369a28c17c0133cdea0834",
+      "git_sha256": "a3f3e616ba99124b2a9bebe2787cb7ace421434db2369a28c17c0133cdea0834",
+      "redactions": [],
+      "size": 2337
+    },
+    {
+      "source": "/tmp/ngv-507-narrow-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-narrow-review.diff",
+      "source_sha256": "d01e98866d1b25afb367b9de211e93a4702ec22bc49409f3556726e6263b9750",
+      "git_sha256": "d01e98866d1b25afb367b9de211e93a4702ec22bc49409f3556726e6263b9750",
+      "redactions": [],
+      "size": 28817
+    },
+    {
+      "source": "/tmp/ngv-507-narrow-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-narrow-task.txt",
+      "source_sha256": "752d8ceeebecac93c22e673f012fd3d0bf5b6298f2f26caf9bf171869c471613",
+      "git_sha256": "752d8ceeebecac93c22e673f012fd3d0bf5b6298f2f26caf9bf171869c471613",
+      "redactions": [],
+      "size": 2800
+    },
+    {
+      "source": "/tmp/ngv-507-overlays-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-overlays-review.diff",
+      "source_sha256": "3eb3ac1203b3bdbe232bfa26febe30295e5e1b55fee9f58ebd8586fdd8fb99cd",
+      "git_sha256": "3eb3ac1203b3bdbe232bfa26febe30295e5e1b55fee9f58ebd8586fdd8fb99cd",
+      "redactions": [],
+      "size": 37924
+    },
+    {
+      "source": "/tmp/ngv-507-overlays-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-overlays-task.txt",
+      "source_sha256": "4c669c99217ac5eace5cc3fcc7d1e12270e91a7df0999a5d65011e74c497387c",
+      "git_sha256": "4c669c99217ac5eace5cc3fcc7d1e12270e91a7df0999a5d65011e74c497387c",
+      "redactions": [],
+      "size": 2175
+    },
+    {
+      "source": "/tmp/ngv-507-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-review.diff",
+      "source_sha256": "a481c7c41a2f9e7b977a0af4af3787201791baa588c35bbfaae7518c5ee2fcc5",
+      "git_sha256": "a481c7c41a2f9e7b977a0af4af3787201791baa588c35bbfaae7518c5ee2fcc5",
+      "redactions": [],
+      "size": 78440
+    },
+    {
+      "source": "/tmp/ngv-507-rulerclip-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-507-rulerclip-task.txt",
+      "source_sha256": "9cacd3b449adc5decf7c722c1b14f29316d23e003860bb6c37d17d2e49d799d5",
+      "git_sha256": "9cacd3b449adc5decf7c722c1b14f29316d23e003860bb6c37d17d2e49d799d5",
+      "redactions": [],
+      "size": 1731
+    },
+    {
+      "source": "/tmp/ngv-525-compile-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-525-compile-task.txt",
+      "source_sha256": "120a8419e6efea28929b198f4e754bf6cae7bdbd98a34ebf21dad6d0d5e80262",
+      "git_sha256": "120a8419e6efea28929b198f4e754bf6cae7bdbd98a34ebf21dad6d0d5e80262",
+      "redactions": [],
+      "size": 1750
+    },
+    {
+      "source": "/tmp/ngv-525-delta-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-525-delta-review.diff",
+      "source_sha256": "f31a08d0469a13a76ed7d9f4516f76885c6ab492b74e3eb08f14878d734225c8",
+      "git_sha256": "f31a08d0469a13a76ed7d9f4516f76885c6ab492b74e3eb08f14878d734225c8",
+      "redactions": [],
+      "size": 29720
+    },
+    {
+      "source": "/tmp/ngv-525-resume-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-525-resume-task.txt",
+      "source_sha256": "0c3ffc4ea6a690287bfe18520df95ed15f801c8eed069e5a8a6bfe975db2b60f",
+      "git_sha256": "0c3ffc4ea6a690287bfe18520df95ed15f801c8eed069e5a8a6bfe975db2b60f",
+      "redactions": [],
+      "size": 1743
+    },
+    {
+      "source": "/tmp/ngv-525-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-525-review.diff",
+      "source_sha256": "9d8f84c64aa5478ceca315037eafc67788b8712a533b6c94f9cc947a42bfc190",
+      "git_sha256": "9d8f84c64aa5478ceca315037eafc67788b8712a533b6c94f9cc947a42bfc190",
+      "redactions": [],
+      "size": 242642
+    },
+    {
+      "source": "/tmp/ngv-526-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-526-parent-scope.md",
+      "source_sha256": "c2b3f008f9513a458974a17698cd0e60536c7425c8ecdb0e738f9caebd20d5b0",
+      "git_sha256": "277d99c5506c6b910523027fc43c1eb03b080c8f895cd4fdf7b81c8c72eed157",
+      "redactions": [
+        "palmier-io/palmier-pro"
+      ],
+      "size": 2587
+    },
+    {
+      "source": "/tmp/ngv-526-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-526-task-draft.txt",
+      "source_sha256": "c1def7eba5bf590543acbaf7ad514abf4fb77564c2fb416b98f3b77c4e248e7f",
+      "git_sha256": "c1def7eba5bf590543acbaf7ad514abf4fb77564c2fb416b98f3b77c4e248e7f",
+      "redactions": [],
+      "size": 1986
+    },
+    {
+      "source": "/tmp/ngv-528-ci-consumer-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-ci-consumer-task.txt",
+      "source_sha256": "eb8c17c5c91878267243e02e767608aa110c9794efc211390ec38371942412a7",
+      "git_sha256": "eb8c17c5c91878267243e02e767608aa110c9794efc211390ec38371942412a7",
+      "redactions": [],
+      "size": 1925
+    },
+    {
+      "source": "/tmp/ngv-528-completion-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-completion-review.diff",
+      "source_sha256": "23e5f6abd5a4e79aaf368b80c3b188937a5be4c6414b09187b8d433d61cf9a89",
+      "git_sha256": "23e5f6abd5a4e79aaf368b80c3b188937a5be4c6414b09187b8d433d61cf9a89",
+      "redactions": [],
+      "size": 117786
+    },
+    {
+      "source": "/tmp/ngv-528-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-final-review.diff",
+      "source_sha256": "25e5520984a567a0a45340c592eea698103b51a2d98ec90e1f989b5f2ea311c2",
+      "git_sha256": "25e5520984a567a0a45340c592eea698103b51a2d98ec90e1f989b5f2ea311c2",
+      "redactions": [],
+      "size": 191602
+    },
+    {
+      "source": "/tmp/ngv-528-publication-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-publication-followup-task.txt",
+      "source_sha256": "c721c212b7d0e19960b1ef828dc4e3807533ed18f43474dfd535adc210d77070",
+      "git_sha256": "c721c212b7d0e19960b1ef828dc4e3807533ed18f43474dfd535adc210d77070",
+      "redactions": [],
+      "size": 2908
+    },
+    {
+      "source": "/tmp/ngv-528-remaining-two-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-remaining-two-task.txt",
+      "source_sha256": "641e6033bcf798ebda8d21eeabdbdf9dfbe7aa5e0ddf55d31d9cbe10b438ef62",
+      "git_sha256": "641e6033bcf798ebda8d21eeabdbdf9dfbe7aa5e0ddf55d31d9cbe10b438ef62",
+      "redactions": [],
+      "size": 2317
+    },
+    {
+      "source": "/tmp/ngv-528-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-review.diff",
+      "source_sha256": "9439824220c81feceba821615762862eba1e336487dbe03d1bec0e094900aa05",
+      "git_sha256": "9439824220c81feceba821615762862eba1e336487dbe03d1bec0e094900aa05",
+      "redactions": [],
+      "size": 191767
+    },
+    {
+      "source": "/tmp/ngv-528-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-528-task.txt",
+      "source_sha256": "869936be004f9f6b06a7dec0be22d1fd6da45cbb8213bf278d25ada166452b9a",
+      "git_sha256": "425009c0682b8a1faa0b08b1a66009fa91ec35ce09b21ce8df04894a8978df20",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6069
+    },
+    {
+      "source": "/tmp/ngv-530-delta-v2.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-530-delta-v2.diff",
+      "source_sha256": "4cd0f2937f7efd04940bcfabd48efc1dcd3d32cb6c4bad0fa6812e7a6dcfa0df",
+      "git_sha256": "4cd0f2937f7efd04940bcfabd48efc1dcd3d32cb6c4bad0fa6812e7a6dcfa0df",
+      "redactions": [],
+      "size": 24834
+    },
+    {
+      "source": "/tmp/ngv-530-fix.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-530-fix.diff",
+      "source_sha256": "33533bcfdedd64a04dff957b59c6172f67ba3a0ae4980f0ef177685446708843",
+      "git_sha256": "33533bcfdedd64a04dff957b59c6172f67ba3a0ae4980f0ef177685446708843",
+      "redactions": [],
+      "size": 7582
+    },
+    {
+      "source": "/tmp/ngv-532-correlation-full.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-correlation-full.diff",
+      "source_sha256": "302f3c60d1cdbe069c903a1ddc1ff7aabe83285d3ad2dd2022e18e475a10a13b",
+      "git_sha256": "302f3c60d1cdbe069c903a1ddc1ff7aabe83285d3ad2dd2022e18e475a10a13b",
+      "redactions": [],
+      "size": 192067
+    },
+    {
+      "source": "/tmp/ngv-532-correlation-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-correlation-review.diff",
+      "source_sha256": "f9a9ca1c05d7dfbdac958e091c05fa86768ad26d676dd213d925535790957c74",
+      "git_sha256": "f9a9ca1c05d7dfbdac958e091c05fa86768ad26d676dd213d925535790957c74",
+      "redactions": [],
+      "size": 83009
+    },
+    {
+      "source": "/tmp/ngv-532-correlation-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-correlation-task.txt",
+      "source_sha256": "b3bab114afd703cd8ff975c9d1490bded63104674951b70fb9eda9e08b6541e9",
+      "git_sha256": "b3bab114afd703cd8ff975c9d1490bded63104674951b70fb9eda9e08b6541e9",
+      "redactions": [],
+      "size": 3186
+    },
+    {
+      "source": "/tmp/ngv-532-final-guard-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-final-guard-review.diff",
+      "source_sha256": "8f935c375bf2ee565d2ea7a7a9e18bf1ee57c91c64c52b946a6b026ee1102abf",
+      "git_sha256": "8f935c375bf2ee565d2ea7a7a9e18bf1ee57c91c64c52b946a6b026ee1102abf",
+      "redactions": [],
+      "size": 16102
+    },
+    {
+      "source": "/tmp/ngv-532-final-guard-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-final-guard-task.txt",
+      "source_sha256": "484678a43da620ed41d5015c3bc1f3df92700d2e11f33b426ad28be4c4ce52af",
+      "git_sha256": "484678a43da620ed41d5015c3bc1f3df92700d2e11f33b426ad28be4c4ce52af",
+      "redactions": [],
+      "size": 2860
+    },
+    {
+      "source": "/tmp/ngv-532-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-final-review.diff",
+      "source_sha256": "89da092a715f683bed1712c2fe1dc27989c9e6822e758aad6891fd71a5d850a9",
+      "git_sha256": "89da092a715f683bed1712c2fe1dc27989c9e6822e758aad6891fd71a5d850a9",
+      "redactions": [],
+      "size": 122292
+    },
+    {
+      "source": "/tmp/ngv-532-full-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-full-final-review.diff",
+      "source_sha256": "5c0b17d3f6e2daf45d00e8623bf3ddf5587ef06ff8b4535c3ed39d943d01a388",
+      "git_sha256": "5c0b17d3f6e2daf45d00e8623bf3ddf5587ef06ff8b4535c3ed39d943d01a388",
+      "redactions": [],
+      "size": 140453
+    },
+    {
+      "source": "/tmp/ngv-532-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-review.diff",
+      "source_sha256": "872221d94a450703c1757aa07838a3762654d3f46ea4d2ead8adc8adb195e761",
+      "git_sha256": "872221d94a450703c1757aa07838a3762654d3f46ea4d2ead8adc8adb195e761",
+      "redactions": [],
+      "size": 58949
+    },
+    {
+      "source": "/tmp/ngv-532-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-532-task.txt",
+      "source_sha256": "2f72a9fd2bc98535600281a404ea33c8b115fe447dfc53bab3f48892ae008fa3",
+      "git_sha256": "2f72a9fd2bc98535600281a404ea33c8b115fe447dfc53bab3f48892ae008fa3",
+      "redactions": [],
+      "size": 3008
+    },
+    {
+      "source": "/tmp/ngv-534-budget-recovery-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-budget-recovery-review.diff",
+      "source_sha256": "7f5bba6e851215f898592d3ba637fcbc17e32961bb40224235975737d0b29a9c",
+      "git_sha256": "7f5bba6e851215f898592d3ba637fcbc17e32961bb40224235975737d0b29a9c",
+      "redactions": [],
+      "size": 84573
+    },
+    {
+      "source": "/tmp/ngv-534-budget-recovery-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-budget-recovery-task.txt",
+      "source_sha256": "c07a87aece6c4ed44370facfbf5cd654fbaefdb0d6d62a09035aab2d800911da",
+      "git_sha256": "c07a87aece6c4ed44370facfbf5cd654fbaefdb0d6d62a09035aab2d800911da",
+      "redactions": [],
+      "size": 4547
+    },
+    {
+      "source": "/tmp/ngv-534-closeout-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-closeout-review.diff",
+      "source_sha256": "489b614842ff1c23f91b05590591ad832e328d85975df1ca851a509d645d35b9",
+      "git_sha256": "489b614842ff1c23f91b05590591ad832e328d85975df1ca851a509d645d35b9",
+      "redactions": [],
+      "size": 106394
+    },
+    {
+      "source": "/tmp/ngv-534-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-final-review.diff",
+      "source_sha256": "005ab8e3168bbf8c92103daee996526ce95d5549e1a4c66dfaa278214c974a58",
+      "git_sha256": "005ab8e3168bbf8c92103daee996526ce95d5549e1a4c66dfaa278214c974a58",
+      "redactions": [],
+      "size": 98499
+    },
+    {
+      "source": "/tmp/ngv-534-finalfour-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-finalfour-review.diff",
+      "source_sha256": "d44eb6e15af008e4b34d3ea7af09ac84aa31f0c4372e04c323bb0658b5814226",
+      "git_sha256": "d44eb6e15af008e4b34d3ea7af09ac84aa31f0c4372e04c323bb0658b5814226",
+      "redactions": [],
+      "size": 40536
+    },
+    {
+      "source": "/tmp/ngv-534-finalfour-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-finalfour-task.txt",
+      "source_sha256": "a192ae86e42a615fcbcee72b2fbbbb543350b4e25cea69acc914ba9e57e57a9c",
+      "git_sha256": "a192ae86e42a615fcbcee72b2fbbbb543350b4e25cea69acc914ba9e57e57a9c",
+      "redactions": [],
+      "size": 4064
+    },
+    {
+      "source": "/tmp/ngv-534-followup-task-v2.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-followup-task-v2.txt",
+      "source_sha256": "ab1713e11227fac1055a8ced6d52dcf50f398879dc34815f03c916f2215c5093",
+      "git_sha256": "ab1713e11227fac1055a8ced6d52dcf50f398879dc34815f03c916f2215c5093",
+      "redactions": [],
+      "size": 7800
+    },
+    {
+      "source": "/tmp/ngv-534-full-closeout-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-full-closeout-review.diff",
+      "source_sha256": "8136544853d83546b22c6d98596dee477a8f9e9d8db51feb08ff9876ea435c5c",
+      "git_sha256": "616a0bc3c696c9c78eadaef61ac6bca505efcb1a754e971fc7dd5359ef90fbf2",
+      "redactions": [
+        "email-address x2"
+      ],
+      "size": 341833
+    },
+    {
+      "source": "/tmp/ngv-534-full-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-full-final-review.diff",
+      "source_sha256": "3b2127cb0844e0b569392118d521becf7a11c2165e44474a51790b5ecf6a39b8",
+      "git_sha256": "d996a9c1fa864c15efad3b82f74a80e77dca354b2319d9f64ac757a2f0ce5390",
+      "redactions": [
+        "email-address x2"
+      ],
+      "size": 262916
+    },
+    {
+      "source": "/tmp/ngv-534-native-resume-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-native-resume-task.txt",
+      "source_sha256": "9ca58d837dac911fbd425dc2da4085f3dd5091425fa9569f51f85789472df334",
+      "git_sha256": "9ca58d837dac911fbd425dc2da4085f3dd5091425fa9569f51f85789472df334",
+      "redactions": [],
+      "size": 5385
+    },
+    {
+      "source": "/tmp/ngv-534-reconcile-full.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-reconcile-full.diff",
+      "source_sha256": "ce48bc7ae0940fd9476040be8af487e4f5a980db38baa1a5026b126f89e58ee8",
+      "git_sha256": "0dedcc631197b5be8a381954a813650fe344e69952e4797fef2eb83d8a632df8",
+      "redactions": [
+        "email-address x2"
+      ],
+      "size": 396106
+    },
+    {
+      "source": "/tmp/ngv-534-reconcile-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-reconcile-review.diff",
+      "source_sha256": "0ca609995b7b0563e53818d8e3b2ce3d07e8a770b7204c8353197729f44960a0",
+      "git_sha256": "0ca609995b7b0563e53818d8e3b2ce3d07e8a770b7204c8353197729f44960a0",
+      "redactions": [],
+      "size": 73294
+    },
+    {
+      "source": "/tmp/ngv-534-reconcile-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-reconcile-task.txt",
+      "source_sha256": "200e90694f0d84fff76ddc178674ee773865acf36d25f703c9c1451c590745b9",
+      "git_sha256": "200e90694f0d84fff76ddc178674ee773865acf36d25f703c9c1451c590745b9",
+      "redactions": [],
+      "size": 3867
+    },
+    {
+      "source": "/tmp/ngv-534-review-baseline.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-review-baseline.diff",
+      "source_sha256": "8ea961552ef757c1cdf0da22b36e7094c3cf89d07de47f8a65f65213ce47ee64",
+      "git_sha256": "86cb9cbe1158f16259f09ff1270db97c17496c471cc036da5ab5f699a7080e7c",
+      "redactions": [
+        "email-address x2"
+      ],
+      "size": 166146
+    },
+    {
+      "source": "/tmp/ngv-534-terminal-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-terminal-review.diff",
+      "source_sha256": "be26d92af8d11b51c2c9dd6850b98d4ce2a596a2c8ca27155efae614a3cf35d3",
+      "git_sha256": "be26d92af8d11b51c2c9dd6850b98d4ce2a596a2c8ca27155efae614a3cf35d3",
+      "redactions": [],
+      "size": 89973
+    },
+    {
+      "source": "/tmp/ngv-534-terminal-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-terminal-task.txt",
+      "source_sha256": "857a8075e971fe390b2d5bbde855e9667b52d02d082b8daeabaade9bb1de9317",
+      "git_sha256": "857a8075e971fe390b2d5bbde855e9667b52d02d082b8daeabaade9bb1de9317",
+      "redactions": [],
+      "size": 4012
+    },
+    {
+      "source": "/tmp/ngv-534-two-small-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-534-two-small-task.txt",
+      "source_sha256": "40f36b067652be048249755ecdd99bfc80b30e73cbe0b2a61073da13519027a0",
+      "git_sha256": "40f36b067652be048249755ecdd99bfc80b30e73cbe0b2a61073da13519027a0",
+      "redactions": [],
+      "size": 2120
+    },
+    {
+      "source": "/tmp/ngv-537-design.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-537-design.md",
+      "source_sha256": "967e235cdef270c2ba9030323628f7fa0233880c948222e80d8bc007d6c9da52",
+      "git_sha256": "967e235cdef270c2ba9030323628f7fa0233880c948222e80d8bc007d6c9da52",
+      "redactions": [],
+      "size": 3076
+    },
+    {
+      "source": "/tmp/ngv-537-feature-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-537-feature-review.diff",
+      "source_sha256": "3c23edc542a0d95249879867d591b1680676427e059ac3654241c08ddee8d810",
+      "git_sha256": "3c23edc542a0d95249879867d591b1680676427e059ac3654241c08ddee8d810",
+      "redactions": [],
+      "size": 89705
+    },
+    {
+      "source": "/tmp/ngv-537-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-537-parent-scope.md",
+      "source_sha256": "e6480d3dcb692737c59e8d784d755bd08065ec0f90ffe5127557049d184d330d",
+      "git_sha256": "e6480d3dcb692737c59e8d784d755bd08065ec0f90ffe5127557049d184d330d",
+      "redactions": [],
+      "size": 4228
+    },
+    {
+      "source": "/tmp/ngv-537-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-537-task-draft.txt",
+      "source_sha256": "fd60133328254a97516c294cba0a834c5c012eb9dd54be3e55e07338ad171d6a",
+      "git_sha256": "fd60133328254a97516c294cba0a834c5c012eb9dd54be3e55e07338ad171d6a",
+      "redactions": [],
+      "size": 2382
+    },
+    {
+      "source": "/tmp/ngv-537-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-537-task.txt",
+      "source_sha256": "6405688b4c40437f597eeded87612b43d344c610abb46f7b3b137f9d97ae46d3",
+      "git_sha256": "be7fd1cb6f14996fdbaa21e0330da34cbfd4914a882e6bd814acb4298409e3b9",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2513
+    },
+    {
+      "source": "/tmp/ngv-541-boundary-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-boundary-followup-task.txt",
+      "source_sha256": "dc7f8aebb2c7e4c3e0733dcbd11f5fa241a558a42918a1dafb55cefd9a13ac3e",
+      "git_sha256": "dc7f8aebb2c7e4c3e0733dcbd11f5fa241a558a42918a1dafb55cefd9a13ac3e",
+      "redactions": [],
+      "size": 4519
+    },
+    {
+      "source": "/tmp/ngv-541-bulk-parser-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-bulk-parser-task.txt",
+      "source_sha256": "4215564eba8a93c5d0cfb5bde1941578c04959bcb0abdd5df618c47f40f6a7dc",
+      "git_sha256": "4215564eba8a93c5d0cfb5bde1941578c04959bcb0abdd5df618c47f40f6a7dc",
+      "redactions": [],
+      "size": 1289
+    },
+    {
+      "source": "/tmp/ngv-541-dispatch-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-dispatch-task.txt",
+      "source_sha256": "b00b7007658cc61beaafa6b678a5bcfe0b117f53bdecad3387da54d328839ff9",
+      "git_sha256": "b00b7007658cc61beaafa6b678a5bcfe0b117f53bdecad3387da54d328839ff9",
+      "redactions": [],
+      "size": 3094
+    },
+    {
+      "source": "/tmp/ngv-541-final-boundaries-followup-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-final-boundaries-followup-draft.txt",
+      "source_sha256": "0e1c513a78ea8d09c86f49a5d46ab32ebc8103bab338c1b2c0d46f858762eaef",
+      "git_sha256": "0e1c513a78ea8d09c86f49a5d46ab32ebc8103bab338c1b2c0d46f858762eaef",
+      "redactions": [],
+      "size": 2341
+    },
+    {
+      "source": "/tmp/ngv-541-final-boundaries-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-final-boundaries-task.txt",
+      "source_sha256": "cf3805115c1e353f0494b8c0b63618aadbb0d3c53f2fb5a3bd330e313f29db3d",
+      "git_sha256": "cf3805115c1e353f0494b8c0b63618aadbb0d3c53f2fb5a3bd330e313f29db3d",
+      "redactions": [],
+      "size": 3334
+    },
+    {
+      "source": "/tmp/ngv-541-finaldelta-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-finaldelta-review.diff",
+      "source_sha256": "abf591bb8bb3b9fd20be21ade76d21e5097740002e7b07152c77f1c26fa7946a",
+      "git_sha256": "abf591bb8bb3b9fd20be21ade76d21e5097740002e7b07152c77f1c26fa7946a",
+      "redactions": [],
+      "size": 103526
+    },
+    {
+      "source": "/tmp/ngv-541-next-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-next-review.diff",
+      "source_sha256": "e60f95d2ea166c03ec892cb711da32e012a09f361b9d1296d17d0ffccf425518",
+      "git_sha256": "e60f95d2ea166c03ec892cb711da32e012a09f361b9d1296d17d0ffccf425518",
+      "redactions": [],
+      "size": 13627
+    },
+    {
+      "source": "/tmp/ngv-541-postparser-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-postparser-review.diff",
+      "source_sha256": "c5d7370d248a60fcc50af88c37f265fb3f0a517bd554f9f17e474c5af16b8939",
+      "git_sha256": "c5d7370d248a60fcc50af88c37f265fb3f0a517bd554f9f17e474c5af16b8939",
+      "redactions": [],
+      "size": 59812
+    },
+    {
+      "source": "/tmp/ngv-541-resource-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-resource-followup-task.txt",
+      "source_sha256": "47acea3bd509fdbb7d579ad87a3f88f717c363eb1072ab8ad0bfcdd4e8dd2aaf",
+      "git_sha256": "082a0ba42295440816827c9a30a32857358c281ef2673a334f76e08e6cc6818c",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2675
+    },
+    {
+      "source": "/tmp/ngv-541-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-review.diff",
+      "source_sha256": "c2d050456d962e90d1a6fd8fc878d71cf3fc19f11e2d543cd15a4587a74d4160",
+      "git_sha256": "c2d050456d962e90d1a6fd8fc878d71cf3fc19f11e2d543cd15a4587a74d4160",
+      "redactions": [],
+      "size": 163392
+    },
+    {
+      "source": "/tmp/ngv-541-reviewfix-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-reviewfix-review.diff",
+      "source_sha256": "afa80e51c64558368b42971414b218599b65ad51a75508f016eb3ca4c5f17db7",
+      "git_sha256": "afa80e51c64558368b42971414b218599b65ad51a75508f016eb3ca4c5f17db7",
+      "redactions": [],
+      "size": 410374
+    },
+    {
+      "source": "/tmp/ngv-541-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-task.txt",
+      "source_sha256": "7734cf47dcac8a38a646a1d387bf69a68490b8eeb15fa12a66cef828f7523733",
+      "git_sha256": "cfba9f3e7884add1a8f37d93f483c0bb0cdd4d8193e7f39a0d74a57875709fcc",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6198
+    },
+    {
+      "source": "/tmp/ngv-541-wheel-layout.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-541-wheel-layout.py",
+      "source_sha256": "6e5789616d6d316d221b77cce1a7c7dc44c9bfdc13ba8333212ea582bd230e5d",
+      "git_sha256": "de2126352f9380704b922affc236e1af6ae3f22ff728b0ba38233af087315d92",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 1727
+    },
+    {
+      "source": "/tmp/ngv-542-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-542-parent-scope.md",
+      "source_sha256": "20b2a5f6a684bc1c6f87a97ca9bfc1b57421275627fb0db54f49046a3530bcf6",
+      "git_sha256": "20b2a5f6a684bc1c6f87a97ca9bfc1b57421275627fb0db54f49046a3530bcf6",
+      "redactions": [],
+      "size": 1155
+    },
+    {
+      "source": "/tmp/ngv-546-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-546-final-review.diff",
+      "source_sha256": "c49a04b88d784aa80468facf3ebf8daa0b7d695d2c6fc779cb8b331b8b5957b9",
+      "git_sha256": "c49a04b88d784aa80468facf3ebf8daa0b7d695d2c6fc779cb8b331b8b5957b9",
+      "redactions": [],
+      "size": 78987
+    },
+    {
+      "source": "/tmp/ngv-546-final-two-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-546-final-two-task.txt",
+      "source_sha256": "4d90c645df5715f36009bac46916bcc5ca0d529b22a04e82c9c296a3f85e17a0",
+      "git_sha256": "4d90c645df5715f36009bac46916bcc5ca0d529b22a04e82c9c296a3f85e17a0",
+      "redactions": [],
+      "size": 2053
+    },
+    {
+      "source": "/tmp/ngv-546-proposal-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-546-proposal-task.txt",
+      "source_sha256": "e7abc1b3d9939842f5066fd979996465a537f9c455532f34d7511f7cc6003af2",
+      "git_sha256": "8eb7a1e79f53e2326c04f62076629b86dc4d28bdbb899e7befba14cb9115147d",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4557
+    },
+    {
+      "source": "/tmp/ngv-546-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-546-task-draft.txt",
+      "source_sha256": "01758655ba097226a8e6350f79d4890526ff4a32a75a638728a732350179cdc9",
+      "git_sha256": "01758655ba097226a8e6350f79d4890526ff4a32a75a638728a732350179cdc9",
+      "redactions": [],
+      "size": 4253
+    },
+    {
+      "source": "/tmp/ngv-547-archive.swift",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-archive.swift",
+      "source_sha256": "f671d47ad0075ff420947fedb20d362a3d2c8de0cd9c24fbef5157256e106782",
+      "git_sha256": "f671d47ad0075ff420947fedb20d362a3d2c8de0cd9c24fbef5157256e106782",
+      "redactions": [],
+      "size": 7467
+    },
+    {
+      "source": "/tmp/ngv-547-bundle.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-bundle.py",
+      "source_sha256": "bcf9d5ebb2085d8402be053dcc5f1210ed1ca17c78567fc6c80031e087c0c551",
+      "git_sha256": "a626c9fa3d0407053a201d5b3b16f1efa8852a06cbe4300be34bd8ad7e366221",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4057
+    },
+    {
+      "source": "/tmp/ngv-547-contract-progress.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-contract-progress.md",
+      "source_sha256": "9c52b6b9dbda705f80166f0105ffe191f3415e9c872c618837ae7fba01026a9d",
+      "git_sha256": "9c52b6b9dbda705f80166f0105ffe191f3415e9c872c618837ae7fba01026a9d",
+      "redactions": [],
+      "size": 772
+    },
+    {
+      "source": "/tmp/ngv-547-design.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-design.md",
+      "source_sha256": "2927bf47459fdedd8bac5a1628c305d7f6b8b67064ab51b3f463f25b5e8fcff6",
+      "git_sha256": "2927bf47459fdedd8bac5a1628c305d7f6b8b67064ab51b3f463f25b5e8fcff6",
+      "redactions": [],
+      "size": 4675
+    },
+    {
+      "source": "/tmp/ngv-547-migration.spec.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-migration.spec.md",
+      "source_sha256": "fdeb39695a3bc610065d99fc08df15c47a0fb3b8ece7d01a6800e09a938ef6bc",
+      "git_sha256": "fdeb39695a3bc610065d99fc08df15c47a0fb3b8ece7d01a6800e09a938ef6bc",
+      "redactions": [],
+      "size": 15205
+    },
+    {
+      "source": "/tmp/ngv-547-parent-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-parent-scope.md",
+      "source_sha256": "3d7fe78c9fdf029c1973220c6bfef176bce17c050baf60fec8967c5334dcab11",
+      "git_sha256": "3d7fe78c9fdf029c1973220c6bfef176bce17c050baf60fec8967c5334dcab11",
+      "redactions": [],
+      "size": 2451
+    },
+    {
+      "source": "/tmp/ngv-547-pr-draft.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-pr-draft.md",
+      "source_sha256": "3b9642bbb9c7e414f1d04040290984da595c904306fdf23e323d8cfb1c8f2742",
+      "git_sha256": "3b9642bbb9c7e414f1d04040290984da595c904306fdf23e323d8cfb1c8f2742",
+      "redactions": [],
+      "size": 1820
+    },
+    {
+      "source": "/tmp/ngv-547-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-task-draft.txt",
+      "source_sha256": "9a39cd960773501fff7f7db4e1059ab4860ff6203d018bdc97c61e0908d4bcae",
+      "git_sha256": "9a39cd960773501fff7f7db4e1059ab4860ff6203d018bdc97c61e0908d4bcae",
+      "redactions": [],
+      "size": 2763
+    },
+    {
+      "source": "/tmp/ngv-547-technique-store-draft.swift",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-technique-store-draft.swift",
+      "source_sha256": "754ae03f637b321bfee72446c800ce1fb7ef5adb612d3c4db6b5ebcb32193ce3",
+      "git_sha256": "754ae03f637b321bfee72446c800ce1fb7ef5adb612d3c4db6b5ebcb32193ce3",
+      "redactions": [],
+      "size": 5540
+    },
+    {
+      "source": "/tmp/ngv-547-technique.swift",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-technique.swift",
+      "source_sha256": "754ae03f637b321bfee72446c800ce1fb7ef5adb612d3c4db6b5ebcb32193ce3",
+      "git_sha256": "754ae03f637b321bfee72446c800ce1fb7ef5adb612d3c4db6b5ebcb32193ce3",
+      "redactions": [],
+      "size": 5540
+    },
+    {
+      "source": "/tmp/ngv-547-tests.swift",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-547-tests.swift",
+      "source_sha256": "250f0d35f3bdd40b8a0d7c9619733f148a0833d4925b77b3e4f9ecc593b3823b",
+      "git_sha256": "250f0d35f3bdd40b8a0d7c9619733f148a0833d4925b77b3e4f9ecc593b3823b",
+      "redactions": [],
+      "size": 4338
+    },
+    {
+      "source": "/tmp/ngv-551-closeout-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-closeout-review.diff",
+      "source_sha256": "af730f978685ad82fa0a8291a99faa58b4ba74b9a512593055430cb77c77e8e5",
+      "git_sha256": "af730f978685ad82fa0a8291a99faa58b4ba74b9a512593055430cb77c77e8e5",
+      "redactions": [],
+      "size": 50467
+    },
+    {
+      "source": "/tmp/ngv-551-final-fix-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-final-fix-task.txt",
+      "source_sha256": "6bf502a88998ee8da3e5cf3b1bef6e7b1d80980a8a03f21ca59ed1282a4ff868",
+      "git_sha256": "6bf502a88998ee8da3e5cf3b1bef6e7b1d80980a8a03f21ca59ed1282a4ff868",
+      "redactions": [],
+      "size": 3495
+    },
+    {
+      "source": "/tmp/ngv-551-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-final-review.diff",
+      "source_sha256": "eb3b24e3b3b38b0d58d74ba69093fc2e5e817e3b010219f055b8bc7ec540f9fd",
+      "git_sha256": "eb3b24e3b3b38b0d58d74ba69093fc2e5e817e3b010219f055b8bc7ec540f9fd",
+      "redactions": [],
+      "size": 90781
+    },
+    {
+      "source": "/tmp/ngv-551-fleet-scope.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-fleet-scope.md",
+      "source_sha256": "a6fccc3f09daa9a1fec1137ba4b9a5b09ff38094e7fde04683dc29eee6f273ae",
+      "git_sha256": "a6fccc3f09daa9a1fec1137ba4b9a5b09ff38094e7fde04683dc29eee6f273ae",
+      "redactions": [],
+      "size": 584
+    },
+    {
+      "source": "/tmp/ngv-551-followup-task-v2.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-followup-task-v2.txt",
+      "source_sha256": "420e582c9f5b6886c1de916b55ef2109beac11539c386fff1506022aab3b6672",
+      "git_sha256": "420e582c9f5b6886c1de916b55ef2109beac11539c386fff1506022aab3b6672",
+      "redactions": [],
+      "size": 5131
+    },
+    {
+      "source": "/tmp/ngv-551-full-closeout-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-full-closeout-review.diff",
+      "source_sha256": "b2c4515cdc904f00141c6210300ef01b1ecb97832aeb9edef185cf2b378cd32a",
+      "git_sha256": "b2c4515cdc904f00141c6210300ef01b1ecb97832aeb9edef185cf2b378cd32a",
+      "redactions": [],
+      "size": 312270
+    },
+    {
+      "source": "/tmp/ngv-551-full-final-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-full-final-review.diff",
+      "source_sha256": "928ffcdc2a7f9dd839bf28612b070ec0b3a3aef3599ad6d9100b83f6747b8aab",
+      "git_sha256": "928ffcdc2a7f9dd839bf28612b070ec0b3a3aef3599ad6d9100b83f6747b8aab",
+      "redactions": [],
+      "size": 286059
+    },
+    {
+      "source": "/tmp/ngv-551-harnessfix-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-harnessfix-task.txt",
+      "source_sha256": "a35c3b56ccd7110c11cdc2326d0e0a3a473df802d38febee7b536ab60859f85c",
+      "git_sha256": "a35c3b56ccd7110c11cdc2326d0e0a3a473df802d38febee7b536ab60859f85c",
+      "redactions": [],
+      "size": 1816
+    },
+    {
+      "source": "/tmp/ngv-551-resume-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-resume-task.txt",
+      "source_sha256": "9818b4f8d9137bfcd54553c02593c9102b237f74e7cd5de7c2bf773b30346165",
+      "git_sha256": "9818b4f8d9137bfcd54553c02593c9102b237f74e7cd5de7c2bf773b30346165",
+      "redactions": [],
+      "size": 1750
+    },
+    {
+      "source": "/tmp/ngv-551-review-baseline.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-551-review-baseline.diff",
+      "source_sha256": "cc741cf23e46919db6e0d55862a805227c7617facbd43c2aec93439c64389db1",
+      "git_sha256": "cc741cf23e46919db6e0d55862a805227c7617facbd43c2aec93439c64389db1",
+      "redactions": [],
+      "size": 230836
+    },
+    {
+      "source": "/tmp/ngv-552-feature-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-feature-review.diff",
+      "source_sha256": "27f7da5e84fa1e4805b3dc7ecd6f3295e31d793784d9aba3f595e5dc6283c30c",
+      "git_sha256": "27f7da5e84fa1e4805b3dc7ecd6f3295e31d793784d9aba3f595e5dc6283c30c",
+      "redactions": [],
+      "size": 139664
+    },
+    {
+      "source": "/tmp/ngv-552-finaldelta-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-finaldelta-review.diff",
+      "source_sha256": "92c7af99139cb6c710db47b9e3f39eee7f0e4f5fd7ef51de77057c4414741ea0",
+      "git_sha256": "92c7af99139cb6c710db47b9e3f39eee7f0e4f5fd7ef51de77057c4414741ea0",
+      "redactions": [],
+      "size": 52406
+    },
+    {
+      "source": "/tmp/ngv-552-focus-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-focus-followup-task.txt",
+      "source_sha256": "435971ad010ce159130c4ce0d673583ebbbb74b18f13f969bf96db89a129342c",
+      "git_sha256": "f705203e0a646792b693be303675a13e109e0a6ec55138c9e1e238aeddda3eea",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2143
+    },
+    {
+      "source": "/tmp/ngv-552-integration-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-integration-review.diff",
+      "source_sha256": "46c42b0dc7778981273bd2c700d53854b6f9863dd67c41078c337d2e566e5b43",
+      "git_sha256": "3538d5a5534bd4b8e65b34a0b4018647eba32e9d737e827fce32ee4873bc714b",
+      "redactions": [
+        "email-address x2"
+      ],
+      "size": 25050
+    },
+    {
+      "source": "/tmp/ngv-552-native-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-native-review.diff",
+      "source_sha256": "1351674f6ed9de349ba1ef3e897ef150c7fe4282a5a8c65887103065267592f3",
+      "git_sha256": "1351674f6ed9de349ba1ef3e897ef150c7fe4282a5a8c65887103065267592f3",
+      "redactions": [],
+      "size": 7003
+    },
+    {
+      "source": "/tmp/ngv-552-reviewfix-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-reviewfix-review.diff",
+      "source_sha256": "3d32460436d74ebc5d594183d7ff25f9fe5db79a97b8cba54a9928ddbc906ab0",
+      "git_sha256": "3d32460436d74ebc5d594183d7ff25f9fe5db79a97b8cba54a9928ddbc906ab0",
+      "redactions": [],
+      "size": 85459
+    },
+    {
+      "source": "/tmp/ngv-552-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-task-draft.txt",
+      "source_sha256": "56bad6233592894155b43d52a3de34b7fa7e2b7c452563c5089093e7d430fa01",
+      "git_sha256": "a5cb50b0889023504d8e113fa6765b3a58766806f623d3d5bedb3c9a176640a8",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4181
+    },
+    {
+      "source": "/tmp/ngv-552-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-task.txt",
+      "source_sha256": "1ef4a3b3dc4a668bac6ab0f184a1335156e88b8cc745ee0ac12ae7443e9e8bdc",
+      "git_sha256": "1914642ac2d157f2f1c4aee5f8ca07b6b780d3a3839ddf80b89c604ddde0ead4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4593
+    },
+    {
+      "source": "/tmp/ngv-552-thirdfix-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-552-thirdfix-review.diff",
+      "source_sha256": "91a856d59be2550f9bacfc2d13a1326a74923fb0a8e4b3edbd4cfa0d5ba03f83",
+      "git_sha256": "91a856d59be2550f9bacfc2d13a1326a74923fb0a8e4b3edbd4cfa0d5ba03f83",
+      "redactions": [],
+      "size": 41579
+    },
+    {
+      "source": "/tmp/ngv-554-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-554-task-draft.txt",
+      "source_sha256": "b11170d4da868d5be36ad08d4839f2cf44070b3184f2f034705d6341e2f170e6",
+      "git_sha256": "b11170d4da868d5be36ad08d4839f2cf44070b3184f2f034705d6341e2f170e6",
+      "redactions": [],
+      "size": 2405
+    },
+    {
+      "source": "/tmp/ngv-555-current-panel.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-current-panel.diff",
+      "source_sha256": "f3fb5e531041c36d2a2e20b366eadcb85d2eb8ce5f3dd69aa50152569e507f18",
+      "git_sha256": "f3fb5e531041c36d2a2e20b366eadcb85d2eb8ce5f3dd69aa50152569e507f18",
+      "redactions": [],
+      "size": 30144
+    },
+    {
+      "source": "/tmp/ngv-555-next-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-next-review.diff",
+      "source_sha256": "b8adcc078a855c53cbb8e8fd2404c01d8189fc24f91edf9bce3606446db9a3df",
+      "git_sha256": "b8adcc078a855c53cbb8e8fd2404c01d8189fc24f91edf9bce3606446db9a3df",
+      "redactions": [],
+      "size": 28945
+    },
+    {
+      "source": "/tmp/ngv-555-parent-followup-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-parent-followup-task.txt",
+      "source_sha256": "75bfb9c491e444470be5e245c84a96d54d8375041d5c590ce3de83c53699b0db",
+      "git_sha256": "03efcdf57e93a34faa5eb4d105e4ecee676ed0e2dd694f3d549f3f9a8d3142c1",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2984
+    },
+    {
+      "source": "/tmp/ngv-555-pr-draft.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-pr-draft.md",
+      "source_sha256": "9e0dae75eaed996e9de58dce829793453075f1440367d1f324d2e770282b854c",
+      "git_sha256": "9e0dae75eaed996e9de58dce829793453075f1440367d1f324d2e770282b854c",
+      "redactions": [],
+      "size": 3152
+    },
+    {
+      "source": "/tmp/ngv-555-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-review.diff",
+      "source_sha256": "f08c2bddf5dbb46d34638d7e807ce9e4011780b1d40b1ba466cb760fbfb96f40",
+      "git_sha256": "f08c2bddf5dbb46d34638d7e807ce9e4011780b1d40b1ba466cb760fbfb96f40",
+      "redactions": [],
+      "size": 180515
+    },
+    {
+      "source": "/tmp/ngv-555-reviewfix-review.diff",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-reviewfix-review.diff",
+      "source_sha256": "8e3b155d5617a6da0c0d25e62e772dcd3fd4ea322c525eac88c8110c04115bdb",
+      "git_sha256": "8e3b155d5617a6da0c0d25e62e772dcd3fd4ea322c525eac88c8110c04115bdb",
+      "redactions": [],
+      "size": 92043
+    },
+    {
+      "source": "/tmp/ngv-555-task-draft.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-task-draft.txt",
+      "source_sha256": "ba93904da4eda723e9767b1991a4fd1e6bd0dbc4e96e71214025ed860bbcee4f",
+      "git_sha256": "d50e036a358e27ff306d6ae1138160c2f0a124a52ca2fa4d1115a8c8703e8d7c",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3186
+    },
+    {
+      "source": "/tmp/ngv-555-task.txt",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-555-task.txt",
+      "source_sha256": "60d96f39e48bd16e491e8161c56ff7d2b5edeeece26fe5342d4ba5d6eab5449f",
+      "git_sha256": "b37c84e114e1c5a8a393b17a7d1002d92eeb6c418ae5e08aa1cdabdf8e8c943f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3750
+    },
+    {
+      "source": "/tmp/ngv-acceptance-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-acceptance-fixes.py",
+      "source_sha256": "5b90c40cd86fb4ee89d23359fe86fa74e73c8a9f25960eda292e452997eb0b6e",
+      "git_sha256": "5b90c40cd86fb4ee89d23359fe86fa74e73c8a9f25960eda292e452997eb0b6e",
+      "redactions": [],
+      "size": 14393
+    },
+    {
+      "source": "/tmp/ngv-acceptance-ui.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-acceptance-ui.py",
+      "source_sha256": "285b804be31207f16d3a51eed51d1aca657798cd408cde53a9c67da0b6b836d8",
+      "git_sha256": "285b804be31207f16d3a51eed51d1aca657798cd408cde53a9c67da0b6b836d8",
+      "redactions": [],
+      "size": 7439
+    },
+    {
+      "source": "/tmp/ngv-all-context-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-all-context-review.mjs",
+      "source_sha256": "4b6a8e3aa05db4856b3019268474cdfa97583efa5d60996397e1e5e03b74ef72",
+      "git_sha256": "cbdda006a00b4cc657f4ab4918a175e2f544a7d26aac201c068c5f0fbb8d4b7a",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 19056
+    },
+    {
+      "source": "/tmp/ngv-allphases-base.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-allphases-base.js",
+      "source_sha256": "ac21e899c781ec7546af68dd2630a107329520aae59bc412ce1eae2e7f30c6fb",
+      "git_sha256": "ac21e899c781ec7546af68dd2630a107329520aae59bc412ce1eae2e7f30c6fb",
+      "redactions": [],
+      "size": 85255
+    },
+    {
+      "source": "/tmp/ngv-animatic-check.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-animatic-check.mjs",
+      "source_sha256": "1d3687db6f326f76010a3d012aaea9ead61e8f434999ae108ba8dd4d8ac00892",
+      "git_sha256": "b2b31b6d172ae5bb87108b3d88d18ab758a31b5e844e5e9fd343f53e2d5625f8",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3018
+    },
+    {
+      "source": "/tmp/ngv-audio-wording-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-audio-wording-review.mjs",
+      "source_sha256": "2f168c8ee0c022b27a6f5c65ba0acb31d41444be6dc0a14d1eeb2988293e501a",
+      "git_sha256": "f548f5724f96359f8a59048b77693288905597b6740774cc548ba433d63edd2c",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4609
+    },
+    {
+      "source": "/tmp/ngv-blocking-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-blocking-host-review.mjs",
+      "source_sha256": "b5204e67fa4ee96482085439dcb6c47c063a65c81d876d6c912adf0db4d61c8a",
+      "git_sha256": "cafb9eb3d77bc89509b69caa6feaedec848098edbe1094e1f1a35c958951ddce",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3969
+    },
+    {
+      "source": "/tmp/ngv-canonical-media.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-canonical-media.py",
+      "source_sha256": "bb174b3f83b84deb8a24be2849c173372ef9b1d70bdf6f8c8e13317995730202",
+      "git_sha256": "bb174b3f83b84deb8a24be2849c173372ef9b1d70bdf6f8c8e13317995730202",
+      "redactions": [],
+      "size": 3224
+    },
+    {
+      "source": "/tmp/ngv-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-check.js",
+      "source_sha256": "afac0801b87ab691f969b7f6afe384f56b71104796ab94564b0a56ee96c0d281",
+      "git_sha256": "afac0801b87ab691f969b7f6afe384f56b71104796ab94564b0a56ee96c0d281",
+      "redactions": [],
+      "size": 42953
+    },
+    {
+      "source": "/tmp/ngv-chrome-spacing-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-chrome-spacing-host-review.mjs",
+      "source_sha256": "fc6a4c28e5c2c2aeda8586f8b3d51b8400e8e791e9b2074efa145ddad1931983",
+      "git_sha256": "396c0fdc386fda8f20a4fb9ba230112c4358f0dec427c3e7c3d5c223704a5f12",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3965
+    },
+    {
+      "source": "/tmp/ngv-clay-update.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-clay-update.py",
+      "source_sha256": "970f6d7bd1e67cb81ec899856b8ccf2a1e62de2a1969d2996b62f3481d2f3776",
+      "git_sha256": "970f6d7bd1e67cb81ec899856b8ccf2a1e62de2a1969d2996b62f3481d2f3776",
+      "redactions": [],
+      "size": 4823
+    },
+    {
+      "source": "/tmp/ngv-click-extension.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-click-extension.js",
+      "source_sha256": "e87e9cc3ea02dedb834a561bc0ee274d301b789d5002fb030758bb5feb2f1896",
+      "git_sha256": "e87e9cc3ea02dedb834a561bc0ee274d301b789d5002fb030758bb5feb2f1896",
+      "redactions": [],
+      "size": 26373
+    },
+    {
+      "source": "/tmp/ngv-click-style.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-click-style.css",
+      "source_sha256": "d7e41fc3268ec5c7ebec2368b16d0a11293e2f59d7f6d764b64cd4fc2cedfbad",
+      "git_sha256": "d7e41fc3268ec5c7ebec2368b16d0a11293e2f59d7f6d764b64cd4fc2cedfbad",
+      "redactions": [],
+      "size": 3174
+    },
+    {
+      "source": "/tmp/ngv-click-tests.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-click-tests.js",
+      "source_sha256": "53fcc00ec18c43f77f3cc5de673a6d55bbb4197ba0c1ffce88e1078cdd098988",
+      "git_sha256": "53fcc00ec18c43f77f3cc5de673a6d55bbb4197ba0c1ffce88e1078cdd098988",
+      "redactions": [],
+      "size": 6878
+    },
+    {
+      "source": "/tmp/ngv-compact-chrome.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-compact-chrome.py",
+      "source_sha256": "713837bcf90ef85ccc07178b8eb4229397b8e2b5ca81daaa4e94a720a25a30a4",
+      "git_sha256": "734da0f08982f085e950ae07b566f65cb17cd892bed35b6853c59f59371b7c3e",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4382
+    },
+    {
+      "source": "/tmp/ngv-compact-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-compact-review.mjs",
+      "source_sha256": "b219e6158d0eee5c6acdd6f4d8ac00b96b68f9cb41800e5863a7ef4da1522a22",
+      "git_sha256": "3757f81aafdaa41ecc8e3138aa9d0be3c93af4ebb796970ec28be12e7e3fac15",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5593
+    },
+    {
+      "source": "/tmp/ngv-contract.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-contract.js",
+      "source_sha256": "0a305b846653f4d717f887481039a9763fe849e782859f4e26ba7728dec10dfc",
+      "git_sha256": "0a305b846653f4d717f887481039a9763fe849e782859f4e26ba7728dec10dfc",
+      "redactions": [],
+      "size": 19691
+    },
+    {
+      "source": "/tmp/ngv-control-spacing-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-control-spacing-review.mjs",
+      "source_sha256": "7951cfd2eb997054024d6d57289cb330ada2b5216ade1504356f0dfd79610289",
+      "git_sha256": "4dd560f769ade733528ea7008d4469104a15f0e2cdf6b76b8c719c74fc8b5ce0",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 10086
+    },
+    {
+      "source": "/tmp/ngv-controls-final-visual.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-controls-final-visual.mjs",
+      "source_sha256": "884586f428f5770ce91e67f500f75ebc22b47f9c104a5001cb8b47bfc59d2511",
+      "git_sha256": "bb9032058be3405ffbbdb2ec8e7d17f6e8ffcfaf9e3888667e5f442d096c6fe5",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 7055
+    },
+    {
+      "source": "/tmp/ngv-controls-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-controls-host-review.mjs",
+      "source_sha256": "5858e9150e939dd201fc1d85a1b2c58e92113cc8327f2d1d0dac089ef520d10b",
+      "git_sha256": "7aacf800196892c713ad68f80e7497b6d286f66d5177726e65b5213969b38308",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3838
+    },
+    {
+      "source": "/tmp/ngv-controls-narrow.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-controls-narrow.mjs",
+      "source_sha256": "41ad755d251ea4e603ca07236e8698e79bd9afcc5230106cde8f6ce1baa69baa",
+      "git_sha256": "e93211a8f01c936b225eecdb954a6980d22507b863bea4bedefb11e8c36b8087",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6071
+    },
+    {
+      "source": "/tmp/ngv-current.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-current.js",
+      "source_sha256": "01269e2c4385ed1f6e72f77203b8e3749f88e5b725670e48c1ca34752dd75507",
+      "git_sha256": "01269e2c4385ed1f6e72f77203b8e3749f88e5b725670e48c1ca34752dd75507",
+      "redactions": [],
+      "size": 110775
+    },
+    {
+      "source": "/tmp/ngv-desktop-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-desktop-check.js",
+      "source_sha256": "388597cca2d730e41a10441aa350704836d55bf2fb68b315e77e911e0e03506d",
+      "git_sha256": "388597cca2d730e41a10441aa350704836d55bf2fb68b315e77e911e0e03506d",
+      "redactions": [],
+      "size": 21765
+    },
+    {
+      "source": "/tmp/ngv-desktop-functions.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-desktop-functions.js",
+      "source_sha256": "307390498de59c59c07d4aa7413648fc27cbef40f159868214421f065064276f",
+      "git_sha256": "307390498de59c59c07d4aa7413648fc27cbef40f159868214421f065064276f",
+      "redactions": [],
+      "size": 4165
+    },
+    {
+      "source": "/tmp/ngv-edit-physical.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-edit-physical.mjs",
+      "source_sha256": "e426ae21cbb6f3957e77a61156d3bf4fe74d3cd9a95e254b9f4d9694e62859db",
+      "git_sha256": "cc6c145f7e6e007a86f53e533f3b8f10b3633254e661d061110a527a7a968eaa",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5849
+    },
+    {
+      "source": "/tmp/ngv-events.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-events.js",
+      "source_sha256": "62eaff78fcd007974b17c862914d8c9ed95d70e860329e080f77c23b02191924",
+      "git_sha256": "62eaff78fcd007974b17c862914d8c9ed95d70e860329e080f77c23b02191924",
+      "redactions": [],
+      "size": 2639
+    },
+    {
+      "source": "/tmp/ngv-existing.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-existing.js",
+      "source_sha256": "e52a3e7ae1b597275d2f5e985cfa2f8bc7fd0bcedad14dfcc5eea4cdf5c7a770",
+      "git_sha256": "e52a3e7ae1b597275d2f5e985cfa2f8bc7fd0bcedad14dfcc5eea4cdf5c7a770",
+      "redactions": [],
+      "size": 38688
+    },
+    {
+      "source": "/tmp/ngv-extra-fix.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-extra-fix.py",
+      "source_sha256": "0a19e04054460beaa938c904bc40b68491729354d23aa6891e1e4df48650037b",
+      "git_sha256": "fcfd1e5d74ce848cd9f6cd212af2c7a37f415fcbc34e40f868cdfe8931147a76",
+      "redactions": [
+        "/home/cwendler/"
+      ],
+      "size": 1740
+    },
+    {
+      "source": "/tmp/ngv-extra-tests.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-extra-tests.py",
+      "source_sha256": "256e1b011ed6262ac3e0ddebba6fdad232c46370ffb7832da31628d5fc8fa08f",
+      "git_sha256": "256e1b011ed6262ac3e0ddebba6fdad232c46370ffb7832da31628d5fc8fa08f",
+      "redactions": [],
+      "size": 5031
+    },
+    {
+      "source": "/tmp/ngv-fable-context.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fable-context.py",
+      "source_sha256": "5cd91ba8bf67ca736418410bf26ebb4e85057e11d6a80445ef2b2f95ca59649c",
+      "git_sha256": "5cd91ba8bf67ca736418410bf26ebb4e85057e11d6a80445ef2b2f95ca59649c",
+      "redactions": [],
+      "size": 9587
+    },
+    {
+      "source": "/tmp/ngv-fable-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fable-fixes.py",
+      "source_sha256": "630b7eb78f6b43f7b7c439c60d6c98329a2cf096e2eaf204a06b9c50a8b3be92",
+      "git_sha256": "630b7eb78f6b43f7b7c439c60d6c98329a2cf096e2eaf204a06b9c50a8b3be92",
+      "redactions": [],
+      "size": 14599
+    },
+    {
+      "source": "/tmp/ngv-film-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-film-check.js",
+      "source_sha256": "88f728086c301a87c85c051bfb3bea0bcac5ae9f52ba61a182be70d8f2a8be83",
+      "git_sha256": "88f728086c301a87c85c051bfb3bea0bcac5ae9f52ba61a182be70d8f2a8be83",
+      "redactions": [],
+      "size": 17270
+    },
+    {
+      "source": "/tmp/ngv-film-tests.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-film-tests.js",
+      "source_sha256": "68020ccd5023cf5fc5ce969bf80aa1bfb0ec8fbf9b006b0007063b3d9381e0e8",
+      "git_sha256": "68020ccd5023cf5fc5ce969bf80aa1bfb0ec8fbf9b006b0007063b3d9381e0e8",
+      "redactions": [],
+      "size": 2640
+    },
+    {
+      "source": "/tmp/ngv-final-add.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-final-add.py",
+      "source_sha256": "5322ec30f821f9725988082a96bd60732862e8ff9d9cf74f0681021a6f4e49fb",
+      "git_sha256": "5322ec30f821f9725988082a96bd60732862e8ff9d9cf74f0681021a6f4e49fb",
+      "redactions": [],
+      "size": 5110
+    },
+    {
+      "source": "/tmp/ngv-final-review-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-final-review-fixes.py",
+      "source_sha256": "5858bebc3850f05c9d85b1beabc25b1a2a2f2060e8c777e67864ef637f13750e",
+      "git_sha256": "5858bebc3850f05c9d85b1beabc25b1a2a2f2060e8c777e67864ef637f13750e",
+      "redactions": [],
+      "size": 3182
+    },
+    {
+      "source": "/tmp/ngv-finish-physical.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-finish-physical.mjs",
+      "source_sha256": "7b203fe9f747b4fc687a49098295055ba121d0b0d057bc23fbb3e2d9b13bef1e",
+      "git_sha256": "92efedfeab76393fa993c8033691adea929ae7a6bdf3fada0f7a894b70a15c12",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 7412
+    },
+    {
+      "source": "/tmp/ngv-first-use.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-first-use.mjs",
+      "source_sha256": "1725aa9d3b891ecfe9e1879ca088f9499f3a967b53ee55a7a8371b7f5c023237",
+      "git_sha256": "db31010665f06f4cce56f1242dc74f43394177703b95e1c6000d918907735fc6",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4160
+    },
+    {
+      "source": "/tmp/ngv-fix.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fix.js",
+      "source_sha256": "94efee8d1d074dcb17880d8851359e743cf3d2cffce550b0363075a9b77cbc64",
+      "git_sha256": "94efee8d1d074dcb17880d8851359e743cf3d2cffce550b0363075a9b77cbc64",
+      "redactions": [],
+      "size": 62593
+    },
+    {
+      "source": "/tmp/ngv-fix.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fix.py",
+      "source_sha256": "abead68aad742d1f154d13c09082ce935bcf2afcc32413cd5346b32fb9f9c9bf",
+      "git_sha256": "e1aa68395cde768884082884022ae59767e349b65982eeb48b394826b41f05f6",
+      "redactions": [
+        "/home/cwendler/"
+      ],
+      "size": 1444
+    },
+    {
+      "source": "/tmp/ngv-fixed-layout.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fixed-layout.css",
+      "source_sha256": "d1ebf3d4c0943f2c0123e5952d55a28bd3ff67268cdefb1c3ac5098f1c133806",
+      "git_sha256": "d1ebf3d4c0943f2c0123e5952d55a28bd3ff67268cdefb1c3ac5098f1c133806",
+      "redactions": [],
+      "size": 2371
+    },
+    {
+      "source": "/tmp/ngv-flow-assemble.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-flow-assemble.py",
+      "source_sha256": "a8542c3bbed3c2c45e735f4c904e6557c771d6c3c7bac328cbda98e54dd5cefd",
+      "git_sha256": "444e8e2e06286bf1cb9055dec39973bb38522bf59fc0ad4835be50d63f4e9f6b",
+      "redactions": [
+        "/home/cwendler/"
+      ],
+      "size": 1024
+    },
+    {
+      "source": "/tmp/ngv-flow-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-flow-check.js",
+      "source_sha256": "e52a3e7ae1b597275d2f5e985cfa2f8bc7fd0bcedad14dfcc5eea4cdf5c7a770",
+      "git_sha256": "e52a3e7ae1b597275d2f5e985cfa2f8bc7fd0bcedad14dfcc5eea4cdf5c7a770",
+      "redactions": [],
+      "size": 38688
+    },
+    {
+      "source": "/tmp/ngv-flow.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-flow.css",
+      "source_sha256": "0d9e1ec2d8b543fc7a98863887b36c520b96d56a5a729756db6ec1a929d16e84",
+      "git_sha256": "0d9e1ec2d8b543fc7a98863887b36c520b96d56a5a729756db6ec1a929d16e84",
+      "redactions": [],
+      "size": 2742
+    },
+    {
+      "source": "/tmp/ngv-flow.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-flow.js",
+      "source_sha256": "5ab8f7d028989822affc60d9fd108be68e3eed2eec991b6d639f3fcc50b658af",
+      "git_sha256": "5ab8f7d028989822affc60d9fd108be68e3eed2eec991b6d639f3fcc50b658af",
+      "redactions": [],
+      "size": 38706
+    },
+    {
+      "source": "/tmp/ngv-fork-0.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fork-0.js",
+      "source_sha256": "ecfb8d8fe183b1b613e495a42dd32f8d1f53ad711e1e6a59ae721ab8fcdd0c68",
+      "git_sha256": "ecfb8d8fe183b1b613e495a42dd32f8d1f53ad711e1e6a59ae721ab8fcdd0c68",
+      "redactions": [],
+      "size": 4561
+    },
+    {
+      "source": "/tmp/ngv-fork-1.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-fork-1.js",
+      "source_sha256": "e97678fa659e6cb16f68df2494e17d0212c8d42987f21fbb65460a219f95465f",
+      "git_sha256": "e97678fa659e6cb16f68df2494e17d0212c8d42987f21fbb65460a219f95465f",
+      "redactions": [],
+      "size": 13543
+    },
+    {
+      "source": "/tmp/ngv-generation-physical.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-generation-physical.mjs",
+      "source_sha256": "2a690a8e40bf27fd12c947670f38901a53993aef9ad582a00b9399f5b5d25fda",
+      "git_sha256": "2a0b2ed6cd23e05e3f70171d4fb395d1732a5642ba1e0903b5665fc4b98fe74f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5065
+    },
+    {
+      "source": "/tmp/ngv-grid-check.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-grid-check.mjs",
+      "source_sha256": "207fff6da3ba5a83bd984c6fc648805ce266c4ce802a114d53c987a81a9ce336",
+      "git_sha256": "14006a846b9e86f2adcb494a51ca2f4b59d54d255d419a4adba4c2ec60e7f032",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2344
+    },
+    {
+      "source": "/tmp/ngv-guided-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-guided-check.js",
+      "source_sha256": "4e0aa9fff8f08c0248bf2942103c44c915d03259d25cd79acd29a4367fceb372",
+      "git_sha256": "4e0aa9fff8f08c0248bf2942103c44c915d03259d25cd79acd29a4367fceb372",
+      "redactions": [],
+      "size": 46189
+    },
+    {
+      "source": "/tmp/ngv-guided.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-guided.js",
+      "source_sha256": "0085dd0fb7363baf5fdc0351534078903e05533291df33cb0517170ea944bd33",
+      "git_sha256": "0085dd0fb7363baf5fdc0351534078903e05533291df33cb0517170ea944bd33",
+      "redactions": [],
+      "size": 3038
+    },
+    {
+      "source": "/tmp/ngv-inspector-scroll-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-inspector-scroll-review.mjs",
+      "source_sha256": "55106b262da919d53667c96242dcc64c07a79e2ee41e4538ec5e7fc7297ec0cc",
+      "git_sha256": "fa2b0a42a596c3015b2ce23622d4cc0e999e83aaa8bfc7c9325ebc40fff73389",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 8250
+    },
+    {
+      "source": "/tmp/ngv-integrate-edit.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-integrate-edit.py",
+      "source_sha256": "1623e8adb26ee68a4ed3ec276425e65b86bced3f8b0a4e18b35bc521a16639b1",
+      "git_sha256": "1623e8adb26ee68a4ed3ec276425e65b86bced3f8b0a4e18b35bc521a16639b1",
+      "redactions": [],
+      "size": 5408
+    },
+    {
+      "source": "/tmp/ngv-issue-216-decision.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-issue-216-decision.md",
+      "source_sha256": "631d44ed2cde58b7190e5a1d9b4826e39bca794093e38eb47feb4650bb61577d",
+      "git_sha256": "631d44ed2cde58b7190e5a1d9b4826e39bca794093e38eb47feb4650bb61577d",
+      "redactions": [],
+      "size": 408
+    },
+    {
+      "source": "/tmp/ngv-issues-query.graphql",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-issues-query.graphql",
+      "source_sha256": "f96bb2a6ba8c6ff33333b9707f6f9d173eeef5f4e8f645b03c7d249990d651e9",
+      "git_sha256": "f96bb2a6ba8c6ff33333b9707f6f9d173eeef5f4e8f645b03c7d249990d651e9",
+      "redactions": [],
+      "size": 2983
+    },
+    {
+      "source": "/tmp/ngv-last-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-last-fixes.py",
+      "source_sha256": "afcf3c902257b2fa9ef81a3059e36a9d27ec683b0bec7a3b981b877385757cb8",
+      "git_sha256": "afcf3c902257b2fa9ef81a3059e36a9d27ec683b0bec7a3b981b877385757cb8",
+      "redactions": [],
+      "size": 1509
+    },
+    {
+      "source": "/tmp/ngv-main-before-workspace.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-main-before-workspace.js",
+      "source_sha256": "daea9ead45ec54fb9a2e644f6a3567b66d6c6096b8596d9cd4baf91522301e4d",
+      "git_sha256": "daea9ead45ec54fb9a2e644f6a3567b66d6c6096b8596d9cd4baf91522301e4d",
+      "redactions": [],
+      "size": 79277
+    },
+    {
+      "source": "/tmp/ngv-master.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-master.py",
+      "source_sha256": "79f843a966db8914511806a534afe2fc101aeff207edbb559f135cc76a8a1d19",
+      "git_sha256": "79f843a966db8914511806a534afe2fc101aeff207edbb559f135cc76a8a1d19",
+      "redactions": [],
+      "size": 5999
+    },
+    {
+      "source": "/tmp/ngv-media-before-workspace.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-media-before-workspace.js",
+      "source_sha256": "15225f044297e9564bb3a6faffaeb012644d48b5045e4a8cca0ad08899ce0faa",
+      "git_sha256": "15225f044297e9564bb3a6faffaeb012644d48b5045e4a8cca0ad08899ce0faa",
+      "redactions": [],
+      "size": 11775
+    },
+    {
+      "source": "/tmp/ngv-media-edit.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-media-edit.py",
+      "source_sha256": "caf29725f494c43396ada3a56bc08d1416aa7b5ae55667c206331c4817c98624",
+      "git_sha256": "caf29725f494c43396ada3a56bc08d1416aa7b5ae55667c206331c4817c98624",
+      "redactions": [],
+      "size": 5282
+    },
+    {
+      "source": "/tmp/ngv-media-physical.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-media-physical.mjs",
+      "source_sha256": "8f671274f8bd7ebf625a8626c007e93898cdb1f1ecbe8be83b9fb0ef283616a1",
+      "git_sha256": "a4dbd9e1a7b254e9b64de7d95848174314d256a7eb67b10fdbc5e66721f0d6c3",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5363
+    },
+    {
+      "source": "/tmp/ngv-media-spacing-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-media-spacing-review.mjs",
+      "source_sha256": "ef84714cc1fe716e2c455d6b5ec2f5c7b30e3d133c8828bc07e4bd8111ecf0a0",
+      "git_sha256": "6961dd426b166f3d0244eb180cd0340276656c908549156dd6a380cf1ae3c66e",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5957
+    },
+    {
+      "source": "/tmp/ngv-media-workspace-physical.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-media-workspace-physical.mjs",
+      "source_sha256": "d8090d0c0f42595f55aea0fe191770f1291588f909bae9da547d43c02ff87502",
+      "git_sha256": "0063abdf681fa2d2a621ce17d33a411c818fd8b8a5fe79520439fa2cf6427f58",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5479
+    },
+    {
+      "source": "/tmp/ngv-mock-checks.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-mock-checks.js",
+      "source_sha256": "8f83dcd8733c18cb5d340e40c40213ae7081075aaade8b18d89e2a88ab18ecbe",
+      "git_sha256": "8f83dcd8733c18cb5d340e40c40213ae7081075aaade8b18d89e2a88ab18ecbe",
+      "redactions": [],
+      "size": 2791
+    },
+    {
+      "source": "/tmp/ngv-neutral-style.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-neutral-style.py",
+      "source_sha256": "ea6bc1198ab74e276b096bca8d67893dae520784b05cfbfaf8c3b583b485c621",
+      "git_sha256": "378b279672e01c599983d40313dd7614bd21279471510e6ae7b94fbe51e62fa3",
+      "redactions": [
+        "/home/cwendler/"
+      ],
+      "size": 2692
+    },
+    {
+      "source": "/tmp/ngv-next-ui-scopes.md",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-next-ui-scopes.md",
+      "source_sha256": "f833cb6155ef75c6693f37a8882f363732aea1364226159b2ada2ff07bfeb1f2",
+      "git_sha256": "f833cb6155ef75c6693f37a8882f363732aea1364226159b2ada2ff07bfeb1f2",
+      "redactions": [],
+      "size": 2157
+    },
+    {
+      "source": "/tmp/ngv-panel-controls.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-panel-controls.py",
+      "source_sha256": "39c6d5a3b230d3fe726be840528217a65929aa25c6ada2e4a162f80a644508e4",
+      "git_sha256": "39c6d5a3b230d3fe726be840528217a65929aa25c6ada2e4a162f80a644508e4",
+      "redactions": [],
+      "size": 10248
+    },
+    {
+      "source": "/tmp/ngv-panel-icons.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-panel-icons.py",
+      "source_sha256": "0b9b83db4f1f2d620143d9214d6fa2bc5c3d3220de91cbbec6db45983f527372",
+      "git_sha256": "0b9b83db4f1f2d620143d9214d6fa2bc5c3d3220de91cbbec6db45983f527372",
+      "redactions": [],
+      "size": 5292
+    },
+    {
+      "source": "/tmp/ngv-phase-dock.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-dock.js",
+      "source_sha256": "79f78b871aae8ccd29cdd27a5ad02c7fa7e69077c05ab792430edb6c7fbe6968",
+      "git_sha256": "79f78b871aae8ccd29cdd27a5ad02c7fa7e69077c05ab792430edb6c7fbe6968",
+      "redactions": [],
+      "size": 933
+    },
+    {
+      "source": "/tmp/ngv-phase-endtoend.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-endtoend.js",
+      "source_sha256": "1652e5b7f2d428ee98fd3c8b42c778457bd815870302c24276c82489668819d5",
+      "git_sha256": "1652e5b7f2d428ee98fd3c8b42c778457bd815870302c24276c82489668819d5",
+      "redactions": [],
+      "size": 1820
+    },
+    {
+      "source": "/tmp/ngv-phase-refinements.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-refinements.js",
+      "source_sha256": "5b2789c2b4f9cac232afafe7d19525bc5350e791d51ad310ae5616ffe4a5dbc0",
+      "git_sha256": "5b2789c2b4f9cac232afafe7d19525bc5350e791d51ad310ae5616ffe4a5dbc0",
+      "redactions": [],
+      "size": 3529
+    },
+    {
+      "source": "/tmp/ngv-phase-style.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-style.css",
+      "source_sha256": "28257472b455417a2fc45887ef7bd46299d09e546a17f6a9fc73c58fcb7e64d3",
+      "git_sha256": "28257472b455417a2fc45887ef7bd46299d09e546a17f6a9fc73c58fcb7e64d3",
+      "redactions": [],
+      "size": 1226
+    },
+    {
+      "source": "/tmp/ngv-phase-tests.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-tests.js",
+      "source_sha256": "350d4113f1b45f3ca5c378a75a28b53d72163feeb79d0b9b27e9553852de91bc",
+      "git_sha256": "350d4113f1b45f3ca5c378a75a28b53d72163feeb79d0b9b27e9553852de91bc",
+      "redactions": [],
+      "size": 4787
+    },
+    {
+      "source": "/tmp/ngv-phase-workspaces.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-phase-workspaces.js",
+      "source_sha256": "a550bd9ed00503654b70d763166744e53727f9ddf17aa9dc8441e4d8aa8e3e14",
+      "git_sha256": "a550bd9ed00503654b70d763166744e53727f9ddf17aa9dc8441e4d8aa8e3e14",
+      "redactions": [],
+      "size": 20031
+    },
+    {
+      "source": "/tmp/ngv-polish-capture.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-polish-capture.mjs",
+      "source_sha256": "b0b7b891590ce9b68cced338e5cbe8197cc64a8c71be450ab46609ad20292137",
+      "git_sha256": "8dbd0218a2efd86ba8d68df5186419106f2015f7195f0c781fd2fcb570233320",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6198
+    },
+    {
+      "source": "/tmp/ngv-polish-edit.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-polish-edit.py",
+      "source_sha256": "530ab178148c41507c67661dc1a6ca04a7510125de2a3db5587f119dde80af59",
+      "git_sha256": "530ab178148c41507c67661dc1a6ca04a7510125de2a3db5587f119dde80af59",
+      "redactions": [],
+      "size": 7873
+    },
+    {
+      "source": "/tmp/ngv-polish-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-polish-host-review.mjs",
+      "source_sha256": "bd3fed85f5feedd1a0a6008763e5ec199e96a5fa7c4d0dac11190f7b417d9e6e",
+      "git_sha256": "a34517f2556a48ce3a82b7c0fc0f83cbc131b062908597cecffc2244d48e1a31",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4032
+    },
+    {
+      "source": "/tmp/ngv-refine-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-refine-fixes.py",
+      "source_sha256": "8a850ea52dff8e86a95f15aadc5d6566ad221c985871901f4de532e5487f70b4",
+      "git_sha256": "8a850ea52dff8e86a95f15aadc5d6566ad221c985871901f4de532e5487f70b4",
+      "redactions": [],
+      "size": 1503
+    },
+    {
+      "source": "/tmp/ngv-refine-more.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-refine-more.py",
+      "source_sha256": "da84d70056377a805ec80bfb4beead6f7713575915ad9e1a55ee8ffbe43a8d35",
+      "git_sha256": "da84d70056377a805ec80bfb4beead6f7713575915ad9e1a55ee8ffbe43a8d35",
+      "redactions": [],
+      "size": 2893
+    },
+    {
+      "source": "/tmp/ngv-refine.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-refine.py",
+      "source_sha256": "a7de7fbbaf233c16b6eee76205c6cc420cd53a0c49f6a8e3040f3df1065fc771",
+      "git_sha256": "a7de7fbbaf233c16b6eee76205c6cc420cd53a0c49f6a8e3040f3df1065fc771",
+      "redactions": [],
+      "size": 6485
+    },
+    {
+      "source": "/tmp/ngv-refinement-manual.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-refinement-manual.mjs",
+      "source_sha256": "926d0fb2a7c1e64f82b96023678b972eae41aeeedadbaec70db8654ebda4f19c",
+      "git_sha256": "e6dce3dd9ca79ebd66250c342491ec4f9b743bdad8fcb4094aa2f0b7ac955ed4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4239
+    },
+    {
+      "source": "/tmp/ngv-reproduce-edit.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-reproduce-edit.mjs",
+      "source_sha256": "67e182846f5514a18538452f054afb39a0c6e875b96fb7efde9faaa56767b37e",
+      "git_sha256": "bd2e12dd43b26fd6f016c0d1ed41779e2ae25a035ba95d73213f84db1b4ec60d",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2657
+    },
+    {
+      "source": "/tmp/ngv-review-artwork-host.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-artwork-host.mjs",
+      "source_sha256": "73ada1d13d92b65861172a2b25dd86e5fc5073b864c69419ca5d8619ca8c9546",
+      "git_sha256": "7232565836040f395e66318ac502c51511b78afe31af9918d543a154201cc83f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3481
+    },
+    {
+      "source": "/tmp/ngv-review-edit-final.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-edit-final.mjs",
+      "source_sha256": "07cb862909bca162055451ef53497d70d84ec4e6968e909e5ccfd580e3b6d77c",
+      "git_sha256": "e85a9670f89de9bc204e8f07e72fe57cda6c0e1eeb7afdfbd5967dd35dd326d2",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3934
+    },
+    {
+      "source": "/tmp/ngv-review-edit-icons.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-edit-icons.mjs",
+      "source_sha256": "affd865c926ae2e393d67b9738edac33f21eb6bfe8e575cbadae05a8f674365f",
+      "git_sha256": "20742b415855b83c274449953ff6224e1c2329313ec76f17b9a3615589de6a4b",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3557
+    },
+    {
+      "source": "/tmp/ngv-review-icons.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-icons.mjs",
+      "source_sha256": "2fed149a15e03d6ded8896ca18dcff55bca459abdf75f9657a23bf0b83c299c0",
+      "git_sha256": "2b28dbe2076759618df28663a78ec07f84d00cf0f709b4640b43ce09d81a5dbc",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3558
+    },
+    {
+      "source": "/tmp/ngv-review-media-icons.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-media-icons.mjs",
+      "source_sha256": "316d16b6c02016a465d1f0f4072077b8c2c4e1b2bee0679495ad162def81a1a5",
+      "git_sha256": "0b648df740e1ad9f0254861800009ad8145f92c88cd9a9f6e2af30af52300ea0",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3956
+    },
+    {
+      "source": "/tmp/ngv-review-navigation.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-navigation.mjs",
+      "source_sha256": "ab5e0d44e3481f02f1418872febff6f1640d2f674de030c2f16c38db99fbfd28",
+      "git_sha256": "77201ba1e7f96a463d7695bb807f27eb12e022ac9f67cabbf42adddcbf834d89",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4787
+    },
+    {
+      "source": "/tmp/ngv-review-pack-status.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-pack-status.mjs",
+      "source_sha256": "41a9f2b16fb436bdbb93a569dc951242d9def60b38309c96ae566d0346d2101e",
+      "git_sha256": "25e3e2e247645f71d89f8b901eb2e8804a8979b03383ddcf2f8ad9f909182cc7",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5193
+    },
+    {
+      "source": "/tmp/ngv-review-regressions.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-regressions.js",
+      "source_sha256": "56cd715ede304a8cc830e493d3a0c6bffd9aaf32144c64c9d07b842ad2a7866d",
+      "git_sha256": "56cd715ede304a8cc830e493d3a0c6bffd9aaf32144c64c9d07b842ad2a7866d",
+      "redactions": [],
+      "size": 6499
+    },
+    {
+      "source": "/tmp/ngv-review-toolbar-host.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-toolbar-host.mjs",
+      "source_sha256": "9817645126eb4c91f05ff4b555a366d7114f6dca1dafb454f377637edde39f5b",
+      "git_sha256": "b240439537d28cf5dbd19c4023e8bb66b62c5940f44dbe59d4a8dac606a77b42",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3226
+    },
+    {
+      "source": "/tmp/ngv-review-toolbar.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-toolbar.mjs",
+      "source_sha256": "024f2b9134773f36a400eda493e20ef011021bab76af6677f31ebd51fc11ab75",
+      "git_sha256": "115efe7445c596ffc5c287ea16bc4a71e6c9bb3f212693ee998f198c852a4864",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 7534
+    },
+    {
+      "source": "/tmp/ngv-review-undo.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-review-undo.mjs",
+      "source_sha256": "f3096e0bd57ba866acae1c31b4d56343ff52a05f2ecc08d6a72ba98eb6e5b593",
+      "git_sha256": "80ad5fde52cffd54fdd0ab603c8d55c38789b7e32a17801bb1d21fae6985eac4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5827
+    },
+    {
+      "source": "/tmp/ngv-run-acceptance-verification.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-run-acceptance-verification.py",
+      "source_sha256": "b4398a2e08261187a2fca20cadf398d57dfc2d9923edd6b6c2638d1b5f7e471e",
+      "git_sha256": "2bfddd1b695813f09bcd5c10c72a47e869c0e34cd00110d9cdf1d873b52a30ee",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo",
+        "/home/cwendler/"
+      ],
+      "size": 1193
+    },
+    {
+      "source": "/tmp/ngv-run-bounded-verification.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-run-bounded-verification.py",
+      "source_sha256": "4432758fc005289666277cc64022668a8440c4e6e464a1d74c1fd234b7b91381",
+      "git_sha256": "a1d7c7669570d984f44c230d51721915ab9525d2cf76bdf1ccc708dc696d298a",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo",
+        "/home/cwendler/"
+      ],
+      "size": 3583
+    },
+    {
+      "source": "/tmp/ngv-run-fable-polish.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-run-fable-polish.py",
+      "source_sha256": "57bac5c70e7a2c060a66ab23c13971937813d1a70eac39ac918028adfd2197ab",
+      "git_sha256": "e1604e9584f387babf48b5389ce5d5c6aac985893d95a2707a0f0c2a51f4e7cb",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo",
+        "/home/cwendler/"
+      ],
+      "size": 1134
+    },
+    {
+      "source": "/tmp/ngv-script.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-script.js",
+      "source_sha256": "47745486e5ba3df4dbfcfa4b53574dfe5c5a71f95a0ab742d13d6ad9d5a8ee74",
+      "git_sha256": "47745486e5ba3df4dbfcfa4b53574dfe5c5a71f95a0ab742d13d6ad9d5a8ee74",
+      "redactions": [],
+      "size": 4557
+    },
+    {
+      "source": "/tmp/ngv-scroll-debug.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-scroll-debug.mjs",
+      "source_sha256": "149f12360e0b43d5f8d312c1334dde83699475c68e05e3dd8bd82f4bdd087e7c",
+      "git_sha256": "fc62e4d8ba886b22a4fc88b48eef4fdb79ca36eed411e31a18b99e6c4c17925f",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 4249
+    },
+    {
+      "source": "/tmp/ngv-settings-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-settings-host-review.mjs",
+      "source_sha256": "dfddd9d1c3f1598ea97a1947b6571008dd47873d22449869cb660f40b62f75a8",
+      "git_sha256": "ddf0f2d23dd3baa00254c5ca1687a0ecf24432d213f328f23b77aa56e75236a6",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3736
+    },
+    {
+      "source": "/tmp/ngv-settings-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-settings-review.mjs",
+      "source_sha256": "871c0c3cd2fc7a352c3bcf4318f3441d0d4eb2cbaef92064a41958bb126673e4",
+      "git_sha256": "24bfca98b751ea091c86a3488331e83e7125cbfda4edeeea47cd35e1f8dcce76",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6847
+    },
+    {
+      "source": "/tmp/ngv-shot-context-final.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-shot-context-final.mjs",
+      "source_sha256": "8b91eac5fab2ad672799e12c95123f6f695f0197f85afda5ff0a8dfef1ecf0fe",
+      "git_sha256": "e0078902e314b0e8f45ef1203dd761b4b1c81bdef9021355ee886f64512a8b85",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 6959
+    },
+    {
+      "source": "/tmp/ngv-shot-context-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-shot-context-review.mjs",
+      "source_sha256": "86ab685034883346c41ecff29c9a70009276343d8dcfb635bdbd5cd4ffe8a5dd",
+      "git_sha256": "09183f59cdda0d86725643fe4634fd8d8375bb3e07628c065506a43e2fbf7194",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 11542
+    },
+    {
+      "source": "/tmp/ngv-shot-drag-diagnose.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-shot-drag-diagnose.mjs",
+      "source_sha256": "5357f045debb953c6066c9b0f0373ecc23177db8895f7e20812bbc475fccd34d",
+      "git_sha256": "1a1a1ea66601593ff6d61ded115eef466a0621921f4f65b0b62dbaa4a589f3c6",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 7425
+    },
+    {
+      "source": "/tmp/ngv-source.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-source.js",
+      "source_sha256": "78bffb50d1276fdecf448dd1549fd8c805a9efec3a64a00eb2e4a9bc0d58e061",
+      "git_sha256": "78bffb50d1276fdecf448dd1549fd8c805a9efec3a64a00eb2e4a9bc0d58e061",
+      "redactions": [],
+      "size": 33292
+    },
+    {
+      "source": "/tmp/ngv-spatial-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-spatial-check.js",
+      "source_sha256": "06e628a984165fa8b138e3310fcdcf25ba7714441fdfc0054b0a2846bcd301e5",
+      "git_sha256": "06e628a984165fa8b138e3310fcdcf25ba7714441fdfc0054b0a2846bcd301e5",
+      "redactions": [],
+      "size": 32940
+    },
+    {
+      "source": "/tmp/ngv-spatial-functions.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-spatial-functions.js",
+      "source_sha256": "31fb5508f40a38c44657cb5f757ba2ff2277d6d155a00f9220f7af2fd12617fa",
+      "git_sha256": "31fb5508f40a38c44657cb5f757ba2ff2277d6d155a00f9220f7af2fd12617fa",
+      "redactions": [],
+      "size": 10689
+    },
+    {
+      "source": "/tmp/ngv-spatial.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-spatial.css",
+      "source_sha256": "e7311fd225465bdffa89aacd5649b57a00fedb025742062b8c78230d21ad4854",
+      "git_sha256": "e7311fd225465bdffa89aacd5649b57a00fedb025742062b8c78230d21ad4854",
+      "redactions": [],
+      "size": 3160
+    },
+    {
+      "source": "/tmp/ngv-studio-docs.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-docs.py",
+      "source_sha256": "79481232075729bae98b1b351d324570f20e2e65882b439f819aa756c036db16",
+      "git_sha256": "79481232075729bae98b1b351d324570f20e2e65882b439f819aa756c036db16",
+      "redactions": [],
+      "size": 17829
+    },
+    {
+      "source": "/tmp/ngv-studio-finalfix.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-finalfix.py",
+      "source_sha256": "7e79f42ac49c7cd360f4d948b9cc2f9c688e2db2d01ee3da07ac21e7ef17aefc",
+      "git_sha256": "7e79f42ac49c7cd360f4d948b9cc2f9c688e2db2d01ee3da07ac21e7ef17aefc",
+      "redactions": [],
+      "size": 6922
+    },
+    {
+      "source": "/tmp/ngv-studio-fix.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-fix.py",
+      "source_sha256": "5ee16ef6638babe9449ae0f9a623d272f5023470fedb6fc12253888f9b0d0f16",
+      "git_sha256": "5ee16ef6638babe9449ae0f9a623d272f5023470fedb6fc12253888f9b0d0f16",
+      "redactions": [],
+      "size": 7908
+    },
+    {
+      "source": "/tmp/ngv-studio-guards.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-guards.mjs",
+      "source_sha256": "2c89994e42c179fa9712b27f9d39ef5c8bec685319b07c0f210ef3ee6280e066",
+      "git_sha256": "27db6cc77fb364918dafe9cbd70cda81450e1b55a91614f99525bdf2f01121d2",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 10296
+    },
+    {
+      "source": "/tmp/ngv-studio-patch.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-patch.py",
+      "source_sha256": "95fb0d7eeb0c18b065f52de0aac73b68e5cc69ee84c6b6aaf3f74af0729b8514",
+      "git_sha256": "95fb0d7eeb0c18b065f52de0aac73b68e5cc69ee84c6b6aaf3f74af0729b8514",
+      "redactions": [],
+      "size": 1939
+    },
+    {
+      "source": "/tmp/ngv-studio-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-review.mjs",
+      "source_sha256": "fa030f3bc38ef6da7b91a5b5d0757a4e60665187aa00839b76bd04d76590b1b9",
+      "git_sha256": "09a0b7ac703c1d80174348dc6b20bba9925f86ca47ed4e88b3fc9f1191b755fa",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2532
+    },
+    {
+      "source": "/tmp/ngv-studio-verify.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-studio-verify.mjs",
+      "source_sha256": "57e5dbcb0411b7cac62eeffb1f776f5ecf370fffd32a8f4e47bbf74f8c55418a",
+      "git_sha256": "5baa08770cf5e1b20c7e2983d42b5f1ad3da80e9abe6fd37e61241af89ffc20e",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 9595
+    },
+    {
+      "source": "/tmp/ngv-task7-round1-inspect.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-task7-round1-inspect.mjs",
+      "source_sha256": "e5efbbf060c29604538e983e090292dfa1f94b21bc36d58cb3da4443c745725b",
+      "git_sha256": "f6cf356390e46da6842afc231f2325f856877fefca8fc466b6ae235c26359a85",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5646
+    },
+    {
+      "source": "/tmp/ngv-test.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-test.js",
+      "source_sha256": "d62716cbec032d3eb8ec81326b1fc78683661a33a71fcc81e702fc5d6c7b5ef3",
+      "git_sha256": "d62716cbec032d3eb8ec81326b1fc78683661a33a71fcc81e702fc5d6c7b5ef3",
+      "redactions": [],
+      "size": 2451
+    },
+    {
+      "source": "/tmp/ngv-tests-before-workspace.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-tests-before-workspace.js",
+      "source_sha256": "53b6fcd7e35384a377794029bec43520c413330bf99bd5a0f984f2c8edd9df0e",
+      "git_sha256": "53b6fcd7e35384a377794029bec43520c413330bf99bd5a0f984f2c8edd9df0e",
+      "redactions": [],
+      "size": 26840
+    },
+    {
+      "source": "/tmp/ngv-tile-scale-final.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-tile-scale-final.mjs",
+      "source_sha256": "c2c48100a26ac025c9b83dc853a0d90f0df1f676773809b0793fb22a8358f650",
+      "git_sha256": "0ce3ec4617c62169b8b8ac374c85e0c48930da73a96bf181dbdbc01868f861f4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 5353
+    },
+    {
+      "source": "/tmp/ngv-tile-spacing-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-tile-spacing-review.mjs",
+      "source_sha256": "b1f1e0321bf5b80265c5645327dc1459b399ad45e7291aa2884795a4f89b4a80",
+      "git_sha256": "affd058ad32fcb6dbf30f6ea59a18fb7537511062d17abb8f3af99000a73991a",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 9164
+    },
+    {
+      "source": "/tmp/ngv-title-spacing-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-title-spacing-review.mjs",
+      "source_sha256": "2e563f8ed7427623d6513de655b31ce45a076cec8e5535c52d6cd9d9d55bd593",
+      "git_sha256": "b7df612b4d22790c33e5320051a74796be83f58f37bf7ded5370b9e233cf0ef4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3760
+    },
+    {
+      "source": "/tmp/ngv-ui-followup.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-ui-followup.py",
+      "source_sha256": "0a1033af3d0d9dc5ac79960bba8955c6fb8602d4e7698b74896709b691df13d3",
+      "git_sha256": "0a1033af3d0d9dc5ac79960bba8955c6fb8602d4e7698b74896709b691df13d3",
+      "redactions": [],
+      "size": 2882
+    },
+    {
+      "source": "/tmp/ngv-update-ui.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-update-ui.py",
+      "source_sha256": "f4e805cb22d3213e754f9a5f5b376d5cca649a3988646a6b0f64ca73054d8c8c",
+      "git_sha256": "f4e805cb22d3213e754f9a5f5b376d5cca649a3988646a6b0f64ca73054d8c8c",
+      "redactions": [],
+      "size": 18741
+    },
+    {
+      "source": "/tmp/ngv-ux-fixes.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-ux-fixes.py",
+      "source_sha256": "2a2bdb65429673d8a23782756b0f8dac7500cfe597c51f9eaf5290079b5a5d00",
+      "git_sha256": "2a2bdb65429673d8a23782756b0f8dac7500cfe597c51f9eaf5290079b5a5d00",
+      "redactions": [],
+      "size": 8480
+    },
+    {
+      "source": "/tmp/ngv-ux-followup.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-ux-followup.py",
+      "source_sha256": "7914cc7ea5ab14acd79e680c65d0ad682537ca171f9f9c426fe064b2272ceeff",
+      "git_sha256": "7914cc7ea5ab14acd79e680c65d0ad682537ca171f9f9c426fe064b2272ceeff",
+      "redactions": [],
+      "size": 2322
+    },
+    {
+      "source": "/tmp/ngv-v2-assemble.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-v2-assemble.py",
+      "source_sha256": "4f1ea6cb4aa5444336cc87e2825af9ef49424fb186f1245f3d19826ca0ed5290",
+      "git_sha256": "b32aa0f3bd44719ad92e2c00824877100cdfbc6aa9b808d7c0e3bd60eeae849a",
+      "redactions": [
+        "/home/cwendler/"
+      ],
+      "size": 1146
+    },
+    {
+      "source": "/tmp/ngv-v2-check.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-v2-check.js",
+      "source_sha256": "b1bb96183780c1e4ffc9eb2fb1b445860e0fa60d7e518a68b8ac1d585c26522a",
+      "git_sha256": "b1bb96183780c1e4ffc9eb2fb1b445860e0fa60d7e518a68b8ac1d585c26522a",
+      "redactions": [],
+      "size": 53999
+    },
+    {
+      "source": "/tmp/ngv-v2.css",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-v2.css",
+      "source_sha256": "813b7a25aa2c3e528594e6742009bb2e3336744b98a213afe41502955177d19f",
+      "git_sha256": "813b7a25aa2c3e528594e6742009bb2e3336744b98a213afe41502955177d19f",
+      "redactions": [],
+      "size": 12590
+    },
+    {
+      "source": "/tmp/ngv-v2.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-v2.js",
+      "source_sha256": "0aba2715bea2500c6beedeab88eac8184e183a244cb8d8cd84e1df0c38ac1bde",
+      "git_sha256": "0aba2715bea2500c6beedeab88eac8184e183a244cb8d8cd84e1df0c38ac1bde",
+      "redactions": [],
+      "size": 54017
+    },
+    {
+      "source": "/tmp/ngv-visual-takes-host-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-visual-takes-host-review.mjs",
+      "source_sha256": "cc2ce8bda4c84820a8be101c41701a16d6579036c0adae719bbc3e18d2d78c54",
+      "git_sha256": "5d9030c730e5a23ac34fefb35952e3270d362aae1305f4d98b54e18b43018dd6",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 3694
+    },
+    {
+      "source": "/tmp/ngv-visual-takes-review.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-visual-takes-review.mjs",
+      "source_sha256": "7240ab8b8df9da418b3ca412ebcf3c009e51edb97ec0edec4a078cdc25547839",
+      "git_sha256": "47d826fca0fc94365cc7457f027d37e696cf4d180f99547a89ce93d126dbe42e",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 8862
+    },
+    {
+      "source": "/tmp/ngv-window-controls.mjs",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-window-controls.mjs",
+      "source_sha256": "dbaa8fb4ec53e75bc751568c6a0c3166e2a22b0d38959834155265c7f4aa919f",
+      "git_sha256": "93884a26ed6000b1fd9e2261b6a250f2454e8996fbba38d6cf1b54ae1bba9ba4",
+      "redactions": [
+        "/home/cwendler/projects/nexgenvideo/repos/nexgenvideo"
+      ],
+      "size": 2225
+    },
+    {
+      "source": "/tmp/ngv-workbench-functions.js",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-workbench-functions.js",
+      "source_sha256": "9f84a5a97568777343f0097bcc378191255d3e80de9a8c6def6c429115097276",
+      "git_sha256": "9f84a5a97568777343f0097bcc378191255d3e80de9a8c6def6c429115097276",
+      "redactions": [],
+      "size": 15033
+    },
+    {
+      "source": "/tmp/ngv-workspace-edit.py",
+      "git_path": "docs/archives/ngv-working-drafts-2026-09-24/ngv-workspace-edit.py",
+      "source_sha256": "3955e85962e58451f31d8f0f0468e4da640e1579b13840c2fcc08cbfa7c8553c",
+      "git_sha256": "3955e85962e58451f31d8f0f0468e4da640e1579b13840c2fcc08cbfa7c8553c",
+      "redactions": [],
+      "size": 4237
+    }
+  ]
+}

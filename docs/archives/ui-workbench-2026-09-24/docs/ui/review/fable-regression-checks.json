@@ -1,0 +1,120 @@
+{
+  "results": [
+    {
+      "name": "Split selects only the new half; delete removes that half",
+      "pass": true
+    },
+    {
+      "name": "Command deselection clears inspector target",
+      "pass": true
+    },
+    {
+      "name": "Hidden occupied video tracks block video export and create finding",
+      "pass": true
+    },
+    {
+      "name": "Title selection owns inspector and excludes clip keyframes",
+      "pass": true
+    },
+    {
+      "name": "Delete title preserves video montage",
+      "pass": true
+    },
+    {
+      "name": "Hidden title track hides its picture overlay and cannot be removed as empty",
+      "pass": true
+    },
+    {
+      "name": "Title track lock protects text and deletion",
+      "pass": true
+    },
+    {
+      "name": "Insert splits the spanning clip without overlap",
+      "pass": true
+    },
+    {
+      "name": "Locks protect keyframes and indirect grade actions",
+      "pass": true
+    },
+    {
+      "name": "Mixed selection cannot reassign all tracks or absolute trims",
+      "pass": true
+    },
+    {
+      "name": "Batch grade affects selected video clips but not audio",
+      "pass": true
+    },
+    {
+      "name": "Animated parameter field updates keyframe and visible parameter value",
+      "pass": true
+    },
+    {
+      "name": "Postproduction hides montage tools and prevents montage delete",
+      "pass": true
+    },
+    {
+      "name": "Postproduction keyboard playback works",
+      "pass": true
+    },
+    {
+      "name": "Postproduction captions direct montage operations to Schnitt",
+      "pass": true
+    },
+    {
+      "name": "Entity task applies selected material rather than light",
+      "pass": true
+    },
+    {
+      "name": "Anker task returns its output to its bound shot",
+      "pass": true
+    },
+    {
+      "name": "Sync requires selected audio and picture pair",
+      "pass": true
+    },
+    {
+      "name": "Sync shifts only the bound selected audio",
+      "pass": true
+    },
+    {
+      "name": "Stale task explains why acceptance is blocked",
+      "pass": true
+    },
+    {
+      "name": "Project menu is anchored and nonmodal",
+      "pass": true
+    },
+    {
+      "name": "Right click medium opens a menu rather than Rename sheet",
+      "pass": true
+    },
+    {
+      "name": "Timecode uses four explicit fields",
+      "pass": true
+    },
+    {
+      "name": "Media usage reflects clips created from takes",
+      "pass": true
+    },
+    {
+      "name": "Test condition controls are absent from product UI",
+      "pass": true
+    },
+    {
+      "name": "Context-menu command opens bounded document sheet",
+      "pass": true
+    },
+    {
+      "name": "Context-menu rename updates same media",
+      "pass": true
+    },
+    {
+      "name": "Locked reference options cannot be selected for mutation",
+      "pass": true
+    },
+    {
+      "name": "Viewer content fits its available height",
+      "pass": true
+    }
+  ]
+}

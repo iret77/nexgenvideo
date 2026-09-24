@@ -1,0 +1,11 @@
+DRAFT — do not launch until current leaf finishes and parent revalidates final clean head. Only assign still-real findings.
+
+Du bist IMPLEMENTIERUNGS-LEAF für #541. Nur der Parent darf nicht implementieren; du sollst selbst implementieren. Keine Delegation/Agents/AI-CLIs/Reviewer/Fleet. AGENTS/basic-memory. Parent setzt exakte Basis. Bestehender Stack vollständig erhalten.
+
+Prüfe aktuellen Abschlussbericht und /tmp/ngv-541-supervisor-provisional.md. Vorläufige Restpunkte gegenFinalsourceverifizieren, obsoleteFindingnichtwiederholen:
+1 EchtesSBPLoperationfürSignale: Chromium/AnthropicPrimärprofilnutzen signal, nichtprocess-signal. Unbelegtes(denyprocess-signal)kannjedeSandboxinitialisierungabbrechen. KorrektebetriebssystemseitigeRegelmitrealvorbereitetemActionsnegativbelegundhealthyJobdanach. KeinePythonhook/SIG0-onlyErfolgsbehauptungalsalleinigerBeweis.
+2 NachProcess.runmussaufJEDEMFehlerpfadexaktesKindbeendet/abgewartetwerden, einschließlichidentity.write/EncodingFehlerbevorÜberwachungsschleife. Keineungebundenen/fremdenPIDs, Gruppen-SIGKILLnichterneuteinführen. LifecycleverantwortungnichtdurcheinenfehlgeschlagenenMetadatenwriteverlieren; vorbereiteteInjectiongenaudieserStelle.
+3 KonkreterSource-onlyActionsweg: aktuellerRuntimeworkflow blocktsofort--distribution. EinBuilderalsSkriptmitChecklistaberohneerreichbarenActionsjobkannkeinefehlendeSource-/Notice-Evidenzerzeugen. Manual-onlySourceClosureworkflow/JobaufkonkretemSHA,Ubuntu,ohneBinarybuild/Runtime/Provider/Gens/Secrets,gebundenesManifest+Sources+Notices+Validierung+ehrlicheCandidate/DistributionGrenze. KeinepublicBinaryguardumgehen. Erstfertigvorbereiten,nichtstarten.
+4 Quellekorrespondenz: offizielleWheelMETADATA→exakteReleaseSource+versions.cmake/Buildrezepte/Patche undvorbereiteterBinarybuildhash/LibraryVersionsnachweisprüfen. EinperwheelBuildattestistnichtautomatischgesetzlichePflicht. Schließe konkretfehltQuellVersion/BuildinputFakt, keinegenerischeewige'provenance'Freigabe. FehlendeQuellen/NoticessperrenweiterrealDistribution. KeinerfundeneLegalapproval/bitidentischerRebuild.
+
+KeineLockedSpecs/PackABI, keinelokalenBuilds/Tests/Compiler/App/Worker/Sandboxprobes/Devserver. KeinPush/PR/CI/Dispatch/Merge/Release. Statischprüfen,lokalCommitviaEskalation, /tmp/ngv-541-final-boundaries-result.md undCompletionaktualisieren. TLDR.

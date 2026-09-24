@@ -1,0 +1,3794 @@
+diff --git a/.github/workflows/bpy-runtime-acceptance.yml b/.github/workflows/bpy-runtime-acceptance.yml
+new file mode 100644
+index 00000000..fbad44c1
+--- /dev/null
++++ b/.github/workflows/bpy-runtime-acceptance.yml
+@@ -0,0 +1,230 @@
++name: Managed bpy Runtime Acceptance
++
++on:
++  workflow_dispatch:
++    inputs:
++      source_sha:
++        description: Exact commit to accept
++        required: true
++        type: string
++
++permissions:
++  contents: read
++
++concurrency:
++  group: bpy-runtime-acceptance-${{ inputs.source_sha }}
++  cancel-in-progress: false
++
++jobs:
++  source:
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          ref: ${{ inputs.source_sha }}
++      - name: Bind source and verify the lock before macOS allocation
++        env:
++          EXPECTED_SHA: ${{ inputs.source_sha }}
++        run: |
++          set -euo pipefail
++          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
++          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
++          python3 scripts/verify_bpy_runtime.py
++          python3 -m unittest \
++            scripts.test_verify_bpy_runtime \
++            scripts.test_bpy_runtime_workflow
++
++  build:
++    needs: source
++    runs-on: xcode-27
++    timeout-minutes: 90
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          ref: ${{ inputs.source_sha }}
++      - uses: ./.github/actions/setup-xcode-27
++      - uses: ./.github/actions/cache-swiftpm-dependencies
++      - name: Import existing Developer ID identity
++        env:
++          CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
++          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
++        run: |
++          set -euo pipefail
++          KEYCHAIN="$RUNNER_TEMP/bpy-signing.keychain-db"
++          KEYCHAIN_PW="$(openssl rand -base64 24)"
++          printf '%s' "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
++          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
++          security set-keychain-settings -lut 21600 "$KEYCHAIN"
++          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
++          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PW" -A -t cert -f pkcs12 \
++            -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security
++          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
++          security list-keychains -d user -s "$KEYCHAIN" \
++            $(security list-keychains -d user | sed 's/"//g')
++          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
++            | awk '/Developer ID Application/{print $2; exit}')"
++          [ -n "$IDENTITY" ]
++          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
++      - name: Prepare existing notary key
++        env:
++          NOTARY_KEY_B64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
++          NOTARY_KEY_ID_VALUE: ${{ secrets.MACOS_NOTARY_KEY_ID }}
++          NOTARY_ISSUER_VALUE: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
++        run: |
++          set -euo pipefail
++          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
++          {
++            echo "NOTARY_KEY_FILE=$RUNNER_TEMP/notary.p8"
++            echo "NOTARY_KEY_ID=$NOTARY_KEY_ID_VALUE"
++            echo "NOTARY_ISSUER=$NOTARY_ISSUER_VALUE"
++          } >> "$GITHUB_ENV"
++      - name: Build and unit-test on xcode-27
++        run: |
++          set -euo pipefail
++          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
++          scripts/stage_test_runtime.sh debug
++          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build
++      - name: Assemble and sign the pinned managed runtime
++        run: |
++          set -euo pipefail
++          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
++          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh release --sign
++          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
++      - name: Verify nested identities and the OS sandbox contract
++        run: |
++          set -euo pipefail
++          APP=.build/NexGenVideo.app
++          PYTHON="$APP/Contents/Helpers/BpyRuntime/python/bin/python3.13"
++          codesign --verify --strict --verbose=2 "$APP"
++          codesign -d --entitlements :- "$PYTHON" > "$RUNNER_TEMP/python-entitlements.plist"
++          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
++          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
++          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/python-entitlements.plist"
++          for slot in 0 1; do
++            XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
++            ENTITLEMENTS="$RUNNER_TEMP/xpc-entitlements-$slot.plist"
++            codesign --verify --strict --verbose=2 "$XPC"
++            codesign -d --entitlements :- "$XPC" > "$ENTITLEMENTS"
++            [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$ENTITLEMENTS")" = true ]
++            ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$ENTITLEMENTS"
++          done
++          test ! -e "$APP/Contents/Helpers/BpyRuntime/python/bin/pip"
++          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/NexGenVideo-bpy.zip"
++          scripts/notarize.sh "$RUNNER_TEMP/NexGenVideo-bpy.zip"
++          xcrun stapler staple "$APP"
++          xcrun stapler validate "$APP"
++          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/NexGenVideo-bpy-notarized.zip"
++      - uses: actions/upload-artifact@v4
++        with:
++          name: managed-bpy-notarized-${{ inputs.source_sha }}
++          path: ${{ runner.temp }}/NexGenVideo-bpy-notarized.zip
++          if-no-files-found: error
++          retention-days: 7
++
++  runtime:
++    needs: build
++    runs-on: macos-26
++    timeout-minutes: 30
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          ref: ${{ inputs.source_sha }}
++      - uses: actions/download-artifact@v4
++        with:
++          name: managed-bpy-notarized-${{ inputs.source_sha }}
++          path: ${{ runner.temp }}/download
++      - name: Relocate the notarized app and prepare denied resources
++        run: |
++          set -euo pipefail
++          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
++          [ "$(uname -m)" = arm64 ]
++          mkdir -p "$RUNNER_TEMP/relocated" "$RUNNER_TEMP/denied/foreign-project" \
++            "$RUNNER_TEMP/fake-bin" "$RUNNER_TEMP/approved-input"
++          ditto -x -k "$RUNNER_TEMP/download/NexGenVideo-bpy-notarized.zip" "$RUNNER_TEMP/relocated"
++          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
++          codesign --verify --strict --verbose=2 "$APP"
++          xcrun stapler validate "$APP"
++          spctl -a -vvv -t exec "$APP"
++          printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
++          printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
++          printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"
++          printf 'host-home-secret' > "$HOME/ngv-bpy-host-home-secret"
++          printf '{"approved":true}' > "$RUNNER_TEMP/approved-input/fixture.json"
++          ln -s "$RUNNER_TEMP/denied/provider-secret" "$RUNNER_TEMP/approved-input/symlink.json"
++          printf 'hardlink' > "$RUNNER_TEMP/approved-input/hardlink-source"
++          ln "$RUNNER_TEMP/approved-input/hardlink-source" "$RUNNER_TEMP/approved-input/hardlink.json"
++          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
++          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
++          chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
++      - name: Run real bpy acceptance without ambient Blender or Python
++        run: |
++          set -euo pipefail
++          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
++          EVIDENCE="$RUNNER_TEMP/evidence"
++          mkdir -p "$EVIDENCE"
++          DENIED="$(jq -cn \
++            --arg secret "$RUNNER_TEMP/denied/provider-secret" \
++            --arg canonical "$RUNNER_TEMP/denied/canonical-artifact" \
++            --arg foreign "$RUNNER_TEMP/denied/foreign-project/scene.blend" \
++            --arg home "$HOME/ngv-bpy-host-home-secret" \
++            '[$secret,$canonical,$foreign,$home]')"
++          system_profiler SPHardwareDataType > "$EVIDENCE/hardware.txt"
++          sw_vers > "$EVIDENCE/os.txt"
++          before="$(pgrep -f 'BpyRuntime/python' || true)"
++          [ -z "$before" ]
++          /usr/bin/time -l env \
++            PATH="$RUNNER_TEMP/fake-bin" \
++            BLENDER_USER_CONFIG="$RUNNER_TEMP/denied/foreign-blender" \
++            PYTHONPATH="$RUNNER_TEMP/denied/foreign-python" \
++            NGV_TEST_SECRET="must-not-cross-xpc" \
++            NGV_BPY_DENIED_PATHS="$DENIED" \
++            NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
++            NGV_SELFTEST_BPY="$EVIDENCE" \
++            "$APP/Contents/MacOS/NexGenVideo" \
++            > "$EVIDENCE/runtime.log" 2> "$EVIDENCE/time.txt"
++          grep -q SELFTEST_BPY_OK "$EVIDENCE/runtime.log"
++          jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
++            .python == "3.13.15"
++            and .bpy == "5.2.2"
++            and .sandboxed == true
++            and .coldStartSeconds > 0
++            and .warmJobSeconds > 0
++            and .jobMetrics.edit_seconds > 0
++            and .jobMetrics.render_seconds > 0
++            and .jobMetrics.peak_memory_bytes > 0
++            and .jobMetrics.vertices > 8
++            and .jobMetrics.polygons > 6
++            and .duplicateJoined == true
++            and .sessionsClosed == true
++            and .crossSessionDenied == true
++            and .timeoutState == "timedOut"
++            and .cancelState == "cancelled"
++            and .crashState == "crashed"
++            and .workerA != .workerB
++            and .workerEvidence.secret_environment_absent == true
++            and .workerEvidence.approved_input.approved == true
++            and (.workerEvidence.modifiers.NGV_Room | index("BEVEL")) != null
++            and (.workerEvidence.python_executable | startswith($app + "/"))
++            and (.workerEvidence.bpy_module | startswith($app + "/"))
++            and .workerEvidence.blender_user_config != $foreign
++            and (.workerEvidence.session_root as $session | .workerEvidence.blender_user_config | startswith($session + "/"))
++            and (.workerEvidence.network_denied.denied == true)
++            and (.workerEvidence.network_denied.errno == 1 or .workerEvidence.network_denied.errno == 13)
++            and all(.workerEvidence.denied_paths[]; .denied == true and (.errno == 1 or .errno == 13))
++            and (.workerEvidence.renderer.selected == "CYCLES_METAL" or .workerEvidence.renderer.selected == "CYCLES_CPU")
++          ' "$EVIDENCE/result.json"
++          test -s "$EVIDENCE/perspective.png"
++          [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]
++          [ "$(sips -g pixelHeight "$EVIDENCE/perspective.png" | awk '/pixelHeight/{print $2}')" = 360 ]
++          sleep 2
++          after="$(pgrep -f 'BpyRuntime/python' || true)"
++          [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
++          du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: managed-bpy-runtime-evidence-${{ inputs.source_sha }}
++          path: ${{ runner.temp }}/evidence
++          if-no-files-found: error
++          retention-days: 90
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index e6cf7bc6..e6cc4675 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -98,7 +98,7 @@ jobs:
+     if: needs.source_gate.outputs.build_required == 'true'
+     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
+     runs-on: xcode-27
+-    timeout-minutes: 20
++    timeout-minutes: 35
+     steps:
+       - uses: actions/checkout@v4
+ 
+@@ -168,7 +168,10 @@ jobs:
+ 
+       - name: Bundle (debug, ad-hoc signed)
+         if: needs.source_gate.outputs.bundle_required == 'true'
+-        run: scripts/bundle.sh debug
++        run: |
++          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
++          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh debug
++          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
+ 
+       - name: Verify app build did not mutate tracked source
+         if: needs.source_gate.outputs.bundle_required == 'true'
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 5e987b2c..6acd84ce 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -119,6 +119,10 @@ jobs:
+       - name: Verify private fixture bundle tooling
+         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+ 
++      - name: Block unresolved managed-runtime distribution obligations
++        if: ${{ inputs.dry_run == false }}
++        run: python3 scripts/verify_bpy_runtime.py --distribution
++
+       - name: Inspect or resume release publication
+         if: ${{ inputs.dry_run == false }}
+         id: publication-state
+@@ -462,7 +466,10 @@ jobs:
+         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+ 
+       - name: Build and sign app
+-        run: scripts/bundle.sh release --sign
++        run: |
++          scripts/stage_bpy_runtime.sh "$RUNNER_TEMP/bpy-runtime"
++          NGV_BPY_RUNTIME_ROOT="$RUNNER_TEMP/bpy-runtime" scripts/bundle.sh release --sign
++          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app
+ 
+       - name: Verify app bundling did not mutate tracked source
+         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+diff --git a/.github/workflows/signing-preflight.yml b/.github/workflows/signing-preflight.yml
+index b2af913e..9f36f96f 100644
+--- a/.github/workflows/signing-preflight.yml
++++ b/.github/workflows/signing-preflight.yml
+@@ -10,6 +10,10 @@ on:
+     paths:
+       - "scripts/bundle.sh"
+       - "scripts/NexGenVideo.entitlements"
++      - "Runtime/bpy/*.entitlements"
++      - "Runtime/bpy/NexGenVideoBpyService-Info.plist"
++      - "scripts/bundle_bpy_runtime.sh"
++      - "scripts/verify_bpy_bundle.sh"
+       - ".github/workflows/release.yml"
+       - ".github/workflows/signing-preflight.yml"
+       - "Sources/NexGenVideo/Resources/Info.plist"
+diff --git a/Package.swift b/Package.swift
+index b372ba62..7454bbdb 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -33,6 +33,7 @@ let package = Package(
+     products: [
+         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
+         .executable(name: "NexGenVideoDiagnostics", targets: ["NexGenVideoDiagnostics"]),
++        .executable(name: "NexGenVideoBpyService", targets: ["NexGenVideoBpyService"]),
+         // The first loadable pack — built as a dynamic library, then assembled +
+         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
+         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
+@@ -60,6 +61,13 @@ let package = Package(
+         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
+     ],
+     targets: [
++        .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
++        .executableTarget(
++            name: "NexGenVideoBpyService",
++            dependencies: ["BpyRuntimeProtocol"],
++            path: "Sources/NexGenVideoBpyService",
++            linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
++        ),
+         .target(name: "HangStackSampler", path: "Sources/HangStackSampler"),
+         .target(name: "HangDiagnostics", path: "Sources/HangDiagnostics"),
+         .executableTarget(
+@@ -70,6 +78,7 @@ let package = Package(
+         .executableTarget(
+             name: "NexGenVideo",
+             dependencies: [
++                "BpyRuntimeProtocol",
+                 "HangDiagnostics",
+                 "HangStackSampler",
+                 .product(name: "DSWaveformImage", package: "DSWaveformImage"),
+@@ -123,6 +132,7 @@ let package = Package(
+         .testTarget(
+             name: "NexGenVideoTests",
+             dependencies: [
++                "BpyRuntimeProtocol",
+                 "HangDiagnostics",
+                 "NexGenVideo",
+                 .product(name: "NexGenEngine", package: "Engine"),
+diff --git a/Runtime/bpy/NOTICE.md b/Runtime/bpy/NOTICE.md
+new file mode 100644
+index 00000000..4315b89f
+--- /dev/null
++++ b/Runtime/bpy/NOTICE.md
+@@ -0,0 +1,22 @@
++# Managed bpy runtime notices
++
++NexGenVideo prepares a separately sandboxed `bpy` worker built from the exact artifacts in
++`runtime-lock.json`. The application does not install packages at runtime and does not use a
++system Blender or Python.
++
++`bpy` and Blender are distributed under GPL-3.0-or-later. NexGenVideo is GPL-3.0. This repository
++does not claim that a process boundary removes GPL obligations. CPython, python-build-standalone,
++the declared Python wheels, and the native libraries listed in the lock carry their own licenses.
++The build copies the license files contained by the pinned artifacts into the runtime bundle.
++
++Public distribution is blocked until the exact native libraries vendored by the `bpy` wheel are
++mapped to their Corresponding Source and license notices and the combined distribution has been
++reviewed. `scripts/verify_bpy_runtime.py --distribution` enforces that block before a stable
++release can ship it.
++
++Primary sources:
++
++- <https://pypi.org/project/bpy/5.2.2/>
++- <https://download.blender.org/source/blender-5.2.2.tar.xz>
++- <https://github.com/astral-sh/python-build-standalone/releases/tag/20260901>
++- <https://www.python.org/downloads/release/python-31315/>
+diff --git a/Runtime/bpy/NexGenVideoBpyService-Info.plist b/Runtime/bpy/NexGenVideoBpyService-Info.plist
+new file mode 100644
+index 00000000..30afeb67
+--- /dev/null
++++ b/Runtime/bpy/NexGenVideoBpyService-Info.plist
+@@ -0,0 +1,29 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>CFBundleDevelopmentRegion</key>
++	<string>en</string>
++	<key>CFBundleExecutable</key>
++	<string>NexGenVideoBpyService</string>
++	<key>CFBundleIdentifier</key>
++	<string>de.h5ventures.nexgenvideo.bpy-service-template</string>
++	<key>CFBundleInfoDictionaryVersion</key>
++	<string>6.0</string>
++	<key>CFBundleName</key>
++	<string>NexGenVideoBpyService</string>
++	<key>CFBundlePackageType</key>
++	<string>XPC!</string>
++	<key>CFBundleShortVersionString</key>
++	<string>1.0</string>
++	<key>CFBundleVersion</key>
++	<string>1</string>
++	<key>LSMinimumSystemVersion</key>
++	<string>26.0</string>
++	<key>XPCService</key>
++	<dict>
++		<key>ServiceType</key>
++		<string>Application</string>
++	</dict>
++</dict>
++</plist>
+diff --git a/Runtime/bpy/NexGenVideoBpyService.entitlements b/Runtime/bpy/NexGenVideoBpyService.entitlements
+new file mode 100644
+index 00000000..852fa1a4
+--- /dev/null
++++ b/Runtime/bpy/NexGenVideoBpyService.entitlements
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>com.apple.security.app-sandbox</key>
++	<true/>
++</dict>
++</plist>
+diff --git a/Runtime/bpy/PythonChild.entitlements b/Runtime/bpy/PythonChild.entitlements
+new file mode 100644
+index 00000000..794eada1
+--- /dev/null
++++ b/Runtime/bpy/PythonChild.entitlements
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>com.apple.security.app-sandbox</key>
++	<true/>
++	<key>com.apple.security.inherit</key>
++	<true/>
++</dict>
++</plist>
+diff --git a/Runtime/bpy/runtime-lock.json b/Runtime/bpy/runtime-lock.json
+new file mode 100644
+index 00000000..9f230108
+--- /dev/null
++++ b/Runtime/bpy/runtime-lock.json
+@@ -0,0 +1,56 @@
++{
++  "schema": "nexgenvideo/bpy-runtime-lock/1",
++  "platform": "macos-arm64",
++  "pythonABI": "cp313",
++  "distributionStatus": "blocked-pending-corresponding-source-review",
++  "verifiedAt": "2026-09-24",
++  "runtime": {
++    "name": "python-build-standalone",
++    "version": "3.13.15+20260901",
++    "sourceCommit": "4bb01f09aaf362c71e891be4a41cb6d6ddf830b3",
++    "artifact": {
++      "filename": "cpython-3.13.15+20260901-aarch64-apple-darwin-pgo+lto-full.tar.zst",
++      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.13.15%2B20260901-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
++      "sha256": "46685a8e6dbad3e94534e0d73f483d08149867707200aa39e99690b76002053f",
++      "size": 58451885
++    },
++    "source": {
++      "url": "https://codeload.github.com/astral-sh/python-build-standalone/tar.gz/refs/tags/20260901",
++      "sha256": "bf4776e7bdb751a58fa6879d280b678f60b955b62b19ec98a32903fd82cee1c6",
++      "license": "MPL-2.0"
++    }
++  },
++  "pythonBuildInputs": [
++    {"name":"CPython","version":"3.13.15","license":"Python-2.0 AND CNRI-Python","url":"https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz","sha256":"1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76"},
++    {"name":"bzip2","version":"1.0.8","license":"bzip2-1.0.6","url":"https://astral-sh.github.io/mirror/files/bzip2-1.0.8.tar.gz","sha256":"ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"},
++    {"name":"expat","version":"2.8.4","license":"MIT","url":"https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz","sha256":"656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7"},
++    {"name":"libedit","version":"20240808-3.1","license":"BSD-3-Clause","url":"https://thrysoee.dk/editline/libedit-20240808-3.1.tar.gz","sha256":"5f0573349d77c4a48967191cdd6634dd7aa5f6398c6a57fe037cc02696d6099f"},
++    {"name":"libffi","version":"3.4.8","license":"MIT","url":"https://github.com/libffi/libffi/releases/download/v3.4.8/libffi-3.4.8.tar.gz","sha256":"bc9842a18898bfacb0ed1252c4febcc7e78fa139fd27fdc7a3e30d9d9356119b"},
++    {"name":"mpdecimal","version":"4.0.0","license":"BSD-2-Clause","url":"https://astral-sh.github.io/mirror/files/mpdecimal-4.0.0.tar.gz","sha256":"942445c3245b22730fd41a67a7c5c231d11cb1b9936b9c0f76334fb7d0b4468c"},
++    {"name":"ncurses","version":"6.5","license":"X11","url":"https://astral-sh.github.io/mirror/files/ncurses-6.5.tar.gz","sha256":"136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"},
++    {"name":"OpenSSL","version":"3.5.8","license":"Apache-2.0","url":"https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz","sha256":"a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"},
++    {"name":"SQLite","version":"3.53.1.0","license":"public-domain","url":"https://www.sqlite.org/2026/sqlite-autoconf-3530100.tar.gz","sha256":"83e6b2020a034e9a7ad4a72feea59e1ad52f162e09cbd26735a3ffb98359fc4f"},
++    {"name":"Tcl","version":"9.0.4","license":"TCL","url":"https://prdownloads.sourceforge.net/tcl/tcl9.0.4-src.tar.gz","sha256":"d0aed49230bc02a65c1e0229e65f34590a4b037ec40d546f32573b467f7551ea"},
++    {"name":"Tk","version":"9.0.4","license":"TCL","url":"https://prdownloads.sourceforge.net/tcl/tk9.0.4-src.tar.gz","sha256":"d7a146d2917eb8b5cc95276dbf0e3d03c7464d2b19c1675357857c989301dbb4"},
++    {"name":"XZ liblzma","version":"5.8.3","license":"0BSD","url":"https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz","sha256":"3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0"},
++    {"name":"zlib","version":"1.3.2","license":"Zlib","url":"https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz","sha256":"bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"}
++  ],
++  "wheels": [
++    {"name":"bpy","version":"5.2.2","license":"GPL-3.0-or-later","filename":"bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","sha256":"e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7","size":245172189,"metadata":{"url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl.metadata","sha256":"05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084","license":"GPL-3.0","requiresPython":"==3.13.*","requiresDist":["cattrs","cython","numpy<3.0,>=2.2","requests","zstandard"]},"source":{"url":"https://download.blender.org/source/blender-5.2.2.tar.xz","sha256":"56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e"}},
++    {"name":"numpy","version":"2.5.3","license":"BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0","filename":"numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl","url":"https://files.pythonhosted.org/packages/ab/2a/98282aa5b8f58b1157d440bb6282eed47e3632a5de53a714fbab17e659fe/numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl","sha256":"f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09","size":5439695,"source":{"url":"https://files.pythonhosted.org/packages/13/01/11703282db468b85f6f7b8c7f22d058de5970d5c7e60a3a8aaa313c3de36/numpy-2.5.3.tar.gz","sha256":"df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563"}},
++    {"name":"cattrs","version":"26.2.0","license":"MIT","filename":"cattrs-26.2.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/f5/4d/6b8460462012a52075ba97932197f8c141be71b8e5f7e918af08ee73424b/cattrs-26.2.0-py3-none-any.whl","sha256":"c680f17cd1df3a1c038ad1db8d90a9c595568cc54c4e8098e7ceb8d7b9bd826b","size":74830,"source":{"url":"https://files.pythonhosted.org/packages/d6/b2/42f4524e5479b090040b5fd8bb316dd8c65a079bb6492494ce2079dc91be/cattrs-26.2.0.tar.gz","sha256":"3cf49f69df8326bcf17a3cb3d3d3ec4a856858fe3a7473746c9044c317d3ba55"}},
++    {"name":"Cython","version":"3.3.0","license":"Apache-2.0","filename":"cython-3.3.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/bf/77/67b0b24e45073a699610e50f00c18474ff9b09ea29ecc95083bdf5e60acd/cython-3.3.0-py3-none-any.whl","sha256":"9b24b5c8cd536946b62086fcafee6d5509d3f549f72d553d2336af87ffbe0da1","size":1349151,"source":{"url":"https://files.pythonhosted.org/packages/a9/d8/4981ef716ad0e3ff0d3ef383aefc6b03c4a88dee33b272bf8e0d833001ca/cython-3.3.0.tar.gz","sha256":"eed0d93fbca7087f143b42c34b05a825849bdf17f101572c2105acfa49aa88b8"}},
++    {"name":"requests","version":"2.34.2","license":"Apache-2.0","filename":"requests-2.34.2-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl","sha256":"2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0","size":73075,"source":{"url":"https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz","sha256":"f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"}},
++    {"name":"zstandard","version":"0.25.0","license":"BSD-3-Clause","filename":"zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl","url":"https://files.pythonhosted.org/packages/3f/06/9ae96a3e5dcfd119377ba33d4c42a7d89da1efabd5cb3e366b156c45ff4d/zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl","sha256":"a1a4ae2dec3993a32247995bdfe367fc3266da832d82f8438c8570f989753de1","size":640440,"source":{"url":"https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz","sha256":"7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b"}},
++    {"name":"attrs","version":"26.1.0","license":"MIT","filename":"attrs-26.1.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl","sha256":"c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309","size":67548,"source":{"url":"https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz","sha256":"d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"}},
++    {"name":"typing-extensions","version":"4.16.0","license":"PSF-2.0","filename":"typing_extensions-4.16.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl","sha256":"481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8","size":45571,"source":{"url":"https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz","sha256":"dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"}},
++    {"name":"charset-normalizer","version":"3.5.1","license":"MIT","filename":"charset_normalizer-3.5.1-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl","sha256":"6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6","size":68658,"source":{"url":"https://files.pythonhosted.org/packages/e5/3f/143b048436775b0f76ac3eec145c019e8173ccc2885c8f20319b996d5e83/charset_normalizer-3.5.1.tar.gz","sha256":"6117b84ea48435e5356dc737f5121485c30920ba43375fa7b434fd753df0eac3"}},
++    {"name":"idna","version":"3.20","license":"BSD-3-Clause","filename":"idna-3.20-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl","sha256":"ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c","size":69583,"source":{"url":"https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz","sha256":"a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"}},
++    {"name":"urllib3","version":"2.8.0","license":"MIT","filename":"urllib3-2.8.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl","sha256":"0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3","size":135717,"source":{"url":"https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz","sha256":"63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"}},
++    {"name":"certifi","version":"2026.7.22","license":"MPL-2.0","filename":"certifi-2026.7.22-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl","sha256":"62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775","size":136983,"source":{"url":"https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz","sha256":"741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"}}
++  ],
++  "distributionBlockers": [
++    "Map every native library vendored inside the bpy wheel to exact Corresponding Source and license text; the Blender source tarball alone does not prove that mapping.",
++    "Obtain legal review of combined-app distribution obligations. The process boundary is not treated as a GPL exception."
++  ]
++}
+diff --git a/Runtime/bpy/worker.py b/Runtime/bpy/worker.py
+new file mode 100755
+index 00000000..40d90935
+--- /dev/null
++++ b/Runtime/bpy/worker.py
+@@ -0,0 +1,202 @@
++import contextlib
++import io
++import json
++import os
++import resource
++import sys
++import threading
++import time
++import traceback
++from pathlib import Path
++
++
++def emit(payload):
++    sys.__stdout__.write(json.dumps(payload, separators=(",", ":")) + "\n")
++    sys.__stdout__.flush()
++
++
++def fail(message):
++    emit({"type": "fatal", "message": message})
++    raise SystemExit(70)
++
++
++if len(sys.argv) != 10:
++    fail("invalid worker bootstrap arguments")
++
++site_packages = Path(sys.argv[1]).resolve()
++session_root = Path(sys.argv[2]).resolve()
++confirmed_scene = Path(sys.argv[3]).resolve() if sys.argv[3] != "-" else None
++memory_limit = int(sys.argv[4])
++object_limit = int(sys.argv[5])
++vertex_limit = int(sys.argv[6])
++polygon_limit = int(sys.argv[7])
++stdout_limit = int(sys.argv[8])
++output_limit = int(sys.argv[9])
++
++try:
++    os.setsid()
++except PermissionError:
++    pass
++
++resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
++resource.setrlimit(resource.RLIMIT_FSIZE, (output_limit, output_limit))
++resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
++if hasattr(resource, "RLIMIT_AS"):
++    resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
++
++
++def audit(event, args):
++    if event in {
++        "os.exec",
++        "os.fork",
++        "os.forkpty",
++        "os.kill",
++        "os.killpg",
++        "os.posix_spawn",
++        "os.posix_spawnp",
++        "os.spawn",
++        "os.system",
++        "pty.spawn",
++        "subprocess.Popen",
++    }:
++        raise PermissionError("child processes are not permitted in the bpy worker")
++
++
++sys.addaudithook(audit)
++
++parent_pid = os.getppid()
++
++
++def exit_with_parent():
++    while os.getppid() == parent_pid:
++        time.sleep(0.25)
++    os._exit(71)
++
++
++threading.Thread(target=exit_with_parent, daemon=True).start()
++
++sys.path[:] = [str(site_packages)] + [path for path in sys.path if "site-packages" not in path]
++
++started = time.monotonic()
++import bpy
++import bmesh
++import mathutils
++
++
++def reset_or_load():
++    bpy.context.preferences.filepaths.use_scripts_auto_execute = False
++    if confirmed_scene and confirmed_scene.is_file():
++        bpy.ops.wm.open_mainfile(
++            filepath=str(confirmed_scene), load_ui=False, use_scripts=False
++        )
++    else:
++        bpy.ops.wm.read_factory_settings(use_empty=True)
++    bpy.context.preferences.filepaths.use_scripts_auto_execute = False
++
++
++reset_or_load()
++emit({
++    "type": "ready",
++    "python_version": ".".join(map(str, sys.version_info[:3])),
++    "bpy_version": bpy.app.version_string,
++    "executable": str(Path(sys.executable).resolve()),
++    "pid": os.getpid(),
++    "startup_seconds": time.monotonic() - started,
++})
++
++
++class BoundedTextIO(io.StringIO):
++    def write(self, value):
++        remaining = max(0, stdout_limit - self.tell())
++        if remaining:
++            return super().write(str(value)[:remaining])
++        return len(value)
++
++
++for line in sys.stdin:
++    try:
++        command = json.loads(line)
++    except Exception as error:
++        fail(f"invalid command: {error}")
++    if command.get("type") == "shutdown":
++        emit({"type": "stopped"})
++        raise SystemExit(0)
++    if command.get("type") != "job":
++        fail("unexpected command")
++
++    job_id = command["job_id"]
++    input_dir = Path(command["input_dir"]).resolve()
++    output_dir = Path(command["output_dir"]).resolve()
++    if session_root not in input_dir.parents or session_root not in output_dir.parents:
++        fail("job path escaped the session root")
++    output_dir.mkdir(parents=True, exist_ok=False)
++    stdout = BoundedTextIO()
++    metrics = {}
++    progress_sequence = 0
++
++    def progress(stage, fraction):
++        nonlocal_holder[0] += 1
++        emit({
++            "type": "progress",
++            "job_id": job_id,
++            "sequence": nonlocal_holder[0],
++            "stage": str(stage)[:128],
++            "fraction": max(0.0, min(1.0, float(fraction))),
++        })
++
++    nonlocal_holder = [progress_sequence]
++    namespace = {
++        "__builtins__": __builtins__,
++        "bpy": bpy,
++        "bmesh": bmesh,
++        "mathutils": mathutils,
++        "Path": Path,
++        "session_root": session_root,
++        "input_dir": input_dir,
++        "output_dir": output_dir,
++        "progress": progress,
++        "metrics": metrics,
++    }
++    edit_started = time.monotonic()
++    try:
++        progress("execute", 0.05)
++        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stdout):
++            exec(compile(command["source"], f"<ngv-bpy-job:{job_id}>", "exec"), namespace)
++        metrics.setdefault("edit_seconds", time.monotonic() - edit_started)
++        objects = len(bpy.data.objects)
++        vertices = sum(len(mesh.vertices) for mesh in bpy.data.meshes)
++        polygons = sum(len(mesh.polygons) for mesh in bpy.data.meshes)
++        if objects > object_limit or vertices > vertex_limit or polygons > polygon_limit:
++            raise RuntimeError(
++                f"geometry limit exceeded: objects={objects}, vertices={vertices}, polygons={polygons}"
++            )
++        metrics.update({
++            "objects": float(objects),
++            "vertices": float(vertices),
++            "polygons": float(polygons),
++            "peak_memory_bytes": float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
++        })
++        progress("checkpoint", 0.9)
++        scene_path = output_dir / "scene.blend"
++        bpy.ops.wm.save_as_mainfile(
++            filepath=str(scene_path), check_existing=False, relative_remap=False, compress=True
++        )
++        progress("complete", 1.0)
++        emit({
++            "type": "result",
++            "job_id": job_id,
++            "ok": True,
++            "stdout": stdout.getvalue(),
++            "metrics": metrics,
++        })
++    except BaseException as error:
++        traceback.print_exc(file=stdout)
++        emit({
++            "type": "result",
++            "job_id": job_id,
++            "ok": False,
++            "message": f"{type(error).__name__}: {error}",
++            "stdout": stdout.getvalue(),
++            "metrics": metrics,
++        })
++        raise SystemExit(70)
+diff --git a/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+new file mode 100644
+index 00000000..501f935d
+--- /dev/null
++++ b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+@@ -0,0 +1,290 @@
++import Foundation
++
++public let bpyRuntimeServiceNames = [
++    "de.h5ventures.nexgenvideo.bpy-service-0",
++    "de.h5ventures.nexgenvideo.bpy-service-1",
++]
++
++@objc public protocol BpyRuntimeServiceProtocol {
++    func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
++    func runJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func jobStatus(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func readOutput(_ request: Data, withReply reply: @escaping (Data, Data) -> Void)
++    func confirmJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func cancelJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func closeSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
++    func shutdown(_ request: Data, withReply reply: @escaping (Data) -> Void)
++}
++
++public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
++    public var timeoutSeconds: Int
++    public var memoryBytes: UInt64
++    public var inputBytes: UInt64
++    public var outputBytes: UInt64
++    public var stdoutBytes: Int
++    public var objects: Int
++    public var vertices: Int
++    public var polygons: Int
++
++    public init(
++        timeoutSeconds: Int = 120,
++        memoryBytes: UInt64 = 6 * 1_024 * 1_024 * 1_024,
++        inputBytes: UInt64 = 512 * 1_024 * 1_024,
++        outputBytes: UInt64 = 512 * 1_024 * 1_024,
++        stdoutBytes: Int = 1_048_576,
++        objects: Int = 20_000,
++        vertices: Int = 20_000_000,
++        polygons: Int = 20_000_000
++    ) {
++        self.timeoutSeconds = timeoutSeconds
++        self.memoryBytes = memoryBytes
++        self.inputBytes = inputBytes
++        self.outputBytes = outputBytes
++        self.stdoutBytes = stdoutBytes
++        self.objects = objects
++        self.vertices = vertices
++        self.polygons = polygons
++    }
++
++    public var isValid: Bool {
++        (1...3_600).contains(timeoutSeconds)
++            && (256 * 1_024 * 1_024...32 * 1_024 * 1_024 * 1_024).contains(memoryBytes)
++            && inputBytes > 0 && inputBytes <= 512 * 1_024 * 1_024
++            && outputBytes > 0 && outputBytes <= 512 * 1_024 * 1_024
++            && (1...16 * 1_024 * 1_024).contains(stdoutBytes)
++            && objects > 0 && vertices > 0 && polygons > 0
++    }
++}
++
++public struct BpyOpenSessionRequest: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let documentID: String
++    public let confirmedRevision: String?
++    public let limits: BpyRuntimeLimits
++
++    public init(
++        sessionID: UUID,
++        documentID: String,
++        confirmedRevision: String? = nil,
++        limits: BpyRuntimeLimits = .init()
++    ) {
++        self.sessionID = sessionID
++        self.documentID = documentID
++        self.confirmedRevision = confirmedRevision
++        self.limits = limits
++    }
++}
++
++public struct BpyStageInputRequest: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let jobID: UUID
++    public let name: String
++    public let offset: UInt64
++    public let totalBytes: UInt64
++    public let sha256: String
++    public let finalChunk: Bool
++
++    public init(
++        sessionID: UUID,
++        jobID: UUID,
++        name: String,
++        offset: UInt64,
++        totalBytes: UInt64,
++        sha256: String,
++        finalChunk: Bool
++    ) {
++        self.sessionID = sessionID
++        self.jobID = jobID
++        self.name = name
++        self.offset = offset
++        self.totalBytes = totalBytes
++        self.sha256 = sha256
++        self.finalChunk = finalChunk
++    }
++}
++
++public struct BpyRunJobRequest: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let jobID: UUID
++    public let expectedRevision: String?
++    public let source: String
++    public let inputNames: [String]
++    public let timeoutSeconds: Int?
++
++    public init(
++        sessionID: UUID,
++        jobID: UUID,
++        expectedRevision: String?,
++        source: String,
++        inputNames: [String] = [],
++        timeoutSeconds: Int? = nil
++    ) {
++        self.sessionID = sessionID
++        self.jobID = jobID
++        self.expectedRevision = expectedRevision
++        self.source = source
++        self.inputNames = inputNames
++        self.timeoutSeconds = timeoutSeconds
++    }
++}
++
++public struct BpyJobReference: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let jobID: UUID
++
++    public init(sessionID: UUID, jobID: UUID) {
++        self.sessionID = sessionID
++        self.jobID = jobID
++    }
++}
++
++public struct BpySessionReference: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++
++    public init(sessionID: UUID) {
++        self.sessionID = sessionID
++    }
++}
++
++public struct BpyConfirmJobRequest: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let jobID: UUID
++    public let revision: String
++    public let sceneSHA256: String
++
++    public init(sessionID: UUID, jobID: UUID, revision: String, sceneSHA256: String) {
++        self.sessionID = sessionID
++        self.jobID = jobID
++        self.revision = revision
++        self.sceneSHA256 = sceneSHA256
++    }
++}
++
++public struct BpyReadOutputRequest: Codable, Sendable, Equatable {
++    public let sessionID: UUID
++    public let jobID: UUID
++    public let name: String
++    public let offset: UInt64
++    public let maximumBytes: Int
++
++    public init(
++        sessionID: UUID,
++        jobID: UUID,
++        name: String,
++        offset: UInt64,
++        maximumBytes: Int
++    ) {
++        self.sessionID = sessionID
++        self.jobID = jobID
++        self.name = name
++        self.offset = offset
++        self.maximumBytes = maximumBytes
++    }
++}
++
++public enum BpyRuntimeJobState: String, Codable, Sendable, Equatable {
++    case accepted
++    case running
++    case awaitingConfirmation
++    case confirmed
++    case rejected
++    case failed
++    case cancelled
++    case timedOut
++    case crashed
++
++    public var isTerminal: Bool {
++        switch self {
++        case .confirmed, .rejected, .failed, .cancelled, .timedOut, .crashed:
++            true
++        case .accepted, .running, .awaitingConfirmation:
++            false
++        }
++    }
++}
++
++public struct BpyRuntimeIdentity: Codable, Sendable, Equatable {
++    public let pythonVersion: String
++    public let bpyVersion: String
++    public let executable: String
++    public let sandboxed: Bool
++    public let processIdentifier: Int32
++
++    public init(
++        pythonVersion: String,
++        bpyVersion: String,
++        executable: String,
++        sandboxed: Bool,
++        processIdentifier: Int32
++    ) {
++        self.pythonVersion = pythonVersion
++        self.bpyVersion = bpyVersion
++        self.executable = executable
++        self.sandboxed = sandboxed
++        self.processIdentifier = processIdentifier
++    }
++}
++
++public struct BpyRuntimeProgress: Codable, Sendable, Equatable {
++    public let sequence: Int
++    public let stage: String
++    public let fraction: Double
++
++    public init(sequence: Int, stage: String, fraction: Double) {
++        self.sequence = sequence
++        self.stage = stage
++        self.fraction = fraction
++    }
++}
++
++public struct BpyOutputDescriptor: Codable, Sendable, Equatable {
++    public let name: String
++    public let byteCount: UInt64
++    public let sha256: String
++    public let mediaType: String
++
++    public init(name: String, byteCount: UInt64, sha256: String, mediaType: String) {
++        self.name = name
++        self.byteCount = byteCount
++        self.sha256 = sha256
++        self.mediaType = mediaType
++    }
++}
++
++public struct BpyServiceResponse: Codable, Sendable, Equatable {
++    public var ok: Bool
++    public var state: BpyRuntimeJobState?
++    public var message: String?
++    public var runtime: BpyRuntimeIdentity?
++    public var progress: [BpyRuntimeProgress]
++    public var outputs: [BpyOutputDescriptor]
++    public var confirmedRevision: String?
++    public var joinedExistingJob: Bool
++    public var stdout: String?
++    public var metrics: [String: Double]
++
++    public init(
++        ok: Bool,
++        state: BpyRuntimeJobState? = nil,
++        message: String? = nil,
++        runtime: BpyRuntimeIdentity? = nil,
++        progress: [BpyRuntimeProgress] = [],
++        outputs: [BpyOutputDescriptor] = [],
++        confirmedRevision: String? = nil,
++        joinedExistingJob: Bool = false,
++        stdout: String? = nil,
++        metrics: [String: Double] = [:]
++    ) {
++        self.ok = ok
++        self.state = state
++        self.message = message
++        self.runtime = runtime
++        self.progress = progress
++        self.outputs = outputs
++        self.confirmedRevision = confirmedRevision
++        self.joinedExistingJob = joinedExistingJob
++        self.stdout = stdout
++        self.metrics = metrics
++    }
++}
+diff --git a/Sources/NexGenVideo/App/AppDelegate.swift b/Sources/NexGenVideo/App/AppDelegate.swift
+index a3729a6e..e782b0f0 100644
+--- a/Sources/NexGenVideo/App/AppDelegate.swift
++++ b/Sources/NexGenVideo/App/AppDelegate.swift
+@@ -150,7 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+         HangDiagnosticUI.delete()
+     }
+ 
+-    func applicationWillTerminate(_ notification: Notification) {
++    @MainActor func applicationWillTerminate(_ notification: Notification) {
++        BpyRuntimeHost.shared.shutdown()
+         HangDiagnosticRecorder.shared.stop()
+     }
+ }
+diff --git a/Sources/NexGenVideo/App/main.swift b/Sources/NexGenVideo/App/main.swift
+index 1aa6b460..c23db58d 100644
+--- a/Sources/NexGenVideo/App/main.swift
++++ b/Sources/NexGenVideo/App/main.swift
+@@ -4,6 +4,7 @@ Log.bootstrap()
+ ChatHangReplay.runIfRequested()
+ HangDiagnosticReplay.runIfRequested()
+ AppRelaunchSelfTest.recordBootIfRequested()
++BpyRuntimeSelfTest.runIfRequested()
+ 
+ // CI-only exact-file analysis through the real app and private digest-pinned fixture.
+ ExampleAudioAnalysisSelfTest.runIfRequested()
+diff --git a/Sources/NexGenVideo/Project/VideoProject.swift b/Sources/NexGenVideo/Project/VideoProject.swift
+index bea45ec6..8cc1c0e9 100644
+--- a/Sources/NexGenVideo/Project/VideoProject.swift
++++ b/Sources/NexGenVideo/Project/VideoProject.swift
+@@ -616,6 +616,7 @@ final class VideoProject: NSDocument {
+     // MARK: - Close
+ 
+     override func close() {
++        BpyRuntimeHost.shared.unregister(document: self)
+         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
+         // launch doesn't mistake it for crash-surviving unsaved work.
+         if let fileURL,
+@@ -686,6 +687,9 @@ final class VideoProject: NSDocument {
+         editorViewModel.onPipelineChanged = { [weak self] in
+             self?.updateChangeCount(.changeDone)
+         }
++        let bpyDocumentID = editorViewModel.openWorkingCopyKey
++            ?? "unsaved-\(ObjectIdentifier(self).hashValue)"
++        BpyRuntimeHost.shared.register(document: self, documentID: bpyDocumentID)
+ 
+         let editorView = EditorWindowContentView()
+             .environment(editorViewModel)
+diff --git a/Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift b/Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift
+new file mode 100644
+index 00000000..584205b3
+--- /dev/null
++++ b/Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift
+@@ -0,0 +1,604 @@
++import BpyRuntimeProtocol
++import CryptoKit
++import Darwin
++import Foundation
++
++enum BpyRuntimeError: LocalizedError {
++    case unavailable(String)
++    case invalidInput(String)
++    case rejected(String)
++    case timedOut
++    case invalidOutput(String)
++
++    var errorDescription: String? {
++        switch self {
++        case .unavailable(let message), .invalidInput(let message),
++             .rejected(let message), .invalidOutput(let message):
++            message
++        case .timedOut:
++            "The 3D runtime did not respond in time."
++        }
++    }
++}
++
++struct BpyApprovedInputCopy: Sendable, Equatable {
++    let approvedDirectory: URL
++    let filename: String
++
++    init(approvedDirectory: URL, filename: String) throws {
++        guard approvedDirectory.isFileURL,
++              filename.range(
++                of: #"^[A-Za-z0-9][A-Za-z0-9._-]*$"#,
++                options: .regularExpression
++              ) != nil else {
++            throw BpyRuntimeError.invalidInput("Invalid approved input name.")
++        }
++        self.approvedDirectory = approvedDirectory.standardizedFileURL
++        self.filename = filename
++    }
++}
++
++struct BpyRuntimeJobResult: Sendable {
++    let response: BpyServiceResponse
++    let stagedOutputs: [String: URL]
++}
++
++private final class BpyReplyBox: @unchecked Sendable {
++    private let lock = NSLock()
++    private var response: Data?
++    private var chunk: Data?
++    private var error: Error?
++
++    func store(response: Data, chunk: Data? = nil) {
++        lock.lock()
++        self.response = response
++        self.chunk = chunk
++        lock.unlock()
++    }
++
++    func store(error: Error) {
++        lock.lock()
++        self.error = error
++        lock.unlock()
++    }
++
++    func load() -> (Data?, Data?, Error?) {
++        lock.lock()
++        defer { lock.unlock() }
++        return (response, chunk, error)
++    }
++}
++
++final class BpyRuntimeSession: @unchecked Sendable {
++    let sessionID: UUID
++    let documentID: String
++    let limits: BpyRuntimeLimits
++    let serviceName: String
++
++    private let connection: NSXPCConnection
++    private let stagingRoot: URL
++    private let lock = NSLock()
++    private var opened = false
++    private var closed = false
++    private var validatedCandidates: [UUID: String] = [:]
++    private var lastReadyResponse: BpyServiceResponse?
++    private(set) var confirmedRevision: String?
++
++    init(
++        documentID: String,
++        limits: BpyRuntimeLimits = .init(),
++        serviceName: String = bpyRuntimeServiceNames[0]
++    ) {
++        let identifier = UUID()
++        sessionID = identifier
++        self.documentID = documentID
++        self.confirmedRevision = nil
++        self.limits = limits
++        self.serviceName = serviceName
++        stagingRoot = FileManager.default.temporaryDirectory
++            .appendingPathComponent("NexGenVideo/BpyHost/\(identifier.uuidString)", isDirectory: true)
++        connection = NSXPCConnection(serviceName: serviceName)
++        connection.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
++        connection.resume()
++    }
++
++    deinit {
++        close()
++    }
++
++    func ready() throws -> BpyServiceResponse {
++        try ensureOpen(force: true)
++    }
++
++    func runJob(
++        id: UUID,
++        expectedRevision: String?,
++        source: String,
++        inputs: [BpyApprovedInputCopy] = [],
++        timeoutSeconds: Int? = nil
++    ) throws -> BpyRuntimeJobResult {
++        _ = try ensureOpen()
++        if !inputs.isEmpty {
++            var existing = try status(jobID: id)
++            if existing.ok, existing.state != nil {
++                existing.joinedExistingJob = true
++                return try finish(jobID: id, response: existing, timeoutSeconds: timeoutSeconds)
++            }
++        }
++        for input in inputs {
++            try upload(input, jobID: id)
++        }
++        let request = BpyRunJobRequest(
++            sessionID: sessionID,
++            jobID: id,
++            expectedRevision: expectedRevision,
++            source: source,
++            inputNames: inputs.map(\.filename),
++            timeoutSeconds: timeoutSeconds
++        )
++        let response = try call { service, reply in
++            service.runJob(try Self.encode(request), withReply: reply)
++        }
++        guard response.ok else {
++            throw BpyRuntimeError.rejected(response.message ?? "The 3D job was rejected.")
++        }
++        return try finish(jobID: id, response: response, timeoutSeconds: timeoutSeconds)
++    }
++
++    private func finish(
++        jobID: UUID,
++        response initialResponse: BpyServiceResponse,
++        timeoutSeconds: Int?
++    ) throws -> BpyRuntimeJobResult {
++        var response = initialResponse
++        let joinedExistingJob = response.joinedExistingJob
++        let deadline = Date().addingTimeInterval(TimeInterval((timeoutSeconds ?? limits.timeoutSeconds) + 15))
++        while response.state == .accepted || response.state == .running {
++            guard Date() < deadline else { throw BpyRuntimeError.timedOut }
++            Thread.sleep(forTimeInterval: 0.05)
++            response = try status(jobID: jobID)
++            guard response.ok else {
++                throw BpyRuntimeError.rejected(response.message ?? "The 3D job disappeared.")
++            }
++        }
++        response.joinedExistingJob = joinedExistingJob
++        if response.runtime != nil {
++            lock.lock()
++            lastReadyResponse = response
++            lock.unlock()
++        }
++        var outputs: [String: URL] = [:]
++        if response.state == .awaitingConfirmation || response.state == .confirmed {
++            outputs = try downloadOutputs(response.outputs, jobID: jobID)
++            if response.state == .awaitingConfirmation,
++               let scene = response.outputs.first(where: { $0.name == "scene.blend" }) {
++                lock.lock()
++                validatedCandidates[jobID] = scene.sha256
++                lock.unlock()
++            }
++        }
++        return .init(response: response, stagedOutputs: outputs)
++    }
++
++    func status(jobID: UUID) throws -> BpyServiceResponse {
++        let request = BpyJobReference(sessionID: sessionID, jobID: jobID)
++        return try call { service, reply in
++            service.jobStatus(try Self.encode(request), withReply: reply)
++        }
++    }
++
++    func confirm(jobID: UUID, revision: String) throws -> BpyServiceResponse {
++        lock.lock()
++        let sceneSHA256 = validatedCandidates[jobID]
++        lock.unlock()
++        guard let sceneSHA256 else {
++            throw BpyRuntimeError.invalidOutput("Validate the staged 3D candidate before confirmation.")
++        }
++        let request = BpyConfirmJobRequest(
++            sessionID: sessionID,
++            jobID: jobID,
++            revision: revision,
++            sceneSHA256: sceneSHA256
++        )
++        let response = try call(timeout: 180) { service, reply in
++            service.confirmJob(try Self.encode(request), withReply: reply)
++        }
++        guard response.ok, response.state == .confirmed else {
++            throw BpyRuntimeError.rejected(response.message ?? "The 3D candidate was not confirmed.")
++        }
++        lock.lock()
++        confirmedRevision = revision
++        validatedCandidates.removeValue(forKey: jobID)
++        lastReadyResponse?.confirmedRevision = revision
++        lock.unlock()
++        return response
++    }
++
++    func cancel(jobID: UUID) throws -> BpyServiceResponse {
++        let request = BpyJobReference(sessionID: sessionID, jobID: jobID)
++        let response = try call { service, reply in
++            service.cancelJob(try Self.encode(request), withReply: reply)
++        }
++        guard response.ok else {
++            throw BpyRuntimeError.rejected(response.message ?? "The 3D job could not be cancelled.")
++        }
++        lock.lock()
++        validatedCandidates.removeValue(forKey: jobID)
++        lock.unlock()
++        return response
++    }
++
++    func close() {
++        lock.lock()
++        guard !closed else {
++            lock.unlock()
++            return
++        }
++        closed = true
++        let wasOpened = opened
++        lock.unlock()
++        if wasOpened {
++            let request = BpySessionReference(sessionID: sessionID)
++            _ = try? call(timeout: 10) { service, reply in
++                service.closeSession(try Self.encode(request), withReply: reply)
++            }
++        }
++        connection.invalidate()
++        try? FileManager.default.removeItem(at: stagingRoot)
++    }
++
++    private func ensureOpen(force: Bool = false) throws -> BpyServiceResponse {
++        lock.lock()
++        if closed {
++            lock.unlock()
++            throw BpyRuntimeError.unavailable("The 3D document session is closed.")
++        }
++        if opened, !force {
++            let response = lastReadyResponse
++            lock.unlock()
++            return response ?? .init(ok: true, confirmedRevision: confirmedRevision)
++        }
++        lock.unlock()
++        let request = BpyOpenSessionRequest(
++            sessionID: sessionID,
++            documentID: documentID,
++            confirmedRevision: nil,
++            limits: limits
++        )
++        let response = try call(timeout: 180) { service, reply in
++            service.openSession(try Self.encode(request), withReply: reply)
++        }
++        guard response.ok, let runtime = response.runtime,
++              runtime.pythonVersion == "3.13.15", runtime.bpyVersion == "5.2.2" else {
++            throw BpyRuntimeError.unavailable(
++                response.message ?? "The bundled 3D runtime has the wrong identity."
++            )
++        }
++        lock.lock()
++        opened = true
++        lastReadyResponse = response
++        lock.unlock()
++        return response
++    }
++
++    private func upload(_ input: BpyApprovedInputCopy, jobID: UUID) throws {
++        let directoryFD = Darwin.open(
++            input.approvedDirectory.path,
++            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
++        )
++        guard directoryFD >= 0 else {
++            throw BpyRuntimeError.invalidInput("Approved input directory is unavailable.")
++        }
++        defer { Darwin.close(directoryFD) }
++        var resolvedDirectory = [CChar](repeating: 0, count: Int(MAXPATHLEN))
++        let directoryPathResult = resolvedDirectory.withUnsafeMutableBufferPointer {
++            fcntl(directoryFD, F_GETPATH, $0.baseAddress)
++        }
++        guard directoryPathResult == 0,
++              String(cString: resolvedDirectory) == input.approvedDirectory.path else {
++            throw BpyRuntimeError.invalidInput("Approved input directory crosses a symbolic link.")
++        }
++        var directoryStat = stat()
++        guard fstat(directoryFD, &directoryStat) == 0,
++              (directoryStat.st_mode & S_IFMT) == S_IFDIR else {
++            throw BpyRuntimeError.invalidInput("Approved input root is not a directory.")
++        }
++        let fileFD = Darwin.openat(
++            directoryFD,
++            input.filename,
++            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
++        )
++        guard fileFD >= 0 else {
++            throw BpyRuntimeError.invalidInput("Approved input is unavailable.")
++        }
++        let handle = FileHandle(fileDescriptor: fileFD, closeOnDealloc: true)
++        var resolvedFile = [CChar](repeating: 0, count: Int(MAXPATHLEN))
++        let expectedFile = input.approvedDirectory.appendingPathComponent(input.filename).path
++        let filePathResult = resolvedFile.withUnsafeMutableBufferPointer {
++            fcntl(fileFD, F_GETPATH, $0.baseAddress)
++        }
++        guard filePathResult == 0,
++              String(cString: resolvedFile) == expectedFile else {
++            throw BpyRuntimeError.invalidInput("Approved input crosses a symbolic link.")
++        }
++        var before = stat()
++        guard fstat(fileFD, &before) == 0,
++              (before.st_mode & S_IFMT) == S_IFREG,
++              before.st_nlink == 1,
++              before.st_size >= 0,
++              UInt64(before.st_size) <= limits.inputBytes else {
++            throw BpyRuntimeError.invalidInput("Approved input must be a bounded single-link file.")
++        }
++
++        var digest = SHA256()
++        while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
++            digest.update(data: data)
++        }
++        let checksum = digest.finalize().map { String(format: "%02x", $0) }.joined()
++        try handle.seek(toOffset: 0)
++        let total = UInt64(before.st_size)
++        var offset: UInt64 = 0
++        if total == 0 {
++            try stageChunk(
++                jobID: jobID, name: input.filename, offset: 0, total: 0,
++                sha256: checksum, final: true, data: Data()
++            )
++        } else {
++            while let data = try handle.read(upToCount: 4 * 1_024 * 1_024), !data.isEmpty {
++                let final = offset + UInt64(data.count) == total
++                try stageChunk(
++                    jobID: jobID, name: input.filename, offset: offset, total: total,
++                    sha256: checksum, final: final, data: data
++                )
++                offset += UInt64(data.count)
++            }
++        }
++        var after = stat()
++        guard offset == total, fstat(fileFD, &after) == 0,
++              (after.st_mode & S_IFMT) == S_IFREG, after.st_nlink == 1,
++              before.st_dev == after.st_dev, before.st_ino == after.st_ino,
++              before.st_size == after.st_size,
++              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
++              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
++              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
++              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else {
++            throw BpyRuntimeError.invalidInput("Approved input changed while it was copied.")
++        }
++    }
++
++    private func stageChunk(
++        jobID: UUID,
++        name: String,
++        offset: UInt64,
++        total: UInt64,
++        sha256: String,
++        final: Bool,
++        data: Data
++    ) throws {
++        let request = BpyStageInputRequest(
++            sessionID: sessionID,
++            jobID: jobID,
++            name: name,
++            offset: offset,
++            totalBytes: total,
++            sha256: sha256,
++            finalChunk: final
++        )
++        let response = try call { service, reply in
++            service.stageInput(try Self.encode(request), chunk: data, withReply: reply)
++        }
++        guard response.ok else {
++            throw BpyRuntimeError.rejected(response.message ?? "The 3D input was rejected.")
++        }
++    }
++
++    private func downloadOutputs(
++        _ descriptors: [BpyOutputDescriptor],
++        jobID: UUID
++    ) throws -> [String: URL] {
++        let root = stagingRoot.appendingPathComponent(jobID.uuidString, isDirectory: true)
++        try FileManager.default.createDirectory(
++            at: root,
++            withIntermediateDirectories: true,
++            attributes: [.posixPermissions: 0o700]
++        )
++        var result: [String: URL] = [:]
++        for descriptor in descriptors {
++            guard descriptor.name.range(
++                of: #"^[A-Za-z0-9][A-Za-z0-9._-]*$"#,
++                options: .regularExpression
++            ) != nil else {
++                throw BpyRuntimeError.invalidOutput("The worker returned an invalid output name.")
++            }
++            let partial = root.appendingPathComponent(descriptor.name + ".part")
++            let destination = root.appendingPathComponent(descriptor.name)
++            if FileManager.default.fileExists(atPath: partial.path) {
++                try FileManager.default.removeItem(at: partial)
++            }
++            guard FileManager.default.createFile(
++                atPath: partial.path,
++                contents: nil,
++                attributes: [.posixPermissions: 0o600]
++            ) else {
++                throw BpyRuntimeError.invalidOutput("The host output staging file could not be created.")
++            }
++            let handle = try FileHandle(forWritingTo: partial)
++            var digest = SHA256()
++            var offset: UInt64 = 0
++            do {
++                while offset < descriptor.byteCount {
++                    let count = min(4 * 1_024 * 1_024, Int(descriptor.byteCount - offset))
++                    let request = BpyReadOutputRequest(
++                        sessionID: sessionID,
++                        jobID: jobID,
++                        name: descriptor.name,
++                        offset: offset,
++                        maximumBytes: count
++                    )
++                    let chunk = try callChunk { service, reply in
++                        service.readOutput(try Self.encode(request), withReply: reply)
++                    }
++                    guard !chunk.isEmpty, chunk.count <= count else {
++                        throw BpyRuntimeError.invalidOutput("The worker returned a truncated output.")
++                    }
++                    try handle.write(contentsOf: chunk)
++                    digest.update(data: chunk)
++                    offset += UInt64(chunk.count)
++                }
++                try handle.synchronize()
++                try handle.close()
++            } catch {
++                try? handle.close()
++                try? FileManager.default.removeItem(at: partial)
++                throw error
++            }
++            let checksum = digest.finalize().map { String(format: "%02x", $0) }.joined()
++            guard offset == descriptor.byteCount, checksum == descriptor.sha256 else {
++                try? FileManager.default.removeItem(at: partial)
++                throw BpyRuntimeError.invalidOutput("The worker output checksum does not match.")
++            }
++            try validateMagic(partial, mediaType: descriptor.mediaType)
++            if FileManager.default.fileExists(atPath: destination.path) {
++                try FileManager.default.removeItem(at: destination)
++            }
++            try FileManager.default.moveItem(at: partial, to: destination)
++            result[descriptor.name] = destination
++        }
++        return result
++    }
++
++    private func validateMagic(_ url: URL, mediaType: String) throws {
++        let handle = try FileHandle(forReadingFrom: url)
++        defer { try? handle.close() }
++        let prefix = try handle.read(upToCount: 16) ?? Data()
++        let valid: Bool
++        switch mediaType {
++        case "application/x-blender":
++            valid = prefix.starts(with: Data("BLENDER".utf8))
++        case "image/png":
++            valid = prefix.starts(with: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
++        case "application/json":
++            valid = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) != nil
++        default:
++            valid = false
++        }
++        guard valid else { throw BpyRuntimeError.invalidOutput("The worker output type is invalid.") }
++    }
++
++    private func call(
++        timeout: TimeInterval = 30,
++        _ invoke: (BpyRuntimeServiceProtocol, @escaping (Data) -> Void) throws -> Void
++    ) throws -> BpyServiceResponse {
++        let box = BpyReplyBox()
++        let semaphore = DispatchSemaphore(value: 0)
++        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
++            box.store(error: error)
++            semaphore.signal()
++        }) as? BpyRuntimeServiceProtocol else {
++            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
++        }
++        try invoke(service) { data in
++            box.store(response: data)
++            semaphore.signal()
++        }
++        guard semaphore.wait(timeout: .now() + timeout) == .success else {
++            throw BpyRuntimeError.timedOut
++        }
++        let value = box.load()
++        if let error = value.2 { throw error }
++        guard let data = value.0 else { throw BpyRuntimeError.unavailable("Empty 3D service reply.") }
++        return try Self.decode(data)
++    }
++
++    private func callChunk(
++        timeout: TimeInterval = 30,
++        _ invoke: (BpyRuntimeServiceProtocol, @escaping (Data, Data) -> Void) throws -> Void
++    ) throws -> Data {
++        let box = BpyReplyBox()
++        let semaphore = DispatchSemaphore(value: 0)
++        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
++            box.store(error: error)
++            semaphore.signal()
++        }) as? BpyRuntimeServiceProtocol else {
++            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
++        }
++        try invoke(service) { response, chunk in
++            box.store(response: response, chunk: chunk)
++            semaphore.signal()
++        }
++        guard semaphore.wait(timeout: .now() + timeout) == .success else {
++            throw BpyRuntimeError.timedOut
++        }
++        let value = box.load()
++        if let error = value.2 { throw error }
++        guard let responseData = value.0, let chunk = value.1 else {
++            throw BpyRuntimeError.unavailable("Empty 3D service reply.")
++        }
++        let response = try Self.decode(responseData)
++        guard response.ok else {
++            throw BpyRuntimeError.rejected(response.message ?? "The 3D output was rejected.")
++        }
++        return chunk
++    }
++
++    private static func encode<T: Encodable>(_ value: T) throws -> Data {
++        try JSONEncoder().encode(value)
++    }
++
++    private static func decode(_ data: Data) throws -> BpyServiceResponse {
++        try JSONDecoder().decode(BpyServiceResponse.self, from: data)
++    }
++}
++
++@MainActor
++final class BpyRuntimeHost {
++    static let shared = BpyRuntimeHost()
++
++    private struct Entry {
++        weak var document: VideoProject?
++        let documentID: String
++        var session: BpyRuntimeSession?
++    }
++
++    private var entries: [ObjectIdentifier: Entry] = [:]
++
++    private init() {}
++
++    func register(document: VideoProject, documentID: String) {
++        let key = ObjectIdentifier(document)
++        guard entries[key] == nil else { return }
++        entries[key] = Entry(
++            document: document,
++            documentID: documentID,
++            session: nil
++        )
++        entries = entries.filter { $0.value.document != nil }
++    }
++
++    func session(for document: VideoProject) -> BpyRuntimeSession? {
++        let key = ObjectIdentifier(document)
++        guard var entry = entries[key] else { return nil }
++        if let session = entry.session { return session }
++        let used = Set(entries.values.compactMap { $0.session?.serviceName })
++        guard let serviceName = bpyRuntimeServiceNames.first(where: { !used.contains($0) }) else {
++            return nil
++        }
++        let session = BpyRuntimeSession(
++            documentID: entry.documentID,
++            serviceName: serviceName
++        )
++        entry.session = session
++        entries[key] = entry
++        return session
++    }
++
++    func unregister(document: VideoProject) {
++        entries.removeValue(forKey: ObjectIdentifier(document))?.session?.close()
++    }
++
++    func shutdown() {
++        let sessions = entries.values.compactMap(\.session)
++        entries.removeAll()
++        sessions.forEach { $0.close() }
++    }
++}
+diff --git a/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+new file mode 100644
+index 00000000..68f6bdbc
+--- /dev/null
++++ b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+@@ -0,0 +1,433 @@
++import BpyRuntimeProtocol
++import Darwin
++import Foundation
++
++private final class BpySelfTestBox: @unchecked Sendable {
++    private let lock = NSLock()
++    private var value: Result<BpyRuntimeJobResult, Error>?
++
++    func store(_ result: Result<BpyRuntimeJobResult, Error>) {
++        lock.lock()
++        value = result
++        lock.unlock()
++    }
++
++    func load() -> Result<BpyRuntimeJobResult, Error>? {
++        lock.lock()
++        defer { lock.unlock() }
++        return value
++    }
++}
++
++enum BpyRuntimeSelfTest {
++    static func runIfRequested() {
++        guard let outputPath = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"],
++              !outputPath.isEmpty else { return }
++        do {
++            let output = URL(fileURLWithPath: outputPath, isDirectory: true)
++            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
++            let evidence = try run(output: output)
++            let data = try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])
++            try data.write(to: output.appendingPathComponent("result.json"), options: .atomic)
++            FileHandle.standardOutput.write(Data("SELFTEST_BPY_OK\n".utf8))
++            Darwin.exit(0)
++        } catch {
++            let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
++            FileHandle.standardError.write(Data(message.utf8))
++            Darwin.exit(1)
++        }
++    }
++
++    private static func run(output: URL) throws -> [String: Any] {
++        let environment = ProcessInfo.processInfo.environment
++        let deniedPaths = try deniedPathList(environment)
++        let deniedJSON = try JSONSerialization.data(withJSONObject: deniedPaths)
++        let deniedLiteral = String(decoding: deniedJSON, as: UTF8.self)
++        guard let approvedPath = environment["NGV_BPY_APPROVED_INPUT_DIR"] else {
++            throw BpyRuntimeError.invalidInput("NGV_BPY_APPROVED_INPUT_DIR is required.")
++        }
++        let approvedDirectory = URL(fileURLWithPath: approvedPath, isDirectory: true)
++        let approvedInput = try BpyApprovedInputCopy(
++            approvedDirectory: approvedDirectory,
++            filename: "fixture.json"
++        )
++        let sessionA = BpyRuntimeSession(
++            documentID: "acceptance-document-a",
++            serviceName: bpyRuntimeServiceNames[0]
++        )
++        let sessionB = BpyRuntimeSession(
++            documentID: "acceptance-document-b",
++            serviceName: bpyRuntimeServiceNames[1]
++        )
++        defer {
++            sessionA.close()
++            sessionB.close()
++        }
++        let readyA = try sessionA.ready()
++        let readyB = try sessionB.ready()
++        guard readyA.runtime?.processIdentifier != readyB.runtime?.processIdentifier else {
++            throw BpyRuntimeError.invalidOutput("Two documents shared one bpy process.")
++        }
++
++        let warmID = UUID()
++        let warmStarted = Date()
++        let warm = try sessionA.runJob(
++            id: warmID,
++            expectedRevision: nil,
++            source: "metrics['warm_probe'] = 1.0"
++        )
++        let warmJobSeconds = Date().timeIntervalSince(warmStarted)
++        guard warm.response.state == .awaitingConfirmation else {
++            throw BpyRuntimeError.invalidOutput("The warm worker probe did not complete.")
++        }
++        _ = try sessionA.confirm(jobID: warmID, revision: "warm-probe")
++
++        let firstID = UUID()
++        let first = try sessionA.runJob(
++            id: firstID,
++            expectedRevision: "warm-probe",
++            source: acceptanceSceneSource(deniedPaths: deniedLiteral),
++            inputs: [approvedInput],
++            timeoutSeconds: 120
++        )
++        guard first.response.state == .awaitingConfirmation,
++              first.stagedOutputs["scene.blend"] != nil,
++              let render = first.stagedOutputs["render.png"],
++              let runtimeEvidence = first.stagedOutputs["evidence.json"] else {
++            throw BpyRuntimeError.invalidOutput("The acceptance scene did not produce its real outputs.")
++        }
++        try FileManager.default.copyItem(
++            at: render,
++            to: output.appendingPathComponent("perspective.png")
++        )
++        try FileManager.default.copyItem(
++            at: runtimeEvidence,
++            to: output.appendingPathComponent("worker-evidence.json")
++        )
++        let workerEvidence = try JSONSerialization.jsonObject(
++            with: Data(contentsOf: runtimeEvidence)
++        )
++        guard let workerEvidenceObject = workerEvidence as? [String: Any],
++              let firstSessionRoot = workerEvidenceObject["session_root"] as? String else {
++            throw BpyRuntimeError.invalidOutput("The worker omitted its sandbox session identity.")
++        }
++        let firstSessionRootLiteral = String(
++            decoding: try JSONEncoder().encode(firstSessionRoot),
++            as: UTF8.self
++        )
++        _ = try sessionA.confirm(jobID: firstID, revision: "revision-a")
++
++        let duplicate = try sessionA.runJob(
++            id: firstID,
++            expectedRevision: nil,
++            source: "raise RuntimeError('duplicate job executed')"
++        )
++        guard duplicate.response.state == .confirmed,
++              duplicate.response.joinedExistingJob else {
++            throw BpyRuntimeError.invalidOutput("A duplicate Job ID was not joined.")
++        }
++
++        for unsafeName in ["symlink.json", "hardlink.json"] {
++            let unsafeInput = try BpyApprovedInputCopy(
++                approvedDirectory: approvedDirectory,
++                filename: unsafeName
++            )
++            do {
++                _ = try sessionB.runJob(
++                    id: UUID(),
++                    expectedRevision: nil,
++                    source: "pass",
++                    inputs: [unsafeInput]
++                )
++                throw BpyRuntimeError.invalidOutput("Unsafe input \(unsafeName) crossed the boundary.")
++            } catch let error as BpyRuntimeError {
++                guard case .invalidInput(_) = error else { throw error }
++            }
++        }
++
++        let secondDocumentID = UUID()
++        let secondDocument = try sessionB.runJob(
++            id: secondDocumentID,
++            expectedRevision: nil,
++            source: """
++            import json
++            import os
++            mesh = bpy.data.meshes.new('DocumentBMesh')
++            obj = bpy.data.objects.new('DocumentBOnly', mesh)
++            bpy.context.scene.collection.objects.link(obj)
++            bm = bmesh.new()
++            bmesh.ops.create_cube(bm, size=1.0)
++            bm.to_mesh(mesh)
++            bm.free()
++            try:
++                os.listdir(\(firstSessionRootLiteral))
++                cross_session_denied = False
++            except OSError as error:
++                cross_session_denied = {'denied': True, 'errno': error.errno}
++            (output_dir / 'cross-session.json').write_text(
++                json.dumps({'cross_session_denied': cross_session_denied})
++            )
++            """
++        )
++        guard secondDocument.response.state == .awaitingConfirmation,
++              let crossSessionURL = secondDocument.stagedOutputs["cross-session.json"],
++              let crossSessionEvidence = try JSONSerialization.jsonObject(
++                with: Data(contentsOf: crossSessionURL)
++              ) as? [String: Any],
++              let denied = crossSessionEvidence["cross_session_denied"] as? [String: Any],
++              denied["denied"] as? Bool == true,
++              let denialErrno = denied["errno"] as? Int,
++              [Int(EPERM), Int(EACCES)].contains(denialErrno) else {
++            throw BpyRuntimeError.invalidOutput("The second document did not execute independently.")
++        }
++        _ = try sessionB.confirm(jobID: secondDocumentID, revision: "document-b-revision")
++
++        let timeoutID = UUID()
++        let timedOut = try sessionA.runJob(
++            id: timeoutID,
++            expectedRevision: "revision-a",
++            source: "while True: pass",
++            timeoutSeconds: 2
++        )
++        guard timedOut.response.state == .timedOut else {
++            throw BpyRuntimeError.invalidOutput("The infinite job did not time out.")
++        }
++
++        let afterTimeoutID = UUID()
++        let afterTimeout = try sessionA.runJob(
++            id: afterTimeoutID,
++            expectedRevision: "revision-a",
++            source: inspectionSource(label: "after-timeout")
++        )
++        try assertRecovered(afterTimeout, label: "timeout")
++        _ = try sessionA.confirm(jobID: afterTimeoutID, revision: "revision-b")
++
++        let cancelID = UUID()
++        let cancelBox = BpySelfTestBox()
++        let cancelled = DispatchSemaphore(value: 0)
++        DispatchQueue.global(qos: .userInitiated).async {
++            cancelBox.store(Result {
++                try sessionA.runJob(
++                    id: cancelID,
++                    expectedRevision: "revision-b",
++                    source: "while True: pass",
++                    timeoutSeconds: 30
++                )
++            })
++            cancelled.signal()
++        }
++        let cancelDeadline = Date().addingTimeInterval(10)
++        while Date() < cancelDeadline {
++            if (try? sessionA.status(jobID: cancelID).state) == .running { break }
++            Thread.sleep(forTimeInterval: 0.05)
++        }
++        _ = try sessionA.cancel(jobID: cancelID)
++        guard cancelled.wait(timeout: .now() + 10) == .success,
++              let cancelOutcome = cancelBox.load(),
++              case .success(let cancelResult) = cancelOutcome,
++              cancelResult.response.state == .cancelled else {
++            throw BpyRuntimeError.invalidOutput("Cancellation did not stop the active job.")
++        }
++
++        let crashID = UUID()
++        let crashed = try sessionA.runJob(
++            id: crashID,
++            expectedRevision: "revision-b",
++            source: "import os; os._exit(91)"
++        )
++        guard crashed.response.state == .crashed else {
++            throw BpyRuntimeError.invalidOutput("The worker crash was not reported.")
++        }
++
++        let afterCrashID = UUID()
++        let afterCrash = try sessionA.runJob(
++            id: afterCrashID,
++            expectedRevision: "revision-b",
++            source: inspectionSource(label: "after-crash")
++        )
++        try assertRecovered(afterCrash, label: "crash")
++
++        sessionA.close()
++        sessionB.close()
++        return [
++            "schema": "nexgenvideo/bpy-runtime-acceptance/1",
++            "python": readyA.runtime?.pythonVersion ?? "",
++            "bpy": readyA.runtime?.bpyVersion ?? "",
++            "sandboxed": readyA.runtime?.sandboxed ?? false,
++            "workerA": readyA.runtime?.processIdentifier ?? -1,
++            "workerB": readyB.runtime?.processIdentifier ?? -1,
++            "coldStartSeconds": readyA.metrics["cold_start_seconds"] ?? -1,
++            "warmJobSeconds": warmJobSeconds,
++            "jobMetrics": first.response.metrics,
++            "timeoutState": timedOut.response.state?.rawValue ?? "",
++            "cancelState": cancelResult.response.state?.rawValue ?? "",
++            "crashState": crashed.response.state?.rawValue ?? "",
++            "duplicateJoined": duplicate.response.joinedExistingJob,
++            "sessionsClosed": true,
++            "crossSessionDenied": true,
++            "workerEvidence": workerEvidence,
++        ]
++    }
++
++    private static func deniedPathList(_ environment: [String: String]) throws -> [String] {
++        guard let raw = environment["NGV_BPY_DENIED_PATHS"],
++              let data = raw.data(using: .utf8),
++              let paths = try JSONSerialization.jsonObject(with: data) as? [String],
++              paths.count >= 3 else {
++            throw BpyRuntimeError.invalidInput("NGV_BPY_DENIED_PATHS requires secret, canonical, and foreign paths.")
++        }
++        return paths
++    }
++
++    private static func acceptanceSceneSource(deniedPaths: String) -> String {
++        """
++        import json
++        import os
++        import socket
++        import time
++
++        bpy.ops.wm.read_factory_settings(use_empty=True)
++        scene = bpy.context.scene
++        mesh = bpy.data.meshes.new('NGV_RoomMesh')
++        room = bpy.data.objects.new('NGV_Room', mesh)
++        scene.collection.objects.link(room)
++        bm = bmesh.new()
++        created = bmesh.ops.create_cube(bm, size=4.0)
++        bmesh.ops.bevel(
++            bm,
++            geom=[edge for edge in bm.edges],
++            offset=0.12,
++            segments=3,
++            affect='EDGES',
++        )
++        bm.to_mesh(mesh)
++        bm.free()
++        room.scale = (1.8, 1.2, 0.75)
++        modifier = room.modifiers.new(name='NGV_BevelModifier', type='BEVEL')
++        modifier.width = 0.04
++        modifier.segments = 2
++
++        for index in range(6):
++            bpy.ops.mesh.primitive_cube_add(location=(-1.8 + index * 0.45, -0.4, -1.25 + index * 0.22))
++            step = bpy.context.object
++            step.name = f'NGV_Stair_{index:02d}'
++            step.scale = (0.22, 0.8, 0.11)
++        bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, location=(1.15, 0.55, -0.55))
++        bpy.context.object.name = 'NGV_AsymmetricProp'
++
++        clay = bpy.data.materials.new('NGV_Clay')
++        clay.diffuse_color = (0.55, 0.58, 0.62, 1.0)
++        for obj in scene.objects:
++            if obj.type == 'MESH':
++                obj.data.materials.append(clay)
++
++        camera_data = bpy.data.cameras.new('NGV_PerspectiveCamera')
++        camera = bpy.data.objects.new('NGV_PerspectiveCamera', camera_data)
++        scene.collection.objects.link(camera)
++        camera.location = (8.5, -9.0, 6.2)
++        direction = mathutils.Vector((0.0, 0.0, -0.4)) - camera.location
++        camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
++        camera_data.lens = 42
++        scene.camera = camera
++
++        light_data = bpy.data.lights.new('NGV_Key', type='AREA')
++        light_data.energy = 1300
++        light_data.shape = 'DISK'
++        light_data.size = 5
++        light = bpy.data.objects.new('NGV_Key', light_data)
++        scene.collection.objects.link(light)
++        light.location = (2.0, -3.0, 7.0)
++        scene.world.color = (0.04, 0.04, 0.04)
++
++        scene.render.resolution_x = 640
++        scene.render.resolution_y = 360
++        scene.render.resolution_percentage = 100
++        scene.render.image_settings.file_format = 'PNG'
++        scene.render.filepath = str(output_dir / 'render.png')
++        renderer = {'requested': 'CYCLES_METAL', 'selected': '', 'devices': [], 'fallback': None}
++        render_started = time.monotonic()
++        try:
++            cycles = bpy.context.preferences.addons['cycles'].preferences
++            cycles.compute_device_type = 'METAL'
++            cycles.get_devices()
++            renderer['devices'] = [
++                {'name': item.name, 'type': item.type} for item in cycles.devices
++            ]
++            metal = [item for item in cycles.devices if item.type == 'METAL']
++            if not metal:
++                raise RuntimeError('no Metal Cycles device')
++            for item in cycles.devices:
++                item.use = item in metal
++            scene.render.engine = 'CYCLES'
++            scene.cycles.device = 'GPU'
++            scene.cycles.samples = 8
++            renderer['selected'] = 'CYCLES_METAL'
++            bpy.ops.render.render(write_still=True)
++        except Exception as error:
++            renderer['fallback'] = f'{type(error).__name__}: {error}'
++            scene.render.engine = 'CYCLES'
++            scene.cycles.device = 'CPU'
++            scene.cycles.samples = 8
++            renderer['selected'] = 'CYCLES_CPU'
++            bpy.ops.render.render(write_still=True)
++        metrics['render_seconds'] = time.monotonic() - render_started
++
++        denied = {}
++        for path in \(deniedPaths):
++            try:
++                with open(path, 'rb') as handle:
++                    handle.read(1)
++                denied[path] = False
++            except OSError as error:
++                denied[path] = {'denied': True, 'errno': error.errno}
++        try:
++            connection = socket.create_connection(('1.1.1.1', 443), timeout=1)
++            connection.close()
++            network_denied = False
++        except OSError as error:
++            network_denied = {'denied': True, 'errno': error.errno}
++
++        autorun = bpy.data.texts.new('NGV_AutorunProbe.py')
++        autorun.write("import bpy\\nbpy.data.objects.new('AUTORUN_RAN', None)\\n")
++        autorun.use_module = True
++        evidence = {
++            'renderer': renderer,
++            'denied_paths': denied,
++            'network_denied': network_denied,
++            'secret_environment_absent': all(
++                name not in os.environ
++                for name in ('RUNWAY_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'NGV_TEST_SECRET')
++            ),
++            'python_executable': os.path.realpath(os.sys.executable),
++            'bpy_module': os.path.realpath(bpy.__file__),
++            'session_root': str(session_root),
++            'blender_user_config': os.environ.get('BLENDER_USER_CONFIG'),
++            'objects': sorted(obj.name for obj in scene.objects),
++            'modifiers': {
++                obj.name: [modifier.type for modifier in obj.modifiers]
++                for obj in scene.objects if obj.modifiers
++            },
++            'approved_input': json.loads((input_dir / 'fixture.json').read_text()),
++        }
++        (output_dir / 'evidence.json').write_text(json.dumps(evidence, sort_keys=True))
++        """
++    }
++
++    private static func inspectionSource(label: String) -> String {
++        """
++        import json
++        names = sorted(obj.name for obj in bpy.context.scene.objects)
++        if 'NGV_Room' not in names or 'DocumentBOnly' in names or 'AUTORUN_RAN' in names:
++            raise RuntimeError(f'confirmed scene isolation failed: {names}')
++        (output_dir / '\(label).json').write_text(json.dumps({'objects': names}))
++        """
++    }
++
++    private static func assertRecovered(_ result: BpyRuntimeJobResult, label: String) throws {
++        let expectedName = label == "timeout" ? "after-timeout.json" : "after-crash.json"
++        guard result.response.state == .awaitingConfirmation,
++              result.stagedOutputs[expectedName] != nil else {
++            throw BpyRuntimeError.invalidOutput("The worker did not restore the confirmed scene after \(label).")
++        }
++    }
++}
+diff --git a/Sources/NexGenVideoBpyService/main.swift b/Sources/NexGenVideoBpyService/main.swift
+new file mode 100644
+index 00000000..6061fce7
+--- /dev/null
++++ b/Sources/NexGenVideoBpyService/main.swift
+@@ -0,0 +1,989 @@
++import BpyRuntimeProtocol
++import CryptoKit
++import Darwin
++import Foundation
++
++@_silgen_name("proc_listchildpids")
++private func procListChildPIDs(
++    _ processIdentifier: pid_t,
++    _ buffer: UnsafeMutableRawPointer?,
++    _ bufferSize: Int32
++) -> Int32
++
++private let encoder = JSONEncoder()
++private let decoder = JSONDecoder()
++
++private extension NSLock {
++    func access<T>(_ body: () throws -> T) rethrows -> T {
++        lock()
++        defer { unlock() }
++        return try body()
++    }
++}
++
++private func encoded(_ response: BpyServiceResponse) -> Data {
++    (try? encoder.encode(response)) ?? Data()
++}
++
++private func failure(_ message: String) -> Data {
++    encoded(.init(ok: false, message: message))
++}
++
++private func isSafeName(_ value: String) -> Bool {
++    !value.isEmpty && value.count <= 128
++        && value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]*$"#, options: .regularExpression) != nil
++}
++
++private func isSHA256(_ value: String) -> Bool {
++    value.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil
++}
++
++private func sha256(_ url: URL) throws -> String {
++    let handle = try FileHandle(forReadingFrom: url)
++    defer { try? handle.close() }
++    var digest = SHA256()
++    while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
++        digest.update(data: data)
++    }
++    return digest.finalize().map { String(format: "%02x", $0) }.joined()
++}
++
++private func sha256(_ data: Data) -> String {
++    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++}
++
++private func processTree(root: pid_t) -> [pid_t] {
++    var visited = Set<pid_t>()
++    var pending = [root]
++    while let parent = pending.popLast() {
++        var children = [pid_t](repeating: 0, count: 256)
++        let bytes = children.withUnsafeMutableBytes {
++            procListChildPIDs(parent, $0.baseAddress, Int32($0.count))
++        }
++        guard bytes > 0 else { continue }
++        for child in children.prefix(Int(bytes))
++            where child > 1 && visited.insert(child).inserted {
++            pending.append(child)
++        }
++    }
++    return Array(visited)
++}
++
++private final class ResponseCallback: @unchecked Sendable {
++    let body: (Data) -> Void
++
++    init(_ body: @escaping (Data) -> Void) {
++        self.body = body
++    }
++}
++
++private final class UploadRecord {
++    let url: URL
++    let totalBytes: UInt64
++    let expectedSHA256: String
++    let handle: FileHandle
++    var receivedBytes: UInt64 = 0
++
++    init(url: URL, totalBytes: UInt64, expectedSHA256: String, handle: FileHandle) {
++        self.url = url
++        self.totalBytes = totalBytes
++        self.expectedSHA256 = expectedSHA256
++        self.handle = handle
++    }
++}
++
++private final class JobRecord: @unchecked Sendable {
++    let id: UUID
++    var source: String?
++    let expectedRevision: String?
++    let inputNames: [String]
++    let timeoutSeconds: Int
++    var state: BpyRuntimeJobState = .accepted
++    var message: String?
++    var progress: [BpyRuntimeProgress] = []
++    var outputs: [BpyOutputDescriptor] = []
++    var outputData: [String: Data] = [:]
++    var stdout: String?
++    var metrics: [String: Double] = [:]
++
++    init(request: BpyRunJobRequest, timeoutSeconds: Int) {
++        id = request.jobID
++        source = request.source
++        expectedRevision = request.expectedRevision
++        inputNames = request.inputNames
++        self.timeoutSeconds = timeoutSeconds
++    }
++}
++
++private struct WorkerEvent: Decodable {
++    let type: String
++    let jobID: String?
++    let pythonVersion: String?
++    let bpyVersion: String?
++    let executable: String?
++    let pid: Int32?
++    let startupSeconds: Double?
++    let sequence: Int?
++    let stage: String?
++    let fraction: Double?
++    let ok: Bool?
++    let message: String?
++    let stdout: String?
++    let metrics: [String: Double]?
++
++    enum CodingKeys: String, CodingKey {
++        case type, stage, fraction, ok, message, stdout, metrics, pid, sequence
++        case jobID = "job_id"
++        case pythonVersion = "python_version"
++        case bpyVersion = "bpy_version"
++        case executable
++        case startupSeconds = "startup_seconds"
++    }
++}
++
++private struct WorkerJobCommand: Encodable {
++    let type = "job"
++    let jobID: String
++    let source: String
++    let inputDirectory: String
++    let outputDirectory: String
++
++    enum CodingKeys: String, CodingKey {
++        case type, source
++        case jobID = "job_id"
++        case inputDirectory = "input_dir"
++        case outputDirectory = "output_dir"
++    }
++}
++
++private final class ServiceSession: @unchecked Sendable {
++    let request: BpyOpenSessionRequest
++    private let root: URL
++    private let runtimeRoot: URL
++    private let capacity: DispatchSemaphore
++    private let queue: DispatchQueue
++    private let lock = NSLock()
++    private var uploads: [String: UploadRecord] = [:]
++    private var completedInputs: [UUID: [String: (UInt64, String)]] = [:]
++    private var jobs: [UUID: JobRecord] = [:]
++    private var confirmedRevision: String?
++    private var confirmedSceneData: Data?
++    private var process: Process?
++    private var stdin: FileHandle?
++    private var stdout: FileHandle?
++    private var stderr: FileHandle?
++    private var stderrBytes = Data()
++    private var runtimeIdentity: BpyRuntimeIdentity?
++    private var coldStartSeconds: Double?
++    private var closed = false
++
++    init(request: BpyOpenSessionRequest, root: URL, runtimeRoot: URL, capacity: DispatchSemaphore) {
++        self.request = request
++        self.root = root
++        self.runtimeRoot = runtimeRoot
++        self.capacity = capacity
++        confirmedRevision = request.confirmedRevision
++        queue = DispatchQueue(label: "de.h5ventures.nexgenvideo.bpy.\(request.sessionID.uuidString)")
++    }
++
++    func open(reply: @escaping (Data) -> Void) {
++        let callback = ResponseCallback(reply)
++        queue.async { [self] in
++            do {
++                guard lock.access({ !closed }) else {
++                    throw CocoaError(.fileNoSuchFile)
++                }
++                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++                try startWorker()
++                callback.body(encoded(readyResponse()))
++            } catch {
++                stopWorker()
++                callback.body(failure(
++                    "worker did not become ready: \(error.localizedDescription)\(stderrDiagnostic())"
++                ))
++            }
++        }
++    }
++
++    func matches(_ candidate: BpyOpenSessionRequest) -> Bool {
++        request == candidate
++    }
++
++    func stage(_ request: BpyStageInputRequest, chunk: Data) throws {
++        guard isSafeName(request.name), isSHA256(request.sha256) else {
++            throw CocoaError(.fileWriteInvalidFileName)
++        }
++        guard request.totalBytes <= self.request.limits.inputBytes,
++              chunk.count <= 4 * 1_024 * 1_024,
++              request.offset <= request.totalBytes,
++              UInt64(chunk.count) <= request.totalBytes - request.offset,
++              request.finalChunk == (
++                  request.offset + UInt64(chunk.count) == request.totalBytes
++              ) else {
++            throw CocoaError(.fileWriteOutOfSpace)
++        }
++        try lock.access {
++            guard !closed else { throw CocoaError(.fileWriteNoPermission) }
++            if let completed = completedInputs[request.jobID]?[request.name] {
++                guard completed.0 == request.totalBytes, completed.1 == request.sha256 else {
++                    throw CocoaError(.fileWriteFileExists)
++                }
++                return
++            }
++            guard jobs[request.jobID] == nil,
++                  !jobs.values.contains(where: {
++                      [.accepted, .running, .awaitingConfirmation].contains($0.state)
++                  }) else {
++                throw CocoaError(.fileWriteNoPermission)
++            }
++            let key = "\(request.jobID.uuidString)/\(request.name)"
++            let upload: UploadRecord
++            if let existing = uploads[key] {
++                upload = existing
++                guard upload.totalBytes == request.totalBytes,
++                      upload.expectedSHA256 == request.sha256 else {
++                    throw CocoaError(.fileWriteFileExists)
++                }
++            } else {
++                guard request.offset == 0 else { throw CocoaError(.fileWriteUnknown) }
++                let prefix = request.jobID.uuidString + "/"
++                let completedTotal = completedInputs[request.jobID, default: [:]].values
++                    .reduce(UInt64(0)) { $0 + $1.0 }
++                let uploadingTotal = uploads
++                    .filter { $0.key.hasPrefix(prefix) }
++                    .values.reduce(UInt64(0)) { $0 + $1.totalBytes }
++                let uploadingCount = uploads.keys.filter { $0.hasPrefix(prefix) }.count
++                guard completedInputs[request.jobID, default: [:]].count + uploadingCount < 64,
++                      completedTotal <= self.request.limits.inputBytes,
++                      uploadingTotal <= self.request.limits.inputBytes - completedTotal,
++                      request.totalBytes <= self.request.limits.inputBytes - completedTotal - uploadingTotal else {
++                    throw CocoaError(.fileWriteOutOfSpace)
++                }
++                let directory = jobDirectory(request.jobID).appendingPathComponent("inputs", isDirectory: true)
++                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++                let url = directory.appendingPathComponent(request.name + ".part")
++                guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
++                    throw CocoaError(.fileWriteUnknown)
++                }
++                upload = UploadRecord(
++                    url: url,
++                    totalBytes: request.totalBytes,
++                    expectedSHA256: request.sha256,
++                    handle: FileHandle(forWritingTo: url)
++                )
++                uploads[key] = upload
++            }
++            if request.offset < upload.receivedBytes {
++                guard request.offset + UInt64(chunk.count) <= upload.receivedBytes else {
++                    throw CocoaError(.fileWriteUnknown)
++                }
++                var existing = Data(count: chunk.count)
++                let count = existing.withUnsafeMutableBytes {
++                    pread(upload.handle.fileDescriptor, $0.baseAddress, chunk.count, off_t(request.offset))
++                }
++                guard count == chunk.count, existing == chunk else {
++                    throw CocoaError(.fileWriteFileExists)
++                }
++                return
++            }
++            guard request.offset == upload.receivedBytes,
++                  upload.receivedBytes + UInt64(chunk.count) <= upload.totalBytes else {
++                throw CocoaError(.fileWriteUnknown)
++            }
++            try upload.handle.write(contentsOf: chunk)
++            upload.receivedBytes += UInt64(chunk.count)
++            if request.finalChunk {
++                try upload.handle.synchronize()
++                try upload.handle.close()
++                guard upload.receivedBytes == upload.totalBytes,
++                      try sha256(upload.url) == upload.expectedSHA256 else {
++                    throw CocoaError(.fileWriteUnknown)
++                }
++                let finalURL = upload.url.deletingPathExtension()
++                try FileManager.default.moveItem(at: upload.url, to: finalURL)
++                uploads.removeValue(forKey: key)
++                completedInputs[request.jobID, default: [:]][request.name] = (
++                    request.totalBytes, request.sha256
++                )
++            }
++        }
++    }
++
++    func submit(_ request: BpyRunJobRequest) -> BpyServiceResponse {
++        let decision: (JobRecord?, BpyServiceResponse) = lock.access {
++            if closed {
++                return (nil, .init(ok: false, message: "session is closed"))
++            }
++            if let existing = jobs[request.jobID] {
++                var response = response(for: existing)
++                response.joinedExistingJob = true
++                return (nil, response)
++            }
++            guard jobs.count < 1_024 else {
++                return (nil, .init(ok: false, message: "session job limit reached"))
++            }
++            if jobs.values.contains(where: {
++                [.accepted, .running, .awaitingConfirmation].contains($0.state)
++            }) {
++                return (nil, .init(ok: false, message: "session already has an active job"))
++            }
++            guard request.expectedRevision == confirmedRevision else {
++                return (nil, .init(ok: false, message: "confirmed revision mismatch"))
++            }
++            let names = Set(request.inputNames)
++            guard names.count == request.inputNames.count, names.count <= 64,
++                  request.inputNames.allSatisfy(isSafeName),
++                  names == Set(completedInputs[request.jobID, default: [:]].keys) else {
++                return (nil, .init(ok: false, message: "staged inputs do not match the request"))
++            }
++            guard request.source.utf8.count <= 4 * 1_024 * 1_024 else {
++                return (nil, .init(ok: false, message: "job source exceeds the runtime limit"))
++            }
++            for previous in jobs.values where previous.state.isTerminal {
++                previous.outputs.removeAll()
++                previous.outputData.removeAll()
++                previous.progress.removeAll()
++                previous.stdout = nil
++                previous.metrics.removeAll()
++                completedInputs.removeValue(forKey: previous.id)
++            }
++            let timeout = min(request.timeoutSeconds ?? self.request.limits.timeoutSeconds,
++                              self.request.limits.timeoutSeconds)
++            guard timeout > 0 else {
++                return (nil, .init(ok: false, message: "invalid timeout"))
++            }
++            let job = JobRecord(request: request, timeoutSeconds: timeout)
++            jobs[request.jobID] = job
++            return (job, response(for: job))
++        }
++        if let job = decision.0 {
++            queue.async { [self] in execute(job) }
++        }
++        return decision.1
++    }
++
++    func status(_ jobID: UUID) -> BpyServiceResponse {
++        lock.access {
++            guard let job = jobs[jobID] else {
++                return .init(ok: false, message: "unknown job")
++            }
++            return response(for: job)
++        }
++    }
++
++    func output(_ request: BpyReadOutputRequest) throws -> Data {
++        guard isSafeName(request.name), request.maximumBytes > 0,
++              request.maximumBytes <= 4 * 1_024 * 1_024 else {
++            throw CocoaError(.fileReadInvalidFileName)
++        }
++        return try lock.access {
++            guard let job = jobs[request.jobID],
++                  [.awaitingConfirmation, .confirmed].contains(job.state),
++                  let output = job.outputs.first(where: { $0.name == request.name }),
++                  let data = job.outputData[request.name] else {
++                throw CocoaError(.fileReadNoSuchFile)
++            }
++            guard request.offset <= output.byteCount else { throw CocoaError(.fileReadCorruptFile) }
++            let end = min(
++                output.byteCount,
++                request.offset + UInt64(request.maximumBytes)
++            )
++            return data.subdata(in: Int(request.offset)..<Int(end))
++        }
++    }
++
++    func confirm(_ request: BpyConfirmJobRequest) throws -> BpyServiceResponse {
++        guard isSafeName(request.revision), isSHA256(request.sceneSHA256) else {
++            throw CocoaError(.fileWriteInvalidFileName)
++        }
++        return try lock.access {
++            guard let job = jobs[request.jobID], job.state == .awaitingConfirmation else {
++                throw CocoaError(.fileWriteNoPermission)
++            }
++            guard request.revision != confirmedRevision else {
++                throw CocoaError(.fileWriteFileExists)
++            }
++            guard let confirmedData = job.outputData["scene.blend"] else {
++                throw CocoaError(.fileReadNoSuchFile)
++            }
++            guard sha256(confirmedData) == request.sceneSHA256 else {
++                throw CocoaError(.fileReadCorruptFile)
++            }
++            confirmedRevision = request.revision
++            confirmedSceneData = confirmedData
++            job.state = .confirmed
++            return response(for: job)
++        }
++    }
++
++    func cancel(_ jobID: UUID) -> BpyServiceResponse {
++        let shouldStop = lock.access { () -> Bool in
++            guard let job = jobs[jobID] else { return false }
++            switch job.state {
++            case .accepted, .running:
++                job.state = .cancelled
++                job.message = "job cancelled"
++                job.source = nil
++                completedInputs.removeValue(forKey: jobID)
++                return true
++            case .awaitingConfirmation:
++                job.state = .rejected
++                job.message = "candidate rejected"
++                job.outputs.removeAll()
++                job.outputData.removeAll()
++                completedInputs.removeValue(forKey: jobID)
++                return true
++            default:
++                return false
++            }
++        }
++        if shouldStop { stopWorker() }
++        try? FileManager.default.removeItem(at: jobDirectory(jobID))
++        return status(jobID)
++    }
++
++    func close() {
++        lock.access { closed = true }
++        stopWorker()
++        lock.access {
++            for upload in uploads.values { try? upload.handle.close() }
++            uploads.removeAll()
++        }
++        try? FileManager.default.removeItem(at: root)
++    }
++
++    private func execute(_ job: JobRecord) {
++        capacity.wait()
++        defer { capacity.signal() }
++        guard lock.access({ job.state == .accepted && !closed }) else { return }
++        lock.access { job.state = .running }
++        let timeout = DispatchWorkItem { [weak self, weak job] in
++            guard let self, let job else { return }
++            let shouldStop = self.lock.access { () -> Bool in
++                guard job.state == .running else { return false }
++                job.state = .timedOut
++                job.message = "job exceeded \(job.timeoutSeconds) seconds"
++                job.source = nil
++                return true
++            }
++            if shouldStop { self.stopWorker() }
++        }
++        DispatchQueue.global(qos: .utility).asyncAfter(
++            deadline: .now() + .seconds(job.timeoutSeconds), execute: timeout
++        )
++        defer { timeout.cancel() }
++        do {
++            try startWorker()
++            guard lock.access({ job.state == .running && !closed }) else {
++                stopWorker()
++                return
++            }
++            guard let source = lock.access({ job.source }) else {
++                throw CocoaError(.fileReadCorruptFile)
++            }
++            let command = WorkerJobCommand(
++                jobID: job.id.uuidString,
++                source: source,
++                inputDirectory: inputDirectory(job.id).path,
++                outputDirectory: outputDirectory(job.id).path
++            )
++            try writeLine(command)
++            while let event = try readEvent() {
++                guard event.jobID == nil || event.jobID == job.id.uuidString else { continue }
++                if event.type == "progress", let sequence = event.sequence,
++                   let stage = event.stage, let fraction = event.fraction {
++                    guard fraction.isFinite, (0...1).contains(fraction),
++                          sequence == lock.access({ job.progress.count + 1 }),
++                          sequence <= 1_024 else {
++                        throw CocoaError(.fileReadCorruptFile)
++                    }
++                    lock.access {
++                        job.progress.append(.init(sequence: sequence, stage: stage, fraction: fraction))
++                    }
++                    continue
++                }
++                if event.type == "result" {
++                    if event.ok == true {
++                        let collected = try collectOutputs(job.id)
++                        lock.access {
++                            guard job.state == .running else { return }
++                            job.outputs = collected.descriptors
++                            job.outputData = collected.data
++                            job.stdout = limited(event.stdout)
++                            job.metrics = event.metrics ?? [:]
++                            job.source = nil
++                            job.state = .awaitingConfirmation
++                        }
++                    } else {
++                        lock.access {
++                            guard job.state == .running else { return }
++                            job.message = event.message ?? "worker rejected the job"
++                            job.stdout = limited(event.stdout)
++                            job.metrics = event.metrics ?? [:]
++                            job.source = nil
++                            job.state = .failed
++                        }
++                        stopWorker()
++                    }
++                    try? FileManager.default.removeItem(at: jobDirectory(job.id))
++                    return
++                }
++                if event.type == "fatal" { throw CocoaError(.executableLoad) }
++            }
++            throw CocoaError(.executableLoad)
++        } catch {
++            lock.access {
++                if job.state == .running {
++                    job.state = .crashed
++                    job.message = "worker crashed: \(error.localizedDescription)"
++                    job.source = nil
++                    job.stdout = String(
++                        decoding: stderrBytes.prefix(request.limits.stdoutBytes),
++                        as: UTF8.self
++                    )
++                }
++            }
++            stopWorker()
++            try? FileManager.default.removeItem(at: jobDirectory(job.id))
++        }
++    }
++
++    private func startWorker() throws {
++        if lock.access({ process?.isRunning == true && runtimeIdentity != nil }) { return }
++        stopWorker()
++        let python = runtimeRoot.appendingPathComponent("python/bin/python3")
++        let worker = runtimeRoot.appendingPathComponent("worker.py")
++        let sitePackages = runtimeRoot.appendingPathComponent("site-packages")
++        guard FileManager.default.isExecutableFile(atPath: python.path),
++              FileManager.default.fileExists(atPath: worker.path),
++              FileManager.default.fileExists(atPath: sitePackages.path) else {
++            throw CocoaError(.executableNotLoadable)
++        }
++        for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
++            try FileManager.default.createDirectory(
++                at: root.appendingPathComponent(name, isDirectory: true),
++                withIntermediateDirectories: true
++            )
++        }
++        let confirmedData = lock.access { confirmedSceneData }
++        let bootstrap = root.appendingPathComponent("bootstrap", isDirectory: true)
++        try? FileManager.default.removeItem(at: bootstrap)
++        try FileManager.default.createDirectory(at: bootstrap, withIntermediateDirectories: true)
++        let confirmedScene = bootstrap.appendingPathComponent("confirmed.blend")
++        if let confirmedData {
++            try confirmedData.write(to: confirmedScene, options: .atomic)
++        }
++        let input = Pipe()
++        let output = Pipe()
++        let errors = Pipe()
++        let process = Process()
++        process.executableURL = python
++        process.arguments = [
++            "-I", "-S", worker.path, sitePackages.path, root.path,
++            confirmedData == nil ? "-" : confirmedScene.path,
++            String(request.limits.memoryBytes), String(request.limits.objects),
++            String(request.limits.vertices), String(request.limits.polygons),
++            String(request.limits.stdoutBytes), String(request.limits.outputBytes),
++        ]
++        process.currentDirectoryURL = root
++        process.standardInput = input
++        process.standardOutput = output
++        process.standardError = errors
++        process.environment = [
++            "HOME": root.appendingPathComponent("home").path,
++            "TMPDIR": root.appendingPathComponent("tmp").path,
++            "LANG": "C.UTF-8",
++            "LC_ALL": "C.UTF-8",
++            "PATH": "",
++            "PYTHONNOUSERSITE": "1",
++            "PYTHONDONTWRITEBYTECODE": "1",
++            "BLENDER_USER_CONFIG": root.appendingPathComponent("blender-config").path,
++            "BLENDER_USER_SCRIPTS": root.appendingPathComponent("blender-scripts").path,
++            "BLENDER_USER_DATAFILES": root.appendingPathComponent("blender-data").path,
++        ]
++        lock.access { stderrBytes = Data() }
++        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
++            let data = handle.availableData
++            guard !data.isEmpty, let self else { return }
++            self.lock.access {
++                let remaining = max(0, self.request.limits.stdoutBytes - self.stderrBytes.count)
++                self.stderrBytes.append(data.prefix(remaining))
++            }
++        }
++        try process.run()
++        let processIdentifier = process.processIdentifier
++        let readinessTimeout = DispatchWorkItem {
++            _ = Darwin.kill(-processIdentifier, SIGKILL)
++            _ = Darwin.kill(processIdentifier, SIGKILL)
++        }
++        DispatchQueue.global(qos: .utility).asyncAfter(
++            deadline: .now() + .seconds(120),
++            execute: readinessTimeout
++        )
++        defer { readinessTimeout.cancel() }
++        lock.access {
++            self.process = process
++            stdin = input.fileHandleForWriting
++            stdout = output.fileHandleForReading
++            stderr = errors.fileHandleForReading
++        }
++        guard let event = try readEvent(), event.type == "ready",
++              let pythonVersion = event.pythonVersion,
++              let bpyVersion = event.bpyVersion,
++              let executable = event.executable,
++              let pid = event.pid,
++              pid == processIdentifier,
++              URL(fileURLWithPath: executable).resolvingSymlinksInPath()
++                == python.resolvingSymlinksInPath() else {
++            throw CocoaError(.executableLoad)
++        }
++        let installed = lock.access { () -> Bool in
++            guard !closed, self.process === process else { return false }
++            runtimeIdentity = .init(
++                pythonVersion: pythonVersion,
++                bpyVersion: bpyVersion,
++                executable: executable,
++                sandboxed: true,
++                processIdentifier: pid
++            )
++            coldStartSeconds = event.startupSeconds
++            return true
++        }
++        guard installed else { throw CocoaError(.fileNoSuchFile) }
++    }
++
++    private func stopWorker() {
++        let current = lock.access { () -> (Process?, FileHandle?, FileHandle?, FileHandle?) in
++            let value = (process, stdin, stdout, stderr)
++            process = nil
++            stdin = nil
++            stdout = nil
++            stderr = nil
++            runtimeIdentity = nil
++            return value
++        }
++        current.3?.readabilityHandler = nil
++        try? current.1?.close()
++        try? current.2?.close()
++        guard let process = current.0 else { return }
++        let pid = process.processIdentifier
++        if pid > 1 {
++            _ = Darwin.kill(-pid, SIGSTOP)
++            _ = Darwin.kill(pid, SIGSTOP)
++            let descendants = processTree(root: pid)
++            descendants.forEach { _ = Darwin.kill($0, SIGSTOP) }
++            descendants.reversed().forEach { _ = Darwin.kill($0, SIGTERM) }
++            _ = Darwin.kill(-pid, SIGTERM)
++            _ = Darwin.kill(pid, SIGTERM)
++            descendants.forEach { _ = Darwin.kill($0, SIGCONT) }
++            _ = Darwin.kill(-pid, SIGCONT)
++            _ = Darwin.kill(pid, SIGCONT)
++            descendants.reversed().forEach { _ = Darwin.kill($0, SIGKILL) }
++            _ = Darwin.kill(-pid, SIGKILL)
++            _ = Darwin.kill(pid, SIGKILL)
++            process.waitUntilExit()
++        }
++    }
++
++    private func writeLine<T: Encodable>(_ value: T) throws {
++        guard let stdin = lock.access({ stdin }) else { throw CocoaError(.executableLoad) }
++        var data = try encoder.encode(value)
++        data.append(0x0A)
++        try stdin.write(contentsOf: data)
++    }
++
++    private func readEvent() throws -> WorkerEvent? {
++        guard let stdout = lock.access({ stdout }) else { throw CocoaError(.executableLoad) }
++        let protocolLimit = min(
++            32 * 1_024 * 1_024,
++            request.limits.stdoutBytes * 8 + 65_536
++        )
++        while true {
++            var line = Data()
++            var reachedEnd = false
++            while true {
++                guard let byte = try stdout.read(upToCount: 1), !byte.isEmpty else {
++                    reachedEnd = true
++                    break
++                }
++                if byte[0] == 0x0A { break }
++                line.append(byte)
++                if line.count > protocolLimit {
++                    throw CocoaError(.fileReadTooLarge)
++                }
++            }
++            if !line.isEmpty, let event = try? decoder.decode(WorkerEvent.self, from: line) {
++                return event
++            }
++            if !line.isEmpty {
++                lock.access {
++                    let remaining = max(0, request.limits.stdoutBytes - stderrBytes.count)
++                    stderrBytes.append(contentsOf: line.prefix(remaining))
++                }
++            }
++            if reachedEnd { return nil }
++        }
++    }
++
++    private func collectOutputs(
++        _ jobID: UUID
++    ) throws -> (descriptors: [BpyOutputDescriptor], data: [String: Data]) {
++        let directory = outputDirectory(jobID)
++        let values = try FileManager.default.contentsOfDirectory(
++            at: directory,
++            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]
++        )
++        guard values.count <= 256 else { throw CocoaError(.fileReadTooLarge) }
++        var total: UInt64 = 0
++        var result: [BpyOutputDescriptor] = []
++        var outputData: [String: Data] = [:]
++        for url in values.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
++            guard isSafeName(url.lastPathComponent) else { throw CocoaError(.fileReadInvalidFileName) }
++            var status = stat()
++            guard lstat(url.path, &status) == 0,
++                  (status.st_mode & S_IFMT) == S_IFREG,
++                  status.st_nlink == 1 else { throw CocoaError(.fileReadCorruptFile) }
++            let attributes = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
++            guard attributes.isRegularFile == true, attributes.isSymbolicLink != true,
++                  let size = attributes.fileSize else { throw CocoaError(.fileReadCorruptFile) }
++            total += UInt64(size)
++            guard total <= request.limits.outputBytes else { throw CocoaError(.fileReadTooLarge) }
++            guard let mediaType = mediaType(url.pathExtension) else {
++                throw CocoaError(.fileReadUnsupportedScheme)
++            }
++            let data = try Data(contentsOf: url)
++            guard data.count == size else { throw CocoaError(.fileReadCorruptFile) }
++            let digest = sha256(data)
++            result.append(.init(
++                name: url.lastPathComponent,
++                byteCount: UInt64(size),
++                sha256: digest,
++                mediaType: mediaType
++            ))
++            outputData[url.lastPathComponent] = data
++        }
++        guard result.contains(where: { $0.name == "scene.blend" }) else {
++            throw CocoaError(.fileReadCorruptFile)
++        }
++        return (result, outputData)
++    }
++
++    private func response(for job: JobRecord) -> BpyServiceResponse {
++        .init(
++            ok: true,
++            state: job.state,
++            message: job.message,
++            runtime: runtimeIdentity,
++            progress: job.progress,
++            outputs: job.outputs,
++            confirmedRevision: confirmedRevision,
++            stdout: job.stdout,
++            metrics: job.metrics
++        )
++    }
++
++    private func readyResponse() -> BpyServiceResponse {
++        lock.access {
++            .init(
++                ok: true,
++                runtime: runtimeIdentity,
++                confirmedRevision: confirmedRevision,
++                metrics: ["cold_start_seconds": coldStartSeconds ?? 0]
++            )
++        }
++    }
++
++    private func limited(_ value: String?) -> String? {
++        guard let value else { return nil }
++        return String(value.prefix(request.limits.stdoutBytes))
++    }
++
++    private func stderrDiagnostic() -> String {
++        lock.access {
++            guard !stderrBytes.isEmpty else { return "" }
++            return "\n" + String(
++                decoding: stderrBytes.prefix(request.limits.stdoutBytes),
++                as: UTF8.self
++            )
++        }
++    }
++
++    private func jobDirectory(_ jobID: UUID) -> URL {
++        root.appendingPathComponent("jobs/\(jobID.uuidString)", isDirectory: true)
++    }
++
++    private func inputDirectory(_ jobID: UUID) -> URL {
++        jobDirectory(jobID).appendingPathComponent("inputs", isDirectory: true)
++    }
++
++    private func outputDirectory(_ jobID: UUID) -> URL {
++        jobDirectory(jobID).appendingPathComponent("outputs", isDirectory: true)
++    }
++
++    private func mediaType(_ extensionName: String) -> String? {
++        switch extensionName.lowercased() {
++        case "blend": "application/x-blender"
++        case "png": "image/png"
++        case "json": "application/json"
++        default: nil
++        }
++    }
++}
++
++private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unchecked Sendable {
++    private let lock = NSLock()
++    private let capacity = DispatchSemaphore(value: 1)
++    private var sessions: [UUID: ServiceSession] = [:]
++    private let sessionsRoot: URL
++    private let runtimeRoot: URL
++
++    override init() {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("NexGenVideoBpyService", isDirectory: true)
++        try? FileManager.default.removeItem(at: root)
++        sessionsRoot = root
++        runtimeRoot = Bundle.main.bundleURL
++            .deletingLastPathComponent()
++            .deletingLastPathComponent()
++            .appendingPathComponent("Helpers", isDirectory: true)
++            .appendingPathComponent("BpyRuntime", isDirectory: true)
++        super.init()
++    }
++
++    func openSession(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyOpenSessionRequest.self, from: data)
++            guard request.limits.isValid, !request.documentID.isEmpty,
++                  request.documentID.count <= 256,
++                  request.confirmedRevision == nil else {
++                reply(failure("invalid session contract"))
++                return
++            }
++            let session: ServiceSession = try lock.access {
++                if let existing = sessions[request.sessionID] {
++                    guard existing.matches(request) else {
++                        throw CocoaError(.fileWriteInvalidFileName)
++                    }
++                    return existing
++                }
++                guard sessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
++                let session = ServiceSession(
++                    request: request,
++                    root: sessionsRoot.appendingPathComponent(request.sessionID.uuidString, isDirectory: true),
++                    runtimeRoot: runtimeRoot,
++                    capacity: capacity
++                )
++                sessions[request.sessionID] = session
++                return session
++            }
++            session.open(reply: reply)
++        } catch {
++            reply(failure("invalid open request"))
++        }
++    }
++
++    func stageInput(_ data: Data, chunk: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyStageInputRequest.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            try session.stage(request, chunk: chunk)
++            reply(encoded(.init(ok: true)))
++        } catch {
++            reply(failure("input rejected: \(error.localizedDescription)"))
++        }
++    }
++
++    func runJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyRunJobRequest.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            reply(encoded(session.submit(request)))
++        } catch {
++            reply(failure("invalid job request"))
++        }
++    }
++
++    func jobStatus(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyJobReference.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            reply(encoded(session.status(request.jobID)))
++        } catch {
++            reply(failure("invalid status request"))
++        }
++    }
++
++    func readOutput(_ data: Data, withReply reply: @escaping (Data, Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyReadOutputRequest.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            reply(encoded(.init(ok: true)), try session.output(request))
++        } catch {
++            reply(failure("output rejected: \(error.localizedDescription)"), Data())
++        }
++    }
++
++    func confirmJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyConfirmJobRequest.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            reply(encoded(try session.confirm(request)))
++        } catch {
++            reply(failure("confirmation rejected: \(error.localizedDescription)"))
++        }
++    }
++
++    func cancelJob(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpyJobReference.self, from: data)
++            guard let session = session(request.sessionID) else { throw CocoaError(.fileNoSuchFile) }
++            reply(encoded(session.cancel(request.jobID)))
++        } catch {
++            reply(failure("invalid cancel request"))
++        }
++    }
++
++    func closeSession(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try decoder.decode(BpySessionReference.self, from: data)
++            let session = lock.access { sessions.removeValue(forKey: request.sessionID) }
++            session?.close()
++            reply(encoded(.init(ok: true)))
++        } catch {
++            reply(failure("invalid close request"))
++        }
++    }
++
++    func shutdown(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        let closing = lock.access { () -> [ServiceSession] in
++            let values = Array(sessions.values)
++            sessions.removeAll()
++            return values
++        }
++        closing.forEach { $0.close() }
++        reply(encoded(.init(ok: true)))
++    }
++
++    private func session(_ id: UUID) -> ServiceSession? {
++        lock.access { sessions[id] }
++    }
++}
++
++private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
++    private let service = BpyRuntimeService()
++
++    func listener(
++        _ listener: NSXPCListener,
++        shouldAcceptNewConnection connection: NSXPCConnection
++    ) -> Bool {
++        connection.exportedInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
++        connection.exportedObject = service
++        connection.resume()
++        return true
++    }
++}
++
++let listener = NSXPCListener.service()
++let listenerDelegate = ListenerDelegate()
++listener.delegate = listenerDelegate
++listener.resume()
+diff --git a/Tests/NexGenVideoTests/ThreeD/BpyRuntimeContractTests.swift b/Tests/NexGenVideoTests/ThreeD/BpyRuntimeContractTests.swift
+new file mode 100644
+index 00000000..c50a3e48
+--- /dev/null
++++ b/Tests/NexGenVideoTests/ThreeD/BpyRuntimeContractTests.swift
+@@ -0,0 +1,63 @@
++import BpyRuntimeProtocol
++import Foundation
++import Testing
++@testable import NexGenVideo
++
++@Suite("Managed bpy runtime contract")
++struct BpyRuntimeContractTests {
++    @Test func workerSlotsHaveIndependentSandboxIdentities() {
++        #expect(bpyRuntimeServiceNames.count == 2)
++        #expect(Set(bpyRuntimeServiceNames).count == 2)
++    }
++
++    @Test func defaultLimitsAreBounded() {
++        let limits = BpyRuntimeLimits()
++        #expect(limits.isValid)
++        #expect(limits.timeoutSeconds == 120)
++        #expect(limits.outputBytes <= 512 * 1_024 * 1_024)
++    }
++
++    @Test func invalidLimitsFailClosed() {
++        var limits = BpyRuntimeLimits()
++        limits.timeoutSeconds = 0
++        #expect(!limits.isValid)
++        limits = BpyRuntimeLimits()
++        limits.memoryBytes = 64 * 1_024 * 1_024
++        #expect(!limits.isValid)
++    }
++
++    @Test func inputCopyOnlyAcceptsSingleSafeName() throws {
++        let root = URL(fileURLWithPath: "/tmp/approved", isDirectory: true)
++        _ = try BpyApprovedInputCopy(approvedDirectory: root, filename: "scene.blend")
++        #expect(throws: BpyRuntimeError.self) {
++            _ = try BpyApprovedInputCopy(approvedDirectory: root, filename: "../scene.blend")
++        }
++        #expect(throws: BpyRuntimeError.self) {
++            _ = try BpyApprovedInputCopy(approvedDirectory: root, filename: "folder/scene.blend")
++        }
++    }
++
++    @Test func terminalStateSeparatesCandidateFromConfirmation() {
++        #expect(!BpyRuntimeJobState.awaitingConfirmation.isTerminal)
++        #expect(BpyRuntimeJobState.confirmed.isTerminal)
++        #expect(BpyRuntimeJobState.crashed.isTerminal)
++        #expect(BpyRuntimeJobState.timedOut.isTerminal)
++    }
++
++    @Test func requestsRoundTripWithoutPaths() throws {
++        let request = BpyRunJobRequest(
++            sessionID: UUID(),
++            jobID: UUID(),
++            expectedRevision: "r1",
++            source: "import bpy",
++            inputNames: ["approved.blend"],
++            timeoutSeconds: 10
++        )
++        let data = try JSONEncoder().encode(request)
++        let decoded = try JSONDecoder().decode(BpyRunJobRequest.self, from: data)
++        #expect(decoded == request)
++        let text = String(decoding: data, as: UTF8.self)
++        #expect(!text.contains("/Users/"))
++        #expect(!text.contains("projectURL"))
++    }
++}
+diff --git a/docs/BPY_RUNTIME.md b/docs/BPY_RUNTIME.md
+new file mode 100644
+index 00000000..679d0f4a
+--- /dev/null
++++ b/docs/BPY_RUNTIME.md
+@@ -0,0 +1,74 @@
++# Managed bpy runtime
++
++The 3D runtime is a host-owned component, not another engine. The Swift host retains document,
++pipeline, provider, approval, and project-write ownership. One persistent Python/`bpy` worker is
++created per active runtime session and processes one job at a time. Sessions are explicitly bound
++to an NGV document identity. Two differently identified XPC services cap concurrency at two active
++3D documents and give each worker a distinct OS sandbox container.
++
++## Security boundary
++
++The app talks only to two embedded `NexGenVideoBpyService` slots. macOS launches each service in
++its own App Sandbox and container. Neither has network, user-selected-file, Keychain,
++application-group, or temporary-exception entitlements. Each Python child is signed only with App
++Sandbox inheritance. Inputs cross the boundary as bounded byte chunks after the host opens a
++regular, single-link file without
++following symlinks and hashes the exact descriptor bytes. The service writes them into its private
++job directory. Outputs return as bounded chunks and the host verifies length, SHA-256, declared
++type, and magic bytes into host-owned staging. The worker never receives a project path and never
++writes project truth.
++
++The CI probe passes one service's private session path to the other and requires an OS-level
++`EPERM`/`EACCES`, in addition to the host-home, foreign-project, canonical-artifact, secret, and
++network denials. The child starts with an allowlisted environment, isolated Python flags, empty
++Blender config, scripts and data directories, auto-execution disabled, resource limits, and a new
++process group. Timeout, cancel, close, crash, and app termination kill that group and its enumerated
++process tree. These measures reduce ambient state and clean up work; the OS App Sandbox is the
++filesystem/network control.
++
++Apple documents XPC services as private to the containing app, independently sandboxed with
++minimal access, and managed by `launchd`. Apple also recommends XPC when a helper needs different
++capabilities from its host:
++
++- <https://developer.apple.com/documentation/security/app-sandbox>
++- <https://developer.apple.com/documentation/security/discovering-and-diagnosing-app-sandbox-violations>
++- <https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingXPCServices.html>
++
++## Transaction and restart semantics
++
++A Job ID is immutable within a session. A duplicate joins the running job or receives its cached
++terminal result; it never executes again. A successful execution is only a candidate. The host
++must validate its outputs and explicitly confirm a new revision before another mutating job.
++Until confirmation, restart loads the previous confirmed checkpoint. Failed, cancelled, timed-out,
++or crashed jobs are terminal and can never be confirmed.
++
++The runtime seam deliberately accepts native `bpy`/BMesh Python rather than inventing a reduced 3D
++API. #543 owns the schema-validated agent tool and operation policy above this internal seam; #542
++owns portable scene revisions and canonical persistence. This issue adds neither a phase nor a
++canonical scene artifact.
++
++## Runtime and distribution
++
++`Runtime/bpy/runtime-lock.json` pins CPython, the `bpy` wheel, every declared Python dependency,
++the standalone Python build inputs, source locations, hashes, and licenses. CI extracts wheels
++directly; `pip` is absent from runtime assembly and never runs in the installed app. The full
++python-build-standalone archive supplies its build manifest and license set for audit. The lock
++also records the independently fetched PEP 658 metadata hash and its exact CPython/dependency
++contract rather than inferring that contract from the wheel filename.
++
++Public distribution remains fail-closed while the lock says
++`blocked-pending-corresponding-source-review`. The unresolved item is concrete: the native
++libraries already vendored inside the Blender Foundation wheel still need an exact binary-to-source
++and notices mapping. The Blender source tarball by itself is not asserted to settle that duty.
++
++## CI evidence
++
++`bpy-runtime-acceptance.yml` is manual because it consumes the configured current-macOS runner and
++signing/notarization credentials. It performs cheap lock/source checks first, then builds via
++`scripts/bundle.sh`, verifies nested signatures and sandbox entitlements, notarizes, relocates the
++app outside the build directory, and runs the real wheel on Apple Silicon. The self-test covers two
++documents, duplicate IDs, confirmation, timeout, cancel, crash/restart, close/quit, denied host
++files/secrets/network, foreign Python/Blender isolation, BMesh plus a modifier, and a perspective
++render. It records hardware, runtime identity, renderer/device selection, package size, cold/warm
++start, edit/render time, and peak memory. GPU/Metal is evidence only if the runtime reports and uses
++a Metal Cycles device; otherwise the report identifies and measures the CPU fallback.
+diff --git a/scripts/bundle.sh b/scripts/bundle.sh
+index 0f3ff696..e544bf9a 100755
+--- a/scripts/bundle.sh
++++ b/scripts/bundle.sh
+@@ -148,7 +148,7 @@ BIN="$BIN_DIRECTORY/NexGenVideo"
+ echo "==> Assembling $APP"
+ rm -rf "$APP"
+ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+-mkdir -p "$APP/Contents/Helpers"
++mkdir -p "$APP/Contents/Helpers" "$APP/Contents/XPCServices"
+ cp "$BIN_DIRECTORY/NexGenVideoDiagnostics" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
+ cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
+ cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
+@@ -176,6 +176,12 @@ fi
+ 
+ cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+ 
++BPY_RUNTIME_ROOT="${NGV_BPY_RUNTIME_ROOT:-$ROOT/.build/bpy-runtime}"
++"$ROOT/scripts/bundle_bpy_runtime.sh" \
++  "$BPY_RUNTIME_ROOT" \
++  "$BIN_DIRECTORY/NexGenVideoBpyService" \
++  "$APP"
++
+ "$ROOT/scripts/stage_runtime_dependencies.sh" \
+   "$APP/Contents/Frameworks" \
+   "$APP/Contents/MacOS/NexGenVideo" \
+@@ -213,9 +219,22 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
+ touch "$APP"
+ 
+ if [ "$MODE" = "fast" ]; then
+-  echo "==> Codesigning main app with $SIGN_IDENTITY (no timestamp, no helpers)"
++  echo "==> Codesigning fast app with managed runtime"
++  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
++  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
++  codesign --force --sign "$SIGN_IDENTITY" \
++    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
++    "$BPY_RUNTIME/python/bin/python3.13"
++  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
++    codesign --force --sign "$SIGN_IDENTITY" \
++      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
++    codesign --force --sign "$SIGN_IDENTITY" \
++      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++      "$BPY_XPC"
++  done
+   codesign --force --sign "$SIGN_IDENTITY" "$APP"
+-  echo "==> Done: $APP (fast mode — stable identity, no dSYM, no nested re-sign)"
++  echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
+   exit 0
+ fi
+ 
+@@ -228,12 +247,49 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
+ if [ "$MODE" = "dev" ]; then
+   echo "==> Ad-hoc signing dev app"
+   codesign --force --deep --sign - "$APP"
++  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
++  codesign --force --sign - \
++    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
++    "$BPY_RUNTIME/python/bin/python3.13"
++  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
++    codesign --force --sign - \
++      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
++    codesign --force --sign - \
++      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++      "$BPY_XPC"
++  done
++  codesign --force --sign - "$APP"
+   codesign --verify --strict --verbose=2 "$APP"
+   upload_dsyms
+   echo "==> Done: $APP (ad-hoc signed)"
+   exit 0
+ fi
+ 
++BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
++echo "==> Codesigning managed bpy runtime"
++while IFS= read -r -d '' binary; do
++  [ "$binary" = "$BPY_RUNTIME/python/bin/python3.13" ] && continue
++  if file "$binary" | grep -q 'Mach-O'; then
++    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$binary"
++  fi
++done < <(find "$BPY_RUNTIME" -depth -type f -print0)
++codesign --force --options runtime --timestamp \
++  --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
++  --sign "$SIGN_IDENTITY" \
++  "$BPY_RUNTIME/python/bin/python3.13"
++for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
++  codesign --force --options runtime --timestamp \
++    --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++    --sign "$SIGN_IDENTITY" \
++    "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
++  codesign --force --options runtime --timestamp \
++    --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
++    --sign "$SIGN_IDENTITY" \
++    "$BPY_XPC"
++  codesign --verify --strict --verbose=2 "$BPY_XPC"
++done
++
+ SPARKLE_CURRENT="$APP/Contents/Frameworks/Sparkle.framework/Versions/Current"
+ if [ -d "$SPARKLE_CURRENT" ]; then
+   echo "==> Codesigning nested Sparkle helpers"
+diff --git a/scripts/bundle_bpy_runtime.sh b/scripts/bundle_bpy_runtime.sh
+new file mode 100755
+index 00000000..6ae100af
+--- /dev/null
++++ b/scripts/bundle_bpy_runtime.sh
+@@ -0,0 +1,38 @@
++#!/bin/bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++RUNTIME_ROOT="${1:?staged bpy runtime required}"
++SERVICE_BINARY="${2:?bpy XPC service binary required}"
++APP="${3:?NexGenVideo app destination required}"
++
++test -f "$RUNTIME_ROOT/.complete"
++test -x "$RUNTIME_ROOT/python/bin/python3"
++test -f "$RUNTIME_ROOT/site-packages/bpy/__init__.py"
++test -x "$SERVICE_BINARY"
++case "$APP" in
++  *.app) ;;
++  *) echo "invalid bpy app destination: $APP" >&2; exit 1 ;;
++esac
++
++DESTINATION="$APP/Contents/Helpers/BpyRuntime"
++rm -rf "$DESTINATION"
++mkdir -p "$DESTINATION"
++cp -R "$RUNTIME_ROOT/." "$DESTINATION/"
++cp "$ROOT/Runtime/bpy/worker.py" "$DESTINATION/worker.py"
++chmod 755 "$DESTINATION/python/bin/python3"*
++
++for slot in 0 1; do
++  XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
++  rm -rf "$XPC"
++  mkdir -p "$XPC/Contents/MacOS"
++  cp "$SERVICE_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpyService"
++  cp "$ROOT/Runtime/bpy/NexGenVideoBpyService-Info.plist" "$XPC/Contents/Info.plist"
++  /usr/libexec/PlistBuddy -c \
++    "Set :CFBundleIdentifier de.h5ventures.nexgenvideo.bpy-service-$slot" \
++    "$XPC/Contents/Info.plist"
++  chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpyService"
++done
++
++test ! -e "$DESTINATION/python/bin/pip"
++test ! -e "$DESTINATION/python/bin/pip3"
+diff --git a/scripts/ci_changes.py b/scripts/ci_changes.py
+index 03549efc..aea1bc7f 100644
+--- a/scripts/ci_changes.py
++++ b/scripts/ci_changes.py
+@@ -38,6 +38,11 @@ BUNDLE_PATHS = (
+     'Sources/HangDiagnostics/**',
+     'Sources/HangStackSampler/**',
+     'Sources/NexGenVideoDiagnostics/**',
++    'Sources/BpyRuntimeProtocol/**',
++    'Sources/NexGenVideoBpyService/**',
++    'Sources/NexGenVideo/ThreeD/**',
++    'Runtime/bpy/**',
++    '.github/workflows/bpy-runtime-acceptance.yml',
+ )
+ UI_PATHS = (
+     "docs/ui/**",
+diff --git a/scripts/stage_bpy_runtime.sh b/scripts/stage_bpy_runtime.sh
+new file mode 100755
+index 00000000..e6dea04d
+--- /dev/null
++++ b/scripts/stage_bpy_runtime.sh
+@@ -0,0 +1,90 @@
++#!/bin/bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++LOCK="$ROOT/Runtime/bpy/runtime-lock.json"
++DESTINATION="${1:?bpy runtime destination required}"
++
++python3 "$ROOT/scripts/verify_bpy_runtime.py"
++case "$DESTINATION" in
++  /|"$ROOT"|"$ROOT"/) echo "refusing broad bpy runtime destination: $DESTINATION" >&2; exit 1 ;;
++esac
++
++WORK="$(mktemp -d)"
++cleanup() { rm -rf "$WORK"; }
++trap cleanup EXIT
++
++fetch() {
++  local url="$1" expected="$2" output="$3"
++  curl --fail --location --retry 3 --output "$output" "$url"
++  local actual
++  actual="$(shasum -a 256 "$output" | awk '{print $1}')"
++  [ "$actual" = "$expected" ] || {
++    echo "checksum mismatch for $(basename "$output"): $actual" >&2
++    exit 1
++  }
++}
++
++rm -rf "$DESTINATION"
++mkdir -p "$DESTINATION/python" "$DESTINATION/site-packages" \
++  "$DESTINATION/licenses/wheels" "$DESTINATION/licenses/python"
++
++runtime_url="$(jq -r .runtime.artifact.url "$LOCK")"
++runtime_sha="$(jq -r .runtime.artifact.sha256 "$LOCK")"
++runtime_archive="$WORK/python.tar.zst"
++fetch "$runtime_url" "$runtime_sha" "$runtime_archive"
++mkdir -p "$WORK/python-full"
++tar -xf "$runtime_archive" -C "$WORK/python-full" \
++  python/install python/PYTHON.json python/licenses
++cp -R "$WORK/python-full/python/install/." "$DESTINATION/python/"
++cp "$WORK/python-full/python/PYTHON.json" "$DESTINATION/PYTHON.json"
++cp -R "$WORK/python-full/python/licenses/." "$DESTINATION/licenses/python/"
++
++while IFS=$'\t' read -r name filename url sha; do
++  wheel="$WORK/$filename"
++  fetch "$url" "$sha" "$wheel"
++  wheel_root="$WORK/wheel-$name"
++  mkdir -p "$wheel_root"
++  ditto -x -k "$wheel" "$wheel_root"
++  data_roots=("$wheel_root"/*.data)
++  if [ -d "${data_roots[0]}" ]; then
++    for data_root in "${data_roots[@]}"; do
++      for scheme in purelib platlib; do
++        if [ -d "$data_root/$scheme" ]; then
++          cp -R "$data_root/$scheme/." "$DESTINATION/site-packages/"
++        fi
++      done
++      find "$data_root" -mindepth 1 -maxdepth 1 \
++        ! -name purelib ! -name platlib -print -quit | grep -q . && {
++          echo "unsupported wheel data scheme in $filename" >&2
++          exit 1
++        }
++      rm -rf "$data_root"
++    done
++  fi
++  dist_info="$(find "$wheel_root" -maxdepth 1 -type d -name '*.dist-info' -print -quit)"
++  [ -n "$dist_info" ] || { echo "missing dist-info in $filename" >&2; exit 1; }
++  mkdir -p "$DESTINATION/licenses/wheels/$name"
++  find "$dist_info" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) \
++    -exec cp {} "$DESTINATION/licenses/wheels/$name/" \;
++  if [ -d "$dist_info/licenses" ]; then
++    cp -R "$dist_info/licenses/." "$DESTINATION/licenses/wheels/$name/"
++  fi
++  cp -R "$wheel_root/." "$DESTINATION/site-packages/"
++done < <(jq -r '.wheels[] | [.name,.filename,.url,.sha256] | @tsv' "$LOCK")
++
++find "$DESTINATION/python" -type d \( -name pip -o -name 'pip-*.dist-info' -o -name ensurepip \) \
++  -prune -exec rm -rf {} +
++rm -f "$DESTINATION/python/bin/pip" \
++  "$DESTINATION/python/bin/pip3" \
++  "$DESTINATION/python/bin/pip3.13"
++cp "$LOCK" "$DESTINATION/runtime-lock.json"
++cp "$ROOT/Runtime/bpy/NOTICE.md" "$DESTINATION/NOTICE.md"
++printf '%s\n' "$(shasum -a 256 "$LOCK" | awk '{print $1}')" > "$DESTINATION/.complete"
++
++test -x "$DESTINATION/python/bin/python3"
++test -f "$DESTINATION/site-packages/bpy/__init__.py"
++test ! -e "$DESTINATION/python/bin/pip"
++test ! -e "$DESTINATION/python/bin/pip3"
++test ! -e "$DESTINATION/python/bin/pip3.13"
++echo "staged managed bpy runtime at $DESTINATION"
+diff --git a/scripts/test_bpy_runtime_workflow.py b/scripts/test_bpy_runtime_workflow.py
+new file mode 100644
+index 00000000..bff7e6ef
+--- /dev/null
++++ b/scripts/test_bpy_runtime_workflow.py
+@@ -0,0 +1,45 @@
++import unittest
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++class BpyRuntimeWorkflowTests(unittest.TestCase):
++    def test_acceptance_is_manual_and_uses_existing_runner_split(self):
++        text = (ROOT / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
++        trigger = text.split("permissions:", 1)[0]
++        self.assertIn("workflow_dispatch:", trigger)
++        self.assertNotIn("pull_request:", trigger)
++        self.assertNotIn("push:", trigger)
++        self.assertIn("runs-on: xcode-27", text)
++        self.assertIn("runs-on: macos-26", text)
++        self.assertIn("scripts/stage_bpy_runtime.sh", text)
++        self.assertIn("scripts/bundle.sh release --sign", text)
++        self.assertIn("scripts/notarize.sh", text)
++        self.assertIn("NGV_SELFTEST_BPY", text)
++        self.assertIn(".crossSessionDenied == true", text)
++
++    def test_release_fails_closed_on_distribution_review(self):
++        release = (ROOT / ".github/workflows/release.yml").read_text()
++        self.assertIn("verify_bpy_runtime.py --distribution", release)
++        self.assertIn("if: ${{ inputs.dry_run == false }}", release)
++
++    def test_worker_has_no_network_entitlement(self):
++        for filename in (
++            "NexGenVideoBpyService.entitlements",
++            "PythonChild.entitlements",
++        ):
++            text = (ROOT / "Runtime/bpy" / filename).read_text()
++            self.assertIn("com.apple.security.app-sandbox", text)
++            self.assertNotIn("com.apple.security.network.client", text)
++            self.assertNotIn("com.apple.security.files", text)
++
++    def test_bundle_creates_two_distinct_xpc_containers(self):
++        text = (ROOT / "scripts/bundle_bpy_runtime.sh").read_text()
++        self.assertIn("for slot in 0 1", text)
++        self.assertIn("bpy-service-$slot", text)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/scripts/test_ci_workflow.py b/scripts/test_ci_workflow.py
+index 6314d4e5..fc750744 100644
+--- a/scripts/test_ci_workflow.py
++++ b/scripts/test_ci_workflow.py
+@@ -49,6 +49,20 @@ class CIWorkflowTests(unittest.TestCase):
+         self.assertNotIn("render_agent_chat_spec.py", build)
+         self.assertNotIn("pull_request:", (ROOT / ".github/workflows/bundle.yml").read_text())
+ 
++    def test_bpy_runtime_changes_require_a_bundle(self):
++        sys.path.insert(0, str(ROOT / "scripts"))
++        import ci_changes
++        for path in (
++            "Runtime/bpy/runtime-lock.json",
++            "Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift",
++            "Sources/NexGenVideoBpyService/main.swift",
++            "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift",
++        ):
++            with self.subTest(path=path):
++                plan = ci_changes.classify([path])
++                self.assertTrue(plan["build_required"])
++                self.assertTrue(plan["bundle_required"])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/scripts/test_verify_bpy_runtime.py b/scripts/test_verify_bpy_runtime.py
+new file mode 100644
+index 00000000..4fffde43
+--- /dev/null
++++ b/scripts/test_verify_bpy_runtime.py
+@@ -0,0 +1,47 @@
++import importlib.util
++import json
++import unittest
++from pathlib import Path
++from unittest import mock
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SPEC = importlib.util.spec_from_file_location(
++    "verify_bpy_runtime", ROOT / "scripts/verify_bpy_runtime.py"
++)
++MODULE = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(MODULE)
++
++
++class BpyRuntimeLockTests(unittest.TestCase):
++    def setUp(self):
++        self.lock = json.loads(MODULE.LOCK.read_text())
++
++    def test_committed_lock_is_complete(self):
++        MODULE.validate(self.lock)
++
++    def test_bpy_hash_drift_is_rejected(self):
++        bpy = next(item for item in self.lock["wheels"] if item["name"] == "bpy")
++        bpy["sha256"] = "0" * 64
++        with self.assertRaisesRegex(ValueError, "bpy version/hash drift"):
++            MODULE.validate(self.lock)
++
++    def test_missing_transitive_wheel_is_rejected(self):
++        self.lock["wheels"] = self.lock["wheels"][:-1]
++        with self.assertRaisesRegex(ValueError, "wheel closure mismatch"):
++            MODULE.validate(self.lock)
++
++    def test_ready_status_cannot_hide_a_blocker(self):
++        self.lock["distributionStatus"] = "ready"
++        with self.assertRaisesRegex(ValueError, "cannot retain blockers"):
++            MODULE.validate(self.lock)
++
++    def test_distribution_mode_fails_closed(self):
++        with mock.patch.object(MODULE, "LOCK", MODULE.LOCK), mock.patch(
++            "sys.argv", ["verify_bpy_runtime.py", "--distribution"]
++        ):
++            self.assertEqual(MODULE.main(), 2)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/scripts/verify_bpy_bundle.sh b/scripts/verify_bpy_bundle.sh
+new file mode 100755
+index 00000000..e9ba5f4a
+--- /dev/null
++++ b/scripts/verify_bpy_bundle.sh
+@@ -0,0 +1,43 @@
++#!/bin/bash
++set -euo pipefail
++
++APP="${1:?NexGenVideo.app required}"
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++RUNTIME="$APP/Contents/Helpers/BpyRuntime"
++PYTHON="$RUNTIME/python/bin/python3.13"
++
++test -x "$PYTHON"
++test -f "$RUNTIME/site-packages/bpy/__init__.py"
++test -f "$RUNTIME/PYTHON.json"
++test ! -e "$RUNTIME/python/bin/pip"
++test ! -e "$RUNTIME/python/bin/pip3"
++test ! -e "$RUNTIME/python/bin/pip3.13"
++cmp -s "$RUNTIME/runtime-lock.json" "$ROOT/Runtime/bpy/runtime-lock.json"
++[ "$(cat "$RUNTIME/.complete")" = "$(shasum -a 256 "$ROOT/Runtime/bpy/runtime-lock.json" | awk '{print $1}')" ]
++
++codesign --verify --strict --verbose=2 "$PYTHON"
++for slot in 0 1; do
++  XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
++  test -d "$XPC"
++  [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$XPC/Contents/Info.plist")" \
++    = "de.h5ventures.nexgenvideo.bpy-service-$slot" ]
++  codesign --verify --strict --verbose=2 "$XPC"
++done
++
++while IFS= read -r -d '' binary; do
++  file "$binary" | grep -q 'Mach-O' || continue
++  codesign --verify --strict --verbose=2 "$binary"
++  arches="$(lipo -archs "$binary")"
++  [ "$arches" = "arm64" ] || {
++    echo "unexpected architecture in $binary: $arches" >&2
++    exit 1
++  }
++  while IFS= read -r dependency; do
++    case "$dependency" in
++      @rpath/*|@loader_path/*|@executable_path/*|/usr/lib/*|/System/Library/*) ;;
++      *) echo "non-relocatable dependency in $binary: $dependency" >&2; exit 1 ;;
++    esac
++  done < <(otool -L "$binary" | tail -n +2 | awk '{print $1}')
++done < <(find "$RUNTIME" "$APP/Contents/XPCServices" -type f -print0)
++
++echo "managed bpy bundle is signed, arm64-only, and relocatable"
+diff --git a/scripts/verify_bpy_runtime.py b/scripts/verify_bpy_runtime.py
+new file mode 100755
+index 00000000..26db4985
+--- /dev/null
++++ b/scripts/verify_bpy_runtime.py
+@@ -0,0 +1,108 @@
++#!/usr/bin/env python3
++import argparse
++import json
++import re
++import sys
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++LOCK = ROOT / "Runtime/bpy/runtime-lock.json"
++SHA256 = re.compile(r"^[0-9a-f]{64}$")
++EXPECTED_WHEELS = {
++    "bpy", "numpy", "cattrs", "Cython", "requests", "zstandard", "attrs",
++    "typing-extensions", "charset-normalizer", "idna", "urllib3", "certifi",
++}
++EXPECTED_BUILD_INPUTS = {
++    "CPython", "bzip2", "expat", "libedit", "libffi", "mpdecimal", "ncurses",
++    "OpenSSL", "SQLite", "Tcl", "Tk", "XZ liblzma", "zlib",
++}
++
++
++def fail(message):
++    raise ValueError(message)
++
++
++def validate_artifact(item, label, require_size=False):
++    if not item.get("url", "").startswith("https://"):
++        fail(f"{label}: source must use HTTPS")
++    if not SHA256.fullmatch(item.get("sha256", "")):
++        fail(f"{label}: invalid SHA-256")
++    if require_size and not isinstance(item.get("size"), int):
++        fail(f"{label}: missing byte size")
++
++
++def validate(lock):
++    if lock.get("schema") != "nexgenvideo/bpy-runtime-lock/1":
++        fail("unexpected runtime lock schema")
++    if lock.get("platform") != "macos-arm64" or lock.get("pythonABI") != "cp313":
++        fail("runtime platform/ABI must stay macOS arm64 CPython 3.13")
++    runtime = lock.get("runtime", {})
++    if runtime.get("version") != "3.13.15+20260901":
++        fail("unexpected CPython runtime pin")
++    validate_artifact(runtime.get("artifact", {}), "runtime artifact", True)
++    validate_artifact(runtime.get("source", {}), "runtime source")
++
++    wheels = lock.get("wheels", [])
++    names = {item.get("name") for item in wheels}
++    if names != EXPECTED_WHEELS or len(names) != len(wheels):
++        fail(f"wheel closure mismatch: {sorted(names)}")
++    for item in wheels:
++        validate_artifact(item, f"wheel {item.get('name')}", True)
++        validate_artifact(item.get("source", {}), f"source {item.get('name')}")
++        if not item.get("license"):
++            fail(f"wheel {item.get('name')}: missing license")
++    bpy = next(item for item in wheels if item["name"] == "bpy")
++    if bpy["version"] != "5.2.2" or bpy["sha256"] != (
++        "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7"
++    ):
++        fail("bpy version/hash drift")
++    metadata = bpy.get("metadata", {})
++    validate_artifact(metadata, "bpy wheel metadata")
++    if metadata.get("license") != "GPL-3.0" or metadata.get("requiresPython") != "==3.13.*" \
++            or set(metadata.get("requiresDist", [])) != {
++        "cattrs", "cython", "numpy<3.0,>=2.2", "requests", "zstandard",
++    }:
++        fail("bpy wheel metadata drift")
++
++    build_inputs = lock.get("pythonBuildInputs", [])
++    input_names = {item.get("name") for item in build_inputs}
++    if input_names != EXPECTED_BUILD_INPUTS or len(input_names) != len(build_inputs):
++        fail(f"CPython build-input closure mismatch: {sorted(input_names)}")
++    for item in build_inputs:
++        validate_artifact(item, f"CPython input {item.get('name')}")
++        if not item.get("license"):
++            fail(f"CPython input {item.get('name')}: missing license")
++
++    blockers = lock.get("distributionBlockers", [])
++    status = lock.get("distributionStatus")
++    if status == "ready" and blockers:
++        fail("a ready distribution cannot retain blockers")
++    if status != "ready" and not blockers:
++        fail("a blocked distribution must state concrete blockers")
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--distribution", action="store_true")
++    args = parser.parse_args()
++    lock = json.loads(LOCK.read_text())
++    validate(lock)
++    if args.distribution and lock["distributionStatus"] != "ready":
++        print("bpy runtime distribution blocked:", file=sys.stderr)
++        for blocker in lock["distributionBlockers"]:
++            print(f"- {blocker}", file=sys.stderr)
++        return 2
++    print(
++        f"bpy {next(x['version'] for x in lock['wheels'] if x['name'] == 'bpy')} / "
++        f"CPython {lock['runtime']['version']} lock verified"
++    )
++    return 0
++
++
++if __name__ == "__main__":
++    try:
++        raise SystemExit(main())
++    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
++        print(f"invalid bpy runtime lock: {error}", file=sys.stderr)
++        raise SystemExit(1)

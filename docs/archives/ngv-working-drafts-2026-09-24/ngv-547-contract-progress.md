@@ -1,0 +1,3 @@
+Parent hat die vom Leaf benannte Grenze selbst in `docs/PRODUCTION_PROFILES.md:67–79` verifiziert: heutige geplante Video-Prompts müssen genehmigte Action-/Kamera-/Blocking-/Continuity-/Match-/Rescue-Direktiven tatsächlich enthalten; Frames/Render prüfen diese Bytes unabhängig. Eine pauschale Umdeutung aller alten Planfelder als bewusst begründete sparse controls wäre unbelegt.
+
+Nur die widersprechende Sparse-Projektionsänderung bleibt bis zu einem konkreten Opt-in-Vertragsentscheid offen. Der native Leaf arbeitet weiter an unabhängiger vollständiger Korpus-/Retrieval-/Trace-Integration und Iterationskorrekturen. Bestehende Pflichtprojektionen und Locked Specs werden nicht still geändert. Kein globaler Stop, keine Runtime-/Gesamtabschlussbehauptung.

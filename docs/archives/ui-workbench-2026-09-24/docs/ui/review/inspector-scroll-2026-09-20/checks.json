@@ -1,0 +1,176 @@
+{
+  "surfaces": [
+    {
+      "fixture": "Leer",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Messung"
+      ]
+    },
+    {
+      "fixture": "Audio",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Messung",
+        "Interpretation",
+        "Messqualität",
+        "Abhören"
+      ]
+    },
+    {
+      "fixture": "Storyboard",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Timing",
+        "Handlung",
+        "Sketch-Momente",
+        "Bildquelle",
+        "Shotfolge"
+      ]
+    },
+    {
+      "fixture": "Shotplanung",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Timing",
+        "Handlung",
+        "Kamera",
+        "Produktion",
+        "Ausgabe & Eingaben",
+        "Räumlicher Plan",
+        "Music Video",
+        "Zustände · Story-Welt"
+      ]
+    },
+    {
+      "fixture": "Blocking",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Location",
+        "Szene",
+        "Maus",
+        "Projektquellen"
+      ]
+    },
+    {
+      "fixture": "References",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Sichtung",
+        "Herkunft",
+        "Revision",
+        "Anker bearbeiten"
+      ]
+    },
+    {
+      "fixture": "Review",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Eingang",
+        "Ausgang",
+        "Prüfung",
+        "Alle Prüfungen"
+      ]
+    },
+    {
+      "fixture": "Takes",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Produktion",
+        "Generierungsdetails",
+        "Varianten",
+        "Take prüfen"
+      ]
+    },
+    {
+      "fixture": "Schnitt",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Transformieren",
+        "Clip",
+        "Quelle",
+        "Keyframes"
+      ]
+    },
+    {
+      "fixture": "Postproduction",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Bildkorrektur",
+        "Vergleich"
+      ]
+    },
+    {
+      "fixture": "Export",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Ausgabeart",
+        "Video",
+        "Freigabe",
+        "Audio",
+        "Datei",
+        "Vorschaubild"
+      ]
+    },
+    {
+      "fixture": "Medien",
+      "scrollAreas": 1,
+      "outside": [],
+      "nested": 0,
+      "groups": [
+        "Datei",
+        "Dateiaktionen",
+        "Verwendung"
+      ]
+    }
+  ],
+  "results": [
+    {
+      "name": "Complete image-source and shot-order groups visible at 100",
+      "pass": true
+    },
+    {
+      "name": "Complete image-source and shot-order groups visible at 130",
+      "pass": true
+    },
+    {
+      "name": "Collapsing image source moves shot order in the same flow",
+      "pass": true
+    },
+    {
+      "name": "Shot-order edit remains connected",
+      "pass": true
+    },
+    {
+      "name": "Repeated Inspector rendering creates no nested or orphan groups",
+      "pass": true
+    },
+    {
+      "name": "Late sketch controls share the same scroll area",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

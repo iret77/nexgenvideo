@@ -1,0 +1,111 @@
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 735cc4da..05353018 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -111,6 +111,7 @@ enum WorkspaceUIAcceptance {
+             }
+             var browserFolderReturnOpened = false
+             var hiddenSearchFolderDeleteExcluded = false
++            var workspaceReturnVisibleAssetDeleted = false
+             var rootSessionWasIntentional = false
+             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+@@ -266,7 +267,11 @@ enum WorkspaceUIAcceptance {
+                               MediaPanelItemKey.folder("acceptance-folder-0")
+                           )
+                   }),
+-                  click(identifier: "media.workspace.browser", in: window) == nil,
++                  click(identifier: "media.browser.folder.acceptance-folder-0", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaCommandFocus == .browser
++                          && editor.selectedFolderIds == ["acceptance-folder-0"]
++                  }),
+                   pressKey(keyCode: 36, characters: "\r", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       let opened = editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+@@ -320,6 +325,35 @@ enum WorkspaceUIAcceptance {
+                       editor.folder(id: "acceptance-folder-0") != nil
+                           && editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
+                   }),
++                  click(identifier: "editor.workspace.edit", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.workspaceFocus == .edit
++                          && editor.mediaPanelTab == .assets
++                          && editor.mediaPanelCurrentFolderId == nil
++                          && editor.mediaPanelOrderedItemIds.contains("selection-source")
++                          && !editor.mediaPanelOrderedItemIds.contains("acceptance-bulk-0")
++                  }),
++                  click(identifier: "editor.workspace.media", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.workspaceFocus == .media
++                          && editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
++                          && editor.mediaPanelOrderedItemIds.contains("acceptance-bulk-0")
++                          && !editor.mediaPanelOrderedItemIds.contains("selection-source")
++                  }),
++                  click(identifier: "selection.asset.acceptance-bulk-0", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaCommandFocus == .browser
++                          && editor.selectedVisibleMediaAssetIDs == ["acceptance-bulk-0"]
++                  }),
++                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      !editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
++                  }),
++                  pressKey(keyCode: 6, characters: "z", modifiers: [.command], in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
++                          && editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
++                  }),
+                   click(identifier: "media.folder.library", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.mediaPanelCurrentFolderId == nil
+@@ -327,6 +361,7 @@ enum WorkspaceUIAcceptance {
+                   }) else {
+                 fail("native folder and browser selection paths diverged", scale: scale)
+             }
++            workspaceReturnVisibleAssetDeleted = true
+             editor.publishMediaPanelFolder("acceptance-folder-0", for: .production)
+             guard click(identifier: "editor.workspace.production", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+@@ -372,6 +407,7 @@ enum WorkspaceUIAcceptance {
+                     "browserRoleRestoredAfterWorkspaceReturn": true,
+                     "browserFolderReturnOpened": browserFolderReturnOpened,
+                     "hiddenSearchFolderDeleteExcluded": hiddenSearchFolderDeleteExcluded,
++                    "workspaceReturnVisibleAssetDeleted": workspaceReturnVisibleAssetDeleted,
+                     "rootSessionWasIntentional": rootSessionWasIntentional,
+                     "globalSearchReachedAnotherFolder": true,
+                     "browserDeleteExcludedTreeFolder": editor.folder(id: "acceptance-folder-0") != nil,
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 4326a35a..189c550e 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -899,6 +899,7 @@ final class EditorViewModel {
+             mediaPanelTab: mediaPanelTab,
+             mediaFolderId: mediaPanelCurrentFolderId
+         )
++        mediaPanelOrderedItemIds = []
+         workspaceFocus = focus
+         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
+         isRestoringWorkspacePresentation = true
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+index 6230c07d..18fea725 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+@@ -156,6 +156,9 @@ struct MediaTab: View {
+         .onChange(of: visibleMediaPanelItemIDs, initial: true) { _, ids in
+             publishOrderedIds(ids)
+         }
++        .onChange(of: editor.workspaceFocus, initial: true) { _, _ in
++            publishOrderedIds(visibleMediaPanelItemIDs)
++        }
+         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
+         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
+         .simultaneousGesture(TapGesture().onEnded {
+@@ -211,6 +214,7 @@ struct MediaTab: View {
+             session.initializeFolderIfNeeded(editor.mediaPanelCurrentFolderId)
+             currentFolderId = session.folderID
+             editor.publishMediaPanelFolder(currentFolderId, for: workspace)
++            publishOrderedIds(visibleMediaPanelItemIDs)
+             if let target = editor.mediaPanelRevealAssetId, workspace == editor.workspaceFocus {
+                 revealAsset(id: target)
+                 editor.mediaPanelRevealAssetId = nil

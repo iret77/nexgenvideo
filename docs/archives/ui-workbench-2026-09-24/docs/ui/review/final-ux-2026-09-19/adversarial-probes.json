@@ -1,0 +1,72 @@
+[
+  {
+    "name": "cancel-renewal",
+    "before": {
+      "anchors": true,
+      "count": 6,
+      "cost": 1.18
+    },
+    "during": {
+      "anchors": false,
+      "count": 0,
+      "modal": "cost-anchor"
+    },
+    "after": {
+      "anchors": false,
+      "count": 0,
+      "cost": 1.18,
+      "modal": null
+    },
+    "screen": "Anker aus der Shotplanung\n\nKamera, Blocking und gerenderte Identitäten bestimmen die Produktionsvorlagen.\n\nShot-Anker vorbereiten"
+  },
+  {
+    "name": "unchanged-skip",
+    "decision": "skipped",
+    "locations": 0,
+    "stale": true,
+    "anchors": true,
+    "gate": "Shot-Anker nach Blocking-Änderung erneuern\nShot-Anker erneuern…"
+  },
+  {
+    "name": "review-selection",
+    "selected": "1A",
+    "images": [
+      "1B · Das kleine Zahnrad",
+      "1A · Die leere Straße"
+    ],
+    "finding": "Befund 1D → 1E · Mechanik startet zu früh\n\n1D endet mit einer reparierten, stillstehenden Maschine. 1E verlangt bereits eine laufende Maschine, obwohl der Start erst in 1E geschieht.\n\nKorrektur prüfen",
+    "inspector": "1A · Zustände\nPrüfung in der Zeit der Story"
+  },
+  {
+    "name": "hidden-design-phase",
+    "phase": "design",
+    "sidebar": "Briefing\n✓",
+    "gate": "Gestaltung · aktueller Schritt\nBereit zur Freigabe\n✓ Freigeben",
+    "surface": "Gestaltung\nAuftrag\nGestaltung",
+    "navForCurrent": false
+  },
+  {
+    "name": "take-manual-checks",
+    "dialog": "Take 1 · 1A\nStandbildsimulation · im Produkt Video mit Ton\nIdentität\nZustände & Props\nRaum & Blickrichtung\nHandlung\nTiming & Kamera\nBild- und Tonartefakte\nEntscheidung\nFreigeben\nAblehnen\nAbweichung akzeptieren\nBeobachtung\nSchließen\nReview festhalten",
+    "manualControls": 6,
+    "saveDisabled": true
+  },
+  {
+    "name": "shared-actor-position",
+    "selected": "1A",
+    "location": "street",
+    "sharedActorX": 4,
+    "perShotActorPoses": null,
+    "ui": "Straße & Veranda\nRaum & Bewegung · optional\nLocation\nSzene\nMaus\nKatze\nStraßenmaschine\nKiste\nMaus\nX (m)\nZ (m)\nDrehung (°)\nMaßstab\nProjektquellen"
+  },
+  {
+    "name": "blocking-96-shots",
+    "shotbarHeight": 461,
+    "stageHeight": 280,
+    "stageClipped": true,
+    "viewport": 678.671875,
+    "workClient": 679,
+    "workScroll": 835,
+    "simulationNoteVisible": false
+  }
+]

@@ -1,0 +1,1580 @@
+[
+  {
+    "workspace": "Medien",
+    "sidebar": "Projektmedien\nAlle Medien\n34\nTexte\n3\nTon\n1\nStoryboard\n8\nReferences\n10\nVideo-Takes\n12",
+    "toolbar": "Medien",
+    "inspector": "Vorschau & Details\n\nEin Medium auswählen.\n⌘ / Strg: mehrere auswählen\n⇧: Bereich auswählen",
+    "actions": [
+      {
+        "name": "NexGenVideo",
+        "action": "native:menu-app",
+        "disabled": false
+      },
+      {
+        "name": "Ablage",
+        "action": "native:menu-file",
+        "disabled": false
+      },
+      {
+        "name": "Bearbeiten",
+        "action": "native:menu-edit",
+        "disabled": false
+      },
+      {
+        "name": "Fenster",
+        "action": "native:menu-window",
+        "disabled": false
+      },
+      {
+        "name": "Hilfe",
+        "action": "native:menu-help",
+        "disabled": false
+      },
+      {
+        "name": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Medien",
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "name": "Produktion",
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "name": "Schnitt",
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "name": "Postproduction",
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "name": "Export",
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "name": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Alle Medien\n34",
+        "action": "pool:folder-all",
+        "disabled": false
+      },
+      {
+        "name": "Texte\n3",
+        "action": "pool:folder-documents",
+        "disabled": false
+      },
+      {
+        "name": "Ton\n1",
+        "action": "pool:folder-sound",
+        "disabled": false
+      },
+      {
+        "name": "Öffnen: Storyboard",
+        "action": "pool:toggle-sketches",
+        "disabled": false
+      },
+      {
+        "name": "Storyboard\n8",
+        "action": "pool:folder-sketches",
+        "disabled": false
+      },
+      {
+        "name": "Öffnen: References",
+        "action": "pool:toggle-references",
+        "disabled": false
+      },
+      {
+        "name": "References\n10",
+        "action": "pool:folder-references",
+        "disabled": false
+      },
+      {
+        "name": "Öffnen: Video-Takes",
+        "action": "pool:toggle-footage",
+        "disabled": false
+      },
+      {
+        "name": "Video-Takes\n12",
+        "action": "pool:folder-footage",
+        "disabled": false
+      },
+      {
+        "name": "Ordner anlegen",
+        "action": "pool:new",
+        "disabled": false
+      },
+      {
+        "name": "Ordner umbenennen",
+        "action": "pool:rename",
+        "disabled": true
+      },
+      {
+        "name": "Ordner entfernen",
+        "action": "studio:folder-delete",
+        "disabled": true
+      },
+      {
+        "name": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Inhaltssuche · bereit",
+        "action": "studio:index",
+        "disabled": false
+      },
+      {
+        "name": "Medien importieren",
+        "action": "media-import",
+        "disabled": false
+      },
+      {
+        "name": "Medien generieren",
+        "action": "gen:open",
+        "disabled": false
+      },
+      {
+        "name": "Medien nach Typ ordnen",
+        "action": "studio:organize",
+        "disabled": false
+      },
+      {
+        "name": "Sortierrichtung ändern",
+        "action": "pool:sort",
+        "disabled": false
+      },
+      {
+        "name": "Listenansicht",
+        "action": "pool:view-list",
+        "disabled": false
+      },
+      {
+        "name": "Miniaturansicht",
+        "action": "pool:view-grid",
+        "disabled": false
+      },
+      {
+        "name": "1A · Einstellung\nSketches",
+        "action": "asset:sketch-0-0",
+        "disabled": false
+      },
+      {
+        "name": "1A · Shot-Anker\nReferences",
+        "action": "asset:anchor-0",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 1\n00:00:03:00",
+        "action": "asset:take-0-1",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 2\n00:00:03:00",
+        "action": "asset:take-0-2",
+        "disabled": false
+      },
+      {
+        "name": "1B · Einstellung\nSketches",
+        "action": "asset:sketch-1-0",
+        "disabled": false
+      },
+      {
+        "name": "1B · Shot-Anker\nReferences",
+        "action": "asset:anchor-1",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 1\n00:00:02:00",
+        "action": "asset:take-1-1",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 2\n00:00:02:00",
+        "action": "asset:take-1-2",
+        "disabled": false
+      },
+      {
+        "name": "1C · Einstellung\nSketches",
+        "action": "asset:sketch-2-0",
+        "disabled": false
+      },
+      {
+        "name": "1C · Shot-Anker\nReferences",
+        "action": "asset:anchor-2",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 1\n00:00:04:00",
+        "action": "asset:take-2-1",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 2\n00:00:04:00",
+        "action": "asset:take-2-2",
+        "disabled": false
+      },
+      {
+        "name": "1D · Einstellung\nSketches",
+        "action": "asset:sketch-3-0",
+        "disabled": false
+      },
+      {
+        "name": "1D · Shot-Anker\nReferences",
+        "action": "asset:anchor-3",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 1\n00:00:03:00",
+        "action": "asset:take-3-1",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 2\n00:00:03:00",
+        "action": "asset:take-3-2",
+        "disabled": false
+      },
+      {
+        "name": "1E · Hebel greifen\nSketches",
+        "action": "asset:sketch-4-0",
+        "disabled": false
+      },
+      {
+        "name": "1E · Hebel herunterziehen\nSketches",
+        "action": "asset:sketch-4-1",
+        "disabled": false
+      },
+      {
+        "name": "1E · Maschine läuft an\nSketches",
+        "action": "asset:sketch-4-2",
+        "disabled": false
+      },
+      {
+        "name": "1E · Shot-Anker\nReferences",
+        "action": "asset:anchor-4",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 1\n00:00:05:00",
+        "action": "asset:take-4-1",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 2\n00:00:05:00",
+        "action": "asset:take-4-2",
+        "disabled": false
+      },
+      {
+        "name": "1F · Einstellung\nSketches",
+        "action": "asset:sketch-5-0",
+        "disabled": false
+      },
+      {
+        "name": "1F · Shot-Anker\nReferences",
+        "action": "asset:anchor-5",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 1\n00:00:03:00",
+        "action": "asset:take-5-1",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 2\n00:00:03:00",
+        "action": "asset:take-5-2",
+        "disabled": false
+      },
+      {
+        "name": "AI Cat\nReferences",
+        "action": "asset:identity-1",
+        "disabled": false
+      },
+      {
+        "name": "Briefing.md\nMD",
+        "action": "asset:document-brief",
+        "disabled": false
+      },
+      {
+        "name": "Claude Mouse\nReferences",
+        "action": "asset:identity-0",
+        "disabled": false
+      },
+      {
+        "name": "▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio",
+        "action": "asset:track",
+        "disabled": false
+      },
+      {
+        "name": "Comfort Engine\nReferences",
+        "action": "asset:identity-3",
+        "disabled": false
+      },
+      {
+        "name": "Skript.fountain\nFOUNTAIN",
+        "action": "asset:document-script",
+        "disabled": false
+      },
+      {
+        "name": "Straße\nReferences",
+        "action": "asset:identity-2",
+        "disabled": false
+      },
+      {
+        "name": "Treatment.md\nMD",
+        "action": "asset:document-treatment",
+        "disabled": false
+      },
+      {
+        "name": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Budget 5,98 € / 50,00 €",
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "name": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "name": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "workspace": "Produktion",
+    "sidebar": "Workflow\nQuellen\nMusic Video\nProduktionsworkflow\nAudioanalyse\n✓\nGESCHICHTE\nBriefing\n✓\nGestaltung\n✓\nTreatment\n✓\nSkript\n✓\nSHOTS · 6\nStoryboard\n✓\nShotplanung\n✓\nBlocking optional\n—\nReferences\n✓\nRender-Review\n✓\nGENERIERUNG\nVideo-Takes\n✓\n34 Medien im Projekt\n8 Sketches · 6 Shots mit Takes",
+    "toolbar": "Video-Takes",
+    "inspector": "1A · Die leere Straße\nTake 1 ausgewählt\nProduktion\nQuelle\nKI-Video\nDauer\n3 s\nVorlage\nShot-Anker\nGenerierungsdetails\nVarianten\nWeiteren Take erzeugen…\nTake prüfen\nTake\nTake 1\nTake 2\nTake prüfen…\nNutzbaren Bereich retten…\nNächsten Versuch planen…",
+    "actions": [
+      {
+        "name": "NexGenVideo",
+        "action": "native:menu-app",
+        "disabled": false
+      },
+      {
+        "name": "Ablage",
+        "action": "native:menu-file",
+        "disabled": false
+      },
+      {
+        "name": "Bearbeiten",
+        "action": "native:menu-edit",
+        "disabled": false
+      },
+      {
+        "name": "Fenster",
+        "action": "native:menu-window",
+        "disabled": false
+      },
+      {
+        "name": "Hilfe",
+        "action": "native:menu-help",
+        "disabled": false
+      },
+      {
+        "name": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Medien",
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "name": "Produktion",
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "name": "Schnitt",
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "name": "Postproduction",
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "name": "Export",
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "name": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Workflow",
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "name": "Quellen",
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "name": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Gestaltung · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Blocking · übersprungen",
+        "disabled": false
+      },
+      {
+        "name": "References · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Render-Review · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Video-Takes · freigegeben",
+        "disabled": false
+      },
+      {
+        "name": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Takes sichten",
+        "action": "ux:take-toggle",
+        "disabled": false
+      },
+      {
+        "name": "1A\nDie leere Straße\n3.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1A, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1A, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "1B\nDas kleine Zahnrad\n2.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1B, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1B, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "1C\nDer versperrte Weg\n4.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1C, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1C, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "1D\nEine andere Lösung\n3.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1D, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1D, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "1E\nDie Maschine erwacht\n5.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1E, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1E, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "1F\nGemeinsamer Komfort\n3.0 s",
+        "disabled": false
+      },
+      {
+        "name": "Shot 1F, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Shot 1F, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "name": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Weiteren Take erzeugen…",
+        "action": "retake-cost",
+        "disabled": true
+      },
+      {
+        "name": "Take prüfen…",
+        "action": "studio:take-review",
+        "disabled": false
+      },
+      {
+        "name": "Nutzbaren Bereich retten…",
+        "action": "studio:take-rescue",
+        "disabled": false
+      },
+      {
+        "name": "Nächsten Versuch planen…",
+        "action": "studio:take-repair",
+        "disabled": false
+      },
+      {
+        "name": "Video-Takes revidieren…",
+        "action": "revise",
+        "disabled": false
+      },
+      {
+        "name": "Budget 5,98 € / 50,00 €",
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "name": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "name": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "workspace": "Schnitt",
+    "sidebar": "Sequenzen\nSequenz 01\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Timeline\n1920 × 1080 · 24 fps",
+    "inspector": "1A · Take 1\nV1 · 00:00:03:00\nTransformieren\nPosition X\nPosition Y\nSkalierung %\nRotation °\nDeckkraft %\nBeschnitt %\nIm Bild positionieren\nHorizontal spiegeln\nVertikal spiegeln\nClip\nIn (s)\nOut (s)\nTempo\nSpur\nV2\nV1\nQuelle\nKeyframes",
+    "actions": [
+      {
+        "name": "NexGenVideo",
+        "action": "native:menu-app",
+        "disabled": false
+      },
+      {
+        "name": "Ablage",
+        "action": "native:menu-file",
+        "disabled": false
+      },
+      {
+        "name": "Bearbeiten",
+        "action": "native:menu-edit",
+        "disabled": false
+      },
+      {
+        "name": "Fenster",
+        "action": "native:menu-window",
+        "disabled": false
+      },
+      {
+        "name": "Hilfe",
+        "action": "native:menu-help",
+        "disabled": false
+      },
+      {
+        "name": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Medien",
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "name": "Produktion",
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "name": "Schnitt",
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "name": "Postproduction",
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "name": "Export",
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "name": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Sequenz 01",
+        "action": "sequence",
+        "disabled": false
+      },
+      {
+        "name": "In Medien zeigen",
+        "action": "pool:reveal",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 1",
+        "action": "asset:take-0-1",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 2",
+        "action": "asset:take-0-2",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 1",
+        "action": "asset:take-1-1",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 2",
+        "action": "asset:take-1-2",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 1",
+        "action": "asset:take-2-1",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 2",
+        "action": "asset:take-2-2",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 1",
+        "action": "asset:take-3-1",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 2",
+        "action": "asset:take-3-2",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 1",
+        "action": "asset:take-4-1",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 2",
+        "action": "asset:take-4-2",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 1",
+        "action": "asset:take-5-1",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 2",
+        "action": "asset:take-5-2",
+        "disabled": false
+      },
+      {
+        "name": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Timeline",
+        "action": "sequence",
+        "disabled": false
+      },
+      {
+        "name": "Zum Anfang",
+        "action": "nle:start",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild zurück",
+        "action": "nle:prev",
+        "disabled": false
+      },
+      {
+        "name": "Wiedergabe simulieren",
+        "action": "nle:play",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild vor",
+        "action": "nle:next",
+        "disabled": false
+      },
+      {
+        "name": "Zum Ende",
+        "action": "nle:end",
+        "disabled": false
+      },
+      {
+        "name": "Vorschau vergrößern / einpassen",
+        "action": "studio:zoom",
+        "disabled": false
+      },
+      {
+        "name": "Angezeigtes Frame als Medium sichern",
+        "action": "studio:capture",
+        "disabled": false
+      },
+      {
+        "name": "Original vergleichen",
+        "action": "studio:compare",
+        "disabled": false
+      },
+      {
+        "name": "Viewer maximieren",
+        "action": "studio:theater",
+        "disabled": false
+      },
+      {
+        "name": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Video",
+        "action": "nle:tab-video",
+        "disabled": false
+      },
+      {
+        "name": "Farbe",
+        "action": "nle:tab-adjust",
+        "disabled": false
+      },
+      {
+        "name": "Ton",
+        "action": "nle:tab-audio",
+        "disabled": false
+      },
+      {
+        "name": "Titel",
+        "action": "nle:tab-titles",
+        "disabled": false
+      },
+      {
+        "name": "Untertitel",
+        "action": "nle:tab-captions",
+        "disabled": false
+      },
+      {
+        "name": "KI-Bearbeitung",
+        "action": "nle:tab-ai",
+        "disabled": false
+      },
+      {
+        "name": "",
+        "action": "studio:swap",
+        "disabled": false
+      },
+      {
+        "name": "",
+        "action": "studio:save-media",
+        "disabled": false
+      },
+      {
+        "name": "",
+        "action": "studio:key-add",
+        "disabled": false
+      },
+      {
+        "name": "Timeline-Höhe ändern",
+        "disabled": false
+      },
+      {
+        "name": "Auswahl · V",
+        "action": "nle:tool-pointer",
+        "disabled": false
+      },
+      {
+        "name": "Rasierklinge · C",
+        "action": "nle:tool-razor",
+        "disabled": false
+      },
+      {
+        "name": "Am Abspielkopf teilen",
+        "action": "nle:split",
+        "disabled": true
+      },
+      {
+        "name": "Einrasten",
+        "action": "studio:snapping",
+        "disabled": false
+      },
+      {
+        "name": "Clip- und Bereichsaktionen",
+        "action": "studio:clip-menu",
+        "disabled": false
+      },
+      {
+        "name": "Titel hinzufügen",
+        "action": "nle:text",
+        "disabled": false
+      },
+      {
+        "name": "Spur hinzufügen",
+        "action": "studio:add-track",
+        "disabled": false
+      },
+      {
+        "name": "V2",
+        "action": "studio:track-V2",
+        "disabled": false
+      },
+      {
+        "name": "Spur V2 ein-/ausblenden",
+        "action": "studio:track-hide-V2",
+        "disabled": false
+      },
+      {
+        "name": "Spur V2 sperren",
+        "action": "studio:track-lock-V2",
+        "disabled": false
+      },
+      {
+        "name": "V1",
+        "action": "studio:track-V1",
+        "disabled": false
+      },
+      {
+        "name": "Spur V1 ein-/ausblenden",
+        "action": "studio:track-hide-V1",
+        "disabled": false
+      },
+      {
+        "name": "Spur V1 sperren",
+        "action": "studio:track-lock-V1",
+        "disabled": false
+      },
+      {
+        "name": "A1",
+        "action": "studio:track-A1",
+        "disabled": false
+      },
+      {
+        "name": "Spur A1 stummschalten",
+        "action": "studio:track-hide-A1",
+        "disabled": false
+      },
+      {
+        "name": "Spur A1 sperren",
+        "action": "studio:track-lock-A1",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Claude-mouse.wav",
+        "disabled": false
+      },
+      {
+        "name": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "name": "Budget 5,98 € / 50,00 €",
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "name": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "name": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "workspace": "Postproduction",
+    "sidebar": "Postproduction\nFarbe\nTon\nTitel\nUntertitel\nKI-Bearbeitung\nEndkontrolle",
+    "toolbar": "Farbe",
+    "inspector": "1A · Take 1\nV1 · 00:00:03:00\nBildkorrektur\nBelichtung\n0\nKontrast\n0\nLichter\n0\nSchatten\n0\nSchwarz\n0\nWeiß\n0\nTemperatur\n0\nTönung\n0\nDynamik\n0\nSättigung\n100\nVergleich\nKorrektur umgehen\nGruppe zurücksetzen\nAn Referenz angleichen…",
+    "actions": [
+      {
+        "name": "NexGenVideo",
+        "action": "native:menu-app",
+        "disabled": false
+      },
+      {
+        "name": "Ablage",
+        "action": "native:menu-file",
+        "disabled": false
+      },
+      {
+        "name": "Bearbeiten",
+        "action": "native:menu-edit",
+        "disabled": false
+      },
+      {
+        "name": "Fenster",
+        "action": "native:menu-window",
+        "disabled": false
+      },
+      {
+        "name": "Hilfe",
+        "action": "native:menu-help",
+        "disabled": false
+      },
+      {
+        "name": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Medien",
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "name": "Produktion",
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "name": "Schnitt",
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "name": "Postproduction",
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "name": "Export",
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "name": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Farbe",
+        "action": "studio:post-color",
+        "disabled": false
+      },
+      {
+        "name": "Ton",
+        "action": "studio:post-audio",
+        "disabled": false
+      },
+      {
+        "name": "Titel",
+        "action": "studio:post-titles",
+        "disabled": false
+      },
+      {
+        "name": "Untertitel",
+        "action": "studio:post-captions",
+        "disabled": false
+      },
+      {
+        "name": "KI-Bearbeitung",
+        "action": "studio:post-ai",
+        "disabled": false
+      },
+      {
+        "name": "Endkontrolle",
+        "action": "studio:post-review",
+        "disabled": false
+      },
+      {
+        "name": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Zum Anfang",
+        "action": "nle:start",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild zurück",
+        "action": "nle:prev",
+        "disabled": false
+      },
+      {
+        "name": "Wiedergabe simulieren",
+        "action": "nle:play",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild vor",
+        "action": "nle:next",
+        "disabled": false
+      },
+      {
+        "name": "Zum Ende",
+        "action": "nle:end",
+        "disabled": false
+      },
+      {
+        "name": "Vorschau vergrößern / einpassen",
+        "action": "studio:zoom",
+        "disabled": false
+      },
+      {
+        "name": "Angezeigtes Frame als Medium sichern",
+        "action": "studio:capture",
+        "disabled": false
+      },
+      {
+        "name": "Original vergleichen",
+        "action": "studio:compare",
+        "disabled": false
+      },
+      {
+        "name": "Viewer maximieren",
+        "action": "studio:theater",
+        "disabled": false
+      },
+      {
+        "name": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Basis",
+        "action": "studio:grade-basic",
+        "disabled": false
+      },
+      {
+        "name": "Kurven",
+        "action": "studio:grade-curves",
+        "disabled": false
+      },
+      {
+        "name": "Farbräder",
+        "action": "studio:grade-wheels",
+        "disabled": false
+      },
+      {
+        "name": "LUT",
+        "action": "studio:grade-lut",
+        "disabled": false
+      },
+      {
+        "name": "Effekte",
+        "action": "studio:grade-effects",
+        "disabled": false
+      },
+      {
+        "name": "Chroma-Key",
+        "action": "studio:grade-key",
+        "disabled": false
+      },
+      {
+        "name": "Gruppe zurücksetzen",
+        "action": "studio:grade-reset",
+        "disabled": false
+      },
+      {
+        "name": "An Referenz angleichen…",
+        "action": "studio:color-match",
+        "disabled": false
+      },
+      {
+        "name": "Timeline-Höhe ändern",
+        "disabled": false
+      },
+      {
+        "name": "Auswahl · V",
+        "action": "nle:tool-pointer",
+        "disabled": false
+      },
+      {
+        "name": "Einrasten",
+        "action": "studio:snapping",
+        "disabled": false
+      },
+      {
+        "name": "Clip- und Bereichsaktionen",
+        "action": "studio:clip-menu",
+        "disabled": false
+      },
+      {
+        "name": "Titel hinzufügen",
+        "action": "nle:text",
+        "disabled": false
+      },
+      {
+        "name": "Spur hinzufügen",
+        "action": "studio:add-track",
+        "disabled": false
+      },
+      {
+        "name": "V2",
+        "action": "studio:track-V2",
+        "disabled": false
+      },
+      {
+        "name": "Spur V2 ein-/ausblenden",
+        "action": "studio:track-hide-V2",
+        "disabled": false
+      },
+      {
+        "name": "Spur V2 sperren",
+        "action": "studio:track-lock-V2",
+        "disabled": false
+      },
+      {
+        "name": "V1",
+        "action": "studio:track-V1",
+        "disabled": false
+      },
+      {
+        "name": "Spur V1 ein-/ausblenden",
+        "action": "studio:track-hide-V1",
+        "disabled": false
+      },
+      {
+        "name": "Spur V1 sperren",
+        "action": "studio:track-lock-V1",
+        "disabled": false
+      },
+      {
+        "name": "A1",
+        "action": "studio:track-A1",
+        "disabled": false
+      },
+      {
+        "name": "Spur A1 stummschalten",
+        "action": "studio:track-hide-A1",
+        "disabled": false
+      },
+      {
+        "name": "Spur A1 sperren",
+        "action": "studio:track-lock-A1",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 1",
+        "disabled": false
+      },
+      {
+        "name": "Claude-mouse.wav",
+        "disabled": false
+      },
+      {
+        "name": "Budget 5,98 € / 50,00 €",
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "name": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "name": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "workspace": "Export",
+    "sidebar": "Export\nAusgabe\nVorschaubild\nAlbum-Cover\nAufträge & Verlauf\nClaude Mouse\nNoch nicht geprüft",
+    "toolbar": "Sequenz 01\nH.264 · Master",
+    "inspector": "Ausgabe\nAktuelle Sequenz · 00:00:20:00\nAusgabeart\nTyp\nVideodatei\nTimeline-XML\nNGV-Projekt\nVideo\nZiel\nMaster\nAbleitung\nCodec\nH.264\nH.265\nProRes\nAuflösung\nWie Timeline\n720p\n1080p\n2K\n4K\nBildgröße\n1920 × 1080\nBildrate\n24 fps\nGeschätzt\n≈ 26 MB\nSeitenverhältnis und Bildrate folgen dem Schnitt.\nFreigabe\nAktuellen Sequenzreview voraussetzen\nReview\nNoch nicht geprüft\nTon\nA1\nAktiv\nDatei\n\nClaude-Mouse-Master.mp4\n\nSpeicherort im nächsten Schritt.\nVorschaubild\nVorschaubild beilegen\nBild\nOhne Vorschaubild\nBild auswählen…",
+    "actions": [
+      {
+        "name": "NexGenVideo",
+        "action": "native:menu-app",
+        "disabled": false
+      },
+      {
+        "name": "Ablage",
+        "action": "native:menu-file",
+        "disabled": false
+      },
+      {
+        "name": "Bearbeiten",
+        "action": "native:menu-edit",
+        "disabled": false
+      },
+      {
+        "name": "Fenster",
+        "action": "native:menu-window",
+        "disabled": false
+      },
+      {
+        "name": "Hilfe",
+        "action": "native:menu-help",
+        "disabled": false
+      },
+      {
+        "name": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Medien",
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "name": "Produktion",
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "name": "Schnitt",
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "name": "Postproduction",
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "name": "Export",
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "name": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "name": "Ausgabe",
+        "action": "finish-section:delivery",
+        "disabled": false
+      },
+      {
+        "name": "Vorschaubild",
+        "action": "finish-section:preview",
+        "disabled": false
+      },
+      {
+        "name": "Album-Cover",
+        "action": "finish-section:album",
+        "disabled": false
+      },
+      {
+        "name": "Aufträge & Verlauf",
+        "action": "finish-section:history",
+        "disabled": false
+      },
+      {
+        "name": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Zum Anfang",
+        "action": "finish:start",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild zurück",
+        "action": "finish:prev",
+        "disabled": false
+      },
+      {
+        "name": "Wiedergabe simulieren",
+        "action": "finish:play",
+        "disabled": false
+      },
+      {
+        "name": "Ein Bild vor",
+        "action": "finish:next",
+        "disabled": false
+      },
+      {
+        "name": "Zum Ende",
+        "action": "finish:end",
+        "disabled": false
+      },
+      {
+        "name": "1A · Take 1\n00:00:00:00",
+        "action": "finish:clip-0",
+        "disabled": false
+      },
+      {
+        "name": "1B · Take 1\n00:00:03:00",
+        "action": "finish:clip-1",
+        "disabled": false
+      },
+      {
+        "name": "1C · Take 1\n00:00:05:00",
+        "action": "finish:clip-2",
+        "disabled": false
+      },
+      {
+        "name": "1D · Take 1\n00:00:09:00",
+        "action": "finish:clip-3",
+        "disabled": false
+      },
+      {
+        "name": "1E · Take 1\n00:00:12:00",
+        "action": "finish:clip-4",
+        "disabled": false
+      },
+      {
+        "name": "1F · Take 1\n00:00:17:00",
+        "action": "finish:clip-5",
+        "disabled": false
+      },
+      {
+        "name": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "name": "Bild auswählen…",
+        "action": "finish-section:preview",
+        "disabled": false
+      },
+      {
+        "name": "Exportieren…",
+        "action": "finish:export",
+        "disabled": false
+      },
+      {
+        "name": "Budget 5,98 € / 50,00 €",
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "name": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "name": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "phase": "audio",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Audioanalyse\nAbschnitte · Takte · Phrasen",
+    "inspector": "Audioanalyse\nMessung, Songstruktur und Interpretation\nMessung\nTrack\nClaude-mouse.wav\nTempo\n120 BPM\nTakt\n4/4\nQuelle\nDemo-Messdaten\nInterpretation\nAbschnitt\nVerse 1\nTempo-Zuordnung prüfen\nMesswerte und Interpretation bleiben getrennt.\nMessqualität\nAbhören\nAbschnitt\nVerse 1\nBereich\n16–48 s\nTonvorschau: synthetischer 120-BPM-Testtrack.",
+    "task": ""
+  },
+  {
+    "phase": "brief",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Briefing",
+    "inspector": "Briefing\nZiel, Ton und Rahmen des Films\nRahmen\nZielgruppe\nTon\nHoffnungsvoll\nVerspielt\nDüster\nBeobachtend\nZiellänge\nEntwicklung\nEin kurzer Auftrag genügt als Start. Die KI entwickelt anschließend einen Treatment-Vorschlag.\nKreative Richtung\nVorhandenes Material",
+    "task": ""
+  },
+  {
+    "phase": "design",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Gestaltung",
+    "inspector": "Gestaltung\nProjektweite Stilregeln\nGeltungsbereich\nBildsprache\nGrafische Animation\nFarbwelt\nWarm / staubig\nBewegung\nRuhig, motiviert\nDiese Regeln steuern spätere Bilder. Noch keine Szenen oder Motive.",
+    "task": ""
+  },
+  {
+    "phase": "treatment",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Treatment\nRevision 1 · freigegeben",
+    "inspector": "Abschnitt 1\nUrsache und Wirkung\nBearbeitung\nAlternative vorschlagen\nVorschlag nur für diesen Abschnitt. Übernahme bleibt deine Entscheidung.\nVerknüpfung\nGrundlage\nBriefing / Gestaltung\nAusgabe\nErzählverlauf\nKreative Richtung",
+    "task": ""
+  },
+  {
+    "phase": "script",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Skript\nRevision 1 · freigegeben",
+    "inspector": "Szene 1\nHandlung und Schauplatz\nBearbeitung\nAlternative vorschlagen\nVorschlag nur für diesen Abschnitt. Übernahme bleibt deine Entscheidung.\nVerknüpfung\nGrundlage\nTreatment\nAusgabe\nSzenenentwurf",
+    "task": ""
+  },
+  {
+    "phase": "board",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Storyboard\nÜbersicht\nAnimatic",
+    "inspector": "1A · Die leere Straße\nSketch · Erzählung und Timing\nTiming\nDauer (s)\nGemeinsames Timing für Storyboard und Animatic.\nHandlung\nSketch-Momente\nInnerhalb des Shots\n1 Sketch\nSketches öffnen\nHandlungsmoment hinzufügen\nMomente sind keine Schnitte. Das Animatic nutzt ihre Zeitpunkte innerhalb derselben Shotdauer.\nBildquelle\nArt\nStoryboard-Sketch\nHerkunft\nDemo · Draw-Style\nEinsatz\nPlanung / Animatic\nShotfolge\nName",
+    "task": ""
+  },
+  {
+    "phase": "plan",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Shotplanung\nShotliste · Kamera · Quellen",
+    "inspector": "1A · Die leere Straße\nKamera und Produktionsvorgaben\nTiming\nDauer\n3.0 s\nAus dem freigegebenen Storyboard.\nIm Storyboard ändern…\nHandlung\n\nDie Stadt wartet. Die Maschine steht still.\n\nKamera\nBildausschnitt\nTotale\nHalbnah\nNah\nDetail\nBrennweite\n28 mm\n35 mm\n50 mm\n85 mm\nProduktion\nQuelle\nKI-Video\nImportierter Clip\nKI-Bearbeitung\nBildbedarf\nIdentität + Shot-Anker\nAusgabe & Eingaben\nRäumlicher Plan\nMusic Video\nZustände · Story-Welt",
+    "task": ""
+  },
+  {
+    "phase": "blocking",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Blocking\nOptional",
+    "inspector": "Blocking\nRaum & Bewegung · optional\nOptionaler Schritt\nNutzung\nÜbersprungen\nHilft bei wiederkehrenden Locations, Perspektivwechseln und komplexen Kamerafahrten.",
+    "task": ""
+  },
+  {
+    "phase": "refs",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "References\nIdentitäten\nShot-Anker",
+    "inspector": "Shot-Anker 1A\nGerenderte Produktionsvorlage\nSichtung\nTyp\nShot-Anker\n✓ Gesichtet\nHerkunft\nProvider\nIm Beispiel unbekannt\nModell\nIm Beispiel unbekannt\nDatei\nIllustratives Bestandsbild\nIm Produkt: exakte Quelle, Referenzversion und Bild-Audit. Hier keine erfundene Provenienz.\nRevision\nPlan\n1\nFreigabe\nGültig\nAnker bearbeiten",
+    "task": ""
+  },
+  {
+    "phase": "review",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Render-Review\nStory-Zeit\nFilmfolge",
+    "inspector": "1A · Zustände\nPrüfung in der Zeit der Story\nEingang\nMechanik\nDefekt\nTageszeit\nMorgen\nFiguren\nMaus / Katze\nAusgang\nMechanik\nDefekt\nUrsache\nKeine Änderung\nPrüfung\nStruktur\n6 Shots zugeordnet\nReferenzen\nBeispiel-Audit\nContinuity\nKein Befund\nErneut prüfen\nAlle Prüfungen",
+    "task": ""
+  },
+  {
+    "phase": "takes",
+    "sidebar": "Workflow\nQuellen\nQuellen\nIn Medien zeigen\nQuellordner\nAlle Projektmedien\nTexte\nTon\nStoryboard\nStoryboard / Szene 01\nReferences\nReferences / Identitäten\nReferences / Shot-Anker\nVideo-Takes\nVideo-Takes / Szene 01\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\n1A · Take 1\n1A · Take 2\n1B · Take 1\n1B · Take 2\n1C · Take 1\n1C · Take 2\n1D · Take 1\n1D · Take 2\n1E · Take 1\n1E · Take 2\n1F · Take 1\n1F · Take 2\n12 Medien · Auswahl zur Vorschau",
+    "toolbar": "Video-Takes",
+    "inspector": "1A · Die leere Straße\nTake 1 ausgewählt\nProduktion\nQuelle\nKI-Video\nDauer\n3 s\nVorlage\nShot-Anker\nGenerierungsdetails\nVarianten\nWeiteren Take erzeugen…\nTake prüfen\nTake\nTake 1\nTake 2\nTake prüfen…\nNutzbaren Bereich retten…\nNächsten Versuch planen…",
+    "task": ""
+  }
+]

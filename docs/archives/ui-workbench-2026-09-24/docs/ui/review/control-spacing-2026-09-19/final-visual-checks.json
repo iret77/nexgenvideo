@@ -1,0 +1,330 @@
+{
+  "measurements": [
+    {
+      "name": "1048-130-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-1440-100",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 876.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-1440-130",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 857.5
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-1048-100",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 340
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-1048-130",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 340
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-768-100",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 340
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-768-130",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 340
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-390-100",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 129
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media-390-130",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 129
+        }
+      ],
+      "taskOverflow": false
+    }
+  ],
+  "results": [
+    {
+      "name": "Media labels fit without overlaps 1440/100",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 1440/130",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 1048/100",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 1048/130",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 768/100",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 768/130",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 390/100",
+      "pass": true
+    },
+    {
+      "name": "Media labels fit without overlaps 390/130",
+      "pass": true
+    }
+  ]
+}

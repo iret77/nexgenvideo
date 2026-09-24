@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Physical production to Edit",
+    "pass": true
+  },
+  {
+    "name": "Physical Take approval opens montage",
+    "pass": true
+  },
+  {
+    "name": "Physical prompt entry",
+    "pass": true
+  },
+  {
+    "name": "Generation dialog 1024",
+    "pass": true,
+    "height": 596.828125
+  },
+  {
+    "name": "Generation dialog 736",
+    "pass": true,
+    "height": 596.828125
+  },
+  {
+    "name": "Generation dialog 500",
+    "pass": true,
+    "height": 745.609375
+  },
+  {
+    "name": "Generation dialog 320",
+    "pass": true,
+    "height": 777.484375
+  },
+  {
+    "name": "Physical generation result",
+    "pass": true
+  }
+]

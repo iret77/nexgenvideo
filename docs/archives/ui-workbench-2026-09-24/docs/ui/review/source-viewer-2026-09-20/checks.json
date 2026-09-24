@@ -1,0 +1,113 @@
+{
+  "results": [
+    {
+      "name": "Two stable Viewer controls before opening a source",
+      "pass": true
+    },
+    {
+      "name": "Opening take-1-1 replaces the source without accumulating tabs",
+      "pass": true
+    },
+    {
+      "name": "Opening take-0-1 replaces the source without accumulating tabs",
+      "pass": true
+    },
+    {
+      "name": "Opening take-1-2 replaces the source without accumulating tabs",
+      "pass": true
+    },
+    {
+      "name": "Opening take-2-1 replaces the source without accumulating tabs",
+      "pass": true
+    },
+    {
+      "name": "Timeline returns to its own cursor and clip selection",
+      "pass": true
+    },
+    {
+      "name": "Returning to source preserves filename, cursor and In/Out",
+      "pass": true
+    },
+    {
+      "name": "Reselecting the same source preserves its range and position",
+      "pass": true
+    },
+    {
+      "name": "Source transport leaves Timeline cursor and its visible playhead in place",
+      "pass": true
+    },
+    {
+      "name": "Insert uses selected source and In/Out at Timeline cursor, then activates Timeline",
+      "pass": true
+    },
+    {
+      "name": "Undo restores original montage after source insertion",
+      "pass": true
+    },
+    {
+      "name": "Title is visible in the Timeline viewer",
+      "pass": true
+    },
+    {
+      "name": "Source viewer and Inspector do not inherit Timeline titles or title controls",
+      "pass": true
+    },
+    {
+      "name": "Source viewer cannot transform the previously selected Timeline clip",
+      "pass": true
+    },
+    {
+      "name": "Title selection and its Inspector return with Timeline",
+      "pass": true
+    },
+    {
+      "name": "Capture stores the visible source and its time, with no Timeline edit",
+      "pass": true
+    },
+    {
+      "name": "Scrubbing Timeline from source updates Viewer, switch and Inspector together",
+      "pass": true
+    },
+    {
+      "name": "Source context keeps compact picker commands without a second navigation",
+      "pass": true
+    },
+    {
+      "name": "Workspace round trip restores selected source and the same two viewer controls",
+      "pass": true
+    },
+    {
+      "name": "Viewer labels are complete at 130 percent",
+      "pass": true
+    },
+    {
+      "name": "Source In/Out and insertion are visible before metadata at 130 percent",
+      "pass": true
+    },
+    {
+      "name": "Narrow Viewer protects controls and bounds the long source name",
+      "pass": true
+    },
+    {
+      "name": "Both Viewer controls remain usable in the narrow layout",
+      "pass": true
+    },
+    {
+      "name": "Very narrow Viewer moves filename below intact controls without overflow",
+      "pass": true
+    },
+    {
+      "name": "Hiding panes does not change source or Timeline state",
+      "pass": true
+    },
+    {
+      "name": "Source without a selected medium is visibly disabled",
+      "pass": true
+    },
+    {
+      "name": "Audio source cannot move the Timeline through disabled video controls",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

@@ -1,0 +1,247 @@
+[
+  {
+    "name": "rewind-take-retention",
+    "before": {
+      "takes": 12,
+      "chosen": 6
+    },
+    "after": {
+      "takes": 0,
+      "chosen": 0,
+      "history": 12
+    },
+    "historyButtons": [
+      {
+        "label": "Shot 1A, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1A, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1B, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1B, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1C, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1C, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1D, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1D, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1E, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1E, Take 2 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1F, Take 1 prüfen",
+        "disabled": true
+      },
+      {
+        "label": "Shot 1F, Take 2 prüfen",
+        "disabled": true
+      }
+    ],
+    "mediaTakeButtons": 0,
+    "canvas": "Dateiname\nBildinhalt\nTranskript\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\nKI-generiert\nSortieren\nName\nTyp\nDauer\n1A · Einstellung\nSketches\n1A · Shot-Anker\nReferences\n1B · Einstellung\nSketches\n1B · Shot-Anker\nReferences\n1C · Einstellung\nSketches\n1C · Shot-Anker\nReferences\n1D · Einstellung\nSketches\n1D · Shot-Anker\nReferences\n1E · Hebel greifen\nSketches\n1E · Hebel herunterziehen\nSketches\n1E · Maschine läuft an\nSketches\n1E · Shot-Anker\nReferences\n1F · Einstellung\nSketches\n1F · Shot-Anker\nReferences\nAI Cat\nReferences\nBriefing.md\nMD\nClaude Mouse\nReferences\n▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio\nComfort Engine\nReferences\nSkript.fountain\nFOUNTAIN\nStraße\nReferences\nTreatment.md\nMD\n22 Medien"
+  },
+  {
+    "name": "evidence-user-attestation",
+    "before": {
+      "reviewRun": true,
+      "reviewFixed": false,
+      "reviewVersion": 0
+    },
+    "after": {
+      "reviewRun": true,
+      "reviewFixed": false,
+      "reviewVersion": 0
+    },
+    "prepare": "Renderprüfung\n\nStruktur, Conditioning, Continuity, Kausalität und Quell-Evidence. Befunde bleiben am Shot.\n\nStruktur gültig\nReferenzen vorhanden\nChronologie prüfen\nVorschlag prüfen\nVerwerfen\nStrukturierter Auftrag · Simulation",
+    "options": [
+      {
+        "checked": true,
+        "disabled": false
+      },
+      {
+        "checked": true,
+        "disabled": false
+      },
+      {
+        "checked": true,
+        "disabled": false
+      }
+    ],
+    "result": "Renderprüfung\n\nStruktur, Conditioning, Continuity, Kausalität und Quell-Evidence. Befunde bleiben am Shot. — Struktur gültig, Referenzen vorhanden, Chronologie prüfen\n\nErgebnis übernommen · in Entscheidungen gespeichert\nSchließen\nStrukturierter Auftrag · Simulation"
+  },
+  {
+    "name": "storyboard-editability",
+    "buttons": [
+      {
+        "label": "Linke Seitenleiste ausblenden"
+      },
+      {
+        "label": "Claude Mouse",
+        "action": "project"
+      },
+      {
+        "label": "Medien",
+        "action": "workspace:media"
+      },
+      {
+        "label": "Produktion",
+        "action": "workspace:production"
+      },
+      {
+        "label": "Schnitt",
+        "action": "workspace:edit"
+      },
+      {
+        "label": "Postproduction",
+        "action": "workspace:post"
+      },
+      {
+        "label": "Export",
+        "action": "workspace:finish"
+      },
+      {
+        "label": "Inspector ausblenden"
+      },
+      {
+        "label": "Workflow",
+        "action": "sidebar:workflow"
+      },
+      {
+        "label": "Quellen",
+        "action": "sidebar:media"
+      },
+      {
+        "label": "Audioanalyse✓"
+      },
+      {
+        "label": "Briefing✓"
+      },
+      {
+        "label": "Treatment✓"
+      },
+      {
+        "label": "Skript✓"
+      },
+      {
+        "label": "Storyboard●"
+      },
+      {
+        "label": "Shotplanung·"
+      },
+      {
+        "label": "Blocking optional·"
+      },
+      {
+        "label": "References·"
+      },
+      {
+        "label": "Render-Review·"
+      },
+      {
+        "label": "Video-Takes·"
+      },
+      {
+        "label": "Aufträge & Entscheidungen",
+        "action": "studio:activity"
+      },
+      {
+        "label": "Einstellungen…",
+        "action": "studio:settings"
+      },
+      {
+        "label": "Projektbrowser vergrößern oder verkleinern"
+      },
+      {
+        "label": "Übersicht",
+        "action": "mode:board"
+      },
+      {
+        "label": "Animatic",
+        "action": "mode:animatic"
+      },
+      {
+        "label": "1ADie leere Straße3.0 sDie Stadt wartet. Die Maschine steht still."
+      },
+      {
+        "label": "1BDas kleine Zahnrad2.0 sRückblende · früher in der Story"
+      },
+      {
+        "label": "1CDer versperrte Weg4.0 sDie Katze versperrt den Zugang zur Veranda."
+      },
+      {
+        "label": "1DEine andere Lösung3.0 sDie Maus setzt das Zahnrad in die Straßenmaschine ein."
+      },
+      {
+        "label": "1EDie Maschine erwacht5.0 s3 Sketches · eine Einstellung"
+      },
+      {
+        "label": "1FGemeinsamer Komfort3.0 sDie Bewohner kehren auf die Straße zurück."
+      },
+      {
+        "label": "Inspector vergrößern oder verkleinern"
+      },
+      {
+        "label": "Sketches öffnen",
+        "action": "mode:moments"
+      },
+      {
+        "label": "Handlungsmoment hinzufügen",
+        "action": "add-moment"
+      },
+      {
+        "label": "✓ Freigeben",
+        "action": "approve"
+      },
+      {
+        "label": "Budget 0,26 € / 50,00 €",
+        "action": "budget"
+      },
+      {
+        "label": "KI",
+        "action": "background:ai"
+      },
+      {
+        "label": "Export",
+        "action": "background:export"
+      }
+    ],
+    "draggables": []
+  },
+  {
+    "name": "animatic-song-timing",
+    "track": true,
+    "shotDuration": 20,
+    "dock": "ANIMATIC\n▶ Abspielen\n00:00:12:00 / 00:00:20:00\n1A\n3.0 s\n1B\n2.0 s\n1C\n4.0 s\n1D\n3.0 s\n1E\n5.0 s\n1F\n3.0 s",
+    "audioElements": 0,
+    "canvas": "Animatic · Sketches\nShot 1E · Moment 1/3\nHebel greifen · eine durchgehende Einstellung"
+  },
+  {
+    "name": "reference-clay-compare",
+    "toolbar": "References\nIdentitäten\nShot-Anker",
+    "canvas": "1A · Sketch / Shot-Anker\nSichtung offen\nSketch / Rendering vergleichen\nSTORYBOARD\nSketch · Komposition und Handlung\nSHOT-ANKER\nRendering · konkrete Bildvorlage",
+    "clayThumbs": 0
+  }
+]

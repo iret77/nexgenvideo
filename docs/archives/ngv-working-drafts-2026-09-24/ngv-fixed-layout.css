@@ -1,0 +1,14 @@
+#ngv-spatial{height:740px;max-height:100dvh;min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;overflow:hidden}
+#ngv-spatial .desktop-shell{min-height:0;height:auto;overflow:hidden;align-items:stretch}
+#ngv-spatial main,#ngv-spatial .context-inspector,#ngv-spatial .navigator{min-height:0;overflow:auto;overscroll-behavior:contain}
+#ngv-spatial .context-inspector{padding:14px;display:block}
+#ngv-spatial footer{min-height:44px;flex-wrap:wrap;margin:0;gap:8px}
+#ngv-spatial .demo-controls{max-height:75px;overflow:auto;padding:4px 10px}
+#ngv-spatial .demo-notice{max-width:45%;font-size:11px;overflow-wrap:anywhere}
+#ngv-spatial .context-line{font-size:11px;color:#ccc4d0;padding:0 0 12px;border-bottom:1px solid #49404c;margin-bottom:14px}
+#ngv-spatial .rail-title,#ngv-spatial .rail-group,#ngv-spatial .number{font-size:11px}
+#ngv-spatial .ins-group{margin-top:10px}
+#ngv-spatial .ins-group>div{padding-bottom:8px}
+#ngv-spatial .context-inspector .section{margin-top:10px;padding-top:10px}
+@media(max-width:800px){#ngv-spatial .desktop-shell{display:grid;grid-template-columns:120px minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(120px,.65fr)}#ngv-spatial .navigator{grid-column:1;grid-row:1/3}#ngv-spatial main{grid-column:2;grid-row:1}#ngv-spatial .context-inspector{grid-column:2;grid-row:2}#ngv-spatial .desktop-shell.inspector-closed{grid-template-rows:minmax(0,1fr)}#ngv-spatial .desktop-shell.rail-closed{grid-template-columns:minmax(0,1fr)}#ngv-spatial .desktop-shell.rail-closed main,#ngv-spatial .desktop-shell.rail-closed .context-inspector{grid-column:1}}
+@media(max-width:540px){#ngv-spatial{height:780px}#ngv-spatial .desktop-shell{grid-template-columns:1fr;grid-template-rows:85px minmax(0,1fr) 140px}#ngv-spatial .navigator{grid-column:1;grid-row:1}#ngv-spatial main{grid-column:1;grid-row:2}#ngv-spatial .context-inspector{grid-column:1;grid-row:3}#ngv-spatial .desktop-shell.rail-closed{grid-template-rows:minmax(0,1fr) 140px}#ngv-spatial .desktop-shell.rail-closed main{grid-row:1}#ngv-spatial .desktop-shell.rail-closed .context-inspector{grid-row:2}#ngv-spatial .desktop-shell.inspector-closed{grid-template-rows:85px minmax(0,1fr)}#ngv-spatial .desktop-shell.rail-closed.inspector-closed{grid-template-rows:minmax(0,1fr)}#ngv-spatial footer .small{flex:1}#ngv-spatial .context-inspector .image{max-width:150px}}

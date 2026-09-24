@@ -1,0 +1,73 @@
+{
+  "results": [
+    {
+      "name": "Right-click exposes shot editing and keeps selection",
+      "pass": true
+    },
+    {
+      "name": "Context move, undo and redo preserve shot data",
+      "pass": true
+    },
+    {
+      "name": "Context click preserves a multi-selection",
+      "pass": true
+    },
+    {
+      "name": "Multiple shots move one place without reversing order",
+      "pass": true
+    },
+    {
+      "name": "Boundary moves are disabled and no-op commands do not revise",
+      "pass": true
+    },
+    {
+      "name": "Escape closes menu and returns focus",
+      "pass": true
+    },
+    {
+      "name": "Rename opens and focuses the existing shot property",
+      "pass": true
+    },
+    {
+      "name": "Rename field persists the selected shot name",
+      "pass": true
+    },
+    {
+      "name": "Approved Storyboard remains locked",
+      "pass": true
+    },
+    {
+      "name": "Revision still asks before changing approved work",
+      "pass": true
+    },
+    {
+      "name": "Menu-bar move uses the same operation",
+      "pass": true
+    },
+    {
+      "name": "Dragging previews and inserts the selected group at the marked edge",
+      "pass": true
+    },
+    {
+      "name": "Cancelled drag leaves order and revision intact",
+      "pass": true
+    },
+    {
+      "name": "Control-click opens the context menu",
+      "pass": true
+    },
+    {
+      "name": "Menu arrow navigation does not move the shot selection",
+      "pass": true
+    },
+    {
+      "name": "Click outside closes the menu",
+      "pass": true
+    },
+    {
+      "name": "Context menu stays inside the app window at 130 percent",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

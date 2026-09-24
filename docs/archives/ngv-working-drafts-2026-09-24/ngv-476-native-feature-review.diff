@@ -1,0 +1,3534 @@
+diff --git a/.github/workflows/workspace-ui-acceptance.yml b/.github/workflows/workspace-ui-acceptance.yml
+index d0d5e448..f9af0931 100644
+--- a/.github/workflows/workspace-ui-acceptance.yml
++++ b/.github/workflows/workspace-ui-acceptance.yml
+@@ -8,12 +8,20 @@ on:
+       - 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'
+       - 'Sources/NexGenVideo/App/main.swift'
+       - 'Sources/NexGenVideo/Agent/AgentService.swift'
++      - 'Sources/NexGenVideo/Editor/BudgetStatusView.swift'
++      - 'Sources/NexGenVideo/Editor/EditorWindowContentView.swift'
++      - 'Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift'
++      - 'Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift'
+       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
++      - 'Sources/NexGenVideo/Export/ExportCoordinator.swift'
++      - 'Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift'
++      - 'Sources/NexGenVideo/Generation/GenerationTypes.swift'
+       - 'Sources/NexGenVideo/Inspector/**'
+       - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
+       - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
+       - 'Sources/NexGenVideo/UI/AppTheme.swift'
+       - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
++      - 'Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift'
+ 
+ concurrency:
+   group: workspace-ui-acceptance-${{ github.ref }}
+diff --git a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+index e57b30d5..9d0b8836 100644
+--- a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
++++ b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+@@ -5,27 +5,36 @@ import SwiftUI
+ struct AppRelaunchClickProbe: NSViewRepresentable {
+     let identifier: String
+     var acceptanceState: Bool?
++    var acceptanceValue: String?
+ 
+-    init(identifier: String, acceptanceState: Bool? = nil) {
++    init(
++        identifier: String,
++        acceptanceState: Bool? = nil,
++        acceptanceValue: String? = nil
++    ) {
+         self.identifier = identifier
+         self.acceptanceState = acceptanceState
++        self.acceptanceValue = acceptanceValue
+     }
+ 
+     func makeNSView(context: Context) -> AppRelaunchClickProbeView {
+         let view = AppRelaunchClickProbeView()
+         view.identifier = NSUserInterfaceItemIdentifier(identifier)
+         view.acceptanceState = acceptanceState
++        view.acceptanceValue = acceptanceValue
+         return view
+     }
+ 
+     func updateNSView(_ nsView: AppRelaunchClickProbeView, context: Context) {
+         nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+         nsView.acceptanceState = acceptanceState
++        nsView.acceptanceValue = acceptanceValue
+     }
+ }
+ 
+ final class AppRelaunchClickProbeView: NSView {
+     var acceptanceState: Bool?
++    var acceptanceValue: String?
+ 
+     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+ }
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 762973b9..ebad23a2 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -1,5 +1,6 @@
+ import AppKit
+ import SwiftUI
++import NexGenEngine
+ 
+ @MainActor
+ enum WorkspaceUIAcceptance {
+@@ -76,6 +77,7 @@ enum WorkspaceUIAcceptance {
+                     && visiblePanelIDs(in: host) == expectedPanels(for: .media)
+                     && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
+                     && previewTimecodeIsSingleLine(in: window, scale: scale)
++                    && statusControlsAreContained(in: window)
+             }) else {
+                 fail("could not prepare large media layout", scale: scale)
+             }
+@@ -95,6 +97,7 @@ enum WorkspaceUIAcceptance {
+                     && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
+                     && previewTimecodeIsSingleLine(in: window, scale: scale)
+                     && agentControlsAreContained(in: window)
++                    && statusControlsAreContained(in: window)
+             }) else {
+                 fail("could not prepare large production layout", scale: scale)
+             }
+@@ -138,6 +141,7 @@ enum WorkspaceUIAcceptance {
+                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
+                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
+                         && previewTimecodeIsSingleLine(in: window, scale: scale)
++                        && statusControlsAreContained(in: window)
+                         && (workspace != .production || agentControlsAreContained(in: window))
+                 }) else {
+                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
+@@ -177,9 +181,27 @@ enum WorkspaceUIAcceptance {
+                       visiblePanelFrames(in: host) == renderedFrames,
+                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
+                       previewTimecodeIsSingleLine(in: window, scale: scale),
++                      statusControlsAreContained(in: window),
+                       workspace != .production || agentControlsAreContained(in: window) else {
+                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
+                 }
++                guard click(identifier: "editor.status.budget", in: window) == nil,
++                      await waitUntil(timeout: .seconds(5), {
++                          probeState(identifier: "editor.status.budget", in: window) == true
++                              && probeExistsAnywhere(
++                                  identifier: "editor.status.budget.close",
++                                  preferredWindow: window
++                              )
++                      }),
++                      clickAnywhere(
++                          identifier: "editor.status.budget.close",
++                          preferredWindow: window
++                      ) == nil,
++                      await waitUntil(timeout: .seconds(5), {
++                          probeState(identifier: "editor.status.budget", in: window) == false
++                      }) else {
++                    fail("budget details were not clickable in \(workspace.rawValue)", scale: scale)
++                }
+                 let visiblePanels = visiblePanelIDs(in: host)
+                 if workspace == .edit { initialEditFrames = renderedFrames }
+                 let name = "scale-\(scaleLabel(scale))-\(workspace.rawValue)"
+@@ -194,6 +216,8 @@ enum WorkspaceUIAcceptance {
+                         "screenshot": "\(name).png",
+                         "panels": visiblePanels.sorted(),
+                         "frames": renderedFrames.mapValues { frameDescription($0) },
++                        "statusContext": probeValue(identifier: "editor.statusBar", in: window) ?? "",
++                        "statusFrames": statusControlFrames(in: window),
+                     ]
+                 )
+             }
+@@ -315,6 +339,7 @@ enum WorkspaceUIAcceptance {
+                     && narrowProductionWidthsAreValid(frames)
+                     && previewTimecodeIsSingleLine(in: window, scale: scale)
+                     && agentControlsAreContained(in: window)
++                    && statusControlsAreContained(in: window)
+             }) else {
+                 fail("narrow production controls did not fit", scale: scale)
+             }
+@@ -332,6 +357,8 @@ enum WorkspaceUIAcceptance {
+                 fields: [
+                     "screenshot": "\(narrowName).png",
+                     "frames": narrowFrames.mapValues { frameDescription($0) },
++                    "statusContext": probeValue(identifier: "editor.statusBar", in: window) ?? "",
++                    "statusFrames": statusControlFrames(in: window),
+                     "window": windowDiagnostics(window, contentView: host),
+                 ]
+             )
+@@ -357,6 +384,74 @@ enum WorkspaceUIAcceptance {
+                 scale: scale,
+                 fields: ["screenshot": "\(pinnedName).png"]
+             )
++            guard let projectRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
++                  let mutationID = editor.pipelinePhaseRunCoordinator.beginMutation(
++                      projectRoot: projectRoot,
++                      label: "A deliberately long production status for compact-layout acceptance"
++                  ),
++                  await waitUntil(timeout: .seconds(5), {
++                      probeValue(identifier: "editor.status.aiJobs", in: window) == "active"
++                  }),
++                  click(identifier: "editor.status.aiJobs", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.aiJobs", in: window) == true
++                          && probeExistsAnywhere(
++                              identifier: "editor.status.aiJobs.close",
++                              preferredWindow: window
++                          )
++                  }),
++                  clickAnywhere(
++                      identifier: "editor.status.aiJobs.close",
++                      preferredWindow: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.aiJobs", in: window) == false
++                  }) else {
++                fail("AI job status was not reachable while active", scale: scale)
++            }
++            editor.pipelinePhaseRunCoordinator.endMutation(
++                projectRoot: projectRoot,
++                id: mutationID
++            )
++            guard await waitUntil(timeout: .seconds(5), {
++                      probeValue(identifier: "editor.status.aiJobs", in: window) == "idle"
++                  }), ExportCoordinator.beginExportIfIdle(),
++                  await waitUntil(timeout: .seconds(5), {
++                      probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
++                  }),
++                  click(identifier: "editor.status.exportJobs", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.exportJobs", in: window) == true
++                          && probeExistsAnywhere(
++                              identifier: "editor.status.exportJobs.close",
++                              preferredWindow: window
++                          )
++                  }),
++                  clickAnywhere(
++                      identifier: "editor.status.exportJobs.close",
++                      preferredWindow: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.exportJobs", in: window) == false
++                  }) else {
++                fail("export job status was not reachable while active", scale: scale)
++            }
++            ExportCoordinator.endExport()
++            guard await waitUntil(timeout: .seconds(5), {
++                probeValue(identifier: "editor.status.exportJobs", in: window) == "idle"
++            }) else {
++                fail("export job status did not return to idle", scale: scale)
++            }
++            emit(
++                "background-status",
++                scale: scale,
++                fields: [
++                    "aiActiveObserved": true,
++                    "controlsClicked": true,
++                    "exportActiveObserved": true,
++                    "statusFrames": statusControlFrames(in: window),
++                ]
++            )
+             guard editor.timeline == originalTimeline,
+                   editor.mediaManifest == originalManifest,
+                   editor.generationLog == originalGenerationLog,
+@@ -378,6 +473,14 @@ enum WorkspaceUIAcceptance {
+                     "workingCopyUnchanged": true,
+                 ]
+             )
++            await captureBudgetCases(
++                editor: editor,
++                window: window,
++                host: host,
++                projectURL: projectURL,
++                evidenceURL: evidenceURL,
++                scale: scale
++            )
+             emit("completed", scale: scale)
+             window.orderOut(nil)
+             exit(0)
+@@ -386,6 +489,819 @@ enum WorkspaceUIAcceptance {
+         exit(1)
+     }
+ 
++    private struct BudgetAcceptanceCase {
++        let name: String
++        let log: GenerationLog
++        let charged: Double
++        let reserved: Double
++        let active: Int
++        let unpriced: Int
++        let complete: Bool
++        let items: Int
++    }
++
++    private struct BudgetVisibleExpectation {
++        let label: String
++        let total: String
++        let planning: String
++        let hardStop: String
++        let warnings: String?
++        let transactionState: String?
++    }
++
++    private static func budgetVisibleExpectations(for name: String) -> BudgetVisibleExpectation {
++        let normalPlanning = "Planning budget|€10.00 · €10.00 remaining"
++        let normalStop = "Hard stop|€12.00 · €12.00 remaining"
++        let normalTotal = "Reserved + charged total|€0.00"
++        switch name {
++        case "empty":
++            return .init(label: "Budget · No spend", total: normalTotal,
++                         planning: normalPlanning, hardStop: normalStop,
++                         warnings: nil, transactionState: nil)
++        case "zero":
++            return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
++                         planning: normalPlanning, hardStop: normalStop,
++                         warnings: nil, transactionState: "Charged")
++        case "low":
++            return .init(label: "Budget €9.25 / €10.00",
++                         total: "Reserved + charged total|€9.25",
++                         planning: "Planning budget|€10.00 · €0.75 remaining",
++                         hardStop: "Hard stop|€12.00 · €2.75 remaining",
++                         warnings: "Planning budget has €0.75 remaining.",
++                         transactionState: "Charged")
++        case "exceeded":
++            return .init(label: "Budget €12.50 / €10.00",
++                         total: "Reserved + charged total|€12.50",
++                         planning: "Planning budget|€10.00 · €2.50 over",
++                         hardStop: "Hard stop|€12.00 · €0.50 over",
++                         warnings: "Planning budget exceeded by €2.50.\nHard stop exceeded by €0.50.",
++                         transactionState: "Charged")
++        case "unknown-price", "unknown-currency", "subscription-credits":
++            let reason: String
++            switch name {
++            case "unknown-currency": reason = "currency conversion"
++            case "subscription-credits": reason = "subscription/credit monetary cost"
++            default: reason = "provider price"
++            }
++            return .init(label: "Budget ≥€0.00 / €10.00",
++                         total: "Verified reserved + charged total at least|€0.00",
++                         planning: "Planning budget|€10.00 · remaining unavailable",
++                         hardStop: "Hard stop|€12.00 · remaining unavailable",
++                         warnings: "1 open transaction has no verified \(reason).",
++                         transactionState: "Reserved")
++        case "reserved":
++            return .init(label: "Budget €3.25 / €10.00",
++                         total: "Reserved + charged total|€3.25",
++                         planning: "Planning budget|€10.00 · €6.75 remaining",
++                         hardStop: "Hard stop|€12.00 · €8.75 remaining",
++                         warnings: nil, transactionState: "Reserved")
++        case "submitted-failure":
++            return .init(label: "Budget €4.00 / €10.00",
++                         total: "Reserved + charged total|€4.00",
++                         planning: "Planning budget|€10.00 · €6.00 remaining",
++                         hardStop: "Hard stop|€12.00 · €8.00 remaining",
++                         warnings: nil, transactionState: "Submitted · attention")
++        case "released":
++            return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
++                         planning: normalPlanning, hardStop: normalStop,
++                         warnings: nil, transactionState: "Released")
++        case "exceeded-unknown":
++            return .init(label: "Budget ≥€12.50 / €10.00",
++                         total: "Verified reserved + charged total at least|€12.50",
++                         planning: "Planning budget|€10.00 · at least €2.50 over",
++                         hardStop: "Hard stop|€12.00 · at least €0.50 over",
++                         warnings: "1 open transaction has no verified provider price.\nPlanning budget exceeded by €2.50.\nHard stop exceeded by €0.50.",
++                         transactionState: nil)
++        default:
++            fatalError("Unknown budget acceptance case: \(name)")
++        }
++    }
++
++    private static func captureBudgetCases(
++        editor: EditorViewModel,
++        window: NSWindow,
++        host: NSView,
++        projectURL: URL,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        guard let workingRoot = editor.workingRoot else {
++            fail("budget acceptance had no working copy", scale: scale)
++        }
++        await editor.refreshProjectState()
++        guard editor.projectState?.budgetEur == 10,
++              editor.projectState?.budgetStopEur == 12 else {
++            fail("budget acceptance did not load project limits", scale: scale)
++        }
++
++        for item in budgetAcceptanceCases() {
++            do {
++                try installBudgetLog(item.log, in: workingRoot, editor: editor)
++            } catch {
++                fail("could not install budget case \(item.name): \(error.localizedDescription)", scale: scale)
++            }
++            let spendSnapshot: ProjectSpendSnapshot
++            do {
++                spendSnapshot = try GenerationBudgetGuard.spendSnapshot(
++                    log: item.log,
++                    generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
++                )
++            } catch {
++                fail("budget case \(item.name) was rejected by the guard", scale: scale)
++            }
++            guard spendSnapshot.chargedEur == item.charged,
++                  spendSnapshot.openReservationEur == item.reserved,
++                  spendSnapshot.verifiedEur == item.charged + item.reserved,
++                  spendSnapshot.activeReservationCount == item.active,
++                  spendSnapshot.unpricedTransactionCount == item.unpriced,
++                  spendSnapshot.isComplete == item.complete,
++                  spendSnapshot.lineItems.count == item.items else {
++                fail("budget case \(item.name) did not match guard truth", scale: scale)
++            }
++            let expectedPresentation = ProjectBudgetPresentation.make(
++                log: item.log,
++                generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
++                projectState: editor.projectState,
++                hasProductionPipeline: editor.hasProductionPipeline
++            )
++            guard await waitUntil(timeout: .seconds(5), {
++                host.layoutSubtreeIfNeeded()
++                return probeValue(identifier: "editor.status.budget", in: window)
++                    == expectedPresentation.acceptanceValue
++                    && statusControlsAreContained(in: window)
++            }) else {
++                fail("budget case \(item.name) did not reach the status bar", scale: scale)
++            }
++
++            let beforeLog = editor.generationLog
++            let beforeApproval = editor.agentService.pendingSpendApproval?.id
++            let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
++            guard let beforeBytes = try? Data(contentsOf: logURL),
++                  click(identifier: "editor.status.budget", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.budget", in: window) == true
++                          && probeExistsAnywhere(
++                              identifier: "editor.status.budget.close",
++                              preferredWindow: window
++                          )
++                  }),
++                  let (popoverWindow, _) = probeWindow(
++                      identifier: "editor.status.budget.close",
++                      preferredWindow: window
++                  ), let popoverContent = popoverWindow.contentView else {
++                fail("budget case \(item.name) did not open its detail popover", scale: scale)
++            }
++            popoverContent.layoutSubtreeIfNeeded()
++            let visible = budgetVisibleExpectations(for: item.name)
++            guard probeValue(identifier: "editor.status.budget.label", in: window) == visible.label,
++                  probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window)
++                    == visible.total,
++                  probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
++                    == visible.planning,
++                  probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
++                    == visible.hardStop,
++                  probeValueAnywhere(identifier: "editor.status.budget.warnings", preferredWindow: window)
++                    == visible.warnings,
++                  (visible.transactionState == nil || probeValueAnywhere(
++                      identifier: "editor.status.budget.transactionState", preferredWindow: window
++                  ) == visible.transactionState) else {
++                fail("budget case \(item.name) did not render its expected labels", scale: scale)
++            }
++            let popoverName = "scale-\(scaleLabel(scale))-budget-\(item.name).png"
++            guard popoverContent.bounds.width > 0,
++                  popoverContent.bounds.height > 0,
++                  Self.snapshot(popoverContent, at: evidenceURL.appendingPathComponent(popoverName)) else {
++                fail("budget case \(item.name) popover geometry was unavailable", scale: scale)
++            }
++
++            if item.name == "reserved" {
++                let refreshToken = editor.budgetStatusLoadToken
++                guard clickAnywhere(
++                    identifier: "editor.status.budget.refresh",
++                    preferredWindow: window
++                ) == nil,
++                await waitUntil(timeout: .seconds(5), {
++                    editor.budgetStatusLoadToken > refreshToken
++                        && probeStateAnywhere(
++                            identifier: "editor.status.budget.refresh",
++                            preferredWindow: window
++                        ) == false
++                        && probeValue(identifier: "editor.status.budget", in: window)
++                            == expectedPresentation.acceptanceValue
++                }) else {
++                    fail("budget refresh did not complete", scale: scale)
++                }
++            }
++
++            guard clickAnywhere(
++                identifier: "editor.status.budget.close",
++                preferredWindow: window
++            ) == nil,
++            await waitUntil(timeout: .seconds(5), {
++                probeState(identifier: "editor.status.budget", in: window) == false
++            }), editor.generationLog == beforeLog,
++            editor.agentService.pendingSpendApproval?.id == beforeApproval,
++            (try? Data(contentsOf: logURL)) == beforeBytes else {
++                fail("budget case \(item.name) changed consent or cost records", scale: scale)
++            }
++            emit(
++                "budget",
++                scale: scale,
++                fields: [
++                    "case": item.name,
++                    "charged": spendSnapshot.chargedEur,
++                    "complete": spendSnapshot.isComplete,
++                    "items": spendSnapshot.lineItems.count,
++                    "popoverFrame": frameDescription(popoverContent.bounds),
++                    "reserved": spendSnapshot.openReservationEur,
++                    "screenshot": popoverName,
++                    "statusValue": expectedPresentation.acceptanceValue,
++                ]
++            )
++        }
++
++        await captureBudgetUnavailableLimits(
++            editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
++        )
++        await captureBudgetLifecycle(
++            editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
++        )
++
++        await captureBudgetProjectSwitch(
++            editor: editor,
++            window: window,
++            host: host,
++            projectURL: projectURL,
++            evidenceURL: evidenceURL,
++            scale: scale
++        )
++    }
++
++    private static func budgetAcceptanceCases() -> [BudgetAcceptanceCase] {
++        let zero = money(0)
++        let low = money(9.25)
++        let exceeded = money(12.5)
++        let reserved = money(3.25)
++        let submitted = money(4)
++        let released = money(5)
++        return [
++            BudgetAcceptanceCase(
++                name: "empty",
++                log: budgetLog([]),
++                charged: 0,
++                reserved: 0,
++                active: 0,
++                unpriced: 0,
++                complete: true,
++                items: 0
++            ),
++            BudgetAcceptanceCase(
++                name: "zero",
++                log: budgetLog(transactionEvents(id: "zero", money: zero, final: .charged)),
++                charged: 0,
++                reserved: 0,
++                active: 0,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "low",
++                log: budgetLog(transactionEvents(id: "low", money: low, final: .charged)),
++                charged: 9.25,
++                reserved: 0,
++                active: 0,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "exceeded",
++                log: budgetLog(transactionEvents(id: "exceeded", money: exceeded, final: .charged)),
++                charged: 12.5,
++                reserved: 0,
++                active: 0,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "exceeded-unknown",
++                log: budgetLog(transactionEvents(id: "exceeded", money: exceeded, final: .charged)
++                    + transactionEvents(id: "unknown", money: nil, final: .reserved,
++                        pricingStatus: .priceUnavailable)),
++                charged: 12.5,
++                reserved: 0,
++                active: 1,
++                unpriced: 1,
++                complete: false,
++                items: 2
++            ),
++            BudgetAcceptanceCase(
++                name: "unknown-price",
++                log: budgetLog(transactionEvents(
++                    id: "unknown-price",
++                    money: nil,
++                    final: .reserved,
++                    note: "Provider price was unavailable.",
++                    pricingStatus: .priceUnavailable
++                )),
++                charged: 0,
++                reserved: 0,
++                active: 1,
++                unpriced: 1,
++                complete: false,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "unknown-currency",
++                log: budgetLog(transactionEvents(
++                    id: "unknown-currency",
++                    money: nil,
++                    final: .reserved,
++                    note: "Currency conversion was unavailable.",
++                    pricingStatus: .currencyUnavailable
++                )),
++                charged: 0,
++                reserved: 0,
++                active: 1,
++                unpriced: 1,
++                complete: false,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "subscription-credits",
++                log: budgetLog(transactionEvents(
++                    id: "subscription-credits",
++                    money: nil,
++                    final: .reserved,
++                    transport: .mcp,
++                    billing: .subscription,
++                    note: "Subscription credits have no verified project monetary cost.",
++                    pricingStatus: .subscriptionCredits
++                )),
++                charged: 0,
++                reserved: 0,
++                active: 1,
++                unpriced: 1,
++                complete: false,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "reserved",
++                log: budgetLog(transactionEvents(id: "reserved", money: reserved, final: .reserved)),
++                charged: 0,
++                reserved: 3.25,
++                active: 1,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "submitted-failure",
++                log: budgetLog(transactionEvents(
++                    id: "submitted-failure",
++                    money: submitted,
++                    final: .submitted,
++                    note: "The provider accepted the request; status reconciliation is pending."
++                )),
++                charged: 0,
++                reserved: 4,
++                active: 1,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++            BudgetAcceptanceCase(
++                name: "released",
++                log: budgetLog(transactionEvents(
++                    id: "released",
++                    money: released,
++                    final: .released,
++                    note: "Released before provider submission."
++                )),
++                charged: 0,
++                reserved: 0,
++                active: 0,
++                unpriced: 0,
++                complete: true,
++                items: 1
++            ),
++        ]
++    }
++
++    private static func transactionEvents(
++        id: String,
++        money: GenerationMoney?,
++        final: GenerationSpendEvent.Kind,
++        transport: ProviderTransport = .api,
++        billing: BillingMode = .perCall,
++        note: String? = nil,
++        pricingStatus: GenerationPricingStatus? = nil
++    ) -> [GenerationSpendEvent] {
++        let endpoint = transport == .mcp ? "generate_video" : "video/generate"
++        let pricingStatus = pricingStatus
++            ?? (money != nil ? .priced : billing == .subscription ? .subscriptionCredits : .priceUnavailable)
++        var events = [GenerationSpendEvent(
++            id: "\(id)-reserved",
++            transactionId: id,
++            kind: .reserved,
++            model: "higgsfield/acceptance-video",
++            provider: .higgsfield,
++            transport: transport,
++            endpoint: endpoint,
++            money: money,
++            note: final == .reserved ? note : nil,
++            createdAt: Date(timeIntervalSince1970: 1),
++            billing: billing,
++            pricingStatus: pricingStatus
++        )]
++        if final == .submitted || final == .charged {
++            events.append(GenerationSpendEvent(
++                id: "\(id)-submitted",
++                transactionId: id,
++                kind: .submitted,
++                model: "higgsfield/acceptance-video",
++                provider: .higgsfield,
++                transport: transport,
++                endpoint: endpoint,
++                providerRequestId: "acceptance-request",
++                providerRequestResumable: true,
++                money: money,
++                note: final == .submitted ? note : nil,
++                createdAt: Date(timeIntervalSince1970: 2),
++                billing: billing
++            ))
++        }
++        if final == .charged {
++            events.append(GenerationSpendEvent(
++                id: "\(id)-charged",
++                transactionId: id,
++                kind: .charged,
++                model: "higgsfield/acceptance-video",
++                provider: .higgsfield,
++                transport: transport,
++                endpoint: endpoint,
++                money: money,
++                note: note,
++                createdAt: Date(timeIntervalSince1970: 3),
++                billing: billing
++            ))
++        } else if final == .released {
++            events.append(GenerationSpendEvent(
++                id: "\(id)-released",
++                transactionId: id,
++                kind: .released,
++                model: "higgsfield/acceptance-video",
++                provider: .higgsfield,
++                transport: transport,
++                endpoint: endpoint,
++                note: note,
++                createdAt: Date(timeIntervalSince1970: 2),
++                billing: billing
++            ))
++        }
++        return events
++    }
++
++    private static func budgetLog(_ events: [GenerationSpendEvent]) -> GenerationLog {
++        var log = GenerationLog()
++        log.spendEvents = events
++        return log
++    }
++
++    private static func money(_ eur: Double) -> GenerationMoney {
++        GenerationMoney(
++            nativeAmount: eur * 1.2,
++            nativeCurrency: "USD",
++            eurAmount: eur,
++            eurPerNativeUnit: 1 / 1.2,
++            exchangeRateDate: "2026-09-24",
++            pricingSource: "https://provider.example/pricing",
++            exchangeRateSource: "https://www.ecb.europa.eu/"
++        )
++    }
++
++    private static func installBudgetLog(
++        _ log: GenerationLog,
++        in workingRoot: URL,
++        editor: EditorViewModel
++    ) throws {
++        guard editor.workingRoot?.standardizedFileURL.resolvingSymlinksInPath()
++                == workingRoot.standardizedFileURL.resolvingSymlinksInPath() else {
++            throw CocoaError(.fileWriteUnknown)
++        }
++        _ = try GenerationBudgetGuard.spendSnapshot(
++            log: log,
++            generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
++        )
++        editor.generationLog = log
++        try editor.persistGenerationLog()
++    }
++
++    private static func captureBudgetLifecycle(
++        editor: EditorViewModel,
++        window: NSWindow,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        guard let root = editor.workingRoot else {
++            fail("budget lifecycle lost its working copy", scale: scale)
++        }
++        do {
++            try installBudgetLog(GenerationLog(), in: root, editor: editor)
++            let scope = try GenerationProjectMutationScope(projectHome: root, editor: editor)
++            let target = ResolvedGenerationTarget(
++                modelId: "higgsfield/acceptance-video",
++                provider: .higgsfield,
++                endpoint: "video/generate",
++                binding: ProviderBinding(provider: .higgsfield, transport: .api,
++                                         kind: .generation, providerRef: "video/generate",
++                                         billing: .perCall)
++            )
++            let authorization = GenerationAuthorization(
++                transactionId: "budget-lifecycle-charge", target: target,
++                estimate: money(3), projectMutationScope: scope
++            )
++            try editor.recordSpendEvent(authorization: authorization, kind: .reserved,
++                                        money: money(3), pricingStatus: .priced)
++            await captureBudgetLifecycleStage("reserved", editor: editor, window: window,
++                evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
++                total: "Reserved + charged total|€3.00", state: "Reserved", eventCount: 1)
++
++            try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
++                providerRequestId: "acceptance-request", providerRequestResumable: true,
++                money: money(3), note: "Provider outcome requires reconciliation.")
++            await captureBudgetLifecycleStage("submitted-failure", editor: editor, window: window,
++                evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
++                total: "Reserved + charged total|€3.00", state: "Submitted · attention", eventCount: 2)
++
++            try editor.recordSpendEvent(authorization: authorization, kind: .charged,
++                                        money: money(2.75))
++            await captureBudgetLifecycleStage("charged", editor: editor, window: window,
++                evidenceURL: evidenceURL, scale: scale, label: "Budget €2.75 / €10.00",
++                total: "Reserved + charged total|€2.75", state: "Charged", eventCount: 3)
++
++            try installBudgetLog(GenerationLog(), in: root, editor: editor)
++            let released = GenerationAuthorization(
++                transactionId: "budget-lifecycle-release", target: target,
++                estimate: money(5), projectMutationScope: scope
++            )
++            try editor.recordSpendEvent(authorization: released, kind: .reserved,
++                                        money: money(5), pricingStatus: .priced)
++            try editor.recordSpendEvent(authorization: released, kind: .released,
++                                        note: "Released before provider submission.")
++            await captureBudgetLifecycleStage("released", editor: editor, window: window,
++                evidenceURL: evidenceURL, scale: scale, label: "Budget €0.00 / €10.00",
++                total: "Reserved + charged total|€0.00", state: "Released", eventCount: 2)
++        } catch {
++            fail("budget lifecycle could not persist its canonical events: \(error.localizedDescription)", scale: scale)
++        }
++    }
++
++    private static func captureBudgetUnavailableLimits(
++        editor: EditorViewModel,
++        window: NSWindow,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        guard let root = editor.workingRoot,
++              let dataRoot = DataRootResolver.dataRoot(of: root) else {
++            fail("unavailable-limit fixture had no production root", scale: scale)
++        }
++        let marker = dataRoot.appendingPathComponent(PipelineLayout.projectFile)
++        do {
++            try installBudgetLog(GenerationLog(), in: root, editor: editor)
++            let original = try Data(contentsOf: marker)
++            guard let yaml = String(data: original, encoding: .utf8) else {
++                fail("unavailable-limit fixture could not read project metadata", scale: scale)
++            }
++            let pattern = try NSRegularExpression(pattern: "(?m)^budget_eur:.*$")
++            let range = NSRange(yaml.startIndex..<yaml.endIndex, in: yaml)
++            guard pattern.numberOfMatches(in: yaml, range: range) == 1 else {
++                fail("unavailable-limit fixture did not find one budget field", scale: scale)
++            }
++            let unavailable = pattern.stringByReplacingMatches(
++                in: yaml, range: range, withTemplate: "budget_eur: unavailable"
++            )
++            try Data(unavailable.utf8).write(to: marker, options: .atomic)
++            await editor.refreshProjectState()
++            guard editor.hasProductionPipeline,
++                  editor.projectState == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeValue(identifier: "editor.status.budget.label", in: window)
++                          == "Budget · No spend · Limits unavailable"
++                  }),
++                  click(identifier: "editor.status.budget", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeExistsAnywhere(identifier: "editor.status.budget.close", preferredWindow: window)
++                  }),
++                  probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
++                      == "Planning budget|Unavailable",
++                  probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
++                      == "Hard stop|Unavailable",
++                  probeValueAnywhere(identifier: "editor.status.budget.warnings", preferredWindow: window)
++                      == "Project limits are still loading or unavailable.",
++                  let (popoverWindow, _) = probeWindow(
++                      identifier: "editor.status.budget.close", preferredWindow: window
++                  ), let content = popoverWindow.contentView else {
++                fail("unavailable limits were not visible", scale: scale)
++            }
++            let screenshotName = "scale-\(scaleLabel(scale))-budget-limits-unavailable.png"
++            guard Self.snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
++                  clickAnywhere(identifier: "editor.status.budget.close", preferredWindow: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "editor.status.budget", in: window) == false
++                  }) else {
++                fail("unavailable-limit details did not close", scale: scale)
++            }
++            try original.write(to: marker, options: .atomic)
++            await editor.refreshProjectState()
++            guard editor.projectState?.budgetEur == 10 else {
++                fail("budget fixture limits did not restore", scale: scale)
++            }
++            emit("budget-limits-unavailable", scale: scale, fields: ["screenshot": screenshotName])
++        } catch {
++            fail("unavailable-limit fixture failed: \(error.localizedDescription)", scale: scale)
++        }
++    }
++
++    private static func captureBudgetLifecycleStage(
++        _ name: String,
++        editor: EditorViewModel,
++        window: NSWindow,
++        evidenceURL: URL,
++        scale: Double,
++        label: String,
++        total: String,
++        state: String,
++        eventCount: Int
++    ) async {
++        guard let root = editor.workingRoot,
++              let persisted = try? GenerationLogFile.loadIfPresent(
++                  from: root.appendingPathComponent(Project.generationLogFilename)
++              ),
++              persisted == editor.generationLog,
++              persisted.spendEvents.count == eventCount,
++              await waitUntil(timeout: .seconds(5), {
++                  probeValue(identifier: "editor.status.budget.label", in: window) == label
++              }),
++              click(identifier: "editor.status.budget", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  probeExistsAnywhere(identifier: "editor.status.budget.close", preferredWindow: window)
++              }),
++              probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window) == total,
++              probeValueAnywhere(identifier: "editor.status.budget.transactionState", preferredWindow: window) == state,
++              let (popoverWindow, _) = probeWindow(
++                  identifier: "editor.status.budget.close", preferredWindow: window
++              ), let content = popoverWindow.contentView else {
++            fail("budget lifecycle \(name) did not render persisted state", scale: scale)
++        }
++        let screenshotName = "scale-\(scaleLabel(scale))-budget-lifecycle-\(name).png"
++        guard Self.snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
++              clickAnywhere(identifier: "editor.status.budget.close", preferredWindow: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  probeState(identifier: "editor.status.budget", in: window) == false
++              }) else {
++            fail("budget lifecycle \(name) did not close after capture", scale: scale)
++        }
++        emit("budget-lifecycle", scale: scale,
++             fields: ["state": name, "screenshot": screenshotName, "events": eventCount])
++    }
++
++    private static func captureBudgetProjectSwitch(
++        editor: EditorViewModel,
++        window: NSWindow,
++        host: NSView,
++        projectURL: URL,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        let priorLog = editor.generationLog
++        let priorPackage = try? projectSnapshot(at: projectURL)
++        let secondary: URL
++        do {
++            secondary = try makeBareProjectFixture(scale: scale)
++        } catch {
++            fail("could not create the project-switch fixture", scale: scale)
++        }
++        let secondaryKey = ProjectIdentity.existingKey(for: secondary)
++        let secondaryBefore = try? projectSnapshot(at: secondary)
++        editor.projectURL = secondary
++        guard editor.generationLog == GenerationLog(), editor.projectState == nil else {
++            fail("project switch retained stale budget state", scale: scale)
++        }
++        do {
++            try await editor.refreshBudgetStatus()
++        } catch {
++            fail("could not refresh the switched project budget", scale: scale)
++        }
++        let emptyPresentation = ProjectBudgetPresentation.make(
++            log: GenerationLog(),
++            generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
++            projectState: nil,
++            hasProductionPipeline: false
++        )
++        guard await waitUntil(timeout: .seconds(5), {
++            host.layoutSubtreeIfNeeded()
++            return editor.projectURL == secondary
++                && editor.hasProductionPipeline == false
++                && probeValue(identifier: "editor.status.budget", in: window)
++                    == emptyPresentation.acceptanceValue
++                && statusControlsAreContained(in: window)
++        }) else {
++            fail("switched project did not show its own empty budget", scale: scale)
++        }
++        let secondaryStatusContext = probeValue(
++            identifier: "editor.statusBar",
++            in: window
++        ) ?? ""
++        let secondaryLogURL = editor.workingRoot?.appendingPathComponent(
++            Project.generationLogFilename
++        )
++        let secondaryLogBytes = secondaryLogURL.flatMap { try? Data(contentsOf: $0) }
++        let approvalBefore = editor.agentService.pendingSpendApproval?.id
++        guard click(identifier: "editor.status.budget", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  probeExistsAnywhere(
++                      identifier: "editor.status.budget.close",
++                      preferredWindow: window
++                  )
++              }),
++              let (popoverWindow, _) = probeWindow(
++                  identifier: "editor.status.budget.close",
++                  preferredWindow: window
++              ), let content = popoverWindow.contentView else {
++            fail("switched project budget details did not open", scale: scale)
++        }
++        content.layoutSubtreeIfNeeded()
++        guard probeValue(identifier: "editor.status.budget.label", in: window) == "Budget · No spend",
++              probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
++                  == "Planning budget|Not set",
++              probeValueAnywhere(identifier: "editor.status.budget.hardStop", preferredWindow: window)
++                  == "Hard stop|Not set" else {
++            fail("switched project did not render unset limits", scale: scale)
++        }
++        let screenshotName = "scale-\(scaleLabel(scale))-budget-project-switch.png"
++        let refreshToken = editor.budgetStatusLoadToken
++        guard snapshot(content, at: evidenceURL.appendingPathComponent(screenshotName)),
++              clickAnywhere(
++                  identifier: "editor.status.budget.refresh",
++                  preferredWindow: window
++              ) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  editor.budgetStatusLoadToken > refreshToken
++                      && probeStateAnywhere(
++                          identifier: "editor.status.budget.refresh",
++                          preferredWindow: window
++                      ) == false
++              }),
++              clickAnywhere(
++                  identifier: "editor.status.budget.close",
++                  preferredWindow: window
++              ) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  probeState(identifier: "editor.status.budget", in: window) == false
++              }), editor.agentService.pendingSpendApproval?.id == approvalBefore,
++              secondaryLogURL.flatMap({ try? Data(contentsOf: $0) }) == secondaryLogBytes,
++              (try? projectSnapshot(at: secondary)) == secondaryBefore else {
++            fail("switched project controls changed consent or cost records", scale: scale)
++        }
++
++        editor.projectURL = projectURL
++        editor.recoveredUnsavedWork = false
++        do {
++            try await editor.refreshBudgetStatus()
++        } catch {
++            fail("could not restore the original project budget", scale: scale)
++        }
++        let restoredPresentation = ProjectBudgetPresentation.make(
++            log: priorLog,
++            generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
++            projectState: editor.projectState,
++            hasProductionPipeline: editor.hasProductionPipeline
++        )
++        guard editor.generationLog == priorLog,
++              probeValue(identifier: "editor.status.budget", in: window)
++                == restoredPresentation.acceptanceValue,
++              (try? projectSnapshot(at: projectURL)) == priorPackage else {
++            fail("original project budget did not restore after switching", scale: scale)
++        }
++        emit(
++            "budget-project-switch",
++            scale: scale,
++            fields: [
++                "emptyValue": emptyPresentation.acceptanceValue,
++                "restoredValue": restoredPresentation.acceptanceValue,
++                "screenshot": screenshotName,
++                "statusContext": secondaryStatusContext,
++                "statusFrames": statusControlFrames(in: window),
++            ]
++        )
++        if let secondaryKey { ProjectWorkingCopy.discard(key: secondaryKey) }
++        try? FileManager.default.removeItem(at: secondary)
++    }
++
+     private static func captureInspectorCases(
+         editor: EditorViewModel,
+         window: NSWindow,
+@@ -646,6 +1562,51 @@ enum WorkspaceUIAcceptance {
+             to: projectURL.appendingPathComponent(Project.generationLogFilename),
+             options: .atomic
+         )
++        let dataRoot = try ProjectScaffold.initProject(
++            home: projectURL,
++            name: title,
++            mode: .beat,
++            budgetEur: 10,
++            today: { "2026-09-24" }
++        )
++        let brief = try Brief(
++            project: title,
++            generated: "2026-09-24",
++            mission: .demo,
++            targetPlatform: "web",
++            aspectRatio: .landscape16x9,
++            projectMode: "beat",
++            budgetEur: 10,
++            budgetStopEur: 12,
++            conceptType: .abstract,
++            visualMedium: .liveActionRealistic,
++            figures: .none,
++            lyricsIntegration: .ignored
++        )
++        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
++        _ = try ProjectIdentity.uuid(for: projectURL)
++        return projectURL
++    }
++
++    private static func makeBareProjectFixture(scale: Double) throws -> URL {
++        let title = "A second project with an exceptionally long status name \(scaleLabel(scale))"
++        let projectURL = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "\(title)-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
++        try JSONEncoder().encode(Timeline()).write(
++            to: projectURL.appendingPathComponent(Project.timelineFilename),
++            options: .atomic
++        )
++        try JSONEncoder().encode(MediaManifest()).write(
++            to: projectURL.appendingPathComponent(Project.manifestFilename),
++            options: .atomic
++        )
++        try JSONEncoder().encode(GenerationLog()).write(
++            to: projectURL.appendingPathComponent(Project.generationLogFilename),
++            options: .atomic
++        )
+         _ = try ProjectIdentity.uuid(for: projectURL)
+         return projectURL
+     }
+@@ -842,6 +1803,47 @@ enum WorkspaceUIAcceptance {
+         )
+     }
+ 
++    private static let statusControlIdentifiers = [
++        "editor.status.budget",
++        "editor.status.aiJobs",
++        "editor.status.exportJobs",
++    ]
++
++    private static func statusControlsAreContained(in window: NSWindow) -> Bool {
++        guard let root = window.contentView,
++              let status = findProbe(in: root, identifier: "editor.statusBar") else {
++            return false
++        }
++        let statusFrame = status.convert(status.bounds, to: root)
++        guard status.window === window,
++              !status.isHiddenOrHasHiddenAncestor,
++              statusFrame.width > 0,
++              statusFrame.height >= AppTheme.Layout.statusBarHeight,
++              root.bounds.insetBy(
++                  dx: -AppTheme.BorderWidth.thin,
++                  dy: -AppTheme.BorderWidth.thin
++              ).contains(statusFrame) else {
++            return false
++        }
++        let bounds = statusFrame.insetBy(
++            dx: -AppTheme.BorderWidth.thin,
++            dy: -AppTheme.BorderWidth.thin
++        )
++        return statusControlIdentifiers.allSatisfy {
++            visibleProbe(identifier: $0, in: window, containedBy: bounds)
++        }
++    }
++
++    private static func statusControlFrames(in window: NSWindow) -> [String: [String: Double]] {
++        guard let root = window.contentView else { return [:] }
++        return Dictionary(uniqueKeysWithValues: (["editor.statusBar"] + statusControlIdentifiers)
++            .compactMap { identifier in
++                findProbe(in: root, identifier: identifier).map {
++                    (identifier, frameDescription($0.convert($0.bounds, to: root)))
++                }
++            })
++    }
++
+     private static func visibleProbe(
+         identifier: String,
+         in window: NSWindow,
+@@ -1310,6 +2312,99 @@ enum WorkspaceUIAcceptance {
+         return nil
+     }
+ 
++    private static func clickAnywhere(
++        identifier: String,
++        preferredWindow: NSWindow
++    ) -> String? {
++        guard let (window, probe) = probeWindow(
++            identifier: identifier,
++            preferredWindow: preferredWindow
++        ), let root = window.contentView else {
++            return "control geometry unavailable"
++        }
++        let frame = probe.bounds
++        guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
++            return "control has no finite frame"
++        }
++        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
++        guard root.bounds.contains(root.convert(location, from: nil)) else {
++            return "control is outside the window"
++        }
++        let timestamp = ProcessInfo.processInfo.systemUptime
++        guard let down = NSEvent.mouseEvent(
++            with: .leftMouseDown,
++            location: location,
++            modifierFlags: [],
++            timestamp: timestamp,
++            windowNumber: window.windowNumber,
++            context: nil,
++            eventNumber: 0,
++            clickCount: 1,
++            pressure: 1
++        ), let up = NSEvent.mouseEvent(
++            with: .leftMouseUp,
++            location: location,
++            modifierFlags: [],
++            timestamp: timestamp + 0.001,
++            windowNumber: window.windowNumber,
++            context: nil,
++            eventNumber: 0,
++            clickCount: 1,
++            pressure: 0
++        ) else {
++            return "AppKit could not create mouse events"
++        }
++        NSApp.postEvent(down, atStart: false)
++        NSApp.postEvent(up, atStart: false)
++        return nil
++    }
++
++    private static func probeExistsAnywhere(
++        identifier: String,
++        preferredWindow: NSWindow
++    ) -> Bool {
++        probeWindow(identifier: identifier, preferredWindow: preferredWindow) != nil
++    }
++
++    private static func probeStateAnywhere(
++        identifier: String,
++        preferredWindow: NSWindow
++    ) -> Bool? {
++        guard let (_, probe) = probeWindow(
++            identifier: identifier,
++            preferredWindow: preferredWindow
++        ) else { return nil }
++        return (probe as? AppRelaunchClickProbeView)?.acceptanceState
++    }
++
++    private static func probeValueAnywhere(
++        identifier: String,
++        preferredWindow: NSWindow
++    ) -> String? {
++        guard let (_, probe) = probeWindow(
++            identifier: identifier,
++            preferredWindow: preferredWindow
++        ) else { return nil }
++        return (probe as? AppRelaunchClickProbeView)?.acceptanceValue
++    }
++
++    private static func probeWindow(
++        identifier: String,
++        preferredWindow: NSWindow
++    ) -> (NSWindow, NSView)? {
++        let candidates = [preferredWindow] + NSApp.windows.filter { $0 !== preferredWindow }
++        for window in candidates where window.isVisible && !window.ignoresMouseEvents {
++            guard let root = window.contentView,
++                  let probe = findProbe(in: root, identifier: identifier),
++                  probe.window === window,
++                  !probe.isHiddenOrHasHiddenAncestor else {
++                continue
++            }
++            return (window, probe)
++        }
++        return nil
++    }
++
+     private static func findProbe(in view: NSView, identifier: String) -> NSView? {
+         if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
+             return view
+@@ -1327,6 +2422,13 @@ enum WorkspaceUIAcceptance {
+         return probe.acceptanceState
+     }
+ 
++    private static func probeValue(identifier: String, in window: NSWindow) -> String? {
++        guard let root = window.contentView,
++              let probe = findProbe(in: root, identifier: identifier)
++                as? AppRelaunchClickProbeView else { return nil }
++        return probe.acceptanceValue
++    }
++
+     private static func waitUntil(
+         timeout: Duration,
+         _ predicate: () -> Bool
+diff --git a/Sources/NexGenVideo/Editor/BudgetStatusView.swift b/Sources/NexGenVideo/Editor/BudgetStatusView.swift
+new file mode 100644
+index 00000000..0e9e8b3f
+--- /dev/null
++++ b/Sources/NexGenVideo/Editor/BudgetStatusView.swift
+@@ -0,0 +1,926 @@
++import SwiftUI
++import NexGenEngine
++
++enum ProjectBudgetLimit: Equatable {
++    case notSet
++    case unavailable
++    case amount(Double)
++}
++
++struct ProjectBudgetPresentation: Equatable {
++    enum Severity: Equatable {
++        case normal
++        case warning
++        case error
++    }
++
++    let spend: ProjectSpendSnapshot?
++    let planningBudget: ProjectBudgetLimit
++    let hardStop: ProjectBudgetLimit
++    let nextPhaseName: String?
++
++    static func make(
++        log: GenerationLog,
++        generatedInputs: [GenerationInput],
++        projectState: ProjectStateData?,
++        hasProductionPipeline: Bool
++    ) -> Self {
++        let planningBudget: ProjectBudgetLimit
++        let hardStop: ProjectBudgetLimit
++        if let projectState {
++            planningBudget = projectState.budgetEur > 0
++                ? .amount(projectState.budgetEur)
++                : .unavailable
++            hardStop = projectState.budgetStopEur.map(ProjectBudgetLimit.amount) ?? .notSet
++        } else if hasProductionPipeline {
++            planningBudget = .unavailable
++            hardStop = .unavailable
++        } else {
++            planningBudget = .notSet
++            hardStop = .notSet
++        }
++
++        do {
++            return Self(
++                spend: try GenerationBudgetGuard.spendSnapshot(
++                    log: log,
++                    generatedInputs: generatedInputs
++                ),
++                planningBudget: planningBudget,
++                hardStop: hardStop,
++                nextPhaseName: projectState?.nextPhaseName
++            )
++        } catch {
++            return Self(
++                spend: nil,
++                planningBudget: planningBudget,
++                hardStop: hardStop,
++                nextPhaseName: projectState?.nextPhaseName
++            )
++        }
++    }
++
++    var compactLabel: String {
++        guard let spend else { return "Budget unavailable" }
++        if !hasRecords {
++            return limitsAreUnavailable ? "Budget · No spend · Limits unavailable" : "Budget · No spend"
++        }
++        let amount = Self.euro(spend.verifiedEur)
++        let prefix = spend.isComplete ? "" : "≥"
++        var label = "Budget \(prefix)\(amount)"
++        switch planningBudget {
++        case .amount(let budget):
++            label += " / \(Self.euro(budget))"
++        case .unavailable:
++            label += " · Planning limit unavailable"
++        case .notSet:
++            break
++        }
++        switch hardStop {
++        case .amount(let stop):
++            if case .amount = planningBudget { break }
++            label += " · Stop \(Self.euro(stop))"
++        case .unavailable:
++            label += " · Stop unavailable"
++        default:
++            break
++        }
++        if planningBudget == .notSet && hardStop == .notSet {
++            label += " · No limit"
++        }
++        return label
++    }
++
++    var severity: Severity {
++        guard let spend else { return .error }
++        if limitIsExceeded(planningBudget, spend: spend.verifiedEur)
++            || limitIsExceeded(hardStop, spend: spend.verifiedEur) {
++            return .error
++        }
++        guard spend.isComplete else { return .warning }
++        if limitIsLow(planningBudget, spend: spend.verifiedEur)
++            || limitIsLow(hardStop, spend: spend.verifiedEur) {
++            return .warning
++        }
++        return .normal
++    }
++
++    var warnings: [String] {
++        guard let spend else {
++            return ["The cost journal cannot be verified. Repair it before relying on budget totals."]
++        }
++        var result: [String] = []
++        if spend.unpricedTransactionCount > 0 {
++            appendPricingWarning(.priceUnavailable, label: "provider price", spend: spend, to: &result)
++            appendPricingWarning(.currencyUnavailable, label: "currency conversion", spend: spend, to: &result)
++            appendPricingWarning(.subscriptionCredits, label: "subscription/credit monetary cost", spend: spend, to: &result)
++        }
++        if spend.legacyGenerationCount > 0 {
++            result.append(
++                "\(spend.legacyGenerationCount) legacy generation\(spend.legacyGenerationCount == 1 ? " has" : "s have") no verified monetary record."
++            )
++        }
++        appendLimitWarning("Planning budget", limit: planningBudget, spend: spend.verifiedEur, to: &result)
++        appendLimitWarning("Hard stop", limit: hardStop, spend: spend.verifiedEur, to: &result)
++        if planningBudget == .unavailable || hardStop == .unavailable {
++            result.append("Project limits are still loading or unavailable.")
++        }
++        return result
++    }
++
++    var hasRecords: Bool {
++        guard let spend else { return false }
++        return !spend.lineItems.isEmpty || spend.legacyGenerationCount > 0
++    }
++
++    private var limitsAreUnavailable: Bool {
++        planningBudget == .unavailable || hardStop == .unavailable
++    }
++
++    var acceptanceValue: String {
++        guard let spend else { return "unavailable" }
++        return [
++            "committed=\(Self.decimal(spend.verifiedEur))",
++            "charged=\(Self.decimal(spend.chargedEur))",
++            "reserved=\(Self.decimal(spend.openReservationEur))",
++            "complete=\(spend.isComplete)",
++            "active=\(spend.activeReservationCount)",
++            "unpriced=\(spend.unpricedTransactionCount)",
++            "legacy=\(spend.legacyGenerationCount)",
++            "planning=\(limitToken(planningBudget))",
++            "stop=\(limitToken(hardStop))",
++            "items=\(spend.lineItems.count)",
++        ].joined(separator: ";")
++    }
++
++    static func euro(_ amount: Double) -> String {
++        String(format: "€%.2f", amount)
++    }
++
++    static func decimal(_ amount: Double) -> String {
++        String(format: "%.2f", amount)
++    }
++
++    private func appendLimitWarning(
++        _ label: String,
++        limit: ProjectBudgetLimit,
++        spend: Double,
++        to result: inout [String]
++    ) {
++        guard case .amount(let amount) = limit else { return }
++        let remaining = amount - spend
++        if remaining < 0 {
++            result.append("\(label) exceeded by \(Self.euro(-remaining)).")
++        } else if remaining == 0 {
++            result.append("\(label) reached.")
++        } else if remaining < amount * 0.1 {
++            result.append("\(label) has \(Self.euro(remaining)) remaining.")
++        }
++    }
++
++    private func appendPricingWarning(
++        _ status: GenerationPricingStatus,
++        label: String,
++        spend: ProjectSpendSnapshot,
++        to result: inout [String]
++    ) {
++        let count = spend.lineItems.filter {
++            $0.countsTowardGuard && $0.money == nil && $0.pricingStatus == status
++        }.count
++        guard count > 0 else { return }
++        result.append(
++            "\(count) open transaction\(count == 1 ? " has" : "s have") no verified \(label)."
++        )
++    }
++
++    private func limitIsExceeded(_ limit: ProjectBudgetLimit, spend: Double) -> Bool {
++        guard case .amount(let amount) = limit else { return false }
++        return spend >= amount
++    }
++
++    private func limitIsLow(_ limit: ProjectBudgetLimit, spend: Double) -> Bool {
++        guard case .amount(let amount) = limit, spend < amount else { return false }
++        return amount - spend < amount * 0.1
++    }
++
++    private func limitToken(_ limit: ProjectBudgetLimit) -> String {
++        switch limit {
++        case .notSet: "none"
++        case .unavailable: "unknown"
++        case .amount(let value): Self.decimal(value)
++        }
++    }
++}
++
++struct EditorStatusBar: View {
++    @Environment(EditorViewModel.self) private var editor
++
++    var body: some View {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text(statusContext)
++                .interfaceFont(size: AppTheme.Typography.metadata)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++                .lineLimit(1)
++                .truncationMode(.middle)
++                .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, alignment: .leading)
++                .layoutPriority(-1)
++
++            BudgetStatusButton()
++                .fixedSize(horizontal: true, vertical: false)
++                .layoutPriority(2)
++            AIJobStatusButton()
++                .fixedSize(horizontal: true, vertical: false)
++                .layoutPriority(2)
++            ExportJobStatusButton()
++                .fixedSize(horizontal: true, vertical: false)
++                .layoutPriority(2)
++        }
++        .padding(.horizontal, AppTheme.Spacing.md)
++        .frame(maxWidth: .infinity)
++        .frame(minHeight: AppTheme.Layout.statusBarHeight)
++        .background(AppTheme.Background.raisedColor)
++        .overlay(alignment: .top) {
++            Rectangle()
++                .fill(AppTheme.Border.primaryColor)
++                .frame(height: AppTheme.BorderWidth.hairline)
++        }
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(
++                    identifier: "editor.statusBar",
++                    acceptanceValue: statusContext
++                )
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
++    }
++
++    private var statusContext: String {
++        let project = editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
++        return "\(project) · \(editor.workspaceFocus.label)"
++    }
++}
++
++private struct BudgetStatusButton: View {
++    @Environment(EditorViewModel.self) private var editor
++    @State private var isPresented = false
++    @State private var isRefreshing = false
++    @State private var refreshError: String?
++
++    var body: some View {
++        let presentation = presentation
++        Button {
++            isPresented.toggle()
++        } label: {
++            HStack(spacing: AppTheme.Spacing.xs) {
++                Image(systemName: budgetSymbol(presentation.severity))
++                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                Text(presentation.compactLabel)
++                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
++                    .monospacedDigit()
++                    .lineLimit(1)
++                    .background {
++                        if WorkspaceUIAcceptance.isRequested {
++                            AppRelaunchClickProbe(
++                                identifier: "editor.status.budget.label",
++                                acceptanceValue: presentation.compactLabel
++                            )
++                            .allowsHitTesting(false)
++                        }
++                    }
++            }
++            .foregroundStyle(budgetColor(presentation.severity))
++            .padding(.horizontal, AppTheme.Spacing.sm)
++            .frame(minHeight: AppTheme.Control.compactHeight)
++            .hoverHighlight(cornerRadius: AppTheme.Radius.xs, isActive: isPresented)
++        }
++        .buttonStyle(.plain)
++        .accessibilityLabel("Project budget")
++        .accessibilityValue(presentation.compactLabel)
++        .help("Show project costs and budget details")
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(
++                    identifier: "editor.status.budget",
++                    acceptanceState: isPresented,
++                    acceptanceValue: presentation.acceptanceValue
++                )
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .allowsHitTesting(false)
++            }
++        }
++        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
++            BudgetDetailPopover(
++                presentation: presentation,
++                legacyEntries: editor.generationLogEntries.filter { $0.spendTransactionId == nil },
++                isRefreshing: isRefreshing,
++                refreshError: refreshError,
++                refresh: refresh,
++                close: { isPresented = false }
++            )
++        }
++        .onChange(of: editor.projectURL) { _, _ in
++            isPresented = false
++            refreshError = nil
++        }
++    }
++
++    private var presentation: ProjectBudgetPresentation {
++        ProjectBudgetPresentation.make(
++            log: editor.generationLog,
++            generatedInputs: editor.mediaAssets.compactMap(\.generationInput),
++            projectState: editor.projectState,
++            hasProductionPipeline: editor.hasProductionPipeline
++        )
++    }
++
++    private func refresh() {
++        guard !isRefreshing else { return }
++        isRefreshing = true
++        refreshError = nil
++        Task { @MainActor in
++            do {
++                try await editor.refreshBudgetStatus()
++            } catch {
++                refreshError = "Budget details could not be refreshed."
++            }
++            isRefreshing = false
++        }
++    }
++
++    private func budgetSymbol(_ severity: ProjectBudgetPresentation.Severity) -> String {
++        switch severity {
++        case .normal: "creditcard"
++        case .warning, .error: "exclamationmark.triangle.fill"
++        }
++    }
++
++    private func budgetColor(_ severity: ProjectBudgetPresentation.Severity) -> Color {
++        switch severity {
++        case .normal: AppTheme.Text.secondaryColor
++        case .warning: AppTheme.Status.warningColor
++        case .error: AppTheme.Status.errorColor
++        }
++    }
++}
++
++private struct BudgetDetailPopover: View {
++    @Environment(\.interfaceScale) private var interfaceScale
++    let presentation: ProjectBudgetPresentation
++    let legacyEntries: [GenerationLogEntry]
++    let isRefreshing: Bool
++    let refreshError: String?
++    let refresh: () -> Void
++    let close: () -> Void
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
++            header
++            AppDivider()
++            ScrollView {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
++                    if let spend = presentation.spend {
++                        summary(spend)
++                        warnings
++                        transactions(spend.lineItems)
++                        legacyActivity
++                    } else {
++                        budgetUnavailable
++                    }
++                }
++                .frame(maxWidth: .infinity, alignment: .leading)
++            }
++            .frame(maxHeight: AppTheme.ComponentSize.budgetPopoverMaxHeight * interfaceScale)
++        }
++        .padding(AppTheme.Spacing.mdLg)
++        .frame(width: AppTheme.ComponentSize.budgetPopoverWidth * interfaceScale)
++    }
++
++    private var header: some View {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text("Project Budget")
++                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Text.primaryColor)
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Button(action: refresh) {
++                Label(isRefreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
++            }
++            .buttonStyle(.inlineAction())
++            .disabled(isRefreshing)
++            .background {
++                if WorkspaceUIAcceptance.isRequested {
++                    AppRelaunchClickProbe(
++                        identifier: "editor.status.budget.refresh",
++                        acceptanceState: isRefreshing
++                    )
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++                }
++            }
++            Button(action: close) {
++                Image(systemName: "xmark")
++                    .accessibilityLabel("Close budget details")
++            }
++            .buttonStyle(.inlineAction())
++            .background {
++                if WorkspaceUIAcceptance.isRequested {
++                    AppRelaunchClickProbe(identifier: "editor.status.budget.close")
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                        .allowsHitTesting(false)
++                }
++            }
++        }
++    }
++
++    private func summary(_ spend: ProjectSpendSnapshot) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            sectionTitle("Summary")
++            amountRow("Charged", amount: spend.chargedEur)
++            amountRow(
++                spend.unpricedTransactionCount > 0
++                    ? "Verified open reservations at least"
++                    : "Open reservations",
++                amount: spend.openReservationEur,
++                suffix: reservationSuffix(spend)
++            )
++            amountRow(
++                spend.isComplete
++                    ? "Reserved + charged total"
++                    : "Verified reserved + charged total at least",
++                amount: spend.verifiedEur,
++                emphasized: true,
++                acceptanceIdentifier: "editor.status.budget.total"
++            )
++            budgetProgress(spend)
++            limitRow(
++                "Planning budget",
++                limit: presentation.planningBudget,
++                spend: spend,
++                acceptanceIdentifier: "editor.status.budget.planning"
++            )
++            limitRow(
++                "Hard stop",
++                limit: presentation.hardStop,
++                spend: spend,
++                acceptanceIdentifier: "editor.status.budget.hardStop"
++            )
++            if let nextPhaseName = presentation.nextPhaseName {
++                HStack(spacing: AppTheme.Spacing.sm) {
++                    Text("Next phase")
++                    Spacer(minLength: AppTheme.Spacing.sm)
++                    Text(PhaseDisplay.label(nextPhaseName))
++                        .foregroundStyle(AppTheme.Text.secondaryColor)
++                }
++                .interfaceFont(size: AppTheme.Typography.ui)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++            }
++        }
++    }
++
++    private func reservationSuffix(_ spend: ProjectSpendSnapshot) -> String? {
++        var parts: [String] = []
++        if spend.activeReservationCount > 0 {
++            parts.append(String(spend.activeReservationCount))
++        }
++        if spend.unpricedTransactionCount > 0 {
++            parts.append("\(spend.unpricedTransactionCount) unpriced")
++        }
++        return parts.isEmpty ? nil : " · " + parts.joined(separator: " · ")
++    }
++
++    @ViewBuilder
++    private func budgetProgress(_ spend: ProjectSpendSnapshot) -> some View {
++        if case .amount(let amount) = presentation.planningBudget,
++           amount > 0,
++           spend.isComplete {
++            ProgressView(value: min(1, max(0, spend.verifiedEur / amount)))
++                .tint(spend.verifiedEur >= amount
++                    ? AppTheme.Status.errorColor
++                    : AppTheme.Status.successColor)
++                .accessibilityLabel("Planning budget used")
++                .accessibilityValue(
++                    "\(ProjectBudgetPresentation.euro(spend.verifiedEur)) of \(ProjectBudgetPresentation.euro(amount))"
++                )
++        }
++    }
++
++    @ViewBuilder
++    private var warnings: some View {
++        let displayedWarnings = presentation.warnings + (refreshError.map { [$0] } ?? [])
++        if !displayedWarnings.isEmpty {
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++                sectionTitle("Attention")
++                ForEach(displayedWarnings, id: \.self) { warning in
++                    warningRow(warning)
++                }
++            }
++            .background {
++                if WorkspaceUIAcceptance.isRequested {
++                    AppRelaunchClickProbe(
++                        identifier: "editor.status.budget.warnings",
++                        acceptanceValue: displayedWarnings.joined(separator: "\n")
++                    )
++                    .allowsHitTesting(false)
++                }
++            }
++        }
++    }
++
++    @ViewBuilder
++    private func transactions(_ items: [ProjectSpendLineItem]) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            sectionTitle("Transactions")
++            if items.isEmpty {
++                Text("No cost records")
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(AppTheme.Text.mutedColor)
++            } else {
++                ForEach(items) { item in
++                    transactionRow(item)
++                }
++            }
++        }
++    }
++
++    @ViewBuilder
++    private var legacyActivity: some View {
++        if !legacyEntries.isEmpty {
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++                sectionTitle("Legacy activity")
++                ForEach(legacyEntries) { entry in
++                    HStack(spacing: AppTheme.Spacing.sm) {
++                        Image(systemName: entry.sfSymbolName)
++                            .frame(width: AppTheme.IconSize.xs)
++                        Text(entry.modelDisplayName)
++                            .lineLimit(1)
++                        Spacer(minLength: AppTheme.Spacing.xs)
++                        Text("Credits \(CostEstimator.format(entry.costCredits))")
++                            .monospacedDigit()
++                    }
++                    .interfaceFont(size: AppTheme.Typography.metadata)
++                    .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
++                Text("Legacy credits are not treated as money or included in the reserved and charged total.")
++                    .interfaceFont(size: AppTheme.Typography.metadata)
++                    .foregroundStyle(AppTheme.Text.mutedColor)
++                    .fixedSize(horizontal: false, vertical: true)
++            }
++        }
++    }
++
++    private var budgetUnavailable: some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            Label("Budget unavailable", systemImage: "exclamationmark.triangle.fill")
++                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Status.errorColor)
++            Text("The cost journal cannot be verified. No amount is being treated as zero.")
++                .interfaceFont(size: AppTheme.Typography.ui)
++                .foregroundStyle(AppTheme.Text.secondaryColor)
++                .fixedSize(horizontal: false, vertical: true)
++        }
++    }
++
++    private func transactionRow(_ item: ProjectSpendLineItem) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
++            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
++                Text(ModelRegistry.displayName(for: item.model))
++                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                    .foregroundStyle(AppTheme.Text.secondaryColor)
++                    .lineLimit(1)
++                Spacer(minLength: AppTheme.Spacing.xs)
++                Text(stateLabel(item))
++                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                    .foregroundStyle(stateColor(item))
++                    .background {
++                        if WorkspaceUIAcceptance.isRequested {
++                            AppRelaunchClickProbe(
++                                identifier: "editor.status.budget.transactionState",
++                                acceptanceValue: stateLabel(item)
++                            )
++                            .allowsHitTesting(false)
++                        }
++                    }
++            }
++            Text("\(item.provider.displayName) · \(routeLabel(item.transport)) · \(billingLabel(item.billing))")
++                .interfaceFont(size: AppTheme.Typography.metadata)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++                .lineLimit(1)
++                .truncationMode(.middle)
++            Text(item.endpoint)
++                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++                .lineLimit(1)
++                .truncationMode(.middle)
++                .textSelection(.enabled)
++            moneyLabel(item)
++        }
++        .padding(AppTheme.Spacing.sm)
++        .background(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                .fill(AppTheme.Background.raisedColor)
++        )
++        .overlay(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
++        )
++    }
++
++    @ViewBuilder
++    private func moneyLabel(_ item: ProjectSpendLineItem) -> some View {
++        if item.state == .released {
++            Text("Released · not counted")
++                .foregroundStyle(AppTheme.Text.mutedColor)
++        } else if let money = item.money {
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Text(ProjectBudgetPresentation.euro(money.eurAmount))
++                    .foregroundStyle(AppTheme.Text.secondaryColor)
++                    .monospacedDigit()
++                Text("\(money.nativeCurrency) \(ProjectBudgetPresentation.decimal(money.nativeAmount)) · rate \(money.exchangeRateDate)")
++                    .foregroundStyle(AppTheme.Text.mutedColor)
++                    .lineLimit(1)
++            }
++        } else {
++            Text(unpricedLabel(item.pricingStatus))
++                .foregroundStyle(AppTheme.Status.warningColor)
++        }
++    }
++
++    private func unpricedLabel(_ status: GenerationPricingStatus) -> String {
++        switch status {
++        case .priced: "Monetary record unavailable"
++        case .priceUnavailable: "Provider price unavailable"
++        case .currencyUnavailable: "Currency conversion unavailable"
++        case .subscriptionCredits: "Subscription/credits · monetary project cost unavailable"
++        }
++    }
++
++    private func amountRow(
++        _ label: String,
++        amount: Double,
++        suffix: String? = nil,
++        emphasized: Bool = false,
++        acceptanceIdentifier: String? = nil
++    ) -> some View {
++        let amountText = ProjectBudgetPresentation.euro(amount) + (suffix ?? "")
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text(label)
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Text(amountText)
++                .monospacedDigit()
++                .foregroundStyle(emphasized ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
++        }
++        .interfaceFont(
++            size: AppTheme.Typography.ui,
++            weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular
++        )
++        .foregroundStyle(AppTheme.Text.tertiaryColor)
++        .background {
++            if WorkspaceUIAcceptance.isRequested, let acceptanceIdentifier {
++                AppRelaunchClickProbe(
++                    identifier: acceptanceIdentifier,
++                    acceptanceValue: "\(label)|\(amountText)"
++                )
++                .allowsHitTesting(false)
++            }
++        }
++    }
++
++    private func limitRow(
++        _ label: String,
++        limit: ProjectBudgetLimit,
++        spend: ProjectSpendSnapshot,
++        acceptanceIdentifier: String
++    ) -> some View {
++        let description = limitDescription(limit, spend: spend)
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text(label)
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Text(description)
++                .monospacedDigit()
++                .foregroundStyle(limitColor(limit, spend: spend))
++        }
++        .interfaceFont(size: AppTheme.Typography.ui)
++        .foregroundStyle(AppTheme.Text.tertiaryColor)
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(
++                    identifier: acceptanceIdentifier,
++                    acceptanceValue: "\(label)|\(description)"
++                )
++                .allowsHitTesting(false)
++            }
++        }
++    }
++
++    private func limitDescription(_ limit: ProjectBudgetLimit, spend: ProjectSpendSnapshot) -> String {
++        switch limit {
++        case .notSet:
++            "Not set"
++        case .unavailable:
++            "Unavailable"
++        case .amount(let amount):
++            let remaining = amount - spend.verifiedEur
++            if remaining < 0 {
++                let qualifier = spend.isComplete ? "" : "at least "
++                return "\(ProjectBudgetPresentation.euro(amount)) · \(qualifier)\(ProjectBudgetPresentation.euro(-remaining)) over"
++            }
++            guard spend.isComplete else { return "\(ProjectBudgetPresentation.euro(amount)) · remaining unavailable" }
++            return "\(ProjectBudgetPresentation.euro(amount)) · \(ProjectBudgetPresentation.euro(remaining)) remaining"
++        }
++    }
++
++    private func limitColor(_ limit: ProjectBudgetLimit, spend: ProjectSpendSnapshot) -> Color {
++        guard case .amount(let amount) = limit else {
++            return limit == .unavailable ? AppTheme.Status.warningColor : AppTheme.Text.secondaryColor
++        }
++        return spend.verifiedEur >= amount ? AppTheme.Status.errorColor : AppTheme.Text.secondaryColor
++    }
++
++    private func warningRow(_ warning: String) -> some View {
++        Label(warning, systemImage: "exclamationmark.triangle.fill")
++            .interfaceFont(size: AppTheme.Typography.metadata)
++            .foregroundStyle(AppTheme.Status.warningColor)
++            .fixedSize(horizontal: false, vertical: true)
++    }
++
++    private func sectionTitle(_ title: String) -> some View {
++        Text(title.uppercased())
++            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++            .tracking(AppTheme.Tracking.wide)
++            .foregroundStyle(AppTheme.Text.mutedColor)
++    }
++
++    private func stateLabel(_ item: ProjectSpendLineItem) -> String {
++        switch item.state {
++        case .reserved: "Reserved"
++        case .submitted: item.needsAttention ? "Submitted · attention" : "Submitted"
++        case .charged: "Charged"
++        case .released: "Released"
++        }
++    }
++
++    private func stateColor(_ item: ProjectSpendLineItem) -> Color {
++        if item.needsAttention && item.state != .released { return AppTheme.Status.warningColor }
++        switch item.state {
++        case .reserved, .submitted: AppTheme.Status.warningColor
++        case .charged: AppTheme.Status.successColor
++        case .released: AppTheme.Text.mutedColor
++        }
++    }
++
++    private func routeLabel(_ transport: ProviderTransport) -> String {
++        switch transport {
++        case .api: "Direct API"
++        case .mcp: "MCP"
++        }
++    }
++
++    private func billingLabel(_ billing: BillingMode?) -> String {
++        switch billing {
++        case .perCall: "Provider account · per request"
++        case .subscription: "Provider account · subscription/credits"
++        case nil: "Account billing not recorded"
++        }
++    }
++}
++
++private struct AIJobStatusButton: View {
++    @Environment(EditorViewModel.self) private var editor
++    @State private var isPresented = false
++
++    var body: some View {
++        let jobs = currentJobs
++        statusButton(
++            identifier: "editor.status.aiJobs",
++            label: jobs.isEmpty ? "AI" : "AI \(jobs.count)",
++            systemName: jobs.isEmpty ? "sparkles" : "sparkles.rectangle.stack.fill",
++            active: !jobs.isEmpty,
++            presented: isPresented
++        ) { isPresented.toggle() }
++        .accessibilityLabel("AI background jobs")
++        .accessibilityValue(jobs.isEmpty ? "No active jobs" : "\(jobs.count) active")
++        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
++            jobPopover(
++                title: "AI Jobs",
++                jobs: jobs,
++                empty: "No active AI jobs",
++                closeIdentifier: "editor.status.aiJobs.close",
++                close: { isPresented = false }
++            )
++        }
++    }
++
++    private var currentJobs: [String] {
++        var jobs: [String] = []
++        if editor.agentService.isStreaming { jobs.append("Agent is working") }
++        if let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
++           let phase = editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) {
++            jobs.append("Production · \(PhaseDisplay.label(phase))")
++        }
++        jobs.append(contentsOf: editor.mediaAssets.filter(\.isGenerating).map(\.generatingLabel))
++        if editor.generationBatchCoordinator.error != nil { jobs.append("Generation batch needs attention") }
++        return jobs
++    }
++}
++
++private struct ExportJobStatusButton: View {
++    @State private var isPresented = false
++    @State private var isActive = ExportCoordinator.isExportActive
++
++    var body: some View {
++        statusButton(
++            identifier: "editor.status.exportJobs",
++            label: isActive ? "Export 1" : "Export",
++            systemName: isActive ? "arrow.up.circle.fill" : "arrow.up.circle",
++            active: isActive,
++            presented: isPresented
++        ) { isPresented.toggle() }
++        .accessibilityLabel("Export background jobs")
++        .accessibilityValue(isActive ? "One active export" : "No active exports")
++        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
++            jobPopover(
++                title: "Export Jobs",
++                jobs: isActive ? ["Export is running"] : [],
++                empty: "No active exports",
++                closeIdentifier: "editor.status.exportJobs.close",
++                close: { isPresented = false }
++            )
++        }
++        .onReceive(NotificationCenter.default.publisher(for: .exportActivityChanged)) { _ in
++            isActive = ExportCoordinator.isExportActive
++        }
++    }
++}
++
++private func statusButton(
++    identifier: String,
++    label: String,
++    systemName: String,
++    active: Bool,
++    presented: Bool,
++    action: @escaping () -> Void
++) -> some View {
++    Button(action: action) {
++        Label(label, systemImage: systemName)
++            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
++            .foregroundStyle(active ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
++            .padding(.horizontal, AppTheme.Spacing.sm)
++            .frame(minHeight: AppTheme.Control.compactHeight)
++            .hoverHighlight(cornerRadius: AppTheme.Radius.xs)
++    }
++    .buttonStyle(.plain)
++    .background {
++        if WorkspaceUIAcceptance.isRequested {
++            AppRelaunchClickProbe(
++                identifier: identifier,
++                acceptanceState: presented,
++                acceptanceValue: active ? "active" : "idle"
++            )
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .allowsHitTesting(false)
++        }
++    }
++}
++
++private func jobPopover(
++    title: String,
++    jobs: [String],
++    empty: String,
++    closeIdentifier: String,
++    close: @escaping () -> Void
++) -> some View {
++    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text(title)
++                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Text.primaryColor)
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Button(action: close) {
++                Image(systemName: "xmark")
++                    .accessibilityLabel("Close \(title.lowercased())")
++            }
++            .buttonStyle(.inlineAction())
++            .background {
++                if WorkspaceUIAcceptance.isRequested {
++                    AppRelaunchClickProbe(identifier: closeIdentifier)
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                        .allowsHitTesting(false)
++                }
++            }
++        }
++        if jobs.isEmpty {
++            Text(empty)
++                .interfaceFont(size: AppTheme.Typography.ui)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++        } else {
++            ForEach(Array(jobs.enumerated()), id: \.offset) { _, job in
++                Label(job, systemImage: "circle.fill")
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(AppTheme.Text.secondaryColor)
++            }
++        }
++    }
++    .padding(AppTheme.Spacing.mdLg)
++    .frame(width: AppTheme.ComponentSize.backgroundJobsPopoverWidth, alignment: .leading)
++}
+diff --git a/Sources/NexGenVideo/Editor/EditorWindowContentView.swift b/Sources/NexGenVideo/Editor/EditorWindowContentView.swift
+index 59c362ba..694b7516 100644
+--- a/Sources/NexGenVideo/Editor/EditorWindowContentView.swift
++++ b/Sources/NexGenVideo/Editor/EditorWindowContentView.swift
+@@ -28,6 +28,9 @@ struct EditorWindowContentView: View {
+                         .allowsHitTesting(false)
+                 }
+             }
++            if !editor.theaterActive {
++                EditorStatusBar()
++            }
+         }
+         .sheet(isPresented: $editor.showExportDialog) {
+             ExportView().environment(editor)
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+index 58a20507..103f4232 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+@@ -65,6 +65,25 @@ struct GenerationLogEntry: Codable, Sendable, Equatable, Identifiable {
+     }
+ }
+ 
++enum GenerationLogFile {
++    private static let accessLock = NSLock()
++
++    nonisolated static func loadIfPresent(from url: URL) throws -> GenerationLog? {
++        accessLock.lock()
++        defer { accessLock.unlock() }
++        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
++        return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
++    }
++
++    nonisolated static func write(_ log: GenerationLog, to url: URL) throws {
++        accessLock.lock()
++        defer { accessLock.unlock() }
++        try JSONEncoder().encode(log).write(to: url, options: .atomic)
++    }
++}
++
++typealias BudgetStatusLogLoader = @Sendable (URL) async throws -> GenerationLog
++
+ @MainActor
+ extension GenerationLogEntry {
+     var modelDisplayName: String {
+@@ -130,7 +149,8 @@ extension EditorViewModel {
+         providerRequestResumable: Bool? = nil,
+         providerReceipt: HiggsfieldJobReceipt? = nil,
+         money: GenerationMoney? = nil,
+-        note: String? = nil
++        note: String? = nil,
++        pricingStatus: GenerationPricingStatus? = nil
+     ) throws {
+         guard let transactionId = authorization.transactionId else { return }
+         try authorization.projectMutationScope?.requireCurrent(editor: self)
+@@ -147,7 +167,9 @@ extension EditorViewModel {
+             providerRequestResumable: providerRequestResumable,
+             money: money,
+             note: note,
+-            providerReceipt: providerReceipt
++            providerReceipt: providerReceipt,
++            billing: authorization.target.binding?.billing,
++            pricingStatus: pricingStatus
+         )
+         generationLog.spendEvents.append(event)
+         do {
+@@ -172,11 +194,45 @@ extension EditorViewModel {
+             throw CocoaError(.fileWriteUnknown)
+         }
+         try ProjectWorkingCopy.markDirty(key: key)
+-        let data = try JSONEncoder().encode(generationLog)
+-        try data.write(
+-            to: workingRoot.appendingPathComponent(Project.generationLogFilename),
+-            options: .atomic
++        try GenerationLogFile.write(
++            generationLog,
++            to: workingRoot.appendingPathComponent(Project.generationLogFilename)
+         )
+         onPipelineChanged?()
+     }
++
++    func refreshBudgetStatus() async throws {
++        try await refreshBudgetStatus { url in
++            try await Task.detached(priority: .userInitiated) {
++                try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
++            }.value
++        }
++    }
++
++    func refreshBudgetStatus(
++        loadGenerationLog: @escaping BudgetStatusLogLoader
++    ) async throws {
++        budgetStatusLoadToken &+= 1
++        let token = budgetStatusLoadToken
++        let requestedJournalGeneration = generationLogRevision
++        guard let root = workingRoot else {
++            generationLog = GenerationLog()
++            await refreshProjectState()
++            return
++        }
++        let requestedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
++        let url = requestedRoot.appendingPathComponent(Project.generationLogFilename)
++        let refreshed = try await loadGenerationLog(url)
++        guard token == budgetStatusLoadToken,
++              requestedJournalGeneration == generationLogRevision,
++              workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
++            return
++        }
++        _ = try GenerationBudgetGuard.spendSnapshot(
++            log: refreshed,
++            generatedInputs: mediaAssets.compactMap(\.generationInput)
++        )
++        generationLog = refreshed
++        await refreshProjectState()
++    }
+ }
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index b2300e6a..46dece06 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -35,7 +35,9 @@ final class EditorViewModel {
+         didSet { timelineRenderRevision &+= 1 }
+     }
+     var mediaManifest = MediaManifest()
+-    var generationLog = GenerationLog()
++    var generationLog = GenerationLog() {
++        didSet { generationLogRevision &+= 1 }
++    }
+ 
+     // MARK: - Panel focus
+ 
+@@ -277,6 +279,10 @@ final class EditorViewModel {
+                 && workingCopyHome != nil
+                 && activeWorkingCopyKey != nil
+             if !keepsLiveDeclaration {
++                projectStateLoadToken += 1
++                budgetStatusLoadToken &+= 1
++                projectState = nil
++                generationLog = GenerationLog()
+                 capturePluginDeclaration(from: projectURL)
+             }
+             pipelineAgentHarness.reset()
+@@ -958,14 +964,18 @@ final class EditorViewModel {
+     @ObservationIgnored private var projectStateLoadToken = 0
+ 
+     func refreshProjectState() async {
++        projectStateLoadToken += 1
++        let token = projectStateLoadToken
+         guard let dir = workingRoot else {
+             projectState = nil
+             return
+         }
+-        projectStateLoadToken += 1
+-        let token = projectStateLoadToken
++        let requestedRoot = dir.standardizedFileURL.resolvingSymlinksInPath()
+         let result = await CockpitDataService.projectState(projectDir: dir)
+-        guard token == projectStateLoadToken else { return }
++        guard token == projectStateLoadToken,
++              workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
++            return
++        }
+         projectState = (try? result.get()) ?? nil
+     }
+ 
+@@ -1522,5 +1532,7 @@ final class EditorViewModel {
+ 
+     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
+     @ObservationIgnored private var isRestoringWorkspacePresentation = false
++    @ObservationIgnored var budgetStatusLoadToken: UInt64 = 0
++    @ObservationIgnored private(set) var generationLogRevision: UInt64 = 0
+ 
+ }
+diff --git a/Sources/NexGenVideo/Export/ExportCoordinator.swift b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+index fecadc5b..91cbaa9a 100644
+--- a/Sources/NexGenVideo/Export/ExportCoordinator.swift
++++ b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+@@ -1,5 +1,9 @@
+ import Foundation
+ 
++extension Notification.Name {
++    static let exportActivityChanged = Notification.Name("exportActivityChanged")
++}
++
+ @MainActor
+ enum ExportCoordinator {
+     private static var exportActive = false
+@@ -9,6 +13,7 @@ enum ExportCoordinator {
+     static func beginExportIfIdle() -> Bool {
+         guard !exportActive else { return false }
+         exportActive = true
++        NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
+         return true
+     }
+ 
+@@ -17,10 +22,12 @@ enum ExportCoordinator {
+             try? await Task.sleep(for: .milliseconds(50))
+         }
+         exportActive = true
++        NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
+     }
+ 
+     static func endExport() {
+         exportActive = false
++        NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
+     }
+ 
+     static func waitWhileExportActive() async throws {
+diff --git a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+index dc96071e..bcfdd49e 100644
+--- a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
++++ b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+@@ -13,10 +13,29 @@ enum GenerationBudgetError: LocalizedError {
+ 
+ struct ProjectSpendSnapshot: Sendable, Equatable {
+     let verifiedEur: Double
++    let chargedEur: Double
++    let openReservationEur: Double
+     let isComplete: Bool
+     let activeReservationCount: Int
+     let unpricedTransactionCount: Int
+     let legacyGenerationCount: Int
++    let lineItems: [ProjectSpendLineItem]
++}
++
++struct ProjectSpendLineItem: Sendable, Equatable, Identifiable {
++    let id: String
++    let model: String
++    let provider: GenerationProvider
++    let transport: ProviderTransport
++    let endpoint: String
++    let billing: BillingMode?
++    let pricingStatus: GenerationPricingStatus
++    let state: GenerationSpendEvent.Kind
++    let money: GenerationMoney?
++    let createdAt: Date
++    let needsAttention: Bool
++
++    var countsTowardGuard: Bool { state != .released }
+ }
+ 
+ @MainActor
+@@ -63,14 +82,23 @@ enum GenerationBudgetGuard {
+ 
+         let estimate: GenerationMoney?
+         let pricingFailure: String?
++        let pricingStatus: GenerationPricingStatus
+         do {
+             let quoted = try await quoteLoader(target, input)
+             try validate(quoted)
+             estimate = quoted
+             pricingFailure = nil
++            pricingStatus = .priced
+         } catch {
+             estimate = nil
+             pricingFailure = error.localizedDescription
++            if error is GenerationCurrencyUnavailableError {
++                pricingStatus = .currencyUnavailable
++            } else if target.binding?.billing == .subscription {
++                pricingStatus = .subscriptionCredits
++            } else {
++                pricingStatus = .priceUnavailable
++            }
+         }
+ 
+         if let ceiling = approvedPackage?.payload.estimate {
+@@ -123,7 +151,8 @@ enum GenerationBudgetGuard {
+             authorization: authorization,
+             kind: .reserved,
+             money: estimate,
+-            note: pricingFailure
++            note: pricingFailure,
++            pricingStatus: pricingStatus
+         )
+         return authorization
+     }
+@@ -185,7 +214,10 @@ enum GenerationBudgetGuard {
+         try editor.recordSpendEvent(
+             authorization: authorization,
+             kind: .reserved,
+-            note: "Provider did not expose a monetary estimate."
++            note: "Provider did not expose a monetary estimate.",
++            pricingStatus: target.binding?.billing == .subscription
++                ? .subscriptionCredits
++                : .priceUnavailable
+         )
+         return authorization
+     }
+@@ -233,6 +265,12 @@ enum GenerationBudgetGuard {
+                 throw corrupt("generation-log.json contains an incomplete spend event")
+             }
+             try validate(event.money)
++            if event.kind == .reserved, let pricingStatus = event.pricingStatus,
++               (pricingStatus == .priced) != (event.money != nil) {
++                throw corrupt(
++                    "transaction \(event.transactionId) has inconsistent pricing status"
++                )
++            }
+             if var state = states[event.transactionId] {
+                 guard state.model == event.model,
+                       state.provider == event.provider,
+@@ -263,19 +301,26 @@ enum GenerationBudgetGuard {
+             }
+         }
+ 
+-        var total = 0.0
++        var chargedTotal = 0.0
++        var reservationTotal = 0.0
+         var unpricedTransactionCount = 0
+         var activeReservationCount = 0
+         for state in states.values where state.kind != .released {
+-            if state.kind != .charged {
++            if state.kind == .charged {
++                chargedTotal += state.chargedMoney?.eurAmount ?? 0
++            } else {
+                 activeReservationCount += 1
++                reservationTotal += state.effectiveMoney?.eurAmount ?? 0
+             }
+             guard let money = state.effectiveMoney else {
+                 unpricedTransactionCount += 1
+                 continue
+             }
+-            total += money.eurAmount
++            guard money.eurAmount.isFinite, money.eurAmount >= 0 else {
++                throw corrupt("project spend total is invalid")
++            }
+         }
++        let total = chargedTotal + reservationTotal
+         guard total.isFinite, total >= 0 else {
+             throw corrupt("project spend total is invalid")
+         }
+@@ -293,13 +338,34 @@ enum GenerationBudgetGuard {
+             legacyTransactionIDs.count,
+             legacyAssetIDs.count
+         )
++        let lineItems = states.map { transactionId, state in
++            ProjectSpendLineItem(
++                id: transactionId,
++                model: state.model,
++                provider: state.provider,
++                transport: state.transport,
++                endpoint: state.endpoint,
++                billing: state.billing,
++                pricingStatus: state.pricingStatus,
++                state: state.kind,
++                money: state.effectiveMoney,
++                createdAt: state.updatedAt,
++                needsAttention: state.needsAttention
++            )
++        }.sorted {
++            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
++            return $0.id < $1.id
++        }
+         return ProjectSpendSnapshot(
+             verifiedEur: total,
++            chargedEur: chargedTotal,
++            openReservationEur: reservationTotal,
+             isComplete: unpricedTransactionCount == 0
+                 && legacyGenerationCount == 0,
+             activeReservationCount: activeReservationCount,
+             unpricedTransactionCount: unpricedTransactionCount,
+-            legacyGenerationCount: legacyGenerationCount
++            legacyGenerationCount: legacyGenerationCount,
++            lineItems: lineItems
+         )
+     }
+ 
+@@ -338,9 +404,8 @@ enum GenerationBudgetGuard {
+ 
+     private static func loadGenerationLog(from workingRoot: URL) throws -> GenerationLog? {
+         let url = workingRoot.appendingPathComponent(Project.generationLogFilename)
+-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+         do {
+-            return try JSONDecoder().decode(GenerationLog.self, from: Data(contentsOf: url))
++            return try GenerationLogFile.loadIfPresent(from: url)
+         } catch {
+             throw corrupt("generation-log.json is unreadable")
+         }
+@@ -375,6 +440,10 @@ enum GenerationBudgetGuard {
+         var kind: GenerationSpendEvent.Kind
+         var reservedMoney: GenerationMoney?
+         var chargedMoney: GenerationMoney?
++        var billing: BillingMode?
++        var pricingStatus: GenerationPricingStatus
++        var updatedAt: Date
++        var needsAttention: Bool
+ 
+         init(_ event: GenerationSpendEvent) {
+             model = event.model
+@@ -384,11 +453,32 @@ enum GenerationBudgetGuard {
+             kind = event.kind
+             reservedMoney = event.money
+             chargedMoney = nil
++            billing = event.billing
++            pricingStatus = event.pricingStatus
++                ?? (event.money != nil
++                    ? .priced
++                    : event.billing == .subscription ? .subscriptionCredits : .priceUnavailable)
++            updatedAt = event.createdAt
++            needsAttention = event.note != nil
+         }
+ 
+         var effectiveMoney: GenerationMoney? { chargedMoney ?? reservedMoney }
+ 
+         mutating func apply(_ event: GenerationSpendEvent) throws {
++            if let billing, let eventBilling = event.billing, billing != eventBilling {
++                throw GenerationBudgetGuard.corrupt(
++                    "transaction \(event.transactionId) changes its billing mode"
++                )
++            }
++            billing = billing ?? event.billing
++            if let eventPricingStatus = event.pricingStatus,
++               eventPricingStatus != pricingStatus {
++                throw GenerationBudgetGuard.corrupt(
++                    "transaction \(event.transactionId) changes its pricing status"
++                )
++            }
++            updatedAt = max(updatedAt, event.createdAt)
++            needsAttention = needsAttention || event.note != nil
+             switch (kind, event.kind) {
+             case (_, .reserved):
+                 throw GenerationBudgetGuard.corrupt(
+@@ -494,6 +584,14 @@ enum LiveGenerationPricing {
+     }
+ }
+ 
++private struct GenerationCurrencyUnavailableError: LocalizedError, Sendable {
++    let code: String
++
++    var errorDescription: String? {
++        "ECB has no current EUR reference rate for \(code)."
++    }
++}
++
+ actor ProviderMoneyClient {
+     static let shared = ProviderMoneyClient()
+ 
+@@ -573,9 +671,7 @@ actor ProviderMoneyClient {
+             guard let unitsPerEuro = rates.unitsPerEuro[code],
+                   unitsPerEuro.isFinite,
+                   unitsPerEuro > 0 else {
+-                throw GenerationBudgetError.blocked(
+-                    "ECB has no current EUR reference rate for \(code)."
+-                )
++                throw GenerationCurrencyUnavailableError(code: code)
+             }
+             eurPerUnit = 1 / unitsPerEuro
+         }
+diff --git a/Sources/NexGenVideo/Generation/GenerationTypes.swift b/Sources/NexGenVideo/Generation/GenerationTypes.swift
+index ad9e7ffd..43c6d91e 100644
+--- a/Sources/NexGenVideo/Generation/GenerationTypes.swift
++++ b/Sources/NexGenVideo/Generation/GenerationTypes.swift
+@@ -53,6 +53,13 @@ struct GenerationMoney: Codable, Sendable, Equatable {
+     let exchangeRateSource: String
+ }
+ 
++enum GenerationPricingStatus: String, Codable, Sendable, Equatable {
++    case priced
++    case priceUnavailable
++    case currencyUnavailable
++    case subscriptionCredits
++}
++
+ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
+     enum Kind: String, Codable, Sendable {
+         case reserved
+@@ -74,6 +81,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
+     let note: String?
+     let createdAt: Date
+     let providerReceipt: HiggsfieldJobReceipt?
++    let billing: BillingMode?
++    let pricingStatus: GenerationPricingStatus?
+ 
+     init(
+         id: String = UUID().uuidString,
+@@ -88,7 +97,9 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
+         money: GenerationMoney? = nil,
+         note: String? = nil,
+         createdAt: Date = Date(),
+-        providerReceipt: HiggsfieldJobReceipt? = nil
++        providerReceipt: HiggsfieldJobReceipt? = nil,
++        billing: BillingMode? = nil,
++        pricingStatus: GenerationPricingStatus? = nil
+     ) {
+         self.id = id
+         self.transactionId = transactionId
+@@ -103,6 +114,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
+         self.note = note
+         self.createdAt = createdAt
+         self.providerReceipt = providerReceipt
++        self.billing = billing
++        self.pricingStatus = pricingStatus
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+index ac9720b3..4d59b2e8 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+@@ -192,10 +192,6 @@ struct PipelinePanelView: View {
+                                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                         )
+                     }
+-                    if data.budgetEur > 0 || data.budgetStopEur != nil
+-                        || data.budgetSpentEur > 0 || !data.spendComplete {
+-                        budgetCard(data)
+-                    }
+                 }
+                 .padding(.horizontal, AppTheme.Spacing.lg)
+                 .padding(.vertical, AppTheme.Spacing.md)
+@@ -204,127 +200,6 @@ struct PipelinePanelView: View {
+         }
+     }
+ 
+-    // MARK: - Budget (merged Cost panel — same snapshot, one pipeline-health surface)
+-
+-    private func budgetCard(_ data: ProjectStateData) -> some View {
+-        let warn = data.budgetWarning
+-        let barColor = warn ? AppTheme.Status.errorColor : AppTheme.Status.successColor
+-        return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+-                Text("BUDGET")
+-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                    .tracking(AppTheme.Tracking.wide)
+-                    .foregroundStyle(AppTheme.Text.mutedColor)
+-                Spacer(minLength: 0)
+-                if !data.spendComplete {
+-                    Label("Spend incomplete", systemImage: "exclamationmark.triangle.fill")
+-                        .labelStyle(.titleAndIcon)
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Status.errorColor)
+-                } else if warn {
+-                    Label((data.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget",
+-                          systemImage: "exclamationmark.triangle.fill")
+-                        .labelStyle(.titleAndIcon)
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Status.errorColor)
+-                }
+-            }
+-
+-            budgetBar(fraction: data.spentFraction, color: barColor)
+-
+-            if let next = data.nextPhaseName, let remaining = data.budgetRemainingEur {
+-                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", remaining)) planning budget available")
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            } else if !data.spendComplete {
+-                Text("Project spend includes unpriced or legacy generation. Remaining amounts are unavailable.")
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            }
+-
+-            VStack(spacing: AppTheme.Spacing.smMd) {
+-                amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
+-                if let stop = data.budgetStopEur {
+-                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
+-                }
+-                amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
+-                          amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
+-                if data.activeReservations > 0 {
+-                    textRow(label: "Active reservations", value: String(data.activeReservations),
+-                            color: AppTheme.Text.secondaryColor)
+-                }
+-                AppDivider()
+-                if let remaining = data.budgetRemainingEur {
+-                    amountRow(label: "Planning remaining", amount: remaining,
+-                              color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+-                              emphasized: true)
+-                } else {
+-                    textRow(label: "Planning remaining", value: "Unavailable",
+-                            color: AppTheme.Status.errorColor, emphasized: true)
+-                }
+-                if let remaining = data.hardStopRemainingEur {
+-                    amountRow(label: "Hard stop remaining", amount: remaining,
+-                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+-                              emphasized: true)
+-                }
+-            }
+-        }
+-        .padding(AppTheme.Spacing.mdLg)
+-        .frame(maxWidth: .infinity, alignment: .leading)
+-        .background(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                .fill(AppTheme.Background.raisedColor)
+-        )
+-        .overlay(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+-        )
+-    }
+-
+-    private func budgetBar(fraction: Double, color: Color) -> some View {
+-        GeometryReader { geo in
+-            ZStack(alignment: .leading) {
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+-                    .fill(color)
+-                    .frame(width: max(0, min(1, fraction)) * geo.size.width)
+-            }
+-        }
+-        .frame(height: AppTheme.Spacing.smMd)
+-    }
+-
+-    private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
+-        HStack {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
+-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+-            Spacer()
+-            Text(String(format: "€%.2f", amount))
+-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+-                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+-                .monospacedDigit()
+-                .foregroundStyle(color)
+-                .textSelection(.enabled)
+-        }
+-    }
+-
+-    private func textRow(label: String, value: String, color: Color, emphasized: Bool = false) -> some View {
+-        HStack {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
+-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+-            Spacer()
+-            Text(value)
+-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+-                .foregroundStyle(color)
+-                .textSelection(.enabled)
+-        }
+-    }
+-
+     private func summaryHeader(_ data: ProjectStateData) -> some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+             Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
+diff --git a/Sources/NexGenVideo/UI/AppTheme.swift b/Sources/NexGenVideo/UI/AppTheme.swift
+index 78a06e43..a6920518 100644
+--- a/Sources/NexGenVideo/UI/AppTheme.swift
++++ b/Sources/NexGenVideo/UI/AppTheme.swift
+@@ -352,6 +352,9 @@ enum AppTheme {
+         static let projectActivityWidth: CGFloat = 340
+         static let projectActivityMaxHeight: CGFloat = 420
+         static let projectActivityCostWidth: CGFloat = 68
++        static let budgetPopoverWidth: CGFloat = 420
++        static let budgetPopoverMaxHeight: CGFloat = 520
++        static let backgroundJobsPopoverWidth: CGFloat = 280
+         static let tourStageHeight: CGFloat = 300
+         static let exportSidebarWidth: CGFloat = 360
+         static let exportWindow = CGSize(width: 860, height: 560)
+@@ -453,6 +456,7 @@ enum AppTheme {
+         static let workspaceHeaderHeight: CGFloat = 40
+         static let toolbarHeight: CGFloat = 38
+         static let titleBarChromeHeight: CGFloat = 36
++        static let statusBarHeight: CGFloat = 32
+         static let trafficLightInset: CGFloat = 70
+         static let titleBarProjectNameMaxWidth: CGFloat = 180
+         static let titleBarFormatStatusMaxWidth: CGFloat = 150
+diff --git a/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift b/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift
+new file mode 100644
+index 00000000..fe72900e
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift
+@@ -0,0 +1,502 @@
++import Foundation
++import NexGenEngine
++import Testing
++
++@testable import NexGenVideo
++
++@MainActor
++@Suite("Permanent project budget status")
++struct BudgetStatusTests {
++    @Test("empty spend and a verified zero charge remain distinct")
++    func emptyAndZeroAreDistinct() throws {
++        let state = try projectState(budget: 10, stop: 12)
++        let empty = ProjectBudgetPresentation.make(
++            log: GenerationLog(),
++            generatedInputs: [],
++            projectState: state,
++            hasProductionPipeline: true
++        )
++        let zero = ProjectBudgetPresentation.make(
++            log: log(transaction(id: "zero", money: money(0), final: .charged)),
++            generatedInputs: [],
++            projectState: state,
++            hasProductionPipeline: true
++        )
++
++        #expect(empty.compactLabel == "Budget · No spend")
++        #expect(zero.compactLabel == "Budget €0.00 / €10.00")
++        #expect(empty.acceptanceValue.contains("items=0"))
++        #expect(zero.acceptanceValue.contains("items=1"))
++    }
++
++    @Test("missing project limits are unavailable while a generic project has no limit")
++    func missingAndAbsentLimitsAreDistinct() throws {
++        let missingState = try JSONDecoder().decode(ProjectStateData.self, from: Data("""
++        {"project":"legacy","mode":"beat","phases":[]}
++        """.utf8))
++        let unavailable = ProjectBudgetPresentation.make(
++            log: GenerationLog(),
++            generatedInputs: [],
++            projectState: missingState,
++            hasProductionPipeline: true
++        )
++        let notSet = ProjectBudgetPresentation.make(
++            log: GenerationLog(),
++            generatedInputs: [],
++            projectState: nil,
++            hasProductionPipeline: false
++        )
++
++        #expect(unavailable.planningBudget == .unavailable)
++        #expect(unavailable.compactLabel == "Budget · No spend · Limits unavailable")
++        #expect(unavailable.acceptanceValue.contains("planning=unknown"))
++        #expect(notSet.planningBudget == .notSet)
++        #expect(notSet.compactLabel == "Budget · No spend")
++        #expect(notSet.acceptanceValue.contains("planning=none"))
++
++        let charged = log(transaction(id: "known", money: money(2), final: .charged))
++        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
++            projectState: missingState, hasProductionPipeline: true).compactLabel
++            == "Budget €2.00 · Planning limit unavailable")
++        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
++            projectState: nil, hasProductionPipeline: true).compactLabel
++            == "Budget €2.00 · Planning limit unavailable · Stop unavailable")
++        #expect(ProjectBudgetPresentation.make(log: charged, generatedInputs: [],
++            projectState: nil, hasProductionPipeline: false).compactLabel
++            == "Budget €2.00 · No limit")
++    }
++
++    @Test("guard snapshot owns charged, reserved, released, route, and billing truth")
++    func snapshotPreservesGuardTruthAndRouting() throws {
++        var events = transaction(id: "charged", money: money(2), final: .charged)
++        events += transaction(
++            id: "reserved",
++            money: money(3),
++            final: .reserved,
++            transport: .mcp,
++            billing: .subscription
++        )
++        events += transaction(id: "released", money: money(7), final: .released)
++        let snapshot = try GenerationBudgetGuard.spendSnapshot(
++            log: log(events),
++            generatedInputs: []
++        )
++
++        #expect(snapshot.chargedEur == 2)
++        #expect(snapshot.openReservationEur == 3)
++        #expect(snapshot.verifiedEur == 5)
++        #expect(snapshot.activeReservationCount == 1)
++        #expect(snapshot.lineItems.count == 3)
++        #expect(snapshot.lineItems.first(where: { $0.id == "reserved" })?.transport == .mcp)
++        #expect(snapshot.lineItems.first(where: { $0.id == "reserved" })?.billing == .subscription)
++        #expect(snapshot.lineItems.first(where: { $0.id == "released" })?.countsTowardGuard == false)
++    }
++
++    @Test("low and exceeded limits produce explicit warning states")
++    func limitWarningsAreExplicit() throws {
++        let state = try projectState(budget: 10, stop: 12)
++        let low = ProjectBudgetPresentation.make(
++            log: log(transaction(id: "low", money: money(9.25), final: .charged)),
++            generatedInputs: [],
++            projectState: state,
++            hasProductionPipeline: true
++        )
++        let exceeded = ProjectBudgetPresentation.make(
++            log: log(transaction(id: "over", money: money(12.5), final: .charged)),
++            generatedInputs: [],
++            projectState: state,
++            hasProductionPipeline: true
++        )
++
++        #expect(low.severity == .warning)
++        #expect(low.warnings.contains { $0.hasPrefix("Planning budget has") })
++        #expect(exceeded.severity == .error)
++        #expect(exceeded.warnings.contains { $0.hasPrefix("Planning budget exceeded") })
++        #expect(exceeded.warnings.contains { $0.hasPrefix("Hard stop exceeded") })
++    }
++
++    @Test("unavailable price, currency, and subscription credits stay separate and never become zero")
++    func unpricedReasonsStaySeparate() throws {
++        var events = transaction(
++            id: "price",
++            money: nil,
++            final: .reserved,
++            pricingStatus: .priceUnavailable
++        )
++        events += transaction(
++            id: "currency",
++            money: nil,
++            final: .reserved,
++            pricingStatus: .currencyUnavailable
++        )
++        events += transaction(
++            id: "credits",
++            money: nil,
++            final: .reserved,
++            transport: .mcp,
++            billing: .subscription,
++            pricingStatus: .subscriptionCredits
++        )
++        let presentation = ProjectBudgetPresentation.make(
++            log: log(events),
++            generatedInputs: [],
++            projectState: try projectState(budget: 10, stop: nil),
++            hasProductionPipeline: true
++        )
++
++        #expect(presentation.spend?.verifiedEur == 0)
++        #expect(presentation.spend?.isComplete == false)
++        #expect(presentation.compactLabel == "Budget ≥€0.00 / €10.00")
++        #expect(presentation.warnings.contains { $0.contains("provider price") })
++        #expect(presentation.warnings.contains { $0.contains("currency conversion") })
++        #expect(presentation.warnings.contains { $0.contains("subscription/credit") })
++        let statuses = Set(presentation.spend?.lineItems.map(\.pricingStatus) ?? [])
++        #expect(statuses == Set([
++            .priceUnavailable,
++            .currencyUnavailable,
++            .subscriptionCredits,
++        ]))
++    }
++
++    @Test("read-only refresh preserves the exact prepared spend approval and journal bytes")
++    func refreshPreservesPreparedApprovalAndJournal() async throws {
++        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "budget-refresh-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        try Fixtures.prepareProjectPackage(at: package)
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        defer {
++            editor.agentService.declineSpend()
++            editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: package)
++        }
++        let workingRoot = try #require(editor.workingRoot)
++        let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
++        let beforeBytes = try Data(contentsOf: logURL)
++        let option = SpendOption(
++            modelId: "higgsfield/acceptance-video",
++            modelName: "Acceptance video",
++            target: target(transport: .api, billing: .perCall),
++            credits: nil,
++            requiresCatalogAvailability: false
++        )
++        let approval = SpendApproval(
++            id: "prepared-request",
++            recommendedOptionId: option.id,
++            options: [option],
++            actionLabel: "Generate video"
++        )
++        _ = try editor.agentService.requestSpendApproval(
++            approval,
++            origin: .direct,
++            editor: editor,
++            execute: { _, _ in .ok("unexpected") }
++        )
++
++        try await editor.refreshBudgetStatus()
++
++        #expect(editor.agentService.pendingSpendApproval == approval)
++        #expect(try Data(contentsOf: logURL) == beforeBytes)
++    }
++
++    @Test("project switch clears the previous journal before asynchronous refresh")
++    func projectSwitchClearsPreviousBudget() async throws {
++        let first = try package(named: "first")
++        let second = try package(named: "second")
++        let editor = EditorViewModel()
++        editor.projectURL = first
++        defer {
++            editor.releaseWorkingCopy()
++            for url in [first, second] {
++                if let key = ProjectIdentity.existingKey(for: url) {
++                    ProjectWorkingCopy.discard(key: key)
++                }
++                try? FileManager.default.removeItem(at: url)
++            }
++        }
++        let firstLog = log(transaction(id: "first-charge", money: money(6), final: .charged))
++        let firstRoot = try #require(editor.workingRoot)
++        try JSONEncoder().encode(firstLog).write(
++            to: firstRoot.appendingPathComponent(Project.generationLogFilename),
++            options: .atomic
++        )
++        editor.generationLog = firstLog
++
++        editor.projectURL = second
++
++        #expect(editor.generationLog == GenerationLog())
++        #expect(editor.projectState == nil)
++        try await editor.refreshBudgetStatus()
++        #expect(editor.generationLog == GenerationLog())
++    }
++
++    @Test("a paused refresh cannot replace a reservation written after its read")
++    func refreshKeepsConcurrentReservation() async throws {
++        let project = try package(named: "race")
++        let editor = EditorViewModel()
++        editor.projectURL = project
++        defer {
++            editor.releaseWorkingCopy()
++            if let key = ProjectIdentity.existingKey(for: project) {
++                ProjectWorkingCopy.discard(key: key)
++            }
++            try? FileManager.default.removeItem(at: project)
++        }
++        let gate = PausedBudgetLoad()
++        let refresh = Task {
++            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
++                try await gate.load(url)
++            })
++        }
++        await gate.waitForRead()
++        let root = try #require(editor.workingRoot)
++        let authorization = GenerationAuthorization(
++            transactionId: "concurrent-reservation",
++            target: target(transport: .api, billing: .perCall),
++            estimate: money(3),
++            projectMutationScope: try GenerationProjectMutationScope(
++                projectHome: root, editor: editor
++            )
++        )
++        try editor.recordSpendEvent(authorization: authorization, kind: .reserved,
++                                    money: money(3), pricingStatus: .priced)
++        let expected = editor.generationLog
++        await gate.resume()
++        try await refresh.value
++
++        #expect(editor.generationLog == expected)
++        let persisted = try #require(GenerationLogFile.loadIfPresent(
++            from: root.appendingPathComponent(Project.generationLogFilename)
++        ))
++        #expect(persisted == expected)
++        #expect(try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog,
++            generatedInputs: []).openReservationEur == 3)
++
++        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
++                                    providerRequestId: "request-concurrent", money: money(3))
++        let chargeGate = PausedBudgetLoad()
++        let chargeRefresh = Task {
++            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
++                try await chargeGate.load(url)
++            })
++        }
++        await chargeGate.waitForRead()
++        try editor.recordSpendEvent(authorization: authorization, kind: .charged, money: money(2))
++        let chargedLog = editor.generationLog
++        await chargeGate.resume()
++        try await chargeRefresh.value
++        #expect(editor.generationLog == chargedLog)
++        #expect(try GenerationLogFile.loadIfPresent(from:
++            root.appendingPathComponent(Project.generationLogFilename)) == chargedLog)
++        #expect(try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog,
++            generatedInputs: []).chargedEur == 2)
++    }
++
++    @Test("a paused refresh from a prior visit cannot replace the same project's new session")
++    func refreshRejectsProjectABA() async throws {
++        let first = try package(named: "aba-first")
++        let second = try package(named: "aba-second")
++        let editor = EditorViewModel()
++        editor.projectURL = first
++        defer {
++            editor.releaseWorkingCopy()
++            for project in [first, second] {
++                if let key = ProjectIdentity.existingKey(for: project) {
++                    ProjectWorkingCopy.discard(key: key)
++                }
++                try? FileManager.default.removeItem(at: project)
++            }
++        }
++        let gate = PausedBudgetLoad()
++        let refresh = Task {
++            try await editor.refreshBudgetStatus(loadGenerationLog: { url in
++                try await gate.load(url)
++            })
++        }
++        await gate.waitForRead()
++        let oldToken = editor.budgetStatusLoadToken
++        editor.projectURL = second
++        editor.projectURL = first
++        #expect(editor.budgetStatusLoadToken > oldToken)
++        await gate.resume()
++        try await refresh.value
++        #expect(editor.generationLog == GenerationLog())
++    }
++
++    @Test("known excess remains an error with an additional unpriced reservation")
++    func knownExcessSurvivesUnknownCost() throws {
++        var events = transaction(id: "known", money: money(12.5), final: .charged)
++        events += transaction(id: "unknown", money: nil, final: .reserved,
++                              pricingStatus: .priceUnavailable)
++        let presentation = ProjectBudgetPresentation.make(log: log(events), generatedInputs: [],
++            projectState: try projectState(budget: 10, stop: 12), hasProductionPipeline: true)
++        #expect(presentation.severity == .error)
++        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00")
++        #expect(presentation.warnings.contains("Planning budget exceeded by €2.50."))
++        #expect(presentation.warnings.contains("Hard stop exceeded by €0.50."))
++    }
++
++    private func package(named name: String) throws -> URL {
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "budget-\(name)-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        return try Fixtures.prepareProjectPackage(at: url)
++    }
++
++    private func projectState(budget: Double, stop: Double?) throws -> ProjectStateData {
++        let stopValue = stop.map { String($0) } ?? "null"
++        return try JSONDecoder().decode(ProjectStateData.self, from: Data("""
++        {
++          "project": "demo",
++          "mode": "beat",
++          "budget_eur": \(budget),
++          "budget_stop_eur": \(stopValue),
++          "phases": []
++        }
++        """.utf8))
++    }
++
++    private func money(_ eur: Double) -> GenerationMoney {
++        GenerationMoney(
++            nativeAmount: eur * 1.2,
++            nativeCurrency: "USD",
++            eurAmount: eur,
++            eurPerNativeUnit: 1 / 1.2,
++            exchangeRateDate: "2026-09-24",
++            pricingSource: "https://provider.example/pricing",
++            exchangeRateSource: "https://www.ecb.europa.eu/"
++        )
++    }
++
++    private func target(
++        transport: ProviderTransport,
++        billing: BillingMode
++    ) -> ResolvedGenerationTarget {
++        let endpoint = transport == .mcp ? "generate_video" : "video/generate"
++        return ResolvedGenerationTarget(
++            modelId: "higgsfield/acceptance-video",
++            provider: .higgsfield,
++            endpoint: endpoint,
++            binding: ProviderBinding(
++                provider: .higgsfield,
++                transport: transport,
++                kind: .generation,
++                providerRef: endpoint,
++                billing: billing
++            )
++        )
++    }
++
++    private func transaction(
++        id: String,
++        money: GenerationMoney?,
++        final: GenerationSpendEvent.Kind,
++        transport: ProviderTransport = .api,
++        billing: BillingMode = .perCall,
++        pricingStatus: GenerationPricingStatus? = nil
++    ) -> [GenerationSpendEvent] {
++        let target = target(transport: transport, billing: billing)
++        let status = pricingStatus
++            ?? (money != nil ? .priced : billing == .subscription ? .subscriptionCredits : .priceUnavailable)
++        var events = [event(
++            id: "\(id)-reserved",
++            transaction: id,
++            kind: .reserved,
++            target: target,
++            money: money,
++            pricingStatus: status,
++            createdAt: 1
++        )]
++        if final == .submitted || final == .charged {
++            events.append(event(
++                id: "\(id)-submitted",
++                transaction: id,
++                kind: .submitted,
++                target: target,
++                requestID: "request-\(id)",
++                money: money,
++                createdAt: 2
++            ))
++        }
++        if final == .charged {
++            events.append(event(
++                id: "\(id)-charged",
++                transaction: id,
++                kind: .charged,
++                target: target,
++                money: money,
++                createdAt: 3
++            ))
++        } else if final == .released {
++            events.append(event(
++                id: "\(id)-released",
++                transaction: id,
++                kind: .released,
++                target: target,
++                createdAt: 2
++            ))
++        }
++        return events
++    }
++
++    private func event(
++        id: String,
++        transaction: String,
++        kind: GenerationSpendEvent.Kind,
++        target: ResolvedGenerationTarget,
++        requestID: String? = nil,
++        money: GenerationMoney? = nil,
++        pricingStatus: GenerationPricingStatus? = nil,
++        createdAt: TimeInterval
++    ) -> GenerationSpendEvent {
++        GenerationSpendEvent(
++            id: id,
++            transactionId: transaction,
++            kind: kind,
++            model: target.modelId,
++            provider: target.provider,
++            transport: target.transport,
++            endpoint: target.endpoint,
++            providerRequestId: requestID,
++            providerRequestResumable: requestID != nil,
++            money: money,
++            createdAt: Date(timeIntervalSince1970: createdAt),
++            billing: target.binding?.billing,
++            pricingStatus: pricingStatus
++        )
++    }
++
++    private func log(_ events: [GenerationSpendEvent]) -> GenerationLog {
++        var log = GenerationLog()
++        log.spendEvents = events
++        return log
++    }
++}
++
++private actor PausedBudgetLoad {
++    private var read = false
++    private var readWaiter: CheckedContinuation<Void, Never>?
++    private var releaseWaiter: CheckedContinuation<Void, Never>?
++
++    func load(_ url: URL) async throws -> GenerationLog {
++        let log = try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
++        read = true
++        readWaiter?.resume()
++        readWaiter = nil
++        await withCheckedContinuation { releaseWaiter = $0 }
++        return log
++    }
++
++    func waitForRead() async {
++        if read { return }
++        await withCheckedContinuation { readWaiter = $0 }
++    }
++
++    func resume() {
++        releaseWaiter?.resume()
++        releaseWaiter = nil
++    }
++}
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index de88db67..9cc347bf 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -25,6 +25,31 @@ EXPECTED_KEYFRAME_LANES = {
+     "video": ["position", "scale", "rotation", "opacity", "crop"],
+ }
+ SCALES = (1.0, 1.25, 1.5)
++EXPECTED_BUDGET_CASES = {
++    "empty": (0, 0, True, 0),
++    "zero": (0, 0, True, 1),
++    "low": (9.25, 0, True, 1),
++    "exceeded": (12.5, 0, True, 1),
++    "exceeded-unknown": (12.5, 0, False, 2),
++    "unknown-price": (0, 0, False, 1),
++    "unknown-currency": (0, 0, False, 1),
++    "subscription-credits": (0, 0, False, 1),
++    "reserved": (0, 3.25, True, 1),
++    "submitted-failure": (0, 4, True, 1),
++    "released": (0, 0, True, 1),
++}
++EXPECTED_BUDGET_LIFECYCLE = {
++    "reserved": 1,
++    "submitted-failure": 2,
++    "charged": 3,
++    "released": 2,
++}
++STATUS_IDENTIFIERS = {
++    "editor.statusBar",
++    "editor.status.budget",
++    "editor.status.aiJobs",
++    "editor.status.exportJobs",
++}
+ 
+ 
+ def valid_frame(frame):
+@@ -51,6 +76,41 @@ def matching_frame(first, second, tolerance=1):
+     return all(abs(first[key] - second[key]) <= tolerance for key in first)
+ 
+ 
++def valid_status_frames(row):
++    frames = row.get("statusFrames")
++    if not isinstance(frames, dict) or set(frames) != STATUS_IDENTIFIERS:
++        return False
++    if not all(valid_frame(frame) for frame in frames.values()):
++        return False
++    status = frames["editor.statusBar"]
++    return all(
++        contains_frame(status, frames[identifier])
++        for identifier in STATUS_IDENTIFIERS - {"editor.statusBar"}
++    )
++
++
++def valid_long_status_context(row):
++    value = row.get("statusContext")
++    return isinstance(value, str) and len(value) >= 40 and " · " in value
++
++
++def valid_budget_row(row):
++    expected = EXPECTED_BUDGET_CASES.get(row.get("case"))
++    if expected is None:
++        return False
++    charged, reserved, complete, items = expected
++    return (
++        row.get("charged") == charged
++        and row.get("reserved") == reserved
++        and row.get("complete") is complete
++        and row.get("items") == items
++        and valid_frame(row.get("popoverFrame"))
++        and isinstance(row.get("statusValue"), str)
++        and row["statusValue"].endswith(f"items={items}")
++        and isinstance(row.get("screenshot"), str)
++    )
++
++
+ def valid_keyframe_layout(layout, expected_mode, expected_lanes):
+     inspector = layout.get("inspectorFrame")
+     panel = layout.get("panelFrame")
+@@ -132,7 +192,7 @@ def run_scale(executable, output, scale):
+                 "NGV_WORKSPACE_UI_SCALE": str(scale),
+                 "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
+             },
+-            timeout=90,
++            timeout=120,
+             check=False,
+             text=True,
+         )
+@@ -167,6 +227,11 @@ def run_scale(executable, output, scale):
+     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
+     invariants = [row for row in rows if row.get("event") == "invariants"]
+     inspector = [row for row in rows if row.get("event") == "inspector"]
++    budget = [row for row in rows if row.get("event") == "budget"]
++    budget_lifecycle = [row for row in rows if row.get("event") == "budget-lifecycle"]
++    unavailable_limits = [row for row in rows if row.get("event") == "budget-limits-unavailable"]
++    project_switch = [row for row in rows if row.get("event") == "budget-project-switch"]
++    background_status = [row for row in rows if row.get("event") == "background-status"]
+     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
+     screenshots = [
+         row.get("screenshot")
+@@ -177,6 +242,8 @@ def run_scale(executable, output, scale):
+         for row in inspector
+         if row.get("keyframes") != "open"
+     ]
++    screenshots += [row.get("screenshot") for row in budget + project_switch
++                    + budget_lifecycle + unavailable_limits]
+     screenshots += [
+         layout.get("screenshot")
+         for row in open_keyframes
+@@ -195,8 +262,12 @@ def run_scale(executable, output, scale):
+         and completed
+         and workspaces == EXPECTED_WORKSPACES
+         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
++        and all(valid_status_frames(row) for row in workspace_rows)
++        and all(valid_long_status_context(row) for row in workspace_rows)
+         and len(hidden) == 1
+         and len(narrow) == 1
++        and valid_status_frames(narrow[0])
++        and valid_long_status_context(narrow[0])
+         and len(pinned) == 1
+         and len(invariants) == 1
+         and {(row.get("family"), row.get("keyframes")) for row in inspector}
+@@ -204,12 +275,33 @@ def run_scale(executable, output, scale):
+         and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
+         and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
+         and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
++        and {row.get("case") for row in budget} == set(EXPECTED_BUDGET_CASES)
++        and len(budget) == len(EXPECTED_BUDGET_CASES)
++        and all(valid_budget_row(row) for row in budget)
++        and len(budget_lifecycle) == len(EXPECTED_BUDGET_LIFECYCLE)
++        and {row.get("state") for row in budget_lifecycle} == set(EXPECTED_BUDGET_LIFECYCLE)
++        and all(row.get("events") == EXPECTED_BUDGET_LIFECYCLE.get(row.get("state"))
++                for row in budget_lifecycle)
++        and len(unavailable_limits) == 1
++        and len(project_switch) == 1
++        and valid_status_frames(project_switch[0])
++        and valid_long_status_context(project_switch[0])
++        and "planning=none" in project_switch[0].get("emptyValue", "")
++        and "stop=none" in project_switch[0].get("emptyValue", "")
++        and "planning=10.00" in project_switch[0].get("restoredValue", "")
++        and "stop=12.00" in project_switch[0].get("restoredValue", "")
++        and len(background_status) == 1
++        and background_status[0].get("aiActiveObserved") is True
++        and background_status[0].get("exportActiveObserved") is True
++        and background_status[0].get("controlsClicked") is True
++        and valid_status_frames(background_status[0])
+         and invariants[0].get("liveStateUnchanged") is True
+         and invariants[0].get("projectBytesUnchanged") is True
+         and invariants[0].get("undoUnchanged") is True
+         and invariants[0].get("workingCopyUnchanged") is True
+         and len(screenshots)
+-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
++        == 9 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
++        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 1
+         and valid_images
+     )
+     return {

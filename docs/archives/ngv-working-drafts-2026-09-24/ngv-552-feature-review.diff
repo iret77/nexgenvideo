@@ -1,0 +1,3133 @@
+diff --git a/.github/workflows/workspace-ui-acceptance.yml b/.github/workflows/workspace-ui-acceptance.yml
+index aaa9b99e..925e541c 100644
+--- a/.github/workflows/workspace-ui-acceptance.yml
++++ b/.github/workflows/workspace-ui-acceptance.yml
+@@ -8,10 +8,11 @@ on:
+       - 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'
+       - 'Sources/NexGenVideo/App/main.swift'
+       - 'Sources/NexGenVideo/Agent/AgentService.swift'
++      - 'Sources/NexGenVideo/Agent/Panel/**'
+       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
+       - 'Sources/NexGenVideo/Inspector/**'
+-      - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
+-      - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
++      - 'Sources/NexGenVideo/Generation/UI/GenerationView.swift'
++      - 'Sources/NexGenVideo/MediaPanel/**'
+       - 'Sources/NexGenVideo/UI/AppTheme.swift'
+       - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
+       - 'Sources/NexGenVideo/Editor/EditorWindowController.swift'
+diff --git a/Sources/NexGenVideo/Agent/AgentMentionContext.swift b/Sources/NexGenVideo/Agent/AgentMentionContext.swift
+index c4f0de50..222fee1e 100644
+--- a/Sources/NexGenVideo/Agent/AgentMentionContext.swift
++++ b/Sources/NexGenVideo/Agent/AgentMentionContext.swift
+@@ -155,7 +155,7 @@ struct AgentMention: Identifiable, Hashable, Codable {
+ extension MediaAsset {
+     // Collapses spaces and hyphens so the inserted `@token` stays a single word.
+     var mentionDisplayName: String {
+-        AgentMention.makeDisplayName(from: name)
++        AgentMention.makeDisplayName(from: libraryDisplayName)
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift b/Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift
+index 6bf2a83e..ca856933 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift
+@@ -263,6 +263,7 @@ struct AgentDialogCard: View {
+                     .foregroundStyle(AppTheme.Text.mutedColor)
+                 LibraryAssetPicker(
+                     assets: picks,
++                    purpose: .workflowIntake(dialog.id),
+                     showsSearch: true,
+                     showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
+                 ) { addPicked($0.url, intake) }
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift b/Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift
+index 9b111f7a..0d03bfdd 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift
+@@ -277,6 +277,7 @@ struct AgentInputBox<LeadingTools: View>: View {
+         .popover(isPresented: $showReferencePicker, arrowEdge: .bottom) {
+             LibraryAssetPicker(
+                 assets: pickableLibraryAssets,
++                purpose: .agentReference,
+                 showsSearch: true,
+                 showsTypeTabs: true,
+                 scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
+diff --git a/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift b/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
+index 9ef53fdc..a89af275 100644
+--- a/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
++++ b/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
+@@ -40,7 +40,7 @@ struct AssetRow: View {
+             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+ 
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.micro) {
+-                Text(asset.mentionDisplayName)
++                Text(asset.libraryDisplayName)
+                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                     .foregroundStyle(AppTheme.Text.primaryColor)
+                     .lineLimit(1)
+@@ -67,30 +67,23 @@ struct AssetRow: View {
+ /// neither path. It only picks something already in the library; adding a NEW file stays on the
+ /// composer's paperclip and the card's Choose button.
+ struct LibraryAssetPicker: View {
++    @Environment(EditorViewModel.self) private var editor
+     let assets: [MediaAsset]
++    let purpose: MediaLibraryPurpose
+     var showsSearch: Bool = false
+     var showsTypeTabs: Bool = false
+     /// Scroll the rows within this height (the composer popover, over the whole library); nil lays them
+     /// out at natural height (the intake card's short accept-filtered list).
+     var scrollHeight: CGFloat? = nil
++    var allowsDragging = false
+     /// Floated to the top and marked — the composer passes the currently inspected asset so the user's
+     /// selection is the obvious first pick (docs/UI_UX_CONCEPT.md §2.2).
+     var pinnedId: String? = nil
+     var emptyLabel: String = "Nothing in your library yet"
+     let onPick: (MediaAsset) -> Void
+ 
+-    @State private var query: String = ""
+-    @State private var tab: MentionTab = .all
+-
+-    private var visible: [MediaAsset] {
+-        var out = assets
+-        if let clip = tab.clipType { out = out.filter { $0.type == clip } }
+-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+-        if !q.isEmpty {
+-            out = out.filter {
+-                $0.mentionDisplayName.lowercased().contains(q) || $0.name.lowercased().contains(q)
+-            }
+-        }
++    private func visible(session: MediaLibrarySession) -> [MediaAsset] {
++        var out = MediaLibraryProjection.assets(from: assets, session: session)
+         if let pinnedId, let idx = out.firstIndex(where: { $0.id == pinnedId }) {
+             out.insert(out.remove(at: idx), at: 0)
+         }
+@@ -98,49 +91,86 @@ struct LibraryAssetPicker: View {
+     }
+ 
+     var body: some View {
++        let session = editor.mediaLibrarySession(for: purpose)
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+-            if showsSearch { searchField }
+-            if showsTypeTabs { tabStrip }
+-            if visible.isEmpty {
+-                Text(query.isEmpty ? emptyLabel : "No matches for \u{201C}\(query)\u{201D}")
++            if showsSearch { searchField(session: session) }
++            if showsSearch { compactControls(session: session) }
++            if showsTypeTabs { tabStrip(session: session) }
++            if visible(session: session).isEmpty {
++                Text(session.query.isEmpty ? emptyLabel : "No matches for \u{201C}\(session.query)\u{201D}")
+                     .interfaceFont(size: AppTheme.Typography.ui)
+                     .foregroundStyle(AppTheme.Text.mutedColor)
+                     .frame(maxWidth: .infinity, alignment: .leading)
+                     .padding(.vertical, AppTheme.Spacing.sm)
+             } else {
+-                rows
++                rows(session: session)
+             }
+         }
++        .accessibilityIdentifier("mediaPicker.\(purpose.accessibilitySuffix)")
+     }
+ 
+     @ViewBuilder
+-    private var rows: some View {
++    private func rows(session: MediaLibrarySession) -> some View {
+         let list = LazyVStack(spacing: AppTheme.Spacing.none) {
+-            ForEach(visible) { asset in
+-                Button { onPick(asset) } label: {
+-                    AssetRow(asset: asset,
+-                             isHighlighted: asset.id == pinnedId,
+-                             trailingSystemImage: "plus.circle")
+-                        .contentShape(Rectangle())
+-                }
+-                .buttonStyle(.plain)
+-                .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
+-                .help("Reference \u{201C}\(asset.mentionDisplayName)\u{201D}")
++            ForEach(visible(session: session)) { asset in
++                assetButton(asset, session: session)
+             }
+         }
++        .scrollTargetLayout()
+         if let scrollHeight {
+-            ScrollView { list }.frame(maxHeight: scrollHeight)
++            ScrollView { list }
++                .scrollPosition(
++                    id: Binding(
++                        get: { session.scrollAnchorID },
++                        set: { session.scrollAnchorID = $0 }
++                    ),
++                    anchor: .center
++                )
++                .frame(maxHeight: scrollHeight)
+         } else {
+             list
+         }
+     }
+ 
+-    private var searchField: some View {
++    @ViewBuilder
++    private func assetButton(_ asset: MediaAsset, session: MediaLibrarySession) -> some View {
++        let button = Button {
++            session.selectedAssetIDs = [asset.id]
++            session.activeAssetID = asset.id
++            session.scrollAnchorID = asset.id
++            onPick(asset)
++        } label: {
++            AssetRow(
++                asset: asset,
++                isHighlighted: asset.id == pinnedId || session.selectedAssetIDs.contains(asset.id),
++                trailingSystemImage: "plus.circle"
++            )
++            .contentShape(Rectangle())
++        }
++        .buttonStyle(.plain)
++        .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
++        .help("Choose \u{201C}\(asset.libraryDisplayName)\u{201D}")
++        .contextMenu {
++            Button("Show in Media") { editor.revealMediaAsset(id: asset.id) }
++        }
++        .accessibilityIdentifier("mediaPicker.asset.\(asset.id)")
++
++        if allowsDragging {
++            button.draggable(MediaTab.assetDragString(forAssetId: asset.id))
++        } else {
++            button
++        }
++    }
++
++    private func searchField(session: MediaLibrarySession) -> some View {
+         HStack(spacing: AppTheme.Spacing.sm) {
+             Image(systemName: "magnifyingglass")
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            TextField("Search your library\u{2026}", text: $query)
++            TextField(
++                "Search filenames\u{2026}",
++                text: Binding(get: { session.query }, set: { session.query = $0 })
++            )
+                 .textFieldStyle(.plain)
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.primaryColor)
+@@ -157,21 +187,82 @@ struct LibraryAssetPicker: View {
+         )
+     }
+ 
+-    private var tabStrip: some View {
++    private func compactControls(session: MediaLibrarySession) -> some View {
++        HStack(spacing: AppTheme.Spacing.xs) {
++            Menu {
++                Button("All Folders") { session.folderID = nil }
++                ForEach(editor.folders) { folder in
++                    Button(folder.name) { session.folderID = folder.id }
++                }
++            } label: {
++                Label(
++                    session.folderID.flatMap { editor.folder(id: $0)?.name } ?? "All Folders",
++                    systemImage: "folder"
++                )
++            }
++            .menuStyle(.button)
++            .fixedSize()
++
++            Menu {
++                ForEach(MediaLibrarySort.allCases, id: \.self) { sort in
++                    Button {
++                        if session.sort == sort {
++                            session.sortAscending.toggle()
++                        } else {
++                            session.sort = sort
++                            session.sortAscending = true
++                        }
++                    } label: {
++                        Label(sort.label, systemImage: session.sort == sort ? "checkmark" : "")
++                    }
++                }
++            } label: {
++                Image(systemName: session.sortAscending ? "arrow.up.arrow.down" : "arrow.down.arrow.up")
++            }
++            .menuStyle(.button)
++            .help("Sort library")
++            .accessibilityLabel("Sort Library")
++
++            Spacer(minLength: AppTheme.Spacing.xs)
++
++            Button {
++                session.aiOnly.toggle()
++            } label: {
++                Label("AI", systemImage: "sparkles")
++            }
++            .buttonStyle(.capsule(session.aiOnly ? .prominent : .secondary))
++            .help(session.aiOnly ? "Show all sources" : "Show AI-generated sources only")
++        }
++        .controlSize(.small)
++    }
++
++    private func tabStrip(session: MediaLibrarySession) -> some View {
+         HStack(spacing: AppTheme.Spacing.none) {
+             ForEach(MentionTab.allCases, id: \.self) { t in
+                 Text(t.label)
+-                    .interfaceFont(size: AppTheme.Typography.ui, weight: t == tab ? .semibold : .regular)
+-                    .foregroundStyle(t == tab ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
++                    .interfaceFont(
++                        size: AppTheme.Typography.ui,
++                        weight: isSelected(t, session: session)
++                            ? AppTheme.FontWeight.semibold
++                            : AppTheme.FontWeight.regular
++                    )
++                    .foregroundStyle(isSelected(t, session: session) ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+                     .frame(maxWidth: .infinity)
+                     .padding(.vertical, AppTheme.Spacing.xxs)
+                     .background(
+-                        t == tab ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor,
++                        isSelected(t, session: session) ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor,
+                         in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                     )
+                     .contentShape(Rectangle())
+-                    .onTapGesture { tab = t }
++                    .onTapGesture {
++                        session.filterTypes = t.clipType.map { Set([$0]) } ?? []
++                    }
+             }
+         }
+     }
++
++    private func isSelected(_ tab: MentionTab, session: MediaLibrarySession) -> Bool {
++        if let clipType = tab.clipType { return session.filterTypes == Set([clipType]) }
++        return session.filterTypes.isEmpty
++    }
+ }
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 8d740c84..7d9d0f56 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -968,7 +968,7 @@ enum ToolDefinitions {
+         ),
+         AgentTool(
+             name: .deleteFolder,
+-            description: "Deletes folders and everything inside them (subfolders and assets). Clips referencing any deleted asset are removed from the timeline in the same undoable action.",
++            description: "Removes folders and nested subfolders. Their assets move to the root Imports folder in the same undoable action; asset IDs, intake assignments, and timeline clip references remain unchanged.",
+             inputSchema: objectSchema(
+                 properties: [
+                     "folderIds": [
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Folders.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Folders.swift
+index 53d463f3..7c2d0559 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Folders.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Folders.swift
+@@ -115,11 +115,9 @@ extension ToolExecutor {
+         for id in folderIds {
+             guard editor.folder(id: id) != nil else { throw ToolError("folderId not found: \(id)") }
+         }
+-        guard editor.canDeleteFolders(ids: Set(folderIds)) else {
+-            throw ToolError("Cannot delete a folder containing media referenced by an edit-locked track")
+-        }
++        guard editor.canDeleteFolders(ids: Set(folderIds)) else { throw ToolError("Folder not found") }
+         editor.deleteFolders(ids: Set(folderIds))
+-        return .ok("Deleted \(folderIds.count) folder(s) with their contents. Any clips referencing deleted assets were removed from the timeline.")
++        return .ok("Deleted \(folderIds.count) folder(s). Their assets moved to Imports; asset IDs and timeline references were preserved.")
+     }
+ 
+     private func parseCreateFolderSpecs(
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 0dd0f33d..23812e60 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -75,6 +75,13 @@ enum WorkspaceUIAcceptance {
+                     && editor.workspaceFocus == .media
+                     && visiblePanelIDs(in: host) == expectedPanels(for: .media)
+                     && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
++                    && mediaWorkspaceSurfaceIsValid(in: host)
++                    && editor.mediaAssets.count >= 523
++                    && editor.mediaAssets
++                        .filter { $0.id.hasPrefix("acceptance-bulk-") }
++                        .allSatisfy { $0.thumbnail == nil }
++                    && editor.mediaManifest.intakeRoleByAssetID.keys
++                        .allSatisfy { !$0.hasPrefix("acceptance-bulk-") }
+                     && previewTimecodeIsSingleLine(in: window, scale: scale)
+             }) else {
+                 fail("could not prepare large media layout", scale: scale)
+@@ -85,6 +92,19 @@ enum WorkspaceUIAcceptance {
+             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
+                 fail("large media layout did not settle", scale: scale)
+             }
++            guard click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
++                          && editor.mediaLibrarySession(for: .workspace).folderID
++                              == "acceptance-folder-0"
++                  }),
++                  click(identifier: "media.folder.library", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaPanelCurrentFolderId == nil
++                          && editor.mediaLibrarySession(for: .workspace).folderID == nil
++                  }) else {
++                fail("native folder tree did not route the shared media library", scale: scale)
++            }
+             resetSplitAutosaveDefaults()
+             editor.setWorkspaceFocus(.production)
+             guard await waitUntil(timeout: .seconds(5), {
+@@ -137,6 +157,7 @@ enum WorkspaceUIAcceptance {
+                         && probeState(identifier: identifier, in: window) == true
+                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
+                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
++                        && (workspace != .media || mediaWorkspaceSurfaceIsValid(in: host))
+                         && previewTimecodeIsSingleLine(in: window, scale: scale)
+                         && (workspace != .production || agentControlsAreContained(in: window))
+                 }) else {
+@@ -176,6 +197,7 @@ enum WorkspaceUIAcceptance {
+                       visiblePanelIDs(in: host) == expectedPanels(for: workspace),
+                       visiblePanelFrames(in: host) == renderedFrames,
+                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
++                      workspace != .media || mediaWorkspaceSurfaceIsValid(in: host),
+                       previewTimecodeIsSingleLine(in: window, scale: scale),
+                       workspace != .production || agentControlsAreContained(in: window) else {
+                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
+@@ -186,15 +208,27 @@ enum WorkspaceUIAcceptance {
+                 guard snapshot(host, at: evidenceURL.appendingPathComponent("\(name).png")) else {
+                     fail("could not capture \(name)", scale: scale)
+                 }
++                var fields: [String: Any] = [
++                    "workspace": workspace.rawValue,
++                    "screenshot": "\(name).png",
++                    "panels": visiblePanels.sorted(),
++                    "frames": renderedFrames.mapValues { frameDescription($0) },
++                ]
++                if workspace == .media {
++                    fields["mediaAssetCount"] = editor.mediaAssets.count
++                    fields["mediaSurface"] = mediaWorkspaceSurfaceDiagnostics(in: host)
++                    fields["bulkThumbnailsLoaded"] = editor.mediaAssets
++                        .filter { $0.id.hasPrefix("acceptance-bulk-") }
++                        .filter { $0.thumbnail != nil }
++                        .count
++                    fields["bulkIntakeAssignments"] = editor.mediaManifest.intakeRoleByAssetID.keys
++                        .filter { $0.hasPrefix("acceptance-bulk-") }
++                        .count
++                }
+                 emit(
+                     "workspace",
+                     scale: scale,
+-                    fields: [
+-                        "workspace": workspace.rawValue,
+-                        "screenshot": "\(name).png",
+-                        "panels": visiblePanels.sorted(),
+-                        "frames": renderedFrames.mapValues { frameDescription($0) },
+-                    ]
++                    fields: fields
+                 )
+             }
+ 
+@@ -644,9 +678,22 @@ enum WorkspaceUIAcceptance {
+                           && editor.activeSourceAsset?.id == "selection-source"
+                           && editor.inspectedObject == .mediaAsset("selection-source")
+                           && editor.isPlaying
+-                  }) else {
++            }) else {
+                 fail("filtering changed or interrupted the active source context", scale: scale)
+             }
++            scheduleKeySequence(
++                [(115, "\u{F729}"), (125, "\u{F701}"), (36, "\r")],
++                in: window
++            )
++            guard click(identifier: "media.layout", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "media.layout", in: window) == true
++                          && editor.activeSourceAsset?.id == "selection-source"
++                          && editor.inspectedObject == .mediaAsset("selection-source")
++                          && editor.isPlaying
++                  }) else {
++                fail("grid/list layout changed or interrupted the active source context", scale: scale)
++            }
+             guard click(identifier: "preview.playPause", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), { !editor.isPlaying }) else {
+                 fail("source transport did not stop playback", scale: scale)
+@@ -1088,6 +1135,7 @@ enum WorkspaceUIAcceptance {
+                     "sameSourceReactivationPreservedPlayback": true,
+                     "nativeSearchPreservedPlayback": true,
+                     "sortAndFilterPreservedPlayback": true,
++                    "nativeGridListToggle": true,
+                     "listModePreserved": true,
+                     "contextClickRoutingVerified": true,
+                     "offlineSourceHandled": true,
+@@ -1516,6 +1564,13 @@ enum WorkspaceUIAcceptance {
+             options: .atomic
+         )
+         var manifest = MediaManifest()
++        manifest.folders = (0..<12).map { index in
++            MediaFolder(
++                id: "acceptance-folder-\(index)",
++                name: "Folder \(index)",
++                parentFolderId: index < 4 ? nil : "acceptance-folder-\((index - 4) % 4)"
++            )
++        }
+         manifest.entries = [
+             MediaManifestEntry(
+                 id: "selection-source",
+@@ -1554,6 +1609,30 @@ enum WorkspaceUIAcceptance {
+                 originalFilename: "Offline Source.mov"
+             ),
+         ]
++        let bulkTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
++        let bulkFolderCount = manifest.folders.count
++        manifest.entries.append(contentsOf: (0..<520).map { index in
++            let type = bulkTypes[index % bulkTypes.count]
++            let fileExtension = switch type {
++            case .video: "mov"
++            case .audio: "wav"
++            case .image: "png"
++            case .document: "md"
++            case .lottie: "json"
++            case .text: "txt"
++            }
++            return MediaManifestEntry(
++                id: "acceptance-bulk-\(index)",
++                name: "Storage \(index)",
++                type: type,
++                source: .project(
++                    relativePath: "\(Project.mediaDirectoryName)/missing-bulk-\(index).\(fileExtension)"
++                ),
++                duration: type == .video || type == .audio ? Double((index % 30) + 1) : 0,
++                folderId: "acceptance-folder-\(index % bulkFolderCount)",
++                originalFilename: "Original \(index).\(fileExtension)"
++            )
++        })
+         try JSONEncoder().encode(manifest).write(
+             to: projectURL.appendingPathComponent(Project.manifestFilename),
+             options: .atomic
+@@ -1659,7 +1738,10 @@ enum WorkspaceUIAcceptance {
+             return abs(frame.width - width) <= tolerance
+         }
+         switch workspace {
+-        case .media, .edit:
++        case .media:
++            return matches("mediaPanel", AppTheme.Layout.mediaFolderTreeDefault)
++                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
++        case .edit:
+             return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
+                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+         case .production:
+@@ -1672,6 +1754,49 @@ enum WorkspaceUIAcceptance {
+         }
+     }
+ 
++    private static func mediaWorkspaceSurfaceIsValid(in root: NSView) -> Bool {
++        let diagnostics = mediaWorkspaceSurfaceDiagnostics(in: root)
++        guard diagnostics["folderTree"] != nil,
++              diagnostics["browser"] != nil,
++              diagnostics["sourcePreview"] != nil,
++              let mediaPanel = visiblePanelFrames(in: root)["mediaPanel"],
++              let centerPanel = visiblePanelFrames(in: root)["previewPanel"],
++              let folder = probeFrame("media.workspace.folderTree", in: root),
++              let browser = probeFrame("media.workspace.browser", in: root),
++              let source = probeFrame("media.workspace.sourcePreview", in: root)
++        else { return false }
++        let tolerance = AppTheme.BorderWidth.thin
++        return mediaPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(folder)
++            && centerPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(browser)
++            && centerPanel.insetBy(dx: -tolerance, dy: -tolerance).contains(source)
++            && browser.height >= AppTheme.Layout.mediaBrowserMinHeight - tolerance
++            && source.height >= AppTheme.Layout.previewMinHeight - tolerance
++            && (browser.maxY <= source.minY + tolerance || source.maxY <= browser.minY + tolerance)
++    }
++
++    private static func mediaWorkspaceSurfaceDiagnostics(in root: NSView) -> [String: Any] {
++        var result: [String: Any] = [:]
++        for (key, identifier) in [
++            ("folderTree", "media.workspace.folderTree"),
++            ("browser", "media.workspace.browser"),
++            ("sourcePreview", "media.workspace.sourcePreview"),
++        ] {
++            if let frame = probeFrame(identifier, in: root) {
++                result[key] = frameDescription(frame)
++            }
++        }
++        return result
++    }
++
++    private static func probeFrame(_ identifier: String, in root: NSView) -> NSRect? {
++        guard let probe = findProbe(in: root, identifier: identifier),
++              probe.window != nil,
++              !probe.isHiddenOrHasHiddenAncestor else { return nil }
++        let frame = probe.convert(probe.bounds, to: root)
++        guard frame.width > 0, frame.height > 0 else { return nil }
++        return frame
++    }
++
+     private static func narrowProductionWidthsAreValid(_ frames: [String: NSRect]) -> Bool {
+         let tolerance = AppTheme.Spacing.md
+         guard let agent = frames["agentPanel"],
+diff --git a/Sources/NexGenVideo/Editor/EditorView.swift b/Sources/NexGenVideo/Editor/EditorView.swift
+index 42c8ef6f..b17c6d2b 100644
+--- a/Sources/NexGenVideo/Editor/EditorView.swift
++++ b/Sources/NexGenVideo/Editor/EditorView.swift
+@@ -115,7 +115,7 @@ private enum SplitAutosave {
+     static let productionRoot   = "editor.produce.root"
+     static let productionCenter = "editor.produce.center"
+     static let productionRight  = "editor.produce.right"
+-    static let mediaRoot     = "editor.workspace.media.root.v1"
++    static let mediaRoot     = "editor.workspace.media.root.v2"
+     static let postRoot      = "editor.workspace.postproduction.root.v1"
+     static let postCenter    = "editor.workspace.postproduction.center.v1"
+     static let exportRoot    = "editor.workspace.export.root.v1"
+@@ -146,19 +146,23 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
+     private var panelHosts: [any PanelFocusUpdating] = []
+ 
+     private lazy var mediaWorkspaceHC: NSViewController = makeHosting(
+-        MediaWorkspaceSidebar(workspace: .media),
++        MediaWorkspaceNavigation(),
+         panel: .media
+     )
++    private lazy var mediaCenterHC: NSViewController = makeHosting(
++        MediaWorkspaceCenterView(),
++        panel: .preview
++    )
+     private lazy var editMediaHC: NSViewController = makeHosting(
+         MediaWorkspaceSidebar(workspace: .edit),
+         panel: .media
+     )
+-    private lazy var agentHC: NSViewController     = makeHosting(AgentPanelView(), panel: .agent)
++    private lazy var agentHC: NSViewController     = makeHosting(ProductionWorkspaceSidebar(), panel: .agent)
+     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
+     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
+     private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(), panel: .project)
+     private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
+-    private lazy var reviewHC: NSViewController     = makeHosting(FinishReviewPane(), panel: .project)
++    private lazy var reviewHC: NSViewController     = makeHosting(PostproductionWorkspaceSidebar(), panel: .project)
+     private lazy var exportHC: NSViewController     = makeHosting(ExportWorkspaceSidebar(), panel: .project)
+ 
+     init(editor: EditorViewModel) {
+@@ -364,15 +368,15 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
+ 
+     private func buildMediaWorkspace(into target: NSSplitViewController) {
+         target.splitView.isVertical = true
+-        target.addSplitViewItem(makeSidebarItem(host: mediaWorkspaceHC, minimumThickness: AppTheme.Layout.mediaPanelMin))
+-        target.addSplitViewItem(makePreviewItem())
++        target.addSplitViewItem(makeSidebarItem(host: mediaWorkspaceHC, minimumThickness: AppTheme.Layout.mediaFolderTreeMin))
++        target.addSplitViewItem(makePreviewItem(host: mediaCenterHC))
+         target.addSplitViewItem(makeInspectorItem())
+ 
+         applyAfterLayout { [weak self, weak target] in
+             guard let self, let target else { return }
+             let width = target.view.bounds.width
+             self.positionIfUnsaved(target) {
+-                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
++                $0.setPosition(AppTheme.Layout.mediaFolderTreeDefault, ofDividerAt: 0)
+                 $0.setPosition(width - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
+             }
+         }
+@@ -617,7 +621,11 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
+     }
+ 
+     private func makePreviewItem() -> NSSplitViewItem {
+-        let item = NSSplitViewItem(viewController: previewHC)
++        makePreviewItem(host: previewHC)
++    }
++
++    private func makePreviewItem(host: NSViewController) -> NSSplitViewItem {
++        let item = NSSplitViewItem(viewController: host)
+         item.minimumThickness = AppTheme.Layout.previewMinWidth
+         previewSplitItem = item
+         return item
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+index b1abc8d5..532540a6 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+@@ -32,13 +32,6 @@ extension EditorViewModel {
+             .map(\.id))
+     }
+ 
+-    private func clipIdsReferencingAssets(_ assetIds: Set<String>) -> Set<String> {
+-        Set(timeline.tracks
+-            .flatMap(\.clips)
+-            .filter { assetIds.contains($0.mediaRef) }
+-            .map(\.id))
+-    }
+-
+     // MARK: - Mutations
+ 
+     @discardableResult
+@@ -65,8 +58,7 @@ extension EditorViewModel {
+     }
+ 
+     func canDeleteFolders(ids: Set<String>) -> Bool {
+-        let allFolderIds = MediaFolderIndex(mediaManifest.folders).idsIncludingDescendants(ids)
+-        return canDeleteMediaAssets(ids: assetIds(inFolderIds: allFolderIds))
++        mediaManifest.folders.contains { ids.contains($0.id) }
+     }
+ 
+     func deleteFolders(ids: Set<String>) {
+@@ -76,35 +68,32 @@ extension EditorViewModel {
+         guard canDeleteFolders(ids: ids) else { return }
+ 
+         let before = mediaLibraryUndoSnapshot()
+-        let assetIdsToDelete = assetIds(inFolderIds: allFolderIds)
+-        let clipIdsToRemove = clipIdsReferencingAssets(assetIdsToDelete)
+-        guard !clipIdsToRemove.contains(where: isClipEditLocked) else { return }
+-
+-        if !clipIdsToRemove.isEmpty {
+-            selectedClipIds.subtract(clipIdsToRemove)
+-            for i in timeline.tracks.indices {
+-                timeline.tracks[i].clips.removeAll { clipIdsToRemove.contains($0.id) }
++        let affectedAssetIds = assetIds(inFolderIds: allFolderIds)
++        var destinationFolderId: String?
++        if !affectedAssetIds.isEmpty {
++            if let imports = mediaManifest.folders.first(where: {
++                $0.parentFolderId == nil
++                    && $0.name.localizedCaseInsensitiveCompare("Imports") == .orderedSame
++                    && !allFolderIds.contains($0.id)
++            }) {
++                destinationFolderId = imports.id
++            } else {
++                let imports = MediaFolder(name: "Imports")
++                mediaManifest.folders.append(imports)
++                destinationFolderId = imports.id
++            }
++            for assetId in affectedAssetIds {
++                setAssetFolderId(destinationFolderId, forAssetId: assetId)
+             }
+-            pruneEmptyTracks()
+         }
+ 
+-        mediaAssets.removeAll { assetIdsToDelete.contains($0.id) }
+-        mediaManifest.entries.removeAll { assetIdsToDelete.contains($0.id) }
+-        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
+-            !assetIdsToDelete.contains($0.key)
+-        }
+         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
+         selectedFolderIds.subtract(allFolderIds)
+-        selectedMediaAssetIds.subtract(assetIdsToDelete)
+-        for id in assetIdsToDelete { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
+ 
+         undoManager?.registerUndo(withTarget: self) { vm in
+             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Folder")
+         }
+         undoManager?.setActionName("Delete Folder")
+-        if !clipIdsToRemove.isEmpty {
+-            notifyTimelineChanged()
+-        }
+     }
+ 
+     func moveAssetsToFolder(assetIds: Set<String>, folderId: String?) {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
+index ab083585..7c82f3f4 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
+@@ -1235,7 +1235,11 @@ extension EditorViewModel {
+         }
+         guard let asset = mediaAssets.first(where: { $0.id == key }) else { return }
+         mediaPanelScrollTarget = key
+-        selectMediaAsset(asset)
++        if let purpose = mediaLibraryPurpose(for: workspaceFocus) {
++            selectMediaAsset(asset, for: purpose)
++        } else {
++            selectMediaAsset(asset)
++        }
+     }
+ 
+     func renameMediaAsset(id: String, name: String) {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
+index 029c25d8..c0ec8643 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
+@@ -106,6 +106,7 @@ extension EditorViewModel {
+     var canActivateNextSource: Bool { adjacentSourceAsset(offset: 1) != nil }
+ 
+     func selectMediaAsset(_ asset: MediaAsset, atSourceFrame frame: Int? = nil) {
++        activeMediaLibraryPurpose = nil
+         selectedFolderIds.removeAll()
+         selectedMediaAssetIds = [asset.id]
+         openPreviewTab(for: asset, atSourceFrame: frame)
+@@ -138,6 +139,7 @@ extension EditorViewModel {
+     }
+ 
+     func activateMediaAsset(_ asset: MediaAsset, preservingSelection: Bool) {
++        activeMediaLibraryPurpose = nil
+         selectedFolderIds.removeAll()
+         if !preservingSelection {
+             selectedMediaAssetIds = [asset.id]
+@@ -193,12 +195,20 @@ extension EditorViewModel {
+ 
+     func activatePreviousSource() {
+         guard let asset = adjacentSourceAsset(offset: -1) else { return }
+-        activateMediaAsset(asset, preservingSelection: false)
++        if let activeMediaLibraryPurpose {
++            activateMediaAsset(asset, preservingSelection: false, for: activeMediaLibraryPurpose)
++        } else {
++            activateMediaAsset(asset, preservingSelection: false)
++        }
+     }
+ 
+     func activateNextSource() {
+         guard let asset = adjacentSourceAsset(offset: 1) else { return }
+-        activateMediaAsset(asset, preservingSelection: false)
++        if let activeMediaLibraryPurpose {
++            activateMediaAsset(asset, preservingSelection: false, for: activeMediaLibraryPurpose)
++        } else {
++            activateMediaAsset(asset, preservingSelection: false)
++        }
+     }
+ 
+     func markSourceIn() {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 1ebfbd3a..155812f8 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -872,6 +872,7 @@ final class EditorViewModel {
+     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
+     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
+         guard focus != workspaceFocus else { return }
++        snapshotMediaLibrarySession(for: workspaceFocus)
+         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
+             sidebarVisible: mediaPanelVisible,
+             inspectorVisible: inspectorPanelVisible,
+@@ -919,7 +920,18 @@ final class EditorViewModel {
+             explicitTimelineInspectionClipID = nil
+         }
+         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
+-        sourcePlayheadFrame = max(0, state.sourceFrame)
++        var restoredSourceFrame = max(0, state.sourceFrame)
++        if let purpose = mediaLibraryPurpose(for: focus),
++           let asset = activeSourceAsset {
++            let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
++                ?? SourcePreviewState(playheadFrame: restoredSourceFrame)
++            let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
++            let restored = sourceState.clamped(to: duration)
++            sourcePreviewStates[asset.id] = restored
++            restoredSourceFrame = restored.playheadFrame
++        }
++        sourcePlayheadFrame = restoredSourceFrame
++        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : mediaLibraryPurpose(for: focus)
+         mediaPanelTab = state.mediaPanelTab
+         mediaPanelCurrentFolderId = state.mediaFolderId
+         videoEngine?.activateTab(activePreviewTab)
+@@ -1186,6 +1198,90 @@ final class EditorViewModel {
+     @ObservationIgnored var mediaImportCancellationGeneration: Int = 0
+     @ObservationIgnored var songAttachInProgress = false
+ 
++    func mediaLibrarySession(for purpose: MediaLibraryPurpose) -> MediaLibrarySession {
++        if let session = mediaLibrarySessions[purpose] { return session }
++        let session = MediaLibrarySession(purpose: purpose)
++        mediaLibrarySessions[purpose] = session
++        return session
++    }
++
++    func selectMediaAsset(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
++        rememberActiveMediaLibrarySource()
++        let session = mediaLibrarySession(for: purpose)
++        session.activeAssetID = asset.id
++        session.selectedAssetIDs = [asset.id]
++        session.scrollAnchorID = asset.id
++        let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
++        let restored = session.sourceStates[asset.id] ?? SourcePreviewState()
++        sourcePreviewStates[asset.id] = restored.clamped(to: duration)
++        selectMediaAsset(asset)
++        activeMediaLibraryPurpose = purpose
++    }
++
++    func activateMediaAsset(
++        _ asset: MediaAsset,
++        preservingSelection: Bool,
++        for purpose: MediaLibraryPurpose
++    ) {
++        rememberActiveMediaLibrarySource()
++        let session = mediaLibrarySession(for: purpose)
++        session.activeAssetID = asset.id
++        session.scrollAnchorID = asset.id
++        let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
++        sourcePreviewStates[asset.id] = session.sourceState(for: asset.id).clamped(to: duration)
++        activateMediaAsset(asset, preservingSelection: preservingSelection)
++        session.selectedAssetIDs = selectedMediaAssetIds
++        activeMediaLibraryPurpose = purpose
++    }
++
++    func toggleMediaAssetSelection(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
++        selectedFolderIds.removeAll()
++        if selectedMediaAssetIds.contains(asset.id) {
++            selectedMediaAssetIds.remove(asset.id)
++        } else {
++            selectedMediaAssetIds.insert(asset.id)
++        }
++        activateMediaAsset(asset, preservingSelection: true, for: purpose)
++    }
++
++    private func rememberActiveMediaLibrarySource() {
++        guard let activeMediaLibraryPurpose, let activeAsset = activeSourceAsset else { return }
++        mediaLibrarySession(for: activeMediaLibraryPurpose).rememberSourceState(
++            sourcePreviewState(for: activeAsset.id),
++            for: activeAsset.id
++        )
++    }
++
++    func mediaLibraryPurpose(for workspace: WorkspaceFocus) -> MediaLibraryPurpose? {
++        switch workspace {
++        case .media: .workspace
++        case .production: .productionSource
++        case .edit: .editSource
++        case .postproduction: .postproductionSource
++        case .export: nil
++        }
++    }
++
++    private func snapshotMediaLibrarySession(for workspace: WorkspaceFocus) {
++        guard let purpose = mediaLibraryPurpose(for: workspace) else { return }
++        let session = mediaLibrarySession(for: purpose)
++        session.selectedAssetIDs = selectedMediaAssetIds
++        session.folderID = mediaPanelCurrentFolderId
++        guard activeMediaLibraryPurpose == purpose, let asset = activeSourceAsset else { return }
++        session.activeAssetID = asset.id
++        session.rememberSourceState(sourcePreviewState(for: asset.id), for: asset.id)
++    }
++
++    func revealMediaAsset(id: String) {
++        setWorkspaceFocus(.media)
++        theaterActive = false
++        mediaPanelVisible = true
++        maximizedPanel = nil
++        focusedPanel = .media
++        showMediaPanelMediaTab()
++        mediaPanelRevealAssetId = id
++    }
++
+     func showMediaPanelMediaTab() {
+         setMediaPanelTab(.assets, for: workspaceFocus)
+         // Refresh offline status when the user opens the media tab, so missing
+@@ -1570,7 +1666,11 @@ final class EditorViewModel {
+     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
+     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+ 
+-    var sourcePreviewStates: [String: SourcePreviewState] = [:]
++    var sourcePreviewStates: [String: SourcePreviewState] = [:] {
++        didSet { rememberActiveMediaLibrarySource() }
++    }
+     var explicitTimelineInspectionClipID: String?
++    @ObservationIgnored private var mediaLibrarySessions: [MediaLibraryPurpose: MediaLibrarySession] = [:]
++    @ObservationIgnored var activeMediaLibraryPurpose: MediaLibraryPurpose?
+ 
+ }
+diff --git a/Sources/NexGenVideo/Generation/UI/GenerationView.swift b/Sources/NexGenVideo/Generation/UI/GenerationView.swift
+index 17833818..c637e292 100644
+--- a/Sources/NexGenVideo/Generation/UI/GenerationView.swift
++++ b/Sources/NexGenVideo/Generation/UI/GenerationView.swift
+@@ -67,6 +67,7 @@ struct GenerationView: View {
+ 
+     @State private var dropError: String? = nil
+     @State private var dropErrorTask: Task<Void, Never>? = nil
++    @State private var activeLibraryPickerID: String?
+ 
+     @AppStorage("generationPromptExtra") private var promptExtra: Double = 0
+     @State private var liveExtra: Double?
+@@ -742,6 +743,7 @@ struct GenerationView: View {
+     private var audioVideoStrip: some View {
+         frameSlot(
+             label: "Source Video",
++            pickerID: "audio-source-video",
+             asset: audioVideoSource,
+             isTargeted: $audioVideoTargeted,
+             accepting: [.video],
+@@ -1003,10 +1005,10 @@ struct GenerationView: View {
+ 
+     private var videoFrameStrip: some View {
+         HStack(spacing: AppTheme.Spacing.xs) {
+-            frameSlot(label: "First Frame", asset: firstFrame, isTargeted: $firstFrameTargeted,
++            frameSlot(label: "First Frame", pickerID: "first-frame", asset: firstFrame, isTargeted: $firstFrameTargeted,
+                       onDrop: { firstFrame = $0 }, onClear: { firstFrame = nil })
+             if selectedVideoCapabilities?.supportsLastFrame == true {
+-                frameSlot(label: "Last Frame", asset: lastFrame, isTargeted: $lastFrameTargeted,
++                frameSlot(label: "Last Frame", pickerID: "last-frame", asset: lastFrame, isTargeted: $lastFrameTargeted,
+                           onDrop: { lastFrame = $0 }, onClear: { lastFrame = nil })
+             }
+         }
+@@ -1069,8 +1071,9 @@ struct GenerationView: View {
+                 }
+                 if !isRefCapReached {
+                     dropZone(
++                        pickerID: "video-references",
+                         isTargeted: $refsTargeted,
+-                        accepting: Set(ClipType.allCases),
++                        accepting: Set(ClipType.allCases.filter { refCap(for: $0) > 0 }),
+                         iconName: "plus"
+                     ) { asset in
+                         addRefAsset(asset)
+@@ -1169,14 +1172,16 @@ struct GenerationView: View {
+     }
+ 
+     private func validatedDropZone(
++        pickerID: String,
+         isTargeted: Binding<Bool>,
+         expects: Set<ClipType>,
+         iconName: String,
+         onDrop: @escaping (MediaAsset) -> Void
+     ) -> some View {
+         dropZone(
++            pickerID: pickerID,
+             isTargeted: isTargeted,
+-            accepting: Set(ClipType.allCases),
++            accepting: expects,
+             iconName: iconName
+         ) { asset in
+             if expects.contains(asset.type) {
+@@ -1249,7 +1254,9 @@ struct GenerationView: View {
+     }
+ 
+     private func frameSlot(
+-        label: String, asset: MediaAsset?,
++        label: String,
++        pickerID: String,
++        asset: MediaAsset?,
+         isTargeted: Binding<Bool>,
+         accepting acceptedTypes: Set<ClipType> = [.image],
+         iconName: String = "photo.badge.plus",
+@@ -1286,6 +1293,7 @@ struct GenerationView: View {
+                 }
+             } else {
+                 validatedDropZone(
++                    pickerID: pickerID,
+                     isTargeted: isTargeted,
+                     expects: acceptedTypes,
+                     iconName: iconName,
+@@ -1314,6 +1322,7 @@ struct GenerationView: View {
+                     }
+                 }
+                 validatedDropZone(
++                    pickerID: "image-references",
+                     isTargeted: $imageRefTargeted,
+                     expects: [.image],
+                     iconName: "photo.badge.plus"
+@@ -1376,6 +1385,7 @@ struct GenerationView: View {
+         HStack(spacing: AppTheme.Spacing.xs) {
+             frameSlot(
+                 label: "Source Video",
++                pickerID: "edit-source-video",
+                 asset: sourceVideo,
+                 isTargeted: $sourceVideoTargeted,
+                 accepting: [.video],
+@@ -1386,6 +1396,7 @@ struct GenerationView: View {
+             if selectedVideoCapabilities?.supportsReferences == true {
+                 frameSlot(
+                     label: "Reference Image",
++                    pickerID: "edit-reference-image",
+                     asset: imageReferences.first,
+                     isTargeted: $motionReferenceTargeted,
+                     accepting: [.image],
+@@ -1400,34 +1411,60 @@ struct GenerationView: View {
+     // MARK: - Shared drop zone
+ 
+     private func dropZone(
++        pickerID: String,
+         isTargeted: Binding<Bool>,
+         accepting acceptedTypes: Set<ClipType> = [.image],
+         iconName: String = "photo.badge.plus",
+         onDrop: @escaping (MediaAsset) -> Void
+     ) -> some View {
+-        Image(systemName: iconName)
+-            .interfaceFont(size: AppTheme.Typography.ui)
+-            .foregroundStyle(isTargeted.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
+-            .frame(width: AppTheme.GenerationPanel.referenceTileWidth, height: AppTheme.GenerationPanel.referenceTileHeight)
+-            .background(
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                    .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
+-            )
+-            .overlay(
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                    .strokeBorder(
+-                        isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Border.primaryColor,
+-                        style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: AppTheme.Border.compactDash)
+-                    )
+-            )
+-            .overlay {
+-                DropTargetOverlay(isTargeted: isTargeted) { payload in
+-                    for asset in editor.assetsFromDragPayload(payload)
+-                    where acceptedTypes.contains(asset.type) {
+-                        onDrop(asset)
+-                    }
++        Button {
++            activeLibraryPickerID = pickerID
++        } label: {
++            Image(systemName: iconName)
++                .interfaceFont(size: AppTheme.Typography.ui)
++                .foregroundStyle(isTargeted.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
++                .frame(width: AppTheme.GenerationPanel.referenceTileWidth, height: AppTheme.GenerationPanel.referenceTileHeight)
++                .background(
++                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                        .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
++                )
++                .overlay(
++                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                        .strokeBorder(
++                            isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Border.primaryColor,
++                            style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: AppTheme.Border.compactDash)
++                        )
++                )
++                .contentShape(Rectangle())
++        }
++        .buttonStyle(.plain)
++        .help("Choose from Media or drop a source")
++        .overlay {
++            DropTargetOverlay(isTargeted: isTargeted) { payload in
++                for asset in editor.assetsFromDragPayload(payload)
++                where acceptedTypes.contains(asset.type) {
++                    onDrop(asset)
+                 }
+             }
++        }
++        .popover(isPresented: Binding(
++            get: { activeLibraryPickerID == pickerID },
++            set: { if !$0 { activeLibraryPickerID = nil } }
++        ), arrowEdge: .bottom) {
++            LibraryAssetPicker(
++                assets: editor.agentPickableMediaAssets.filter { acceptedTypes.contains($0.type) },
++                purpose: .generationInput(pickerID),
++                showsSearch: true,
++                showsTypeTabs: acceptedTypes.count > 1,
++                scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
++                emptyLabel: "No compatible media"
++            ) { asset in
++                onDrop(asset)
++                activeLibraryPickerID = nil
++            }
++            .frame(width: AppTheme.ComponentSize.agentAssetPickerWidth)
++            .padding(AppTheme.Spacing.sm)
++        }
+     }
+ 
+     // MARK: - Submit button
+diff --git a/Sources/NexGenVideo/Inspector/InspectorView.swift b/Sources/NexGenVideo/Inspector/InspectorView.swift
+index 0eaad4d6..7730d2e8 100644
+--- a/Sources/NexGenVideo/Inspector/InspectorView.swift
++++ b/Sources/NexGenVideo/Inspector/InspectorView.swift
+@@ -530,7 +530,7 @@ struct InspectorView: View {
+         var names: [String: String] = [:]
+         var paths: [String: String] = [:]
+         for asset in editor.mediaAssets {
+-            names[asset.id] = asset.name
++            names[asset.id] = asset.userFacingFilename
+             paths[asset.id] = asset.url.path
+         }
+         return ObjectGraph.from(
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaLibrarySession.swift b/Sources/NexGenVideo/MediaPanel/MediaLibrarySession.swift
+new file mode 100644
+index 00000000..1eb01822
+--- /dev/null
++++ b/Sources/NexGenVideo/MediaPanel/MediaLibrarySession.swift
+@@ -0,0 +1,129 @@
++import Foundation
++
++enum MediaLibraryPurpose: Hashable, Sendable {
++    case workspace
++    case editSource
++    case productionSource
++    case postproductionSource
++    case agentReference
++    case workflowIntake(String)
++    case generationInput(String)
++
++    var accessibilitySuffix: String {
++        switch self {
++        case .workspace: "workspace"
++        case .editSource: "edit"
++        case .productionSource: "production"
++        case .postproductionSource: "postproduction"
++        case .agentReference: "agent"
++        case .workflowIntake(let id): "intake-\(id)"
++        case .generationInput(let id): "generation-\(id)"
++        }
++    }
++}
++
++enum MediaLibrarySearchScope: String, CaseIterable, Sendable {
++    case filename
++    case content
++    case transcript
++
++    var label: String {
++        switch self {
++        case .filename: "Filename"
++        case .content: "Content"
++        case .transcript: "Transcript"
++        }
++    }
++}
++
++enum MediaLibrarySort: String, CaseIterable, Sendable {
++    case dateAdded
++    case name
++    case duration
++    case type
++
++    var label: String {
++        switch self {
++        case .dateAdded: "Date Added"
++        case .name: "Name"
++        case .duration: "Duration"
++        case .type: "Type"
++        }
++    }
++}
++
++enum MediaLibraryLayout: String, CaseIterable, Sendable {
++    case grid
++    case list
++}
++
++@Observable
++@MainActor
++final class MediaLibrarySession {
++    let purpose: MediaLibraryPurpose
++    var query = ""
++    var searchScope: MediaLibrarySearchScope = .filename
++    var folderID: String?
++    var filterTypes: Set<ClipType> = []
++    var aiOnly = false
++    var sort: MediaLibrarySort = .dateAdded
++    var sortAscending = true
++    var layout: MediaLibraryLayout = .grid
++    var thumbnailSize = Double(AppTheme.MediaPanel.thumbnailSmall)
++    var scrollAnchorID: String?
++    var selectedAssetIDs: Set<String> = []
++    var activeAssetID: String?
++    var sourceStates: [String: SourcePreviewState] = [:]
++
++    init(purpose: MediaLibraryPurpose) {
++        self.purpose = purpose
++    }
++
++    func sourceState(for assetID: String) -> SourcePreviewState {
++        sourceStates[assetID] ?? SourcePreviewState()
++    }
++
++    func rememberSourceState(_ state: SourcePreviewState, for assetID: String) {
++        sourceStates[assetID] = state
++    }
++}
++
++@MainActor
++enum MediaLibraryProjection {
++    static func assets(
++        from assets: [MediaAsset],
++        session: MediaLibrarySession
++    ) -> [MediaAsset] {
++        let query = session.query.trimmingCharacters(in: .whitespacesAndNewlines)
++        var output = assets.filter { asset in
++            guard session.folderID == nil || asset.folderId == session.folderID else { return false }
++            guard session.filterTypes.isEmpty || session.filterTypes.contains(asset.type) else { return false }
++            guard !session.aiOnly || asset.isGenerated else { return false }
++            guard query.isEmpty || session.searchScope != .filename
++                    || asset.userFacingFilename.localizedCaseInsensitiveContains(query)
++                    || asset.name.localizedCaseInsensitiveContains(query)
++            else { return false }
++            return true
++        }
++
++        switch session.sort {
++        case .dateAdded:
++            break
++        case .name:
++            output.sort {
++                $0.userFacingFilename.localizedCaseInsensitiveCompare($1.userFacingFilename) == .orderedAscending
++            }
++        case .duration:
++            output.sort { $0.duration < $1.duration }
++        case .type:
++            output.sort {
++                if $0.type == $1.type {
++                    return $0.userFacingFilename.localizedCaseInsensitiveCompare($1.userFacingFilename) == .orderedAscending
++                }
++                return $0.type.rawValue < $1.type.rawValue
++            }
++        }
++        if !session.sortAscending { output.reverse() }
++        return output
++    }
++}
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
+index b6e2279f..47f04af0 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
+@@ -1,8 +1,12 @@
+ import SwiftUI
+ 
+ struct AssetThumbnailView: View {
++    enum Style { case grid, list }
++
+     let asset: MediaAsset
+     var onMoveToFolderMenu: AnyView? = nil
++    var style: Style = .grid
++    var libraryPurpose: MediaLibraryPurpose?
+ 
+     @Environment(EditorViewModel.self) var editor
+     @State private var isRenaming = false
+@@ -11,6 +15,33 @@ struct AssetThumbnailView: View {
+     @State private var isHovering = false
+ 
+     var body: some View {
++        Group {
++            switch style {
++            case .grid: gridBody
++            case .list: listBody
++            }
++        }
++        .frame(maxWidth: .infinity)
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(identifier: "selection.asset.\(asset.id)")
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
++        .contentShape(Rectangle())
++        .onTapGesture(count: 1) {
++            handleTap(modifiers: NSApp.currentEvent?.modifierFlags ?? [])
++        }
++        .contextMenu {
++            contextActivation
++            contextMenuItems
++        }
++        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
++        .allowsHitTesting(!isSwapDimmed)
++    }
++
++    private var gridBody: some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+             ZStack {
+                 Rectangle().fill(AppTheme.Background.overlayColor)
+@@ -48,7 +79,7 @@ struct AssetThumbnailView: View {
+                         }
+                         .onExitCommand { isRenaming = false }
+                 } else {
+-                    Text(asset.name)
++                    Text(asset.libraryDisplayName)
+                         .interfaceFont(size: AppTheme.Typography.ui)
+                         .lineLimit(1)
+                         .truncationMode(.middle)
+@@ -67,24 +98,66 @@ struct AssetThumbnailView: View {
+                     .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
+             )
+         }
+-        .frame(maxWidth: .infinity)
+-        .background {
+-            if WorkspaceUIAcceptance.isRequested {
+-                AppRelaunchClickProbe(identifier: "selection.asset.\(asset.id)")
+-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+-                    .allowsHitTesting(false)
++    }
++
++    private var listBody: some View {
++        HStack(spacing: AppTheme.Spacing.md) {
++            ZStack {
++                Rectangle().fill(AppTheme.Background.overlayColor)
++                thumbnailContent
++            }
++            .aspectRatio(16.0 / 9.0, contentMode: .fit)
++            .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
++            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
++            .overlay(
++                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                    .strokeBorder(borderColor, lineWidth: borderWidth)
++            )
++
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                if isRenaming {
++                    TextField("Name", text: $renameDraft)
++                        .textFieldStyle(.plain)
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .focused($isRenameFieldFocused)
++                        .onSubmit { commitRename() }
++                        .onExitCommand { isRenaming = false }
++                } else {
++                    Text(asset.libraryDisplayName)
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(isSelected || isActiveSource ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
++                        .lineLimit(1)
++                        .truncationMode(.middle)
++                        .onTapGesture(count: 2) { beginRename() }
++                }
++                HStack(spacing: AppTheme.Spacing.sm) {
++                    Text(asset.type.trackLabel)
++                    if showsDurationBadge { Text(formatDuration(asset.duration)).monospacedDigit() }
++                    if asset.isGenerated { Label("AI", systemImage: "sparkles") }
++                    if isOnTimeline { Label("Used", systemImage: "timeline.selection") }
++                }
++                .interfaceFont(size: AppTheme.Typography.metadata)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++            }
++
++            Spacer(minLength: AppTheme.Spacing.sm)
++            if isMissing {
++                Image(systemName: "exclamationmark.triangle.fill")
++                    .foregroundStyle(AppTheme.Status.errorColor)
++                    .help("Media Offline")
+             }
+         }
+-        .contentShape(Rectangle())
+-        .onTapGesture(count: 1) {
+-            handleTap(modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+-        }
+-        .contextMenu {
+-            contextActivation
+-            contextMenuItems
++        .padding(.horizontal, AppTheme.Spacing.sm)
++        .padding(.vertical, AppTheme.Spacing.xs)
++        .background(
++            isSelected || isActiveSource
++                ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
++                : AppTheme.Background.clearColor,
++            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++        )
++        .onHover { hovering in
++            withAnimation(.easeOut(duration: AppTheme.Anim.quick)) { isHovering = hovering }
+         }
+-        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
+-        .allowsHitTesting(!isSwapDimmed)
+     }
+ 
+     @ViewBuilder
+@@ -92,7 +165,11 @@ struct AssetThumbnailView: View {
+         AppTheme.Background.clearColor
+             .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
+             .onAppear {
+-                editor.activateMediaAsset(asset, preservingSelection: true)
++                if let libraryPurpose {
++                    editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
++                } else {
++                    editor.activateMediaAsset(asset, preservingSelection: true)
++                }
+             }
+     }
+ 
+@@ -142,7 +219,11 @@ struct AssetThumbnailView: View {
+     }
+ 
+     private func performSourceAction(_ action: (EditorViewModel) -> Void) {
+-        editor.activateMediaAsset(asset, preservingSelection: true)
++        if let libraryPurpose {
++            editor.activateMediaAsset(asset, preservingSelection: true, for: libraryPurpose)
++        } else {
++            editor.activateMediaAsset(asset, preservingSelection: true)
++        }
+         action(editor)
+     }
+ 
+@@ -408,7 +489,13 @@ struct AssetThumbnailView: View {
+         let shiftHeld = modifiers.contains(.shift)
+ 
+         if shiftHeld {
+-            editor.toggleMediaAssetSelection(asset)
++            if let libraryPurpose {
++                editor.toggleMediaAssetSelection(asset, for: libraryPurpose)
++            } else {
++                editor.toggleMediaAssetSelection(asset)
++            }
++        } else if let libraryPurpose {
++            editor.selectMediaAsset(asset, for: libraryPurpose)
+         } else {
+             editor.selectMediaAsset(asset)
+         }
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
+index a56b6b85..a36af119 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
+@@ -33,6 +33,33 @@ extension MediaTab {
+         let tileWidth: CGFloat
+         let spacing: CGFloat
+     }
++
++    func listScroll(cells: [MediaCell]) -> some View {
++        let orderedIDs = cells.map(\.id)
++        return ScrollViewReader { proxy in
++            ScrollView {
++                LazyVStack(spacing: AppTheme.Spacing.xs) {
++                    ForEach(cells) { cell in
++                        listCellView(for: cell)
++                            .id(cell.id)
++                    }
++                }
++                .padding(AppTheme.Spacing.md)
++            }
++            .onAppear {
++                publishOrderedIds(orderedIDs)
++                if editor.mediaPanelColumnCount != 1 { editor.mediaPanelColumnCount = 1 }
++            }
++            .onChange(of: orderedIDs) { _, ids in publishOrderedIds(ids) }
++            .onChange(of: editor.mediaPanelScrollTarget) { _, target in
++                guard workspace == editor.workspaceFocus, let target else { return }
++                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
++                    proxy.scrollTo(target, anchor: .center)
++                }
++                editor.mediaPanelScrollTarget = nil
++            }
++        }
++    }
+ }
+ 
+ // MARK: - Layout math
+@@ -144,6 +171,12 @@ extension MediaTab {
+             }
+         }
+     }
++
++    var mediaListView: some View {
++        let cells = subfoldersInCurrentFolder.map { MediaCell(kind: .folder($0)) }
++            + assetsInCurrentFolder.map { MediaCell(kind: .asset($0)) }
++        return listScroll(cells: cells)
++    }
+ }
+ 
+ // MARK: - Flat mode (every asset, no folders)
+@@ -166,6 +199,10 @@ extension MediaTab {
+             }
+         }
+     }
++
++    var flatListView: some View {
++        listScroll(cells: sortAndFilter(editor.mediaAssets).map { MediaCell(kind: .asset($0)) })
++    }
+ }
+ 
+ // MARK: - Grouped mode (folder sections with dividers)
+@@ -315,12 +352,21 @@ extension MediaTab {
+                         .foregroundStyle(AppTheme.Text.mutedColor)
+                         .padding(.vertical, AppTheme.Spacing.sm)
+                 } else {
+-                    let columns = [GridItem(.adaptive(minimum: thumbnailSize), spacing: spacing)]
+-                    LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
+-                        ForEach(assets) { asset in
+-                            assetCellView(for: asset)
+-                                .frame(width: tileWidth)
+-                                .id(asset.id)
++                    if assetLayout == .list {
++                        LazyVStack(spacing: AppTheme.Spacing.xs) {
++                            ForEach(assets) { asset in
++                                assetListCellView(for: asset)
++                                    .id(asset.id)
++                            }
++                        }
++                    } else {
++                        let columns = [GridItem(.adaptive(minimum: thumbnailSize), spacing: spacing)]
++                        LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
++                            ForEach(assets) { asset in
++                                assetCellView(for: asset)
++                                    .frame(width: tileWidth)
++                                    .id(asset.id)
++                            }
+                         }
+                     }
+                 }
+@@ -377,7 +423,8 @@ extension MediaTab {
+     func assetCellView(for asset: MediaAsset) -> some View {
+         AssetThumbnailView(
+             asset: asset,
+-            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset))
++            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset)),
++            libraryPurpose: mediaPurpose
+         )
+         .draggable(dragPayload(for: asset)) {
+             dragPreview(for: asset)
+@@ -385,6 +432,56 @@ extension MediaTab {
+         .background(assetFrameReader(for: asset.id))
+     }
+ 
++    func assetListCellView(for asset: MediaAsset) -> some View {
++        AssetThumbnailView(
++            asset: asset,
++            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset)),
++            style: .list,
++            libraryPurpose: mediaPurpose
++        )
++        .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
++        .background(assetFrameReader(for: asset.id))
++    }
++
++    @ViewBuilder
++    func listCellView(for cell: MediaCell) -> some View {
++        switch cell.kind {
++        case .folder(let folder):
++            folderListRow(folder)
++                .background(assetFrameReader(for: cell.id))
++        case .asset(let asset):
++            assetListCellView(for: asset)
++        }
++    }
++
++    private func folderListRow(_ folder: MediaFolder) -> some View {
++        let dropHover = Binding<Bool>(
++            get: { dropTargetFolderId == folder.id },
++            set: { dropTargetFolderId = $0 ? folder.id : nil }
++        )
++        return MediaFolderListRow(
++            folder: folder,
++            childCount: editor.subfolders(of: folder.id).count + editor.assetsIn(folderId: folder.id).count,
++            isSelected: editor.selectedFolderIds.contains(folder.id),
++            isDropTargeted: dropTargetFolderId == folder.id,
++            isRenaming: Binding(
++                get: { renamingFolderId == folder.id },
++                set: { renamingFolderId = $0 ? folder.id : nil }
++            ),
++            onSelect: { handleFolderTap(folder) },
++            onOpen: { openFolder(id: folder.id) },
++            onRename: { editor.renameFolder(id: folder.id, name: $0) },
++            onDelete: { editor.deleteFolders(ids: [folder.id]) }
++        )
++        .draggable(MediaTab.folderDragString(forFolderId: folder.id)) {
++            FolderDragPreview(name: folder.name)
++        }
++        .onDrop(of: [.fileURL, .text], isTargeted: dropHover) { providers in
++            handleProviderDrop(providers, into: folder.id)
++            return true
++        }
++    }
++
+     @ViewBuilder
+     func cellView(for cell: MediaCell) -> some View {
+         switch cell.kind {
+@@ -483,6 +580,93 @@ extension MediaTab {
+     }
+ }
+ 
++private struct MediaFolderListRow: View {
++    let folder: MediaFolder
++    let childCount: Int
++    let isSelected: Bool
++    let isDropTargeted: Bool
++    @Binding var isRenaming: Bool
++    let onSelect: () -> Void
++    let onOpen: () -> Void
++    let onRename: (String) -> Void
++    let onDelete: () -> Void
++
++    @State private var draft = ""
++    @FocusState private var renameFocused: Bool
++    @State private var lastClickTime: Date?
++
++    var body: some View {
++        HStack(spacing: AppTheme.Spacing.md) {
++            Image(systemName: "folder.fill")
++                .interfaceFont(size: AppTheme.Typography.title)
++                .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
++                .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
++            if isRenaming {
++                TextField("Folder", text: $draft)
++                    .textFieldStyle(.plain)
++                    .focused($renameFocused)
++                    .onSubmit { commitRename() }
++                    .onExitCommand { isRenaming = false }
++            } else {
++                Text(folder.name)
++                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                    .foregroundStyle(AppTheme.Text.primaryColor)
++                    .lineLimit(1)
++            }
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Text("\(childCount)")
++                .monospacedDigit()
++                .foregroundStyle(AppTheme.Text.mutedColor)
++        }
++        .padding(.horizontal, AppTheme.Spacing.sm)
++        .padding(.vertical, AppTheme.Spacing.xs)
++        .background(
++            isSelected || isDropTargeted
++                ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
++                : AppTheme.Background.clearColor,
++            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++        )
++        .contentShape(Rectangle())
++        .onTapGesture { handleClick() }
++        .contextMenu {
++            Button("Open", action: onOpen)
++            Button("Rename") { beginRename() }
++            Divider()
++            Button("Remove", role: .destructive, action: onDelete)
++        }
++        .onChange(of: isRenaming) { _, value in
++            if value { beginRename() }
++        }
++        .onChange(of: renameFocused) { _, value in
++            if !value { commitRename() }
++        }
++    }
++
++    private func beginRename() {
++        draft = folder.name
++        isRenaming = true
++        renameFocused = true
++    }
++
++    private func commitRename() {
++        guard isRenaming else { return }
++        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
++        if !name.isEmpty, name != folder.name { onRename(name) }
++        isRenaming = false
++    }
++
++    private func handleClick() {
++        let now = Date()
++        if let lastClickTime, now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval {
++            onOpen()
++            self.lastClickTime = nil
++        } else {
++            onSelect()
++            lastClickTime = now
++        }
++    }
++}
++
+ // MARK: - File-private supporting views/types
+ 
+ struct AssetFramePreferenceKey: PreferenceKey {
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
+index 17da3fc9..332cc2ac 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
+@@ -7,7 +7,7 @@ extension MediaTab {
+     }
+ 
+     var searchResults: some View {
+-        let nameMatches = sortAndFilter(editor.mediaAssets)
++        let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
+         return ScrollView {
+             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                 if !visualHits.isEmpty {
+@@ -17,19 +17,26 @@ extension MediaTab {
+                     }
+                 }
+                 if !spokenHits.isEmpty {
+-                    momentHeader("Spoken", icon: "waveform", count: spokenHits.count, collapsible: true)
+-                    if !collapsedSearchSections.contains("Spoken") {
++                    momentHeader("Transcript", icon: "waveform", count: spokenHits.count, collapsible: true)
++                    if !collapsedSearchSections.contains("Transcript") {
+                         VStack(spacing: AppTheme.Spacing.sm) {
+                             ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
+                         }
+                         .padding(.bottom, AppTheme.Spacing.sm)
+                     }
+                 }
++                if !documentHits.isEmpty {
++                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: documentHits.count)
++                    VStack(spacing: AppTheme.Spacing.sm) {
++                        ForEach(documentHits) { documentRow($0) }
++                    }
++                    .padding(.bottom, AppTheme.Spacing.sm)
++                }
+                 if !nameMatches.isEmpty {
+                     momentHeader("Files", icon: "doc", count: nameMatches.count)
+                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
+                 }
+-                if visualHits.isEmpty, spokenHits.isEmpty, nameMatches.isEmpty {
++                if visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
+                     Text("No matches for “\(trimmedSearchQuery)”")
+                         .interfaceFont(size: AppTheme.Typography.ui)
+                         .foregroundStyle(AppTheme.Text.tertiaryColor)
+@@ -101,7 +108,7 @@ extension MediaTab {
+                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                 .frame(maxWidth: .infinity)
+                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+-            Text(asset?.name ?? "")
++            Text(asset?.libraryDisplayName ?? "")
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .lineLimit(1)
+@@ -149,7 +156,7 @@ extension MediaTab {
+                     .interfaceFont(size: AppTheme.Typography.ui)
+                     .foregroundStyle(AppTheme.Text.primaryColor)
+                     .lineLimit(3)
+-                Text("\(asset?.name ?? "") · \(timecode(hit.start))")
++                Text("\(asset?.libraryDisplayName ?? "") · \(timecode(hit.start))")
+                     .interfaceFont(size: AppTheme.Typography.metadata)
+                     .foregroundStyle(AppTheme.Text.tertiaryColor)
+                     .lineLimit(1)
+@@ -180,18 +187,49 @@ extension MediaTab {
+             .aspectRatio(16.0 / 9.0, contentMode: .fit)
+             .frame(maxWidth: .infinity)
+             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+-            Text(asset.name)
++            Text(asset.libraryDisplayName)
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .lineLimit(1)
+         }
+         .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
+-        .onTapGesture { editor.selectMediaPanelItem(asset.id) }
++        .onTapGesture { editor.selectMediaAsset(asset, for: mediaPurpose) }
++    }
++
++    private func documentRow(_ hit: DocumentSearch.Hit) -> some View {
++        let asset = editor.mediaAssets.first { $0.id == hit.assetID }
++        return Button {
++            guard let asset else { return }
++            editor.selectMediaAsset(asset, for: mediaPurpose)
++        } label: {
++            HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
++                Image(systemName: "doc.text")
++                    .interfaceFont(size: AppTheme.Typography.title)
++                    .foregroundStyle(AppTheme.Text.tertiaryColor)
++                    .frame(width: AppTheme.ComponentSize.searchThumbnailWidth)
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text(hit.snippet)
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                        .lineLimit(3)
++                    Text(asset?.libraryDisplayName ?? "")
++                        .interfaceFont(size: AppTheme.Typography.metadata)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                        .lineLimit(1)
++                }
++                Spacer(minLength: AppTheme.Spacing.none)
++            }
++            .padding(.horizontal, AppTheme.Spacing.md)
++            .contentShape(Rectangle())
++        }
++        .buttonStyle(.plain)
++        .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
+     }
+ 
+     private func previewMoment(assetID: String, atSeconds seconds: Double) {
+         guard let asset = editor.mediaAssets.first(where: { $0.id == assetID }) else { return }
+-        editor.selectMediaAsset(asset, atSourceFrame: secondsToFrame(seconds: seconds, fps: editor.timeline.fps))
++        editor.selectMediaAsset(asset, for: mediaPurpose)
++        editor.seekSourceToFrame(secondsToFrame(seconds: seconds, fps: editor.timeline.fps))
+     }
+ 
+     private func timecode(_ seconds: Double) -> String {
+@@ -209,24 +247,94 @@ extension MediaTab {
+         guard !query.isEmpty else {
+             visualHits = []
+             spokenHits = []
++            documentHits = []
+             return
+         }
+-        let assets = editor.mediaAssets
++        switch searchScope {
++        case .filename:
++            visualHits = []
++            spokenHits = []
++            documentHits = []
++            return
++        case .content:
++            spokenHits = []
++        case .transcript:
++            visualHits = []
++            documentHits = []
++        }
++        let matchingAssets = editor.mediaAssets.filter(passesFilters)
++        let timedAssets = matchingAssets
+             .filter { $0.type == .video || $0.type == .audio }
+             .map { (id: $0.id, url: $0.url) }
++        let documents = matchingAssets
++            .filter { $0.type == .document }
++            .map { (id: $0.id, url: $0.url) }
++        let allowedIDs = Set(matchingAssets.map(\.id))
+         let coordinator = editor.searchIndex
+         momentSearchTask = Task {
+             try? await Task.sleep(for: .milliseconds(250))
+             guard !Task.isCancelled else { return }
+-            let spoken = TranscriptSearch.search(query: query, assets: assets)
+-            let visual = await coordinator.search(query: query)
++            let spoken: [TranscriptSearch.Hit]
++            let visual: [VisualSearch.Hit]
++            let text: [DocumentSearch.Hit]
++            switch searchScope {
++            case .filename:
++                spoken = []
++                visual = []
++                text = []
++            case .content:
++                spoken = []
++                visual = await coordinator.search(query: query).filter { allowedIDs.contains($0.assetID) }
++                text = await DocumentSearch.search(query: query, assets: documents)
++            case .transcript:
++                spoken = TranscriptSearch.search(query: query, assets: timedAssets)
++                visual = []
++                text = []
++            }
+             guard !Task.isCancelled else { return }
+             visualHits = visual
+             spokenHits = spoken
++            documentHits = text
+         }
+     }
+ }
+ 
++enum DocumentSearch {
++    struct Hit: Identifiable, Sendable {
++        let assetID: String
++        let snippet: String
++        var id: String { assetID }
++    }
++
++    private static let maximumBytes = 2_000_000
++    private static let snippetRadius = 96
++
++    nonisolated static func search(
++        query: String,
++        assets: [(id: String, url: URL)]
++    ) async -> [Hit] {
++        await Task.detached(priority: .userInitiated) {
++            let needle = query.lowercased()
++            return assets.compactMap { asset in
++                guard let handle = try? FileHandle(forReadingFrom: asset.url) else { return nil }
++                defer { try? handle.close() }
++                guard let data = try? handle.read(upToCount: maximumBytes),
++                      let text = String(data: data, encoding: .utf8),
++                      let match = text.lowercased().range(of: needle)
++                else { return nil }
++                let lower = text.index(match.lowerBound, offsetBy: -snippetRadius, limitedBy: text.startIndex)
++                    ?? text.startIndex
++                let upper = text.index(match.upperBound, offsetBy: snippetRadius, limitedBy: text.endIndex)
++                    ?? text.endIndex
++                let snippet = text[lower..<upper]
++                    .replacingOccurrences(of: "\n", with: " ")
++                    .trimmingCharacters(in: .whitespacesAndNewlines)
++                return Hit(assetID: asset.id, snippet: snippet)
++            }
++        }.value
++    }
++}
++
+ /// Async frame thumbnail for a search hit.
+ private struct MomentThumbnail: View {
+     let url: URL?
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+index 3f1324be..e87f643a 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+@@ -4,13 +4,20 @@ struct MediaTab: View {
+     @Environment(EditorViewModel.self) var editor
+     let workspace: EditorViewModel.WorkspaceFocus
+ 
++    var mediaPurpose: MediaLibraryPurpose {
++        workspace == .media ? .workspace : .editSource
++    }
++
+     // Toolbar state
+     @State var sortMode: SortMode = .dateAdded
+     @State var filterTypes: Set<ClipType> = []
+     @State var filterAI = false
+     @State var searchQuery: String = ""
+-    @State var thumbnailSize: Double = 80
++    @State var searchScope: MediaLibrarySearchScope = .filename
++    @State var thumbnailSize: Double = Double(AppTheme.MediaPanel.thumbnailSmall)
+     @State var viewMode: ViewMode = .folder
++    @State var assetLayout: MediaLibraryLayout = .grid
++    @State var sortAscending = true
+ 
+     // Navigation + selection state
+     @State var currentFolderId: String? = nil
+@@ -27,6 +34,7 @@ struct MediaTab: View {
+     @State var isDropTargeted = false
+     @State var visualHits: [VisualSearch.Hit] = []
+     @State var spokenHits: [TranscriptSearch.Hit] = []
++    @State var documentHits: [DocumentSearch.Hit] = []
+     @State var collapsedSearchSections: Set<String> = []
+     @State var momentSearchTask: Task<Void, Never>?
+     @State var assetFrames: [String: CGRect] = [:]
+@@ -56,7 +64,7 @@ struct MediaTab: View {
+ 
+     /// Only media types that can actually appear in the panel. ClipType.text
+     /// exists for timeline clips but is never assigned to a MediaAsset.
+-    private static let filterableTypes: [ClipType] = [.video, .audio, .image]
++    private static let filterableTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
+ 
+     private enum ThumbnailPreset: String, CaseIterable, Identifiable {
+         case small, medium, large, xlarge
+@@ -71,10 +79,10 @@ struct MediaTab: View {
+         }
+         var size: Double {
+             switch self {
+-            case .small: 80
+-            case .medium: 110
+-            case .large: 150
+-            case .xlarge: 200
++            case .small: Double(AppTheme.MediaPanel.thumbnailSmall)
++            case .medium: Double(AppTheme.MediaPanel.thumbnailMedium)
++            case .large: Double(AppTheme.MediaPanel.thumbnailLarge)
++            case .xlarge: Double(AppTheme.MediaPanel.thumbnailExtraLarge)
+             }
+         }
+     }
+@@ -100,10 +108,12 @@ struct MediaTab: View {
+                         } else if !trimmedSearchQuery.isEmpty {
+                             searchResults
+                         } else {
+-                            switch viewMode {
+-                            case .folder: mediaGridView
+-                            case .flat: flatGridView
+-                            case .grouped: groupedGridView
++                            switch (viewMode, assetLayout) {
++                            case (.folder, .grid): mediaGridView
++                            case (.folder, .list): mediaListView
++                            case (.flat, .grid): flatGridView
++                            case (.flat, .list): flatListView
++                            case (.grouped, _): groupedGridView
+                             }
+                         }
+                     }
+@@ -121,6 +131,7 @@ struct MediaTab: View {
+             }
+             .layoutPriority(1)
+             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
++            .onChange(of: searchScope) { _, _ in scheduleMomentSearch() }
+ 
+             if editor.showGenerationPanel && !mediaAreaCollapsed {
+                 GenerationView(
+@@ -157,17 +168,55 @@ struct MediaTab: View {
+         }
+         .onChange(of: editor.mediaPanelOpenFolderId, initial: true) { _, target in
+             guard workspace == editor.workspaceFocus, let target else { return }
+-            openFolder(id: target)
++            if target == MediaWorkspaceNavigation.rootRouteID {
++                navigateToFolder(nil)
++            } else {
++                openFolder(id: target)
++            }
+             editor.mediaPanelOpenFolderId = nil
+         }
+         .onChange(of: editor.mediaPanelPasteRequestTick) { _, _ in
+             guard workspace == editor.workspaceFocus else { return }
+             handleClipboardPaste()
+         }
+-        .onChange(of: currentFolderId, initial: true) { _, folderId in
++        .onChange(of: currentFolderId) { _, folderId in
+             editor.publishMediaPanelFolder(folderId, for: workspace)
++            editor.mediaLibrarySession(for: mediaPurpose).folderID = folderId
++        }
++        .onAppear {
++            let session = editor.mediaLibrarySession(for: mediaPurpose)
++            searchQuery = session.query
++            searchScope = session.searchScope
++            filterTypes = session.filterTypes
++            filterAI = session.aiOnly
++            sortMode = SortMode(session.sort)
++            sortAscending = session.sortAscending
++            thumbnailSize = session.thumbnailSize
++            assetLayout = session.layout
++            currentFolderId = session.folderID ?? editor.mediaPanelCurrentFolderId
++            editor.publishMediaPanelFolder(currentFolderId, for: workspace)
++            if let anchor = session.scrollAnchorID {
++                DispatchQueue.main.async { editor.mediaPanelScrollTarget = anchor }
++            }
++        }
++        .onChange(of: searchQuery) { _, value in editor.mediaLibrarySession(for: mediaPurpose).query = value }
++        .onChange(of: searchScope) { _, value in editor.mediaLibrarySession(for: mediaPurpose).searchScope = value }
++        .onChange(of: filterTypes) { _, value in editor.mediaLibrarySession(for: mediaPurpose).filterTypes = value }
++        .onChange(of: filterAI) { _, value in editor.mediaLibrarySession(for: mediaPurpose).aiOnly = value }
++        .onChange(of: sortMode) { _, value in editor.mediaLibrarySession(for: mediaPurpose).sort = value.librarySort }
++        .onChange(of: sortAscending) { _, value in editor.mediaLibrarySession(for: mediaPurpose).sortAscending = value }
++        .onChange(of: thumbnailSize) { _, value in editor.mediaLibrarySession(for: mediaPurpose).thumbnailSize = value }
++        .onChange(of: assetLayout) { _, value in editor.mediaLibrarySession(for: mediaPurpose).layout = value }
++        .onChange(of: editor.selectedMediaAssetIds) { _, value in
++            guard workspace == editor.workspaceFocus else { return }
++            editor.mediaLibrarySession(for: mediaPurpose).selectedAssetIDs = value
++        }
++        .onChange(of: editor.sourcePreviewStates) { _, _ in
++            guard workspace == editor.workspaceFocus, let asset = editor.activeSourceAsset else { return }
++            let session = editor.mediaLibrarySession(for: mediaPurpose)
++            session.activeAssetID = asset.id
++            session.rememberSourceState(editor.sourcePreviewState(for: asset.id), for: asset.id)
+         }
+-        .onAppear { editor.publishMediaPanelFolder(currentFolderId, for: workspace) }
+     }
+ 
+     private var swapBanner: some View {
+@@ -366,7 +415,24 @@ struct MediaTab: View {
+ 
+     @ViewBuilder
+     private var displayControls: some View {
+-        toolbarMenuIcon(systemName: "rectangle.grid.2x2") {
++        toolbarMenuIcon(
++            systemName: "rectangle.grid.2x2",
++            acceptanceIdentifier: "media.layout",
++            acceptanceState: assetLayout == .list
++        ) {
++            Section("Layout") {
++                Button {
++                    assetLayout = .grid
++                } label: {
++                    Label("Grid", systemImage: assetLayout == .grid ? "checkmark" : "rectangle.grid.2x2")
++                }
++                Button {
++                    assetLayout = .list
++                } label: {
++                    Label("List", systemImage: assetLayout == .list ? "checkmark" : "list.bullet")
++                }
++            }
++            Divider() // app-theme: native-menu-divider
+             Section("View") {
+                 ForEach(ViewMode.allCases, id: \.self) { mode in
+                     Button {
+@@ -393,13 +459,18 @@ struct MediaTab: View {
+             acceptanceIdentifier: "media.sort",
+             acceptanceState: sortMode == .name
+         ) {
+-            ForEach(SortMode.allCases, id: \.self) { mode in
+-                Button {
+-                    sortMode = mode
+-                } label: {
+-                    Label(mode.title, systemImage: sortMode == mode ? "checkmark" : "")
++                ForEach(SortMode.allCases, id: \.self) { mode in
++                    Button {
++                        if sortMode == mode {
++                            sortAscending.toggle()
++                        } else {
++                            sortMode = mode
++                            sortAscending = true
++                        }
++                    } label: {
++                        Label(mode.title, systemImage: sortMode == mode ? "checkmark" : "")
++                    }
+                 }
+-            }
+         }
+ 
+         toolbarMenuIcon(
+@@ -410,7 +481,10 @@ struct MediaTab: View {
+         ) {
+             ForEach(Self.filterableTypes, id: \.self) { type in
+                 Button { toggleFilter(type) } label: {
+-                    Label(type.trackLabel, systemImage: filterTypes.contains(type) ? "checkmark" : "")
++                    Label(
++                        type == .document ? "Text" : type.trackLabel,
++                        systemImage: filterTypes.contains(type) ? "checkmark" : ""
++                    )
+                 }
+             }
+             Divider() // app-theme: native-menu-divider
+@@ -466,6 +540,24 @@ struct MediaTab: View {
+             case .type: "Type"
+             }
+         }
++
++        init(_ sort: MediaLibrarySort) {
++            switch sort {
++            case .name: self = .name
++            case .dateAdded: self = .dateAdded
++            case .duration: self = .duration
++            case .type: self = .type
++            }
++        }
++
++        var librarySort: MediaLibrarySort {
++            switch self {
++            case .name: .name
++            case .dateAdded: .dateAdded
++            case .duration: .duration
++            case .type: .type
++            }
++        }
+     }
+ 
+     private var hasActiveFilters: Bool {
+@@ -496,22 +588,26 @@ struct MediaTab: View {
+         return folders.filter { $0.name.localizedCaseInsensitiveContains(q) }
+     }
+ 
+-    private func passesFilters(_ asset: MediaAsset) -> Bool {
++    func passesFilters(_ asset: MediaAsset) -> Bool {
+         let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
+         let aiOk = !filterAI || asset.isGenerated
+         let q = searchQuery.trimmingCharacters(in: .whitespaces)
+-        let nameOk = q.isEmpty || asset.name.localizedCaseInsensitiveContains(q)
++        let nameOk = q.isEmpty || searchScope != .filename
++            || asset.userFacingFilename.localizedCaseInsensitiveContains(q)
++            || asset.name.localizedCaseInsensitiveContains(q)
+         return typeOk && aiOk && nameOk
+     }
+ 
+     func sortAndFilter(_ assets: [MediaAsset]) -> [MediaAsset] {
+         let filtered = assets.filter(passesFilters)
+-        return switch sortMode {
++        var sorted = switch sortMode {
+         case .dateAdded: filtered
+-        case .name: filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+-        case .duration: filtered.sorted { $0.duration > $1.duration }
++        case .name: filtered.sorted { $0.userFacingFilename.localizedCaseInsensitiveCompare($1.userFacingFilename) == .orderedAscending }
++        case .duration: filtered.sorted { $0.duration < $1.duration }
+         case .type: filtered.sorted { $0.type.rawValue < $1.type.rawValue }
+         }
++        if !sortAscending { sorted.reverse() }
++        return sorted
+     }
+ 
+     private var currentFolderItemCount: Int {
+@@ -558,6 +654,23 @@ struct MediaTab: View {
+                 .focusable(false)
+                 .help("Clear search")
+             }
++            Menu {
++                ForEach(MediaLibrarySearchScope.allCases, id: \.self) { scope in
++                    Button {
++                        searchScope = scope
++                    } label: {
++                        Label(scope.label, systemImage: searchScope == scope ? "checkmark" : "")
++                    }
++                }
++            } label: {
++                Text(searchScope.label)
++                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
++                    .foregroundStyle(AppTheme.Text.tertiaryColor)
++            }
++            .menuStyle(.borderlessButton)
++            .menuIndicator(.hidden)
++            .fixedSize()
++            .help("Search scope")
+         }
+         .padding(.leading, AppTheme.Spacing.smMd)
+         .padding(.trailing, AppTheme.Spacing.xs)
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift
+new file mode 100644
+index 00000000..34d90b1a
+--- /dev/null
++++ b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift
+@@ -0,0 +1,290 @@
++import AppKit
++import SwiftUI
++
++struct MediaWorkspaceNavigation: View {
++    static let rootRouteID = "__media_library_root__"
++    @Environment(EditorViewModel.self) private var editor
++    @State private var selection: Set<String> = []
++    @State private var isDropTargeted = false
++    @State private var renameFolderID: String?
++    @State private var renameDraft = ""
++    @State private var pendingDelete: Set<String> = []
++
++    private struct Node: Identifiable {
++        let folder: MediaFolder
++        let children: [Node]?
++        var id: String { folder.id }
++    }
++
++    var body: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            header
++            MediaPanelDropArea(
++                isTargeted: $isDropTargeted,
++                onDrop: importDroppedItems
++            ) {
++                folderList
++            }
++            .overlay {
++                if isDropTargeted {
++                    RoundedRectangle(cornerRadius: AppTheme.Radius.md)
++                        .strokeBorder(
++                            AppTheme.Accent.primary,
++                            style: StrokeStyle(
++                                lineWidth: AppTheme.BorderWidth.thick,
++                                dash: AppTheme.Border.longDash
++                            )
++                        )
++                        .padding(AppTheme.Spacing.xs)
++                        .allowsHitTesting(false)
++                }
++            }
++            footer
++        }
++        .background(AppTheme.Background.surfaceColor)
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(identifier: "media.workspace.folderTree")
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
++        .onAppear { selection = editor.selectedFolderIds }
++        .onChange(of: editor.mediaPanelCurrentFolderId) { _, folderID in
++            guard editor.workspaceFocus == .media else { return }
++            selection = folderID.map { Set([$0]) } ?? []
++        }
++        .onChange(of: selection) { _, value in
++            editor.selectedFolderIds = value
++            guard value.count == 1, let folderID = value.first else { return }
++            openFolder(folderID)
++        }
++        .alert("Rename Folder", isPresented: renameAlertPresented) {
++            TextField("Folder name", text: $renameDraft)
++            Button("Cancel", role: .cancel) { renameFolderID = nil }
++            Button("Rename") { commitRename() }
++                .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++        }
++        .confirmationDialog(
++            pendingDelete.count == 1 ? "Remove Folder?" : "Remove Folders?",
++            isPresented: deleteConfirmationPresented
++        ) {
++            Button("Remove", role: .destructive) {
++                editor.deleteFolders(ids: pendingDelete)
++                selection.subtract(pendingDelete)
++                pendingDelete.removeAll()
++            }
++            Button("Cancel", role: .cancel) { pendingDelete.removeAll() }
++        } message: {
++            Text("Assets move to Imports. Asset IDs and edit references stay unchanged.")
++        }
++        .accessibilityIdentifier("media.folderTree")
++    }
++
++    private var header: some View {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Text("Folders")
++                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Text.primaryColor)
++            Spacer(minLength: AppTheme.Spacing.sm)
++            Button {
++                createFolder()
++            } label: {
++                Image(systemName: "folder.badge.plus")
++                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
++            }
++            .buttonStyle(.plain)
++            .hoverHighlight()
++            .help("New Folder")
++            .accessibilityLabel("New Folder")
++        }
++        .padding(.horizontal, AppTheme.Spacing.md)
++        .frame(height: AppTheme.Layout.workspaceHeaderHeight)
++        .panelHeaderBar()
++    }
++
++    private var folderList: some View {
++        List(selection: $selection) {
++            Button {
++                selection.removeAll()
++                editor.selectedFolderIds.removeAll()
++                editor.mediaPanelOpenFolderId = Self.rootRouteID
++                editor.publishMediaPanelFolder(nil, for: .media)
++                editor.mediaLibrarySession(for: .workspace).folderID = nil
++            } label: {
++                Label("Library", systemImage: "square.stack.3d.up")
++                    .frame(maxWidth: .infinity, alignment: .leading)
++            }
++            .buttonStyle(.plain)
++            .accessibilityIdentifier("media.folder.library")
++            .background {
++                if WorkspaceUIAcceptance.isRequested {
++                    AppRelaunchClickProbe(identifier: "media.folder.library")
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                        .allowsHitTesting(false)
++                }
++            }
++
++            OutlineGroup(folderNodes, children: \.children) { node in
++                folderRow(node.folder)
++                    .tag(node.id)
++                    .contextMenu { folderContextMenu(node.folder) }
++            }
++        }
++        .listStyle(.sidebar)
++    }
++
++    private func folderRow(_ folder: MediaFolder) -> some View {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Image(systemName: "folder")
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++            Text(folder.name)
++                .lineLimit(1)
++            Spacer(minLength: AppTheme.Spacing.xs)
++            Text("\(editor.assetsIn(folderId: folder.id).count)")
++                .monospacedDigit()
++                .foregroundStyle(AppTheme.Text.mutedColor)
++        }
++        .contentShape(Rectangle())
++        .onTapGesture(count: 2) { openFolder(folder.id) }
++        .accessibilityIdentifier("media.folder.\(folder.id)")
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(identifier: "media.folder.row.\(folder.id)")
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
++    }
++
++    @ViewBuilder
++    private func folderContextMenu(_ folder: MediaFolder) -> some View {
++        Button("Open") { openFolder(folder.id) }
++        Button("New Subfolder") { createFolder(in: folder.id) }
++        Button("Rename") { beginRename(folder) }
++        Divider()
++        Button("Remove", role: .destructive) { pendingDelete = [folder.id] }
++    }
++
++    private var footer: some View {
++        HStack(spacing: AppTheme.Spacing.sm) {
++            Button {
++                createFolder()
++            } label: {
++                Label("New", systemImage: "plus")
++            }
++            .buttonStyle(.capsule(.secondary))
++
++            Button {
++                guard selection.count == 1,
++                      let id = selection.first,
++                      let folder = editor.folder(id: id)
++                else { return }
++                beginRename(folder)
++            } label: {
++                Label("Rename", systemImage: "pencil")
++            }
++            .buttonStyle(.capsule(.secondary))
++            .disabled(selection.count != 1)
++
++            Menu {
++                Button("Relink Offline Media from Folder\u{2026}", action: presentRelinkPanel)
++                    .disabled(editor.offlineMediaRefs.isEmpty)
++                Divider()
++                Button("Remove", role: .destructive) { pendingDelete = selection }
++                    .disabled(selection.isEmpty)
++            } label: {
++                Image(systemName: "ellipsis")
++                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
++            }
++            .menuStyle(.button)
++            .help("Folder Actions")
++            .accessibilityLabel("Folder Actions")
++        }
++        .controlSize(.small)
++        .padding(AppTheme.Spacing.sm)
++        .overlay(alignment: .top) {
++            Rectangle()
++                .fill(AppTheme.Border.primaryColor)
++                .frame(height: AppTheme.BorderWidth.hairline)
++        }
++    }
++
++    private var folderNodes: [Node] {
++        makeNodes(parentID: nil, visited: [])
++    }
++
++    private func makeNodes(parentID: String?, visited: Set<String>) -> [Node] {
++        editor.subfolders(of: parentID).compactMap { folder in
++            guard !visited.contains(folder.id) else { return nil }
++            var nextVisited = visited
++            nextVisited.insert(folder.id)
++            let children = makeNodes(parentID: folder.id, visited: nextVisited)
++            return Node(folder: folder, children: children.isEmpty ? nil : children)
++        }
++    }
++
++    private var renameAlertPresented: Binding<Bool> {
++        Binding(
++            get: { renameFolderID != nil },
++            set: { if !$0 { renameFolderID = nil } }
++        )
++    }
++
++    private var deleteConfirmationPresented: Binding<Bool> {
++        Binding(
++            get: { !pendingDelete.isEmpty },
++            set: { if !$0 { pendingDelete.removeAll() } }
++        )
++    }
++
++    private func createFolder(in parentID: String? = nil) {
++        let destination = parentID ?? selection.first
++        let id = editor.createFolder(name: "New Folder", in: destination)
++        selection = [id]
++        if let folder = editor.folder(id: id) { beginRename(folder) }
++    }
++
++    private func beginRename(_ folder: MediaFolder) {
++        renameFolderID = folder.id
++        renameDraft = folder.name
++    }
++
++    private func commitRename() {
++        guard let id = renameFolderID else { return }
++        let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
++        if !name.isEmpty { editor.renameFolder(id: id, name: name) }
++        renameFolderID = nil
++    }
++
++    private func openFolder(_ id: String) {
++        guard editor.folder(id: id) != nil else { return }
++        editor.mediaPanelOpenFolderId = id
++        editor.mediaLibrarySession(for: .workspace).folderID = id
++    }
++
++    private func importDroppedItems(_ urls: [URL]) {
++        let folderID = selection.count == 1 ? selection.first : nil
++        Task { await MediaImportFlow.importItems(urls, into: folderID, editor: editor) }
++    }
++
++    private func presentRelinkPanel() {
++        let panel = NSOpenPanel()
++        panel.canChooseFiles = false
++        panel.canChooseDirectories = true
++        panel.allowsMultipleSelection = false
++        panel.prompt = "Relink"
++        panel.message = "Choose a folder containing the missing original files."
++        panel.begin { response in
++            guard response == .OK, let folder = panel.url else { return }
++            Task { @MainActor in
++                let result = await editor.relinkOfflineAssets(fromFolder: folder)
++                if let failure = result.failure {
++                    editor.mediaPanelToast = MediaPanelToast(message: failure)
++                } else {
++                    editor.mediaPanelToast = "Relinked \(result.relinked) of \(result.total) offline files."
++                }
++            }
++        }
++    }
++}
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift
+new file mode 100644
+index 00000000..5732e276
+--- /dev/null
++++ b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift
+@@ -0,0 +1,163 @@
++import SwiftUI
++
++struct MediaWorkspaceCenterView: View {
++    @Environment(EditorViewModel.self) private var editor
++
++    var body: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            if let progress = editor.mediaImportProgress {
++                MediaImportProgressBanner(progress: progress)
++            }
++            VSplitView {
++                MediaTab(workspace: .media)
++                    .frame(minHeight: AppTheme.Layout.mediaBrowserMinHeight)
++                    .accessibilityIdentifier("media.workspace.browser")
++                    .background {
++                        if WorkspaceUIAcceptance.isRequested {
++                            AppRelaunchClickProbe(identifier: "media.workspace.browser")
++                                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                                .allowsHitTesting(false)
++                        }
++                    }
++                PreviewContainerView()
++                    .frame(minHeight: AppTheme.Layout.previewMinHeight)
++                    .accessibilityIdentifier("media.workspace.sourcePreview")
++                    .background {
++                        if WorkspaceUIAcceptance.isRequested {
++                            AppRelaunchClickProbe(identifier: "media.workspace.sourcePreview")
++                                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                                .allowsHitTesting(false)
++                        }
++                    }
++            }
++        }
++    }
++}
++
++struct CompactMediaSourcePicker: View {
++    @Environment(EditorViewModel.self) private var editor
++    let purpose: MediaLibraryPurpose
++    let title: String
++
++    var body: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Text(title)
++                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
++                    .foregroundStyle(AppTheme.Text.primaryColor)
++                Spacer(minLength: AppTheme.Spacing.sm)
++                Button {
++                    MediaImportFlow.present(
++                        editor: editor,
++                        destinationFolderId: editor.mediaLibrarySession(for: purpose).folderID
++                    )
++                } label: {
++                    Label("Import", systemImage: "plus")
++                }
++                .buttonStyle(.capsule(.secondary))
++                .help("Copy media into the project")
++            }
++            .padding(.horizontal, AppTheme.Spacing.md)
++            .frame(height: AppTheme.Layout.workspaceHeaderHeight)
++            .panelHeaderBar()
++
++            LibraryAssetPicker(
++                assets: editor.mediaAssets.filter { !$0.isGenerating },
++                purpose: purpose,
++                showsSearch: true,
++                showsTypeTabs: true,
++                scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
++                allowsDragging: true,
++                emptyLabel: "No available media"
++            ) { asset in
++                editor.selectMediaAsset(asset, for: purpose)
++            }
++            .padding(AppTheme.Spacing.sm)
++
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Spacer(minLength: AppTheme.Spacing.none)
++                Button("Show in Media") {
++                    guard let id = editor.mediaLibrarySession(for: purpose).activeAssetID else { return }
++                    editor.revealMediaAsset(id: id)
++                }
++                .buttonStyle(.capsule(.secondary))
++                .disabled(editor.mediaLibrarySession(for: purpose).activeAssetID == nil)
++            }
++            .padding(AppTheme.Spacing.sm)
++            .overlay(alignment: .top) {
++                Rectangle()
++                    .fill(AppTheme.Border.primaryColor)
++                    .frame(height: AppTheme.BorderWidth.hairline)
++            }
++        }
++        .frame(minHeight: AppTheme.Layout.compactMediaPickerMinHeight)
++        .background(AppTheme.Background.surfaceColor)
++    }
++}
++
++struct ProductionWorkspaceSidebar: View {
++    @State private var showsLibrary = false
++
++    var body: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            AgentPanelView()
++            compactLibraryDisclosure(
++                title: "Production Sources",
++                purpose: .productionSource,
++                showsLibrary: $showsLibrary
++            )
++        }
++    }
++}
++
++struct PostproductionWorkspaceSidebar: View {
++    @State private var showsLibrary = false
++
++    var body: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            FinishReviewPane()
++            compactLibraryDisclosure(
++                title: "Postproduction Sources",
++                purpose: .postproductionSource,
++                showsLibrary: $showsLibrary
++            )
++        }
++    }
++}
++
++private func compactLibraryDisclosure(
++    title: String,
++    purpose: MediaLibraryPurpose,
++    showsLibrary: Binding<Bool>
++) -> some View {
++    VStack(spacing: AppTheme.Spacing.none) {
++        Button {
++            withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
++                showsLibrary.wrappedValue.toggle()
++            }
++        } label: {
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Image(systemName: showsLibrary.wrappedValue ? "chevron.down" : "chevron.right")
++                Text("Library")
++                Spacer(minLength: AppTheme.Spacing.sm)
++                Image(systemName: "photo.on.rectangle.angled")
++            }
++            .padding(.horizontal, AppTheme.Spacing.md)
++            .frame(height: AppTheme.Layout.workspaceHeaderHeight)
++            .contentShape(Rectangle())
++        }
++        .buttonStyle(.plain)
++        .hoverHighlight()
++        .accessibilityLabel(showsLibrary.wrappedValue ? "Hide Library" : "Show Library")
++
++        if showsLibrary.wrappedValue {
++            CompactMediaSourcePicker(purpose: purpose, title: title)
++                .transition(.move(edge: .bottom).combined(with: .opacity))
++        }
++    }
++    .overlay(alignment: .top) {
++        Rectangle()
++            .fill(AppTheme.Border.primaryColor)
++            .frame(height: AppTheme.BorderWidth.hairline)
++    }
++}
+diff --git a/Sources/NexGenVideo/Models/MediaAsset.swift b/Sources/NexGenVideo/Models/MediaAsset.swift
+index 2cd437fb..69ff86b5 100644
+--- a/Sources/NexGenVideo/Models/MediaAsset.swift
++++ b/Sources/NexGenVideo/Models/MediaAsset.swift
+@@ -110,6 +110,10 @@ final class MediaAsset: Identifiable {
+             storageURL: url
+         )
+     }
++
++    var libraryDisplayName: String {
++        MediaFilename.isContentAddressed(name) ? userFacingFilename : name
++    }
+     /// Agent-facing token for get_media. The persisted manifest carries no status, so the
+     /// library (this object) is the only source that knows an asset is mid-flight or failed.
+     var generationStatusToken: String {
+diff --git a/Sources/NexGenVideo/Preview/PreviewContainerView.swift b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+index c0a83e2c..7e76eff1 100644
+--- a/Sources/NexGenVideo/Preview/PreviewContainerView.swift
++++ b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+@@ -6,6 +6,7 @@ struct PreviewContainerView: View {
+ 
+     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
+     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
++    private var isDocument: Bool { editor.activePreviewTab.clipType == .document }
+ 
+     var body: some View {
+         VStack(spacing: AppTheme.Spacing.none) {
+@@ -26,6 +27,9 @@ struct PreviewContainerView: View {
+                     if isImage {
+                         imagePreview
+                     }
++                    if isDocument, let asset = activeMediaAsset {
++                        ReadOnlyDocumentPreview(url: asset.url)
++                    }
+                     if let error = activeFailedError {
+                         failedPreview(error: error)
+                     }
+@@ -584,7 +588,7 @@ struct PreviewContainerView: View {
+     }
+ 
+     private var activeObjectName: String {
+-        if let asset = activeMediaAsset { return asset.name }
++        if let asset = activeMediaAsset { return asset.userFacingFilename }
+         if let id = editor.activeTimelineInspectionClipID, let location = editor.findClip(id: id) {
+             return editor.clipDisplayLabel(for: editor.timeline.tracks[location.trackIndex].clips[location.clipIndex])
+         }
+@@ -743,6 +747,57 @@ struct PreviewContainerView: View {
+     }
+ }
+ 
++private struct ReadOnlyDocumentPreview: View {
++    let url: URL
++    @State private var text = ""
++    @State private var error: String?
++
++    var body: some View {
++        ScrollView {
++            Group {
++                if let error {
++                    ContentUnavailableView(
++                        "Couldn't Read Text",
++                        systemImage: "doc.badge.ellipsis",
++                        description: Text(error)
++                    )
++                } else {
++                    Text(text)
++                        .interfaceFont(size: AppTheme.Typography.reading)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                        .textSelection(.enabled)
++                        .frame(maxWidth: .infinity, alignment: .leading)
++                }
++            }
++            .padding(AppTheme.Spacing.lg)
++        }
++        .frame(maxWidth: .infinity, maxHeight: .infinity)
++        .background(AppTheme.Background.previewCanvasColor)
++        .task(id: url) {
++            let result = await Self.load(url)
++            text = result.text
++            error = result.error
++        }
++        .accessibilityIdentifier("preview.readOnlyDocument")
++    }
++
++    nonisolated private static func load(_ url: URL) async -> (text: String, error: String?) {
++        await Task.detached(priority: .userInitiated) {
++            do {
++                let handle = try FileHandle(forReadingFrom: url)
++                defer { try? handle.close() }
++                let data = try handle.read(upToCount: 2_000_000) ?? Data()
++                guard let value = String(data: data, encoding: .utf8) else {
++                    throw CocoaError(.fileReadInapplicableStringEncoding)
++                }
++                return (value, nil)
++            } catch {
++                return ("", error.localizedDescription)
++            }
++        }.value
++    }
++}
++
+ // MARK: - Settings Presets
+ 
+ private enum ZoomPreset: CaseIterable {
+diff --git a/Sources/NexGenVideo/UI/AppTheme.swift b/Sources/NexGenVideo/UI/AppTheme.swift
+index 78a06e43..b4d6062c 100644
+--- a/Sources/NexGenVideo/UI/AppTheme.swift
++++ b/Sources/NexGenVideo/UI/AppTheme.swift
+@@ -443,6 +443,10 @@ enum AppTheme {
+         static let safeDimensionCeiling: CGFloat = 10_000
+         static let mediaPanelDefault: CGFloat = 500
+         static let mediaPanelMin: CGFloat = 280
++        static let mediaFolderTreeDefault: CGFloat = 220
++        static let mediaFolderTreeMin: CGFloat = 180
++        static let mediaBrowserMinHeight: CGFloat = 260
++        static let compactMediaPickerMinHeight: CGFloat = 180
+         static let inspectorDefault: CGFloat = 260
+         static let inspectorMin: CGFloat = 150
+         static let inspectorMinHeight: CGFloat = 120
+@@ -571,6 +575,10 @@ enum AppTheme {
+ 
+     enum MediaPanel {
+         static let contextRowHeight: CGFloat = IconSize.md
++        static let thumbnailSmall: CGFloat = 80
++        static let thumbnailMedium: CGFloat = 110
++        static let thumbnailLarge: CGFloat = 150
++        static let thumbnailExtraLarge: CGFloat = 200
+     }
+ 
+     enum Generating {
+diff --git a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+index 295b58d0..85fdf7e4 100644
+--- a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+@@ -604,16 +604,16 @@ struct ToolExecutorClipTests {
+         #expect(remove.isError)
+         #expect(title.isError)
+         #expect(deleteMedia.isError)
+-        #expect(deleteFolder.isError)
++        #expect(deleteFolder.isError == false)
+         #expect(h.editor.timeline == original)
+         #expect(h.editor.mediaAssets.contains { $0.id == asset.id })
+-        #expect(h.editor.folder(id: folderID) != nil)
++        #expect(h.editor.folder(id: folderID) == nil)
+         #expect(ToolHarness.textOf(add).contains("locked"))
+         #expect(ToolHarness.textOf(change).contains("locked"))
+         #expect(ToolHarness.textOf(remove).contains("locked"))
+         #expect(ToolHarness.textOf(title).contains("locked"))
+         #expect(ToolHarness.textOf(deleteMedia).contains("locked"))
+-        #expect(ToolHarness.textOf(deleteFolder).contains("locked"))
++        #expect(ToolHarness.textOf(deleteFolder).contains("preserved"))
+     }
+ 
+     @Test func effectToolsRejectMixedLockedTargetsBeforeMutationOrLUTIO() async {
+diff --git a/Tests/NexGenVideoTests/Media/MediaPanelTests.swift b/Tests/NexGenVideoTests/Media/MediaPanelTests.swift
+index 13a3bbad..49aadb6a 100644
+--- a/Tests/NexGenVideoTests/Media/MediaPanelTests.swift
++++ b/Tests/NexGenVideoTests/Media/MediaPanelTests.swift
+@@ -720,7 +720,7 @@ struct DeleteFoldersTests {
+         #expect(e.folder(id: grand) == nil)
+     }
+ 
+-    @Test func deleteRemovesAssetsAndReferencingClips() {
++    @Test func deleteMovesAssetsToImportsAndPreservesReferencingClips() {
+         let e = editor()
+         let folder = e.createFolder(name: "Trash")
+         let a = asset(name: "doomed", folderId: folder)
+@@ -731,10 +731,11 @@ struct DeleteFoldersTests {
+ 
+         e.deleteFolders(ids: [folder])
+ 
+-        #expect(e.mediaAssets.contains(where: { $0.id == a.id }) == false)
+-        #expect(e.mediaManifest.entries.contains(where: { $0.id == a.id }) == false)
+-        // Empty track is pruned after the only clip referencing the deleted asset goes.
+-        #expect(e.timeline.tracks.flatMap(\.clips).contains(where: { $0.id == "c1" }) == false)
++        let imports = e.folders.first { $0.name == "Imports" && $0.parentFolderId == nil }
++        #expect(imports != nil)
++        #expect(e.mediaAssets.first(where: { $0.id == a.id })?.folderId == imports?.id)
++        #expect(e.mediaManifest.entries.first(where: { $0.id == a.id })?.folderId == imports?.id)
++        #expect(e.timeline.tracks.flatMap(\.clips).contains(where: { $0.id == "c1" }))
+     }
+ 
+     @Test func deleteSubtractsFromSelectedFolderIds() {
+@@ -838,7 +839,7 @@ struct FolderEdgeCaseTests {
+         #expect(e.folder(id: other) != nil)
+     }
+ 
+-    @Test func deleteSubtractsFromSelectedMediaAssetIds() {
++    @Test func deletePreservesSelectedMediaAssetIds() {
+         let e = editor()
+         let folder = e.createFolder(name: "Doomed")
+         let inside = asset(name: "in", folderId: folder)
+@@ -849,7 +850,33 @@ struct FolderEdgeCaseTests {
+ 
+         e.deleteFolders(ids: [folder])
+ 
+-        #expect(e.selectedMediaAssetIds == [outside.id])
++        #expect(e.selectedMediaAssetIds == [inside.id, outside.id])
++    }
++
++    @Test func deleteUndoRedoPreservesAssetAndClipIdentity() {
++        let e = editor()
++        let undo = UndoManager()
++        e.undoManager = undo
++        let folder = e.createFolder(name: "Camera")
++        undo.removeAllActions()
++        let source = asset(name: "take", folderId: folder)
++        e.importMediaAsset(source)
++        let clip = Fixtures.clip(id: "clip-stable", mediaRef: source.id, start: 0, duration: 30)
++        e.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])])
++
++        e.deleteFolders(ids: [folder])
++        #expect(e.mediaAssets.contains { $0.id == source.id })
++        #expect(e.timeline.tracks.flatMap(\.clips).first?.mediaRef == source.id)
++
++        undo.undo()
++        #expect(e.folder(id: folder) != nil)
++        #expect(e.mediaAssets.first(where: { $0.id == source.id })?.folderId == folder)
++        #expect(e.timeline.tracks.flatMap(\.clips).first?.id == "clip-stable")
++
++        undo.redo()
++        #expect(e.folder(id: folder) == nil)
++        #expect(e.mediaAssets.contains { $0.id == source.id })
++        #expect(e.timeline.tracks.flatMap(\.clips).first?.mediaRef == source.id)
+     }
+ 
+     @Test func renameFolderIgnoresUnknownId() {
+diff --git a/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift b/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift
+new file mode 100644
+index 00000000..5b754463
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift
+@@ -0,0 +1,201 @@
++import Foundation
++import Testing
++@testable import NexGenVideo
++
++@Suite("Media workspace")
++@MainActor
++struct MediaWorkspaceTests {
++    @Test func projectsMoreThanFiveHundredMixedAssetsWithoutLoadingPreviews() {
++        let editor = EditorViewModel()
++        let root = editor.createFolder(name: "Shoot")
++        let nested = editor.createFolder(name: "Day 1", in: root)
++        let types: [ClipType] = [.video, .audio, .image, .document, .lottie]
++        editor.mediaAssets = (0..<520).map { index in
++            let type = types[index % types.count]
++            let asset = MediaAsset(
++                id: "asset-\(index)",
++                url: URL(fileURLWithPath: "/tmp/\(String(repeating: "a", count: 64)).\(type == .document ? "md" : "mp4")"),
++                type: type,
++                name: "storage-\(index)",
++                duration: Double(index),
++                originalFilename: "Take \(index).\(type == .document ? "md" : "mp4")"
++            )
++            asset.folderId = index.isMultiple(of: 2) ? nested : root
++            if index.isMultiple(of: 7) {
++                asset.generationInput = GenerationInput(
++                    prompt: "compiled",
++                    model: "fixture",
++                    duration: 4,
++                    aspectRatio: "16:9"
++                )
++            }
++            return asset
++        }
++        let session = editor.mediaLibrarySession(for: .workspace)
++        session.folderID = nested
++        session.filterTypes = [.video, .document]
++        session.aiOnly = true
++        session.sort = .name
++
++        let projected = MediaLibraryProjection.assets(from: editor.mediaAssets, session: session)
++
++        #expect(projected.count > 0)
++        #expect(projected.allSatisfy { $0.folderId == nested })
++        #expect(projected.allSatisfy { $0.type == .video || $0.type == .document })
++        #expect(projected.allSatisfy(\.isGenerated))
++        #expect(editor.mediaAssets.allSatisfy { $0.thumbnail == nil })
++        #expect(editor.activePreviewTab == .timeline)
++    }
++
++    @Test func pickerPurposesKeepFilterScrollSelectionAndSourceRangeSeparate() {
++        let editor = EditorViewModel()
++        let edit = editor.mediaLibrarySession(for: .editSource)
++        let production = editor.mediaLibrarySession(for: .productionSource)
++        edit.query = "close"
++        edit.folderID = "rushes"
++        edit.scrollAnchorID = "asset-edit"
++        edit.selectedAssetIDs = ["asset-edit"]
++        edit.rememberSourceState(
++            SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72),
++            for: "asset-edit"
++        )
++
++        production.query = "wide"
++        production.folderID = "plates"
++        production.scrollAnchorID = "asset-production"
++        production.selectedAssetIDs = ["asset-production"]
++
++        #expect(edit.query == "close")
++        #expect(edit.folderID == "rushes")
++        #expect(edit.scrollAnchorID == "asset-edit")
++        #expect(edit.selectedAssetIDs == ["asset-edit"])
++        #expect(edit.sourceState(for: "asset-edit") == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72))
++        #expect(production.query == "wide")
++        #expect(production.folderID == "plates")
++        #expect(production.scrollAnchorID == "asset-production")
++        #expect(production.selectedAssetIDs == ["asset-production"])
++        #expect(production.sourceState(for: "asset-edit") == SourcePreviewState())
++    }
++
++    @Test func pickerStateChangesDoNotMutateTimelinePreviewOrIntakeAssignments() {
++        let editor = EditorViewModel()
++        let timeline = editor.timeline
++        let session = editor.mediaLibrarySession(for: .generationInput("first-frame"))
++        session.query = "hero"
++        session.selectedAssetIDs = ["candidate"]
++        session.activeAssetID = "candidate"
++
++        #expect(editor.timeline == timeline)
++        #expect(editor.activePreviewTab == .timeline)
++        #expect(editor.mediaManifest.intakeRoleByAssetID.isEmpty)
++        #expect(editor.selectedMediaAssetIds.isEmpty)
++    }
++
++    @Test func selectingTheSameSourceRestoresEachPurposesOwnRange() {
++        let editor = EditorViewModel()
++        editor.timeline.fps = 30
++        let source = MediaAsset(
++            id: "shared-source",
++            url: URL(fileURLWithPath: "/tmp/shared.mov"),
++            type: .video,
++            name: "Shared",
++            duration: 10,
++            originalFilename: "Shared.mov"
++        )
++        editor.mediaAssets = [source]
++        let editState = SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72)
++        let productionState = SourcePreviewState(playheadFrame: 9, inFrame: 3, outFrame: 21)
++        editor.mediaLibrarySession(for: .editSource).rememberSourceState(editState, for: source.id)
++        editor.mediaLibrarySession(for: .productionSource).rememberSourceState(productionState, for: source.id)
++
++        editor.selectMediaAsset(source, for: .editSource)
++        #expect(editor.activeSourcePreviewState == editState)
++        editor.selectMediaAsset(source, for: .productionSource)
++        #expect(editor.activeSourcePreviewState == productionState)
++        #expect(editor.mediaLibrarySession(for: .editSource).sourceState(for: source.id) == editState)
++    }
++
++    @Test func sourceRangeSurvivesTimelineInspectionAndAnotherPicker() {
++        let editor = EditorViewModel()
++        editor.timeline.fps = 30
++        let source = MediaAsset(
++            id: "shared-range-source",
++            url: URL(fileURLWithPath: "/tmp/shared-range.mov"),
++            type: .video,
++            name: "Shared Range",
++            duration: 10,
++            originalFilename: "Shared Range.mov"
++        )
++        editor.mediaAssets = [source]
++        let timeline = editor.timeline
++
++        editor.selectMediaAsset(source, for: .editSource)
++        editor.seekSourceToFrame(42)
++        editor.markSourceIn()
++        editor.seekSourceToFrame(72)
++        editor.markSourceOut()
++        editor.activateTimelineSelection()
++
++        editor.selectMediaAsset(source, for: .productionSource)
++        #expect(editor.activeSourcePreviewState == SourcePreviewState())
++        editor.selectMediaAsset(source, for: .editSource)
++
++        #expect(editor.activeSourcePreviewState == SourcePreviewState(playheadFrame: 72, inFrame: 42, outFrame: 72))
++        #expect(editor.timeline == timeline)
++    }
++
++    @Test func filenameProjectionUsesOriginalNameInsteadOfStorageHash() {
++        let editor = EditorViewModel()
++        let hash = String(repeating: "b", count: 64)
++        let asset = MediaAsset(
++            id: "original-name",
++            url: URL(fileURLWithPath: "/tmp/\(hash).mov"),
++            type: .video,
++            name: hash,
++            originalFilename: "Interview A.mov"
++        )
++        let session = editor.mediaLibrarySession(for: .agentReference)
++        session.query = "interview"
++        session.searchScope = .filename
++
++        let projected = MediaLibraryProjection.assets(from: [asset], session: session)
++
++        #expect(projected.map(\.id) == [asset.id])
++        #expect(projected.first?.userFacingFilename == "Interview A.mov")
++        #expect(asset.userFacingFilename != asset.url.lastPathComponent)
++        #expect(asset.libraryDisplayName == "Interview A.mov")
++        #expect(asset.mentionDisplayName.contains("Interview"))
++        #expect(!asset.mentionDisplayName.contains(hash))
++    }
++
++    @Test func libraryImportRemainsAnUnassignedCandidate() {
++        let editor = EditorViewModel()
++        let track = MediaAsset(
++            id: "candidate-track",
++            url: URL(fileURLWithPath: "/tmp/track.wav"),
++            type: .audio,
++            name: "Track",
++            originalFilename: "Track.wav"
++        )
++
++        editor.importMediaAsset(track)
++
++        #expect(editor.mediaAssets.contains { $0.id == track.id })
++        #expect(editor.mediaManifest.intakeRoleByAssetID[track.id] == nil)
++        #expect(editor.mediaManifest.songAnchorAssetId == nil)
++    }
++
++    @Test func textAssetsRemainReadOnlySourcesNotTitleClips() {
++        let document = MediaAsset(
++            id: "story",
++            url: URL(fileURLWithPath: "/tmp/story.md"),
++            type: .document,
++            name: "story",
++            originalFilename: "Story.md"
++        )
++
++        #expect(document.type == .document)
++        #expect(!document.type.isPlaceable)
++        #expect(document.type != .text)
++    }
++}
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index 933e4a42..20f0094c 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -51,6 +51,33 @@ def matching_frame(first, second, tolerance=1):
+     return all(abs(first[key] - second[key]) <= tolerance for key in first)
+ 
+ 
++def valid_media_surface(row):
++    surface = row.get("mediaSurface")
++    panels = row.get("frames")
++    if not isinstance(surface, dict) or not isinstance(panels, dict):
++        return False
++    folder = surface.get("folderTree")
++    browser = surface.get("browser")
++    source = surface.get("sourcePreview")
++    media_panel = panels.get("mediaPanel")
++    center_panel = panels.get("previewPanel")
++    if not all(valid_frame(frame) for frame in [folder, browser, source, media_panel, center_panel]):
++        return False
++    vertically_separate = (
++        browser["y"] + browser["height"] <= source["y"] + 1
++        or source["y"] + source["height"] <= browser["y"] + 1
++    )
++    return (
++        contains_frame(media_panel, folder)
++        and contains_frame(center_panel, browser)
++        and contains_frame(center_panel, source)
++        and vertically_separate
++        and row.get("mediaAssetCount", 0) >= 523
++        and row.get("bulkThumbnailsLoaded") == 0
++        and row.get("bulkIntakeAssignments") == 0
++    )
++
++
+ def valid_keyframe_layout(layout, expected_mode, expected_lanes):
+     inspector = layout.get("inspectorFrame")
+     panel = layout.get("panelFrame")
+@@ -160,6 +187,7 @@ def run_scale(executable, output, scale):
+             rows.append(row)
+ 
+     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
++    media_rows = [row for row in workspace_rows if row.get("workspace") == "media"]
+     workspaces = {row.get("workspace") for row in workspace_rows}
+     completed = any(row.get("event") == "completed" for row in rows)
+     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
+@@ -197,6 +225,8 @@ def run_scale(executable, output, scale):
+         and completed
+         and workspaces == EXPECTED_WORKSPACES
+         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
++        and len(media_rows) == 1
++        and valid_media_surface(media_rows[0])
+         and len(hidden) == 1
+         and len(narrow) == 1
+         and len(pinned) == 1
+@@ -220,6 +250,7 @@ def run_scale(executable, output, scale):
+         and selection_source[0].get("sameSourceReactivationPreservedPlayback") is True
+         and selection_source[0].get("nativeSearchPreservedPlayback") is True
+         and selection_source[0].get("sortAndFilterPreservedPlayback") is True
++        and selection_source[0].get("nativeGridListToggle") is True
+         and selection_source[0].get("listModePreserved") is True
+         and selection_source[0].get("contextClickRoutingVerified") is True
+         and selection_source[0].get("offlineSourceHandled") is True

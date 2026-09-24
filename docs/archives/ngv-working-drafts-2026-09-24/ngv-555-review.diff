@@ -1,0 +1,3681 @@
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 4be9c0b4..ca9db3bb 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -1287,6 +1287,28 @@ final class AgentService {
+             || currentGateFollowUp != nil
+     }
+ 
++    var composerBlockerDescription: String? {
++        if let dialog = pendingDialog {
++            return "Answer \u{201C}\(dialog.title)\u{201D} in Agent before changing the phase."
++        }
++        if let approval = pendingSpendApproval {
++            return "Approve or decline \(approval.actionLabel.lowercased()) in Agent before changing the phase."
++        }
++        if editor?.generationBatchCoordinator.pending != nil {
++            return "Approve or decline the pending generation batch in Agent before changing the phase."
++        }
++        if currentSpendFollowUp != nil {
++            return "Retry the pending spend result in Agent before changing the phase."
++        }
++        if let approval = pendingGateApproval {
++            return "Answer the pending \(approval.phaseLabel) gate decision in Agent before changing the phase."
++        }
++        if currentGateFollowUp != nil {
++            return "Retry the pending gate result in Agent before changing the phase."
++        }
++        return nil
++    }
++
+     // MARK: - Spend approval (Cost-Guard, M7)
+ 
+     /// The ONE pending spend confirmation (locked provider architecture — user has the final word on
+diff --git a/Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift b/Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift
+index fb44e7c1..1df51bb0 100644
+--- a/Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift
++++ b/Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift
+@@ -3,6 +3,7 @@ import SwiftUI
+ 
+ struct StoryboardReviewSheet: View {
+     let storyboard: Storyboard
++    var embedded = false
+     @Environment(\.dismiss) private var dismiss
+ 
+     var body: some View {
+@@ -11,9 +12,11 @@ struct StoryboardReviewSheet: View {
+                 Text("Storyboard")
+                     .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
+                 Spacer()
+-                Button("Done") { dismiss() }
+-                    .buttonStyle(.capsule(.secondary, size: .regular))
+-                    .keyboardShortcut(.cancelAction)
++                if !embedded {
++                    Button("Done") { dismiss() }
++                        .buttonStyle(.capsule(.secondary, size: .regular))
++                        .keyboardShortcut(.cancelAction)
++                }
+             }
+             Text(storyboard.meta.summaryOneline)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+@@ -57,9 +60,9 @@ struct StoryboardReviewSheet: View {
+         }
+         .interfaceFont(size: AppTheme.Typography.reading)
+         .padding(AppTheme.Spacing.xlXxl)
+-        .frame(minWidth: AppTheme.ComponentSize.formatSheetWidth,
+-               idealWidth: AppTheme.ComponentSize.storyboardReviewWidth,
+-               minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight)
++        .frame(minWidth: embedded ? nil : AppTheme.ComponentSize.formatSheetWidth,
++               idealWidth: embedded ? nil : AppTheme.ComponentSize.storyboardReviewWidth,
++               minHeight: embedded ? nil : AppTheme.ComponentSize.formatSheetCardListMinHeight)
+     }
+ 
+     private func describe(_ values: [String: String]) -> String {
+diff --git a/Sources/NexGenVideo/Agent/Pipeline/PhaseContractResolver.swift b/Sources/NexGenVideo/Agent/Pipeline/PhaseContractResolver.swift
+index cf5e9f1b..3e2ebb56 100644
+--- a/Sources/NexGenVideo/Agent/Pipeline/PhaseContractResolver.swift
++++ b/Sources/NexGenVideo/Agent/Pipeline/PhaseContractResolver.swift
+@@ -176,6 +176,10 @@ struct PhaseContractHostRegistry: Sendable {
+     let writerSelectors: [String: WriterSelector]
+     let hostRunnerSelectors: [String: String]
+ 
++    func artifactSelector(for phase: String) -> String? {
++        artifactSelectors.first { $0.value == phase }?.key
++    }
++
+     static let live = PhaseContractHostRegistry(
+         artifactSelectors: [
+             "host.project_track": "project_init",
+diff --git a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+index e57b30d5..9d0b8836 100644
+--- a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
++++ b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+@@ -5,27 +5,36 @@ import SwiftUI
+ struct AppRelaunchClickProbe: NSViewRepresentable {
+     let identifier: String
+     var acceptanceState: Bool?
++    var acceptanceValue: String?
+ 
+-    init(identifier: String, acceptanceState: Bool? = nil) {
++    init(
++        identifier: String,
++        acceptanceState: Bool? = nil,
++        acceptanceValue: String? = nil
++    ) {
+         self.identifier = identifier
+         self.acceptanceState = acceptanceState
++        self.acceptanceValue = acceptanceValue
+     }
+ 
+     func makeNSView(context: Context) -> AppRelaunchClickProbeView {
+         let view = AppRelaunchClickProbeView()
+         view.identifier = NSUserInterfaceItemIdentifier(identifier)
+         view.acceptanceState = acceptanceState
++        view.acceptanceValue = acceptanceValue
+         return view
+     }
+ 
+     func updateNSView(_ nsView: AppRelaunchClickProbeView, context: Context) {
+         nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+         nsView.acceptanceState = acceptanceState
++        nsView.acceptanceValue = acceptanceValue
+     }
+ }
+ 
+ final class AppRelaunchClickProbeView: NSView {
+     var acceptanceState: Bool?
++    var acceptanceValue: String?
+ 
+     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+ }
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 762973b9..6a26a7bd 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -1,4 +1,5 @@
+ import AppKit
++import NexGenEngine
+ import SwiftUI
+ 
+ @MainActor
+@@ -124,6 +125,13 @@ enum WorkspaceUIAcceptance {
+             let originalDocumentEdited = document.isDocumentEdited
+             let originalCanUndo = document.undoManager?.canUndo ?? false
+             let originalUndoName = document.undoManager?.undoActionName ?? ""
++            await captureProductionNavigationCases(
++                editor: editor,
++                window: window,
++                host: host,
++                evidenceURL: evidenceURL,
++                scale: scale
++            )
+             var initialEditFrames: [String: NSRect]?
+             for workspace in EditorViewModel.WorkspaceFocus.allCases {
+                 let identifier = "editor.workspace.\(workspace.rawValue)"
+@@ -589,6 +597,203 @@ enum WorkspaceUIAcceptance {
+         editor.mediaAssets = originalAssets
+     }
+ 
++    private static func captureProductionNavigationCases(
++        editor: EditorViewModel,
++        window: NSWindow,
++        host: NSView,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        guard await waitUntil(timeout: .seconds(5), {
++            host.layoutSubtreeIfNeeded()
++            return editor.workspaceFocus == .production
++                && editor.projectState?.nextPhaseName == "frames"
++                && probeState(identifier: "production.phase.frames", in: window) != nil
++        }) else {
++            fail("production navigation fixture did not load", scale: scale)
++        }
++
++        let destinations = [
++            (phase: "brief", artifact: "brief"),
++            (phase: "treatment", artifact: "treatment"),
++            (phase: "frames", artifact: "frames"),
++            (phase: "render", artifact: "render"),
++        ]
++        for destination in destinations {
++            let phaseID = "production.phase.\(destination.phase)"
++            guard clickRevealing(identifier: phaseID, in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.workspaceFocus == .production
++                          && editor.viewedPipelinePhaseID == destination.phase
++                          && probeState(identifier: phaseID, in: window) == true
++                          && probeState(
++                              identifier: "production.surface.\(destination.artifact)",
++                              in: window
++                          ) == (destination.phase == "frames")
++                  }) else {
++                fail("production phase did not open \(destination.artifact)", scale: scale)
++            }
++            let name = "scale-\(scaleLabel(scale))-production-\(destination.artifact).png"
++            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
++                fail("could not capture production \(destination.artifact)", scale: scale)
++            }
++            emit(
++                "production-surface",
++                scale: scale,
++                fields: [
++                    "artifact": destination.artifact,
++                    "focusedWorkspace": editor.workspaceFocus.rawValue,
++                    "phase": destination.phase,
++                    "screenshot": name,
++                ]
++            )
++        }
++
++        guard probeValue(identifier: "production.dock.open", in: window) == "frames",
++              click(identifier: "production.dock.open", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  host.layoutSubtreeIfNeeded()
++                  return editor.viewedPipelinePhaseID == "frames"
++                      && probeState(
++                          identifier: "production.surface.frames",
++                          in: window
++                      ) == true
++                      && probeState(identifier: "production.dock.approve", in: window) == false
++              }), let dockRequirement = probeValue(
++                  identifier: "production.dock.approve",
++                  in: window
++              ), dockRequirement.contains("Frames"),
++              !dockRequirement.contains("/"),
++              !dockRequirement.contains("write_") else {
++            fail("phase dock did not expose its current blocked artifact", scale: scale)
++        }
++        let dockName = "scale-\(scaleLabel(scale))-production-dock-blocked.png"
++        guard snapshot(host, at: evidenceURL.appendingPathComponent(dockName)) else {
++            fail("could not capture blocked production dock", scale: scale)
++        }
++        emit(
++            "production-dock",
++            scale: scale,
++            fields: [
++                "approvalEnabled": false,
++                "requirement": dockRequirement,
++                "screenshot": dockName,
++            ]
++        )
++
++        guard click(identifier: "production.settings", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  host.layoutSubtreeIfNeeded()
++                  return editor.cockpitTab == .project
++                      && probeState(identifier: "production.settings", in: window) == true
++                      && probeValue(identifier: "production.budget.status", in: window) != nil
++              }), let budget = probeValue(identifier: "production.budget.status", in: window) else {
++            fail("project spend status was not reachable from production", scale: scale)
++        }
++        let budgetName = "scale-\(scaleLabel(scale))-production-budget.png"
++        guard snapshot(host, at: evidenceURL.appendingPathComponent(budgetName)) else {
++            fail("could not capture project spend status", scale: scale)
++        }
++        emit(
++            "production-budget",
++            scale: scale,
++            fields: ["status": budget, "screenshot": budgetName]
++        )
++        guard click(identifier: "production.settings.back", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  host.layoutSubtreeIfNeeded()
++                  return editor.cockpitTab == .pipeline
++                      && probeState(identifier: "production.phase.frames", in: window) == true
++              }) else {
++            fail("production settings did not return to the selected phase", scale: scale)
++        }
++
++        guard clickRevealing(identifier: "production.phase.brief", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  host.layoutSubtreeIfNeeded()
++                  return editor.viewedPipelinePhaseID == "brief"
++                      && probeState(identifier: "production.phase.brief.actions", in: window) == true
++              }), click(identifier: "production.phase.brief.actions", in: window) == nil else {
++            fail("approved Brief gate menu was unavailable", scale: scale)
++        }
++        try? await Task.sleep(for: .milliseconds(200))
++        pressKey(keyCode: 125, characters: "\u{f701}")
++        pressKey(keyCode: 125, characters: "\u{f701}")
++        pressKey(keyCode: 36, characters: "\r")
++        guard await waitUntil(timeout: .seconds(5), {
++            host.layoutSubtreeIfNeeded()
++            return probeValue(identifier: "production.rewind.confirmation", in: window) == "brief"
++        }) else {
++            fail("Brief rewind did not present its consequences", scale: scale)
++        }
++        let rewindName = "scale-\(scaleLabel(scale))-production-rewind.png"
++        guard snapshot(host, at: evidenceURL.appendingPathComponent(rewindName)) else {
++            fail("could not capture rewind consequences", scale: scale)
++        }
++        emit(
++            "production-rewind",
++            scale: scale,
++            fields: ["phase": "brief", "screenshot": rewindName]
++        )
++        pressKey(keyCode: 53, characters: "\u{1b}")
++        guard await waitUntil(timeout: .seconds(5), {
++            probeValue(identifier: "production.rewind.confirmation", in: window) == nil
++        }) else {
++            fail("rewind confirmation did not cancel", scale: scale)
++        }
++
++        guard let home = editor.workingRoot,
++              let root = DataRootResolver.dataRoot(of: home) else {
++            fail("production working root was unavailable", scale: scale)
++        }
++        let runnerGate = DispatchSemaphore(value: 0)
++        let running = Task { @MainActor in
++            await editor.pipelinePhaseRunCoordinator.run(
++                projectRoot: root,
++                phase: "frames",
++                sourceFilename: nil,
++                runner: { _ in runnerGate.wait() },
++                progressRunner: nil,
++                state: editor.pipelinePhaseExecution
++            )
++        }
++        guard await waitUntil(timeout: .seconds(5), {
++            editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "frames"
++        }), clickRevealing(identifier: "production.phase.brief", in: window) == nil,
++              await waitUntil(timeout: .seconds(5), {
++                  host.layoutSubtreeIfNeeded()
++                  return editor.viewedPipelinePhaseID == "brief"
++                      && probeState(identifier: "production.surface.brief", in: window) == false
++                      && probeState(identifier: "production.story.mutations", in: window) == false
++                      && probeState(identifier: "production.phase.brief.actions", in: window) == false
++              }) else {
++            runnerGate.signal()
++            _ = await running.value
++            fail("historical Brief was not inspectable and read-only during a phase run", scale: scale)
++        }
++        let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
++        guard snapshot(host, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
++            runnerGate.signal()
++            _ = await running.value
++            fail("could not capture running-phase read-only browsing", scale: scale)
++        }
++        emit(
++            "production-read-only",
++            scale: scale,
++            fields: [
++                "inspectedPhase": "brief",
++                "runningPhase": "frames",
++                "screenshot": readOnlyName,
++            ]
++        )
++        runnerGate.signal()
++        let outcome = await running.value
++        guard outcome == .completed else {
++            fail("acceptance phase coordinator did not settle", scale: scale)
++        }
++    }
++
+     private static func makeProjectFixture(scale: Double) throws -> URL {
+         let title = scale == 1.25
+             ? "An exceptionally long project name for the final picture lock"
+@@ -647,6 +852,39 @@ enum WorkspaceUIAcceptance {
+             options: .atomic
+         )
+         _ = try ProjectIdentity.uuid(for: projectURL)
++        let dataRoot = try ProjectScaffold.initProject(
++            home: projectURL,
++            name: title,
++            mode: .beat,
++            budgetEur: 125
++        )
++        let store = YAMLArtifactStore(dataRoot: dataRoot)
++        try store.save(
++            Brief(
++                project: title,
++                generated: "2026-09-24",
++                mission: .demo,
++                targetPlatform: "screening",
++                aspectRatio: .landscape16x9,
++                projectMode: "beat",
++                budgetEur: 125,
++                conceptType: .abstract,
++                visualMedium: .liveActionRealistic,
++                figures: .none,
++                lyricsIntegration: .ignored
++            ),
++            to: PipelineLayout.briefFile
++        )
++        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
++        GatesOperations.approve(&gates, phase: "project_init")
++        GatesOperations.approve(&gates, phase: "brief")
++        GatesOperations.approve(&gates, phase: "production_design")
++        GatesOperations.approve(&gates, phase: "treatment")
++        GatesOperations.approve(&gates, phase: "storyboard")
++        GatesOperations.approve(&gates, phase: "bible")
++        GatesOperations.approve(&gates, phase: "shotlist")
++        GatesOperations.approve(&gates, phase: "sanity")
++        try store.save(gates, to: PipelineLayout.gatesFile)
+         return projectURL
+     }
+ 
+@@ -1310,6 +1548,52 @@ enum WorkspaceUIAcceptance {
+         return nil
+     }
+ 
++    private static func clickRevealing(
++        identifier: String,
++        in window: NSWindow
++    ) -> String? {
++        guard let root = window.contentView,
++              let probe = findProbe(in: root, identifier: identifier) else {
++            return "control geometry unavailable"
++        }
++        if let scrollView = enclosingScrollView(for: probe),
++           let documentView = scrollView.documentView {
++            documentView.scrollToVisible(probe.convert(probe.bounds, to: documentView))
++            scrollView.reflectScrolledClipView(scrollView.contentView)
++            root.layoutSubtreeIfNeeded()
++        }
++        return click(identifier: identifier, in: window)
++    }
++
++    private static func pressKey(keyCode: UInt16, characters: String) {
++        let timestamp = ProcessInfo.processInfo.systemUptime
++        guard let down = NSEvent.keyEvent(
++            with: .keyDown,
++            location: .zero,
++            modifierFlags: [],
++            timestamp: timestamp,
++            windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
++            context: nil,
++            characters: characters,
++            charactersIgnoringModifiers: characters,
++            isARepeat: false,
++            keyCode: keyCode
++        ), let up = NSEvent.keyEvent(
++            with: .keyUp,
++            location: .zero,
++            modifierFlags: [],
++            timestamp: timestamp + 0.001,
++            windowNumber: NSApp.keyWindow?.windowNumber ?? 0,
++            context: nil,
++            characters: characters,
++            charactersIgnoringModifiers: characters,
++            isARepeat: false,
++            keyCode: keyCode
++        ) else { return }
++        NSApp.postEvent(down, atStart: false)
++        NSApp.postEvent(up, atStart: false)
++    }
++
+     private static func findProbe(in view: NSView, identifier: String) -> NSView? {
+         if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
+             return view
+@@ -1327,6 +1611,13 @@ enum WorkspaceUIAcceptance {
+         return probe.acceptanceState
+     }
+ 
++    private static func probeValue(identifier: String, in window: NSWindow) -> String? {
++        guard let root = window.contentView,
++              let probe = findProbe(in: root, identifier: identifier)
++                as? AppRelaunchClickProbeView else { return nil }
++        return probe.acceptanceValue
++    }
++
+     private static func waitUntil(
+         timeout: Duration,
+         _ predicate: () -> Bool
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index b2300e6a..17d046ac 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -279,6 +279,7 @@ final class EditorViewModel {
+             if !keepsLiveDeclaration {
+                 capturePluginDeclaration(from: projectURL)
+             }
++            viewedPipelinePhaseID = nil
+             pipelineAgentHarness.reset()
+             workflowHandoffPending = false
+             // Identity is the package UUID (travels with the file), resolved once here so the working
+@@ -960,13 +961,26 @@ final class EditorViewModel {
+     func refreshProjectState() async {
+         guard let dir = workingRoot else {
+             projectState = nil
++            uiContract = nil
+             return
+         }
+         projectStateLoadToken += 1
+         let token = projectStateLoadToken
+-        let result = await CockpitDataService.projectState(projectDir: dir)
++        let result = CockpitDataService.productionNavigation(
++            projectDir: dir,
++            declaredPack: declaredPluginName,
++            declaredBinding: declaredPluginBinding
++        )
+         guard token == projectStateLoadToken else { return }
+-        projectState = (try? result.get()) ?? nil
++        switch result {
++        case .success(let navigation):
++            projectState = navigation.state
++            uiContract = navigation.contract
++        case .failure(let error):
++            projectState = nil
++            uiContract = nil
++            Log.project.error("Production navigation unavailable: \(error.message)")
++        }
+     }
+ 
+     /// Best-effort snapshots of the Bible and shotlist for object inspection and name-resolved
+@@ -1039,6 +1053,11 @@ final class EditorViewModel {
+         activePluginName = snapshot.binding?.id
+         declaredPluginName = snapshot.binding?.id
+         declaredPluginBinding = snapshot.binding
++        if let bytes = try? NativeCockpitReader.contractJSON(activePack: snapshot.binding?.id) {
++            uiContract = try? JSONDecoder().decode(ContractData.self, from: bytes)
++        } else {
++            uiContract = nil
++        }
+         engineStateRevision = snapshot.revision
+         hasProductionPipeline = snapshot.pipeline != nil
+         setWorkspaceFocus(WorkspaceFocus(persistedValue: snapshot.workspaceFocus))
+@@ -1071,9 +1090,8 @@ final class EditorViewModel {
+         async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
+         async let ledgerResult = CockpitDataService.ledger(projectDir: dir)
+         async let briefResult = CockpitDataService.brief(projectDir: dir)
+-        async let contractResult = CockpitDataService.contract(projectDir: dir)
+         async let stateRefresh: Void = refreshProjectState()
+-        let (b, s, l, br, ct, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, contractResult, stateRefresh)
++        let (b, s, l, br, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, stateRefresh)
+         guard token == engineArtifactsLoadToken else { return }
+         bible = (try? b.get()) ?? nil
+         shotlist = (try? s.get()) ?? nil
+@@ -1088,7 +1106,6 @@ final class EditorViewModel {
+             // only a real read/decode failure means an EXISTING brief we can't parse.
+             briefUnreadable = !(error == .notInitialized || error == .noProject)
+         }
+-        uiContract = (try? ct.get()) ?? nil
+         engineStateRevision += 1
+         let reconciliation = pipelineAgentHarness.reconcile(editor: self)
+         if let failure = reconciliation.failure {
+@@ -1523,4 +1540,7 @@ final class EditorViewModel {
+     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
+     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+ 
++    /// Inspected phase; `ProjectStateData.nextPhaseName` remains the sole executable phase.
++    var viewedPipelinePhaseID: String?
++
+ }
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/CockpitDataService.swift b/Sources/NexGenVideo/Inspector/Cockpit/CockpitDataService.swift
+index 69eb97ec..fc73181c 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/CockpitDataService.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/CockpitDataService.swift
+@@ -46,6 +46,49 @@ private struct CockpitErrorEnvelope: Decodable {
+ 
+ enum CockpitDataService {
+ 
++    @MainActor
++    static func productionNavigation(
++        projectDir: URL,
++        declaredPack: String?,
++        declaredBinding: ProjectPackBinding?
++    ) -> Result<ProductionNavigationData, CockpitError> {
++        do {
++            let activePack = try ProjectPackGate.requireLiveMutation(
++                projectURL: projectDir,
++                declaredPack: declaredPack,
++                declaredBinding: declaredBinding
++            )
++            let revalidateBinding = {
++                let current = try ProjectPackGate.requireLiveMutation(
++                    projectURL: projectDir,
++                    declaredPack: declaredPack,
++                    declaredBinding: declaredBinding
++                )
++                guard current == activePack else {
++                    throw CockpitError.decode("The production workflow binding changed while loading.")
++                }
++            }
++            let contractBytes = try NativeCockpitReader.contractJSON(activePack: activePack)
++            let contract = try JSONDecoder().decode(ContractData.self, from: contractBytes)
++            guard let root = NativeCockpitReader.dataRoot(of: projectDir) else {
++                try revalidateBinding()
++                return .success(try ProductionNavigationData.validated(contract: contract, state: nil))
++            }
++            let stateBytes: Data
++            do {
++                stateBytes = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePack)
++            } catch NativeCockpitReader.NativeError.notInitialized {
++                try revalidateBinding()
++                return .success(try ProductionNavigationData.validated(contract: contract, state: nil))
++            }
++            let state = try JSONDecoder().decode(ProjectStateData.self, from: stateBytes)
++            try revalidateBinding()
++            return .success(try ProductionNavigationData.validated(contract: contract, state: state))
++        } catch {
++            return .failure(.decode("The production workflow contract could not be verified. Reopen the project and try again."))
++        }
++    }
++
+     /// Fetch and decode the Bible for a project. Returns `.success(nil)` when the project simply has
+     /// no Bible yet (the CLI prints literal `null`); `.success(data)` when present; `.failure` for
+     /// engine-not-ready, a structured engine error, a process failure, or a decode mismatch.
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/FrameFindingsReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/FrameFindingsReviewView.swift
+index 5fccb166..41b6d61a 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/FrameFindingsReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/FrameFindingsReviewView.swift
+@@ -3,6 +3,7 @@ import NexGenEngine
+ 
+ struct FrameFindingsReviewView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var allowsMutation = true
+     @State private var items: [Item] = []
+     @State private var home: URL?
+     @State private var failure: String?
+@@ -19,7 +20,12 @@ struct FrameFindingsReviewView: View {
+             if let failure { Text(failure).foregroundStyle(AppTheme.Text.secondaryColor) }
+             if home == editor.workingRoot {
+                 ForEach(items) { item in
+-                    FrameFindingsCard(audit: item.audit, snapshot: item.snapshot, project: home)
++                    FrameFindingsCard(
++                        audit: item.audit,
++                        snapshot: item.snapshot,
++                        project: home,
++                        allowsMutation: allowsMutation
++                    )
+                 }
+             }
+         }
+@@ -57,6 +63,7 @@ private struct FrameFindingsCard: View {
+     let audit: FrameAudit
+     let snapshot: String
+     let project: URL?
++    let allowsMutation: Bool
+     @State private var reason = ""
+     @State private var busy = false
+     @State private var failure: String?
+@@ -84,7 +91,9 @@ private struct FrameFindingsCard: View {
+                     }
+                 }
+                 TextField("Reason for accepting these deviations", text: $reason)
++                    .disabled(!allowsMutation)
+                 Button("Accept these deviations") {
++                    guard allowsMutation else { return }
+                     busy = true
+                     Task {
+                         do {
+@@ -94,7 +103,12 @@ private struct FrameFindingsCard: View {
+                     }
+                 }
+                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
+-                .disabled(busy || !readiness.isReady || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++                .disabled(
++                    !allowsMutation
++                        || busy
++                        || !readiness.isReady
++                        || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++                )
+                 if let blocker = readiness.blocker { Text(blocker).foregroundStyle(AppTheme.Text.secondaryColor) }
+                 if let failure { Text(failure).foregroundStyle(AppTheme.Text.secondaryColor) }
+             }
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift b/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
+index 48f17f93..4942cc98 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
+@@ -39,20 +39,40 @@ enum NativeCockpitReader {
+         try PhaseContractRuntime.order(activePack: activePack)
+     }
+ 
+-    /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
+-    /// `core.ui_contract.full_contract()` overlaid with the active pack's entries.
++    /// Resolved UI contract, phase order, artifact selectors, and pack cockpit surfaces.
+     static func contractJSON(activePack: String? = nil) throws -> Data {
+         let registry = PackCatalog.registry(activePack: activePack)
+         let contract = UIContract.fullContract(packEntries: registry.uiContracts)
++        let resolved = try PhaseContractRuntime.contract(activePack: activePack)
++        let phaseOrder = resolved?.order ?? coreGatePhases
+         var phases: [String: Any] = [:]
+-        for (phase, entry) in contract {
+-            phases[phase] = ["surface": entry.surface, "task_class": entry.taskClass]
++        for phase in phaseOrder {
++            guard let entry = contract[phase] else {
++                throw NativeError.load("contract")
++            }
++            let declaration = resolved?.phase(phase)?.declaration
++            guard let artifactSelector = declaration?.selectors.artifact
++                    ?? PhaseContractHostRegistry.live.artifactSelector(for: phase) else {
++                throw NativeError.load("contract")
++            }
++            var value: [String: Any] = [
++                "surface": entry.surface,
++                "task_class": entry.taskClass,
++                "artifact_selector": artifactSelector,
++            ]
++            if let label = declaration?.display?.label {
++                value["display_label"] = label
++            }
++            phases[phase] = value
+         }
+         let surface = registry.declarativeCockpitSurface
+             ?? registry.cockpitSurfaces.first.flatMap(legacyCockpitSurface)
+         let cockpitSurfaces = surface.map { [cockpitSurfaceDictionary($0)] } ?? []
+         return try serialize([
+-            "surfaces": UIContract.surfaces, "phases": phases, "cockpit_surfaces": cockpitSurfaces,
++            "surfaces": UIContract.surfaces,
++            "phases": phases,
++            "phase_order": phaseOrder,
++            "cockpit_surfaces": cockpitSurfaces,
+         ])
+     }
+ 
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelModel.swift b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelModel.swift
+index 1e8fa64c..b1df77cb 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelModel.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelModel.swift
+@@ -51,10 +51,11 @@ struct ProjectStateData: Codable, Sendable, Equatable {
+         nextPhase = try c.decodeIfPresent(String.self, forKey: .nextPhase)
+     }
+ 
+-    /// The phase the project is currently working toward (first not-yet-approved), if any.
++    /// Host-reported executable phase; missing state never falls back to a UI-derived phase.
+     var nextPhaseName: String? {
+-        if let nextPhase, !nextPhase.trimmingCharacters(in: .whitespaces).isEmpty { return nextPhase }
+-        return phases.first { !$0.approved }?.phase
++        guard let nextPhase,
++              !nextPhase.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
++        return nextPhase
+     }
+ 
+     var isComplete: Bool { !phases.isEmpty && phases.allSatisfy(\.approved) }
+@@ -80,6 +81,77 @@ struct ProjectStateData: Codable, Sendable, Equatable {
+     }
+ }
+ 
++struct ProductionNavigationData: Sendable, Equatable {
++    let contract: ContractData
++    let state: ProjectStateData?
++
++    static func validated(
++        contract: ContractData,
++        state: ProjectStateData?
++    ) throws -> ProductionNavigationData {
++        let order = contract.phaseOrder
++        guard !order.isEmpty,
++              Set(order).count == order.count,
++              Set(contract.phases.keys) == Set(order),
++              order.allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
++              order.allSatisfy({ phase in
++                  guard let entry = contract.phases[phase],
++                        let selector = entry.artifactSelector else { return false }
++                  return !entry.surface.trimmingCharacters(in: .whitespaces).isEmpty
++                      && !entry.taskClass.trimmingCharacters(in: .whitespaces).isEmpty
++                      && !selector.trimmingCharacters(in: .whitespaces).isEmpty
++              }) else {
++            throw ValidationError.invalidContract
++        }
++        guard let state else {
++            return ProductionNavigationData(contract: contract, state: nil)
++        }
++        let stateOrder = state.phases.map(\.phase)
++        guard stateOrder == order else { throw ValidationError.phaseOrderMismatch }
++        let expectedNext = state.phases.first { !$0.approved }?.phase
++        guard state.nextPhaseName == expectedNext else {
++            throw ValidationError.nextPhaseMismatch
++        }
++        return ProductionNavigationData(contract: contract, state: state)
++    }
++
++    enum ValidationError: Error, Equatable {
++        case invalidContract
++        case phaseOrderMismatch
++        case nextPhaseMismatch
++    }
++}
++
++enum PipelineNavigationSelection {
++    static func normalized(
++        requestedPhase: String?,
++        requestedTab: CockpitTab,
++        requestedPackSurfaceID: String?,
++        state: ProjectStateData,
++        contract: ContractData,
++        availablePackSurfaces: [CockpitSurfaceData]
++    ) -> String? {
++        let ids = Set(state.phases.map(\.phase))
++        if let requestedPhase, ids.contains(requestedPhase) { return requestedPhase }
++        if requestedTab != .pipeline || requestedPackSurfaceID != nil {
++            if let match = state.phases.first(where: { phase in
++                guard let route = PipelineSurfaceRouting.route(
++                    for: phase.phase,
++                    contract: contract,
++                    availablePackSurfaces: availablePackSurfaces
++                ) else { return false }
++                if let requestedPackSurfaceID {
++                    return route.destination == .pack(requestedPackSurfaceID)
++                }
++                return route.legacyTab == requestedTab
++            }) {
++                return match.phase
++            }
++        }
++        return state.nextPhaseName ?? state.phases.last?.phase
++    }
++}
++
+ /// One pipeline phase and whether its gate has been approved.
+ struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
+     var phase: String
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+index ac9720b3..ff410a80 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+@@ -1,6 +1,16 @@
+ import SwiftUI
+ import NexGenEngine
+ 
++enum PipelineStoryArtifact: String, Equatable {
++    case brief
++    case treatment
++}
++
++enum PipelineReviewArtifact: String, Equatable {
++    case frames
++    case render
++}
++
+ enum PipelineApprovalControl {
+     static func isEnabled(
+         approvalReady: Bool,
+@@ -21,8 +31,12 @@ enum PipelineSurfaceRouting {
+     enum Destination: Equatable {
+         case tab(CockpitTab)
+         case pack(String)
++        case story(PipelineStoryArtifact)
++        case review(PipelineReviewArtifact)
+         case storyboard
+-        case chat
++        case productionDesign
++        case sanity
++        case interaction
+     }
+ 
+     struct Route: Equatable {
+@@ -30,6 +44,28 @@ enum PipelineSurfaceRouting {
+         let label: String
+         let taskClass: String
+         let destination: Destination
++
++        var legacyTab: CockpitTab? {
++            switch destination {
++            case .tab(let tab): tab
++            case .story: .story
++            case .review: .review
++            default: nil
++            }
++        }
++
++        var acceptanceID: String {
++            switch destination {
++            case .tab(let tab): tab.rawValue.lowercased()
++            case .pack(let id): "pack.\(id)"
++            case .story(let artifact): artifact.rawValue
++            case .review(let artifact): artifact.rawValue
++            case .storyboard: "storyboard"
++            case .productionDesign: "production-design"
++            case .sanity: "sanity"
++            case .interaction: "agent"
++            }
++        }
+     }
+ 
+     static func route(
+@@ -37,7 +73,8 @@ enum PipelineSurfaceRouting {
+         contract: ContractData?,
+         availablePackSurfaces: [CockpitSurfaceData]
+     ) -> Route? {
+-        guard let entry = contract?.phases[phase] else { return nil }
++        guard let entry = contract?.phases[phase],
++              let selector = entry.artifactSelector else { return nil }
+         if let surface = availablePackSurfaces.first(where: { $0.phase == phase }) {
+             return Route(
+                 icon: surface.symbol,
+@@ -46,32 +83,192 @@ enum PipelineSurfaceRouting {
+                 destination: .pack(surface.id)
+             )
+         }
+-        return switch entry.surface {
+-        case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
+-        case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
+-        case "choice": Route(icon: "slider.horizontal.3", label: "In chat", taskClass: entry.taskClass, destination: .chat)
+-        default: Route(icon: "questionmark", label: entry.surface, taskClass: entry.taskClass, destination: .chat)
++        return route(forArtifactSelector: selector, taskClass: entry.taskClass)
++    }
++
++    private static func route(forArtifactSelector selector: String, taskClass: String) -> Route {
++        switch selector {
++        case "host.brief":
++            Route(icon: "text.cursor", label: "Brief", taskClass: taskClass, destination: .story(.brief))
++        case "host.treatment":
++            Route(icon: "text.cursor", label: "Treatment", taskClass: taskClass, destination: .story(.treatment))
++        case "host.production_design":
++            Route(icon: "paintpalette", label: "Production Design", taskClass: taskClass, destination: .productionDesign)
++        case "host.storyboard":
++            Route(icon: "rectangle.stack", label: "Storyboard", taskClass: taskClass, destination: .storyboard)
++        case "host.bible":
++            Route(icon: "person.2", label: "Bible", taskClass: taskClass, destination: .tab(.bible))
++        case "host.shotlist":
++            Route(icon: "list.number", label: "Shot List", taskClass: taskClass, destination: .tab(.shotlist))
++        case "host.sanity_report":
++            Route(icon: "checklist", label: "Sanity", taskClass: taskClass, destination: .sanity)
++        case "host.frames_manifest":
++            Route(icon: "photo.on.rectangle.angled", label: "Frames", taskClass: taskClass, destination: .review(.frames))
++        case "host.render_manifest":
++            Route(icon: "play.rectangle", label: "Render", taskClass: taskClass, destination: .review(.render))
++        default:
++            Route(icon: "sparkles", label: "Agent", taskClass: taskClass, destination: .interaction)
+         }
+     }
++}
+ 
+-    private static func reviewRoute(for phase: String, taskClass: String) -> Route {
+-        switch phase {
+-        case "storyboard":
+-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .storyboard)
+-        case "bible":
+-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.bible))
+-        case "shotlist":
+-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.shotlist))
+-        case "sanity", "frames", "render":
+-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
++enum PipelineNextAction {
++    static func requirement(for selector: String?, phaseLabel: String) -> String {
++        switch selector {
++        case "host.project_track":
++            "Complete the project setup inputs."
++        case "host.analysis":
++            "Complete and review the Audio Analysis."
++        case "host.brief":
++            "Create the Brief."
++        case "host.production_design":
++            "Create the Production Design."
++        case "host.treatment":
++            "Create the Treatment."
++        case "host.storyboard":
++            "Create the Storyboard."
++        case "host.bible":
++            "Create the current Bible."
++        case "host.shotlist":
++            "Create the current Shot List."
++        case "host.sanity_report":
++            "Run Sanity and resolve its blocking findings."
++        case "host.frames_manifest":
++            "Generate and review the current frame set."
++        case "host.render_manifest":
++            "Complete the current Render Manifest."
+         default:
+-            Route(icon: "slider.horizontal.3", label: "In chat", taskClass: taskClass, destination: .chat)
++            "Complete the required \(phaseLabel) artifact."
+         }
+     }
+ }
+ 
+-// Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next open phase
+-// highlighted and gate mutations routed through NativeGateWriter.
++struct PipelineReadinessPresentation: Equatable {
++    let message: String
++    let diagnostic: String?
++
++    static func current(
++        selector: String?,
++        phaseLabel: String,
++        approval: NativeGateApprovalReadiness,
++        mutations: NativeGateApprovalReadiness,
++        hostDecisionRequirement: String?
++    ) -> Self {
++        if let hostDecisionRequirement {
++            return Self(
++                message: hostDecisionRequirement,
++                diagnostic: "A host-owned decision is still waiting for an answer."
++            )
++        }
++        if let blocker = mutations.blocker {
++            return Self(
++                message: userMessage(
++                    for: blocker,
++                    selector: selector,
++                    phaseLabel: phaseLabel
++                ),
++                diagnostic: blocker
++            )
++        }
++        if approval.isReady {
++            return Self(
++                message: "The \(phaseLabel) artifact is structurally complete and ready for approval.",
++                diagnostic: nil
++            )
++        }
++        guard let blocker = approval.blocker else {
++            return Self(
++                message: PipelineNextAction.requirement(
++                    for: selector,
++                    phaseLabel: phaseLabel
++                ),
++                diagnostic: nil
++            )
++        }
++        return Self(
++            message: userMessage(
++                for: blocker,
++                selector: selector,
++                phaseLabel: phaseLabel
++            ),
++            diagnostic: blocker
++        )
++    }
++
++    private static func userMessage(
++        for blocker: String,
++        selector: String?,
++        phaseLabel: String
++    ) -> String {
++        let lower = blocker.lowercased()
++        if lower.contains("checking") {
++            return "Checking \(phaseLabel) approval requirements."
++        }
++        if let card = hostOwnedCard(in: blocker) {
++            return "Complete the \(card) card before approving \(phaseLabel)."
++        }
++        if lower.contains("while ") && lower.contains(" is running") {
++            return "Wait for the running phase to finish before changing phase gates."
++        }
++        if lower.contains("workflow") || lower.contains("pack")
++            || lower.contains("plugin") || lower.contains("ngv.json") {
++            return "Restore the project's format workflow before changing phase gates."
++        }
++        if lower.contains("canon alternative") {
++            return "Resolve the open Treatment canon choices before approval."
++        }
++        if lower.contains("story causality") {
++            return "Update Treatment's story structure to match the current Brief."
++        }
++        if lower.contains("storyboard causality") || lower.contains("treatment beat") {
++            return "Update the Storyboard to cover the current Treatment beats."
++        }
++        if lower.contains("frame finding") || lower.contains("style audit")
++            || lower.contains("style criterion") || lower.contains("frame observation") {
++            return "Resolve or explicitly accept the current frame findings before approval."
++        }
++        if lower.contains("sequence review") || lower.contains("assembled sequence")
++            || lower.contains("reviewed reel") {
++            return "Complete the current sequence review before approving Render."
++        }
++        if selector == "host.render_manifest",
++           (lower.contains("take") || lower.contains("selected")) {
++            return "Select a reviewed final take for every shot before approving Render."
++        }
++        if selector == "host.analysis" {
++            if lower.contains("structure") || lower.contains("section") {
++                return "Review the unresolved Audio Analysis section structure."
++            }
++            if lower.contains("beat") || lower.contains("analysis artifact") {
++                return "Complete Audio Analysis with a verified beat grid and section structure."
++            }
++        }
++        if lower.contains("stale") || lower.contains("changed")
++            || lower.contains("does not match") || lower.contains("no longer matches")
++            || lower.contains("lineage") {
++            return "Update \(phaseLabel) to match its current approved inputs."
++        }
++        if lower.contains("missing") || lower.contains("unreadable")
++            || lower.contains("incomplete") || lower.contains("no ") {
++            return "Create or repair the current \(phaseLabel) artifact before approval."
++        }
++        return PipelineNextAction.requirement(
++            for: selector,
++            phaseLabel: phaseLabel
++        )
++    }
++
++    private static func hostOwnedCard(in blocker: String) -> String? {
++        let prefix = "Complete the host-owned "
++        let suffix = " card before working on "
++        guard let start = blocker.range(of: prefix),
++              let end = blocker.range(of: suffix, range: start.upperBound..<blocker.endIndex)
++        else { return nil }
++        let value = blocker[start.upperBound..<end.lowerBound]
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++        return value.isEmpty ? nil : value
++    }
++}
+ 
+ struct PipelinePanelView: View {
+     @Environment(EditorViewModel.self) private var editor
+@@ -80,14 +277,12 @@ struct PipelinePanelView: View {
+     private enum LoadState: Equatable {
+         case idle
+         case loading
+-        case loaded(ProjectStateData?)
++        case loaded(ProductionNavigationData)
+         case failed(CockpitError)
+     }
+ 
+     @State private var state: LoadState = .idle
+-    /// Guards against a stale reload result overwriting a newer one when the project changes mid-flight.
+     @State private var loadToken = 0
+-    /// True while a gate mutation (approve / needs-revision / rewind) is being written + reloaded.
+     @State private var gateWriting = false
+     @State private var dataRoot: URL?
+     @State private var readinessToken = 0
+@@ -100,9 +295,8 @@ struct PipelinePanelView: View {
+     @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
+         "The pipeline state is unavailable."
+     )
+-    @State private var storyboardReviewRequested = false
+-    /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
+     @State private var gateError: GateErrorState?
++    @State private var rewindPhase: ProjectPhase?
+ 
+     private struct GateErrorState: Equatable {
+         let message: String
+@@ -111,32 +305,58 @@ struct PipelinePanelView: View {
+ 
+     private var runningPhase: String? {
+         guard let dataRoot else { return nil }
+-        return editor.pipelinePhaseRunCoordinator.runningPhase(
+-            projectRoot: dataRoot
+-        )
++        return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: dataRoot)
+     }
+ 
+     var body: some View {
+-        VStack(spacing: AppTheme.Spacing.none) {
+-            content
+-        }
+-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+-        .task(id: editor.projectURL) { await load() }
+-        // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
+-        // then, so without this the panel would keep showing the stale "Start production" state.
+-        .onChange(of: editor.engineStateRevision) { _, _ in
+-            Task { await load(showProgress: false) }
+-        }
+-        .onChange(of: editor.projectURL) { _, _ in
+-            gateError = nil
+-        }
+-        .onChange(of: runningPhase) { _, _ in
+-            refreshApprovalReadiness()
+-        }
+-        .sheet(isPresented: $storyboardReviewRequested) {
+-            PipelineStoryboardReviewSheet()
+-                .environment(editor)
+-        }
++        content
++            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
++            .task(id: editor.projectURL) { await load() }
++            .onChange(of: editor.engineStateRevision) { _, _ in
++                Task { await load(showProgress: false) }
++            }
++            .onChange(of: editor.projectURL) { _, _ in
++                gateError = nil
++                rewindPhase = nil
++            }
++            .onChange(of: editor.availableCockpitPackSurfaces) { _, _ in normalizeSelection() }
++            .onChange(of: runningPhase) { _, _ in refreshApprovalReadiness() }
++            .onChange(of: editor.cockpitTab) { _, tab in
++                guard tab != .project, tab != .pipeline else { return }
++                normalizeSelection(honorRequestedSurface: true)
++            }
++            .onChange(of: editor.cockpitPackSurfaceID) { _, id in
++                guard id != nil else { return }
++                normalizeSelection(honorRequestedSurface: true)
++            }
++            .confirmationDialog(
++                rewindPhase.map { "Rewind to \(phaseLabel($0.phase))?" } ?? "Rewind pipeline?",
++                isPresented: Binding(
++                    get: { rewindPhase != nil },
++                    set: { if !$0 { rewindPhase = nil } }
++                ),
++                titleVisibility: .visible
++            ) {
++                if let phase = rewindPhase {
++                    Button("Rewind to \(phaseLabel(phase.phase))", role: .destructive) {
++                        rewindPhase = nil
++                        rewind(to: phase)
++                    }
++                }
++                Button("Cancel", role: .cancel) { rewindPhase = nil }
++            } message: {
++                Text("Approvals for this phase and every later phase will be cleared. Artifacts, takes, media, and timeline clips remain in the project.")
++            }
++            .overlay(alignment: .topLeading) {
++                if let rewindPhase {
++                    AppRelaunchClickProbe(
++                        identifier: "production.rewind.confirmation",
++                        acceptanceValue: rewindPhase.phase
++                    )
++                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++                    .allowsHitTesting(false)
++                }
++            }
+     }
+ 
+     @ViewBuilder
+@@ -145,189 +365,80 @@ struct PipelinePanelView: View {
+         case .idle, .loading:
+             centeredProgress()
+         case .failed(let error):
+-            CockpitStateView.error(error, title: "Couldn't load the pipeline",
+-                                   subject: "the pipeline",
+-                                   activePack: InstalledPack.named(editor.activePluginName),
+-                                   startProduction: { editor.startProduction() },
+-                                   isStarting: editor.productionStarted) { Task { await load() } }
+-        case .loaded(nil):
+-            CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
+-                                   message: "This project has no phase state.")
+-        case .loaded(.some(let data)):
+-            loadedBody(data)
++            CockpitStateView.error(
++                error,
++                title: "Couldn't verify the production workflow",
++                subject: "the production workflow",
++                activePack: InstalledPack.named(editor.activePluginName),
++                startProduction: { editor.startProduction() },
++                isStarting: editor.productionStarted
++            ) { Task { await load() } }
++        case .loaded(let navigation):
++            if let data = navigation.state {
++                loadedBody(data, contract: navigation.contract)
++            } else {
++                CockpitStateView.error(
++                    .notInitialized,
++                    title: "No production workflow yet",
++                    subject: "the production workflow",
++                    activePack: InstalledPack.named(editor.activePluginName),
++                    startProduction: { editor.startProduction() },
++                    isStarting: editor.productionStarted
++                ) { Task { await load() } }
++            }
+         }
+     }
+ 
+-    @ViewBuilder
+-    private func loadedBody(_ data: ProjectStateData) -> some View {
+-        let activeRunningPhase = runningPhase
+-        GeometryReader { geometry in
+-            ScrollView {
+-                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+-                    summaryHeader(data)
+-                    if let gateError {
+-                        gateErrorBanner(gateError)
+-                    }
+-                    if data.phases.isEmpty {
+-                        CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
+-                                               message: "This project has no defined phases.")
+-                    } else {
+-                        VStack(spacing: AppTheme.Spacing.none) {
+-                            ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
+-                                phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
+-                                         isLast: index == data.phases.count - 1,
+-                                         runningPhase: activeRunningPhase,
+-                                         compact: geometry.size.width < AppTheme.ComponentSize.pipelineCompactWidth * interfaceScale,
+-                                         stackedActions: geometry.size.width < AppTheme.ComponentSize.pipelineActionFitWidth * interfaceScale)
+-                            }
++    private func loadedBody(_ data: ProjectStateData, contract: ContractData) -> some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            HStack(spacing: AppTheme.Spacing.none) {
++                phaseNavigation(data, contract: contract)
++                    .frame(width: AppTheme.ComponentSize.productionNavigationWidth * interfaceScale)
++                AppDivider()
++                viewedPhaseSurface(data, contract: contract)
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .overlay(alignment: .topTrailing) {
++                        if let reason = surfaceReadOnlyReason(data) {
++                            Label(reason, systemImage: "lock.fill")
++                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                                .foregroundStyle(AppTheme.Text.secondaryColor)
++                                .padding(.horizontal, AppTheme.Spacing.sm)
++                                .padding(.vertical, AppTheme.Spacing.xs)
++                                .background(
++                                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                                        .fill(AppTheme.Background.prominentColor)
++                                )
++                                .padding(AppTheme.Spacing.sm)
++                                .allowsHitTesting(false)
+                         }
+-                        .padding(AppTheme.Spacing.xs)
+-                        .frame(maxWidth: .infinity, alignment: .leading)
+-                        .background(
+-                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                                .fill(AppTheme.Background.raisedColor)
+-                        )
+-                        .overlay(
+-                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+-                        )
+                     }
+-                    if data.budgetEur > 0 || data.budgetStopEur != nil
+-                        || data.budgetSpentEur > 0 || !data.spendComplete {
+-                        budgetCard(data)
+-                    }
+-                }
+-                .padding(.horizontal, AppTheme.Spacing.lg)
+-                .padding(.vertical, AppTheme.Spacing.md)
+-                .frame(maxWidth: .infinity, alignment: .leading)
+             }
++            AppDivider()
++            phaseDock(data, contract: contract)
+         }
+     }
+ 
+-    // MARK: - Budget (merged Cost panel — same snapshot, one pipeline-health surface)
+-
+-    private func budgetCard(_ data: ProjectStateData) -> some View {
+-        let warn = data.budgetWarning
+-        let barColor = warn ? AppTheme.Status.errorColor : AppTheme.Status.successColor
+-        return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+-                Text("BUDGET")
+-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                    .tracking(AppTheme.Tracking.wide)
+-                    .foregroundStyle(AppTheme.Text.mutedColor)
+-                Spacer(minLength: 0)
+-                if !data.spendComplete {
+-                    Label("Spend incomplete", systemImage: "exclamationmark.triangle.fill")
+-                        .labelStyle(.titleAndIcon)
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Status.errorColor)
+-                } else if warn {
+-                    Label((data.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget",
+-                          systemImage: "exclamationmark.triangle.fill")
+-                        .labelStyle(.titleAndIcon)
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Status.errorColor)
+-                }
+-            }
+-
+-            budgetBar(fraction: data.spentFraction, color: barColor)
+-
+-            if let next = data.nextPhaseName, let remaining = data.budgetRemainingEur {
+-                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", remaining)) planning budget available")
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            } else if !data.spendComplete {
+-                Text("Project spend includes unpriced or legacy generation. Remaining amounts are unavailable.")
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            }
+-
+-            VStack(spacing: AppTheme.Spacing.smMd) {
+-                amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
+-                if let stop = data.budgetStopEur {
+-                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
+-                }
+-                amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
+-                          amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
+-                if data.activeReservations > 0 {
+-                    textRow(label: "Active reservations", value: String(data.activeReservations),
+-                            color: AppTheme.Text.secondaryColor)
+-                }
+-                AppDivider()
+-                if let remaining = data.budgetRemainingEur {
+-                    amountRow(label: "Planning remaining", amount: remaining,
+-                              color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+-                              emphasized: true)
+-                } else {
+-                    textRow(label: "Planning remaining", value: "Unavailable",
+-                            color: AppTheme.Status.errorColor, emphasized: true)
+-                }
+-                if let remaining = data.hardStopRemainingEur {
+-                    amountRow(label: "Hard stop remaining", amount: remaining,
+-                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+-                              emphasized: true)
++    private func phaseNavigation(_ data: ProjectStateData, contract: ContractData) -> some View {
++        ScrollView {
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
++                progressHeader(data)
++                ForEach(data.phases) { phase in
++                    phaseNavigationRow(phase, data: data, contract: contract)
+                 }
+             }
++            .padding(AppTheme.Spacing.md)
++            .frame(maxWidth: .infinity, alignment: .leading)
+         }
+-        .padding(AppTheme.Spacing.mdLg)
+-        .frame(maxWidth: .infinity, alignment: .leading)
+-        .background(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                .fill(AppTheme.Background.raisedColor)
+-        )
+-        .overlay(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+-        )
+-    }
+-
+-    private func budgetBar(fraction: Double, color: Color) -> some View {
+-        GeometryReader { geo in
+-            ZStack(alignment: .leading) {
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+-                    .fill(color)
+-                    .frame(width: max(0, min(1, fraction)) * geo.size.width)
+-            }
+-        }
+-        .frame(height: AppTheme.Spacing.smMd)
++        .background(AppTheme.Background.surfaceColor)
+     }
+ 
+-    private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
+-        HStack {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
+-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+-            Spacer()
+-            Text(String(format: "€%.2f", amount))
+-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+-                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+-                .monospacedDigit()
+-                .foregroundStyle(color)
+-                .textSelection(.enabled)
+-        }
+-    }
+-
+-    private func textRow(label: String, value: String, color: Color, emphasized: Bool = false) -> some View {
+-        HStack {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
+-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+-            Spacer()
+-            Text(value)
+-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+-                .foregroundStyle(color)
+-                .textSelection(.enabled)
+-        }
+-    }
+-
+-    private func summaryHeader(_ data: ProjectStateData) -> some View {
+-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+-            Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
++    private func progressHeader(_ data: ProjectStateData) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            Text("PRODUCTION")
++                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                .tracking(AppTheme.Tracking.wide)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++            Text(data.isComplete ? "Complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) approved")
+                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                 .foregroundStyle(AppTheme.Text.primaryColor)
+             ProgressView(value: data.progress)
+@@ -335,212 +446,504 @@ struct PipelinePanelView: View {
+                 .accessibilityLabel("Approved phases")
+                 .accessibilityValue("\(data.phases.filter(\.approved).count) of \(data.phases.count)")
+         }
++        .padding(.bottom, AppTheme.Spacing.sm)
+         .frame(maxWidth: .infinity, alignment: .leading)
+     }
+ 
+-    @ViewBuilder
+-    private func phaseRow(
++    private func phaseNavigationRow(
+         _ phase: ProjectPhase,
+-        isNext: Bool,
+-        isLast: Bool,
+-        runningPhase: String?,
+-        compact: Bool,
+-        stackedActions: Bool
++        data: ProjectStateData,
++        contract: ContractData
+     ) -> some View {
++        let isSelected = editor.viewedPipelinePhaseID == phase.phase
++        let isCurrent = data.nextPhaseName == phase.phase
+         let isRunning = runningPhase == phase.phase
+-        let pipelineIsRunning = runningPhase != nil
+-        let hostDecisionPending = editor.agentService.isComposerBlocked
+-        let readiness = isNext && approvalPhase == phase.phase
+-            ? approvalReadiness
+-            : .blocked("This phase is not current.")
+-        let approvalEnabled = PipelineApprovalControl.isEnabled(
+-            approvalReady: readiness.isReady,
+-            controlsAvailable: mutationReadiness.isReady,
+-            gateWriting: gateWriting,
+-            pipelineIsRunning: pipelineIsRunning,
+-            hostDecisionPending: hostDecisionPending
+-        )
+-        VStack(spacing: AppTheme.Spacing.none) {
+-            let layout = compact
+-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
+-                : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
+-            layout {
+-                phaseIdentity(phase, isNext: isNext)
+-                    .frame(maxWidth: .infinity, alignment: .leading)
+-                let actionLayout = stackedActions
+-                    ? AnyLayout(VStackLayout(alignment: .trailing, spacing: AppTheme.Spacing.sm))
+-                    : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
+-                actionLayout {
+-                    surfaceIcon(for: phase.phase)
+-                        .frame(width: AppTheme.ComponentSize.pipelineSurfaceWidth * interfaceScale, alignment: .leading)
+-                    ZStack {
+-                        AppTheme.Background.clearColor
+-                        if isNext && !isRunning {
+-                            approveButton(phase, enabled: approvalEnabled)
++        let isFuture = !phase.approved && !isCurrent
++        let controlsAvailable = mutationReadiness.isReady
++            && !gateWriting
++            && runningPhase == nil
++            && !editor.agentService.isComposerBlocked
++        return HStack(spacing: AppTheme.Spacing.xs) {
++            Button {
++                selectPhase(phase.phase)
++            } label: {
++                HStack(spacing: AppTheme.Spacing.sm) {
++                    phaseStatus(phase, isRunning: isRunning)
++                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                        Text(phaseLabel(phase.phase, contract: contract))
++                            .interfaceFont(
++                                size: AppTheme.Typography.ui,
++                                weight: isCurrent ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium
++                            )
++                            .foregroundStyle(AppTheme.Text.primaryColor)
++                            .lineLimit(2)
++                        if isCurrent {
++                            Text("Current")
++                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
++                                .foregroundStyle(editor.projectPalette.accent)
+                         }
+                     }
+-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+-                    .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale, height: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
+-                    phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
+-                        .frame(width: AppTheme.Control.iconTarget * interfaceScale)
+-                    gateMenu(
+-                        phase,
+-                        isNext: isNext,
+-                        canApprove: approvalEnabled,
+-                        controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
+-                        pipelineIsRunning: pipelineIsRunning
+-                    )
+-                    .frame(width: AppTheme.IconSize.md)
++                    Spacer(minLength: AppTheme.Spacing.none)
+                 }
+-                .frame(maxWidth: compact ? .infinity : nil, alignment: .trailing)
++                .padding(.horizontal, AppTheme.Spacing.sm)
++                .padding(.vertical, AppTheme.Spacing.smMd)
++                .frame(maxWidth: .infinity, minHeight: AppTheme.ComponentSize.pipelineRowMinHeight, alignment: .leading)
++                .background(
++                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                        .fill(isSelected
++                              ? editor.projectPalette.accent.opacity(AppTheme.Opacity.subtle)
++                              : AppTheme.Background.clearColor)
++                )
++                .overlay(
++                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                        .strokeBorder(
++                            isSelected ? editor.projectPalette.accent.opacity(AppTheme.Opacity.medium) : AppTheme.Background.clearColor,
++                            lineWidth: AppTheme.BorderWidth.hairline
++                        )
++                )
++                .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+             }
+-            .padding(.horizontal, AppTheme.Spacing.sm)
+-            .padding(.vertical, AppTheme.Spacing.smMd)
+-            .frame(minHeight: AppTheme.ComponentSize.pipelineRowMinHeight)
++            .buttonStyle(.plain)
++            .help("View \(phaseLabel(phase.phase, contract: contract))")
+             .background(
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                    .fill(isNext
+-                          ? editor.projectPalette.accent.opacity(AppTheme.Opacity.subtle)
+-                          : AppTheme.Background.clearColor)
++                AppRelaunchClickProbe(
++                    identifier: "production.phase.\(phase.phase)",
++                    acceptanceState: isSelected
++                )
+             )
+-            if !isLast {
+-                Rectangle()
+-                    .fill(AppTheme.Border.subtleColor)
+-                    .frame(height: AppTheme.BorderWidth.hairline)
+-                    .padding(.horizontal, AppTheme.Spacing.sm)
++
++            if phase.approved || isCurrent {
++                Menu {
++                    Button("Needs revision") {
++                        markNeedsRevision(phase)
++                    }
++                    .disabled(!phase.approved || !controlsAvailable)
++                    Divider()
++                    Button("Rewind to here…", role: .destructive) {
++                        rewindPhase = phase
++                    }
++                    .disabled(isFuture || !controlsAvailable)
++                } label: {
++                    Image(systemName: "ellipsis.circle")
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.mutedColor)
++                }
++                .menuStyle(.borderlessButton)
++                .menuIndicator(.hidden)
++                .tint(AppTheme.Text.mutedColor)
++                .fixedSize()
++                .disabled(!controlsAvailable)
++                .accessibilityLabel("Gate actions for \(phaseLabel(phase.phase, contract: contract))")
++                .help(runningPhase == nil ? "Gate actions" : "Gate actions are unavailable while a phase is running")
++                .background(
++                    AppRelaunchClickProbe(
++                        identifier: "production.phase.\(phase.phase).actions",
++                        acceptanceState: controlsAvailable
++                    )
++                )
+             }
+         }
+     }
+ 
+-    private func phaseIdentity(_ phase: ProjectPhase, isNext: Bool) -> some View {
+-        Text(PhaseDisplay.label(phase.phase))
+-            .interfaceFont(size: AppTheme.Typography.ui,
+-                           weight: isNext ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+-            .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+-            .textSelection(.enabled)
+-            .fixedSize(horizontal: false, vertical: true)
++    @ViewBuilder
++    private func viewedPhaseSurface(_ data: ProjectStateData, contract: ContractData) -> some View {
++        if let phase = selectedPhase(in: data),
++           let route = PipelineSurfaceRouting.route(
++               for: phase.phase,
++               contract: contract,
++               availablePackSurfaces: editor.availableCockpitPackSurfaces
++           ) {
++            let allowsMutation = surfaceAllowsMutation(data)
++            switch route.destination {
++            case .story(let artifact):
++                StoryPanelView(artifact: artifact, allowsMutation: allowsMutation)
++            case .review(let artifact):
++                ReviewPanelView(artifact: artifact, allowsMutation: allowsMutation)
++            case .tab(.bible):
++                BiblePanelView()
++            case .tab(.shotlist):
++                ShotlistPanelView()
++            case .tab(_):
++                interactionSurface(
++                    phase: phase.phase,
++                    route: route,
++                    contract: contract,
++                    allowsMutation: allowsMutation
++                )
++            case .pack(let id):
++                if let surface = editor.availableCockpitPackSurfaces.first(where: { $0.id == id }) {
++                    DeclarativePackSurfaceView(surface: surface) {
++                        editor.availableCockpitPackSurfaces.removeAll { $0.id == id }
++                    }
++                } else {
++                    interactionSurface(
++                        phase: phase.phase,
++                        route: route,
++                        contract: contract,
++                        allowsMutation: allowsMutation
++                    )
++                }
++            case .storyboard:
++                PipelineStoryboardReviewSheet(embedded: true)
++            case .productionDesign:
++                productionDesignSurface(
++                    phase: phase.phase,
++                    route: route,
++                    contract: contract,
++                    allowsMutation: allowsMutation
++                )
++            case .sanity:
++                SanityPanelView()
++            case .interaction:
++                interactionSurface(
++                    phase: phase.phase,
++                    route: route,
++                    contract: contract,
++                    allowsMutation: allowsMutation
++                )
++            }
++            .overlay(alignment: .topLeading) {
++                AppRelaunchClickProbe(
++                    identifier: "production.surface.\(route.acceptanceID)",
++                    acceptanceState: allowsMutation
++                )
++                .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++                .allowsHitTesting(false)
++            }
++        } else {
++            CockpitStateView.empty(
++                icon: "rectangle.stack",
++                title: "Phase unavailable",
++                message: "The production workflow does not expose a surface for this phase."
++            )
++        }
+     }
+ 
+-    /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
+-    /// not behind an unlabeled “…”. The menu keeps the rarer siblings (send back, rewind).
+-    private func approveButton(
+-        _ phase: ProjectPhase,
+-        enabled: Bool
++    private func productionDesignSurface(
++        phase: String,
++        route: PipelineSurfaceRouting.Route,
++        contract: ContractData,
++        allowsMutation: Bool
+     ) -> some View {
+-        Button {
+-            apply(
+-                failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet."
+-            ) {
+-                try await NativeGateWriter.approve(
+-                    projectDir: $0,
+-                    phase: phase.phase,
+-                    declaredPack: editor.declaredPluginName,
+-                    declaredBinding: editor.declaredPluginBinding,
+-                    executionCoordinator: editor.pipelinePhaseRunCoordinator
+-                )
++        VStack(spacing: AppTheme.Spacing.none) {
++            ProductionStyleReviewView(allowsMutation: false)
++            interactionCard(
++                phase: phase,
++                route: route,
++                contract: contract,
++                allowsMutation: allowsMutation
++            )
++                .padding(AppTheme.Spacing.lg)
++            Spacer(minLength: AppTheme.Spacing.none)
++        }
++    }
++
++    private func interactionSurface(
++        phase: String,
++        route: PipelineSurfaceRouting.Route,
++        contract: ContractData,
++        allowsMutation: Bool
++    ) -> some View {
++        VStack {
++            Spacer(minLength: AppTheme.Spacing.lg)
++            interactionCard(
++                phase: phase,
++                route: route,
++                contract: contract,
++                allowsMutation: allowsMutation
++            )
++                .frame(maxWidth: AppTheme.ComponentSize.productionInteractionMaxWidth)
++            Spacer(minLength: AppTheme.Spacing.lg)
++        }
++        .padding(AppTheme.Spacing.xl)
++        .frame(maxWidth: .infinity, maxHeight: .infinity)
++    }
++
++    private func interactionCard(
++        phase: String,
++        route: PipelineSurfaceRouting.Route,
++        contract: ContractData,
++        allowsMutation: Bool
++    ) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
++            Label(phaseLabel(phase, contract: contract), systemImage: route.icon)
++                .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Text.primaryColor)
++            Text(PipelineNextAction.requirement(
++                for: contract.phases[phase]?.artifactSelector,
++                phaseLabel: phaseLabel(phase, contract: contract)
++            ))
++            .interfaceFont(size: AppTheme.Typography.reading)
++            .foregroundStyle(AppTheme.Text.secondaryColor)
++            .fixedSize(horizontal: false, vertical: true)
++            if allowsMutation {
++                Button("Open Agent") { editor.agentPanelVisible = true }
++                    .buttonStyle(.capsule(.prominent, size: .regular))
++            } else {
++                Text("Rewind this phase before making changes.")
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(AppTheme.Text.mutedColor)
+             }
+-        } label: {
+-            Text("Approve")
+-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+-                .frame(minHeight: AppTheme.IconSize.smMd)
+-        }
+-        .buttonStyle(.inlineAction(.approval))
+-        .disabled(!enabled)
+-        .help(
+-            enabled
+-                ? "Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase"
+-                : "Complete \(PhaseDisplay.label(phase.phase)) before approving"
++        }
++        .padding(AppTheme.Spacing.xl)
++        .frame(maxWidth: .infinity, alignment: .leading)
++        .background(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
++                .fill(AppTheme.Background.raisedColor)
++        )
++        .overlay(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
++                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+         )
+     }
+ 
+-    /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the
+-    /// in-process engine (NativeGateWriter), no agent round-trip. State-aware so the actions match where
+-    /// the phase sits: a FUTURE phase (not reached) offers nothing; the ACTIVE (next) phase can be
+-    /// approved; a COMPLETED phase can be sent back or rewound to. A future phase can't be approved
+-    /// out of order or "rewound to" — that would be meaningless.
+-    @ViewBuilder
+-    private func gateMenu(
+-        _ phase: ProjectPhase,
+-        isNext: Bool,
+-        canApprove: Bool,
+-        controlsAvailable: Bool,
+-        pipelineIsRunning: Bool
+-    ) -> some View {
+-        // The first not-yet-approved phase is the frontier: everything before it is done, it is active,
+-        // everything after is in the future.
+-        let isFuture = !phase.approved && !isNext
+-        Menu {
+-            // Only the active (next) phase is approvable — no approving out of order.
+-            Button("Approve") {
+-                apply(
+-                    failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet."
+-                ) {
+-                    try await NativeGateWriter.approve(
+-                        projectDir: $0,
+-                        phase: phase.phase,
+-                        declaredPack: editor.declaredPluginName,
+-                        declaredBinding: editor.declaredPluginBinding,
+-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+-                    )
++    private func phaseDock(_ data: ProjectStateData, contract: ContractData) -> some View {
++        HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
++            if let gateError {
++                gateErrorBanner(gateError)
++            } else if gateWriting {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text("UPDATING PHASE GATE")
++                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                        .tracking(AppTheme.Tracking.wide)
++                        .foregroundStyle(editor.projectPalette.accent)
++                    Text("The production state is being revalidated and saved.")
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
+                 }
++                Spacer(minLength: AppTheme.Spacing.none)
++            } else if let runningPhase {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text("RUNNING")
++                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                        .tracking(AppTheme.Tracking.wide)
++                        .foregroundStyle(editor.projectPalette.accent)
++                    Text("\(phaseLabel(runningPhase, contract: contract)) is running. Other phases remain available to inspect.")
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                }
++                Spacer(minLength: AppTheme.Spacing.sm)
++                Button("Show running phase") { selectPhase(runningPhase) }
++                    .buttonStyle(.capsule(.secondary, size: .regular))
++            } else if let current = data.nextPhaseName,
++                      let phase = data.phases.first(where: { $0.phase == current }) {
++                currentPhaseDock(phase, contract: contract)
++            } else {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text("PRODUCTION COMPLETE")
++                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                        .tracking(AppTheme.Tracking.wide)
++                        .foregroundStyle(AppTheme.Status.successColor)
++                    Text("All production phases are approved. Select a phase to inspect its artifacts.")
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                }
++                Spacer(minLength: AppTheme.Spacing.none)
+             }
+-            .disabled(!isNext || !canApprove || pipelineIsRunning)
+-            // Only a completed phase can be sent back for revision.
+-            Button("Needs revision") {
+-                apply(
+-                    failureMessage: "Couldn't update \(PhaseDisplay.label(phase.phase)). Try again."
+-                ) {
+-                    try await NativeGateWriter.setState(
+-                        projectDir: $0,
+-                        phase: phase.phase,
+-                        state: .needsRevision,
+-                        declaredPack: editor.declaredPluginName,
+-                        declaredBinding: editor.declaredPluginBinding,
+-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+-                    )
++        }
++        .padding(.horizontal, AppTheme.Spacing.lg)
++        .padding(.vertical, AppTheme.Spacing.md)
++        .frame(maxWidth: .infinity, minHeight: AppTheme.ComponentSize.phaseDockMinHeight, alignment: .leading)
++        .background(AppTheme.Background.raisedColor)
++    }
++
++    private func currentPhaseDock(_ phase: ProjectPhase, contract: ContractData) -> some View {
++        let label = phaseLabel(phase.phase, contract: contract)
++        let selector = contract.phases[phase.phase]?.artifactSelector
++        let route = PipelineSurfaceRouting.route(
++            for: phase.phase,
++            contract: contract,
++            availablePackSurfaces: editor.availableCockpitPackSurfaces
++        )
++        let enabled = PipelineApprovalControl.isEnabled(
++            approvalReady: approvalPhase == phase.phase && approvalReadiness.isReady,
++            controlsAvailable: mutationReadiness.isReady,
++            gateWriting: gateWriting,
++            pipelineIsRunning: false,
++            hostDecisionPending: editor.agentService.isComposerBlocked
++        )
++        let presentation = PipelineReadinessPresentation.current(
++            selector: selector,
++            phaseLabel: label,
++            approval: approvalReadiness,
++            mutations: mutationReadiness,
++            hostDecisionRequirement: editor.agentService.composerBlockerDescription
++                ?? (editor.agentService.isComposerBlocked
++                    ? "Resolve the open Agent decision before approving \(label)."
++                    : nil)
++        )
++        return HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                Text("CURRENT PHASE · \(label.uppercased())")
++                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                    .tracking(AppTheme.Tracking.wide)
++                    .foregroundStyle(editor.projectPalette.accent)
++                Text(presentation.message)
++                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                    .foregroundStyle(AppTheme.Text.primaryColor)
++                    .fixedSize(horizontal: false, vertical: true)
++            }
++            Spacer(minLength: AppTheme.Spacing.sm)
++            if let route {
++                Button(route.destination == .interaction ? "Open Agent" : "Open \(route.label)") {
++                    open(route, phase: phase.phase)
+                 }
++                .buttonStyle(.capsule(.secondary, size: .regular))
++                .background(
++                    AppRelaunchClickProbe(
++                        identifier: "production.dock.open",
++                        acceptanceValue: route.acceptanceID
++                    )
++                )
+             }
+-            .disabled(!phase.approved || !controlsAvailable)
+-            Divider() // app-theme: native-menu-divider
+-            // Rewind to a phase already reached (active or completed) — never to the future.
+-            Button("Rewind to here", role: .destructive) {
+-                apply(failureMessage: "Couldn't rewind the pipeline. Try again.") {
+-                    try NativeGateWriter.rewind(
+-                        projectDir: $0,
+-                        targetPhase: phase.phase,
+-                        declaredPack: editor.declaredPluginName,
+-                        declaredBinding: editor.declaredPluginBinding,
+-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
++            if !enabled, let diagnostic = presentation.diagnostic {
++                Button("Ask Agent") {
++                    askAgentToResolveReadiness(
++                        phase: phase.phase,
++                        diagnostic: diagnostic
+                     )
+                 }
++                .buttonStyle(.capsule(.secondary, size: .regular))
+             }
+-            .disabled(isFuture || !controlsAvailable)
+-        } label: {
+-            Image(systemName: "ellipsis.circle")
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.mutedColor)
++            Button("Approve") { approve(phase) }
++                .buttonStyle(.capsule(.prominent, size: .regular))
++                .disabled(!enabled)
++                .help(enabled ? "Approve \(label)" : presentation.message)
++                .background(
++                    AppRelaunchClickProbe(
++                        identifier: "production.dock.approve",
++                        acceptanceState: enabled,
++                        acceptanceValue: presentation.message
++                    )
++                )
+         }
+-        .accessibilityLabel("Actions for \(PhaseDisplay.label(phase.phase))")
+-        .menuStyle(.borderlessButton)
+-        .menuIndicator(.hidden)
+-        // A borderless Menu overrides its label's foreground style with the control tint.
+-        .tint(AppTheme.Text.mutedColor)
+-        .fixedSize()
+-        .disabled(
+-            gateWriting || isFuture || pipelineIsRunning || !controlsAvailable
++    }
++
++    private func open(_ route: PipelineSurfaceRouting.Route, phase: String) {
++        selectPhase(phase)
++        if route.destination == .interaction { editor.agentPanelVisible = true }
++    }
++
++    private func askAgentToResolveReadiness(phase: String, diagnostic: String) {
++        editor.agentService.send(
++            text: "Resolve the \(phase) approval blocker before requesting approval again: \(diagnostic)",
++            mentions: [],
++            hidden: true
+         )
+-        .help(
+-            pipelineIsRunning
+-                ? "A pipeline phase is still running"
+-                : (!controlsAvailable
+-                    ? "Pipeline gate controls are unavailable"
+-                    : (isFuture
+-                        ? "Not reached yet — approve earlier phases first"
+-                        : "Gate: approve, send back for revision, or rewind the pipeline to this phase"))
++        editor.agentPanelVisible = true
++    }
++
++    private func selectPhase(_ phase: String) {
++        editor.viewedPipelinePhaseID = phase
++        editor.cockpitTab = .pipeline
++        editor.cockpitPackSurfaceID = nil
++    }
++
++    private func selectedPhase(in data: ProjectStateData) -> ProjectPhase? {
++        guard let id = editor.viewedPipelinePhaseID else { return nil }
++        return data.phases.first { $0.phase == id }
++    }
++
++    private func surfaceAllowsMutation(_ data: ProjectStateData) -> Bool {
++        guard selectedPhase(in: data)?.phase == data.nextPhaseName else { return false }
++        return runningPhase == nil
++            && !gateWriting
++            && mutationReadiness.isReady
++            && !editor.agentService.isComposerBlocked
++    }
++
++    private func surfaceReadOnlyReason(_ data: ProjectStateData) -> String? {
++        guard let selected = selectedPhase(in: data) else { return nil }
++        if let runningPhase {
++            return "Read only while \(phaseLabel(runningPhase)) runs"
++        }
++        if selected.approved {
++            return "Read only — rewind this phase to make changes"
++        }
++        if selected.phase != data.nextPhaseName {
++            return "Read only — complete earlier phases first"
++        }
++        if editor.agentService.isComposerBlocked {
++            return "Read only until the open decision is resolved"
++        }
++        if gateWriting || !mutationReadiness.isReady {
++            return "Checking editing access"
++        }
++        return nil
++    }
++
++    private func normalizeSelection(honorRequestedSurface: Bool = false) {
++        guard case .loaded(let navigation) = state,
++              let data = navigation.state else { return }
++        let requestedPhase = honorRequestedSurface ? nil : editor.viewedPipelinePhaseID
++        editor.viewedPipelinePhaseID = PipelineNavigationSelection.normalized(
++            requestedPhase: requestedPhase,
++            requestedTab: editor.cockpitTab,
++            requestedPackSurfaceID: editor.cockpitPackSurfaceID,
++            state: data,
++            contract: navigation.contract,
++            availablePackSurfaces: editor.availableCockpitPackSurfaces
+         )
+     }
+ 
+-    /// Run a gate mutation against the project dir, then reload this panel and the shared engine state.
++    private func phaseLabel(_ phase: String, contract: ContractData? = nil) -> String {
++        contract?.phases[phase]?.displayLabel ?? PhaseDisplay.label(phase)
++    }
++
++    private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool) -> some View {
++        let label = isRunning ? "In progress"
++            : phase.approved ? "Approved"
++            : phase.state == "needs_revision" ? "Needs revision" : "Not approved"
++        let symbol = isRunning ? "circle.dotted.circle"
++            : phase.approved ? "checkmark.circle.fill"
++            : phase.state == "needs_revision" ? "exclamationmark.triangle.fill" : "circle"
++        let color = isRunning ? editor.projectPalette.accent
++            : phase.approved ? AppTheme.Status.successColor
++            : phase.state == "needs_revision" ? AppTheme.Status.errorColor : AppTheme.Text.mutedColor
++        return Image(systemName: symbol)
++            .interfaceFont(size: AppTheme.Typography.ui)
++            .foregroundStyle(color)
++            .accessibilityLabel(label)
++            .help(phase.notes.map { "\(label): \($0)" } ?? label)
++    }
++
++    private func approve(_ phase: ProjectPhase) {
++        apply(failureMessage: "\(phaseLabel(phase.phase)) isn't ready for approval yet.") {
++            try await NativeGateWriter.approve(
++                projectDir: $0,
++                phase: phase.phase,
++                declaredPack: editor.declaredPluginName,
++                declaredBinding: editor.declaredPluginBinding,
++                executionCoordinator: editor.pipelinePhaseRunCoordinator
++            )
++        }
++    }
++
++    private func markNeedsRevision(_ phase: ProjectPhase) {
++        apply(failureMessage: "Couldn't update \(phaseLabel(phase.phase)). Try again.") {
++            try await NativeGateWriter.setState(
++                projectDir: $0,
++                phase: phase.phase,
++                state: .needsRevision,
++                declaredPack: editor.declaredPluginName,
++                declaredBinding: editor.declaredPluginBinding,
++                executionCoordinator: editor.pipelinePhaseRunCoordinator
++            )
++        }
++    }
++
++    private func rewind(to phase: ProjectPhase) {
++        apply(failureMessage: "Couldn't rewind the pipeline. Try again.") {
++            try NativeGateWriter.rewind(
++                projectDir: $0,
++                targetPhase: phase.phase,
++                declaredPack: editor.declaredPluginName,
++                declaredBinding: editor.declaredPluginBinding,
++                executionCoordinator: editor.pipelinePhaseRunCoordinator
++            )
++        }
++    }
++
+     private func apply(
+         failureMessage: String,
+         _ write: @escaping @MainActor (URL) async throws -> Void
+@@ -555,10 +958,7 @@ struct PipelinePanelView: View {
+         }
+         guard let dir = editor.workingRoot else {
+             editor.agentService.endNativeGateMutation(mutationID)
+-            gateError = GateErrorState(
+-                message: "No project is open.",
+-                diagnostic: "No open project to update."
+-            )
++            gateError = GateErrorState(message: "No project is open.", diagnostic: "No open project to update.")
+             return
+         }
+         gateWriting = true
+@@ -570,23 +970,15 @@ struct PipelinePanelView: View {
+             do {
+                 try await write(dir)
+                 gateError = nil
+-                if editor.workingRoot == dir {
+-                    editor.onPipelineChanged?()
+-                }
++                if editor.workingRoot == dir { editor.onPipelineChanged?() }
+             } catch {
+-                gateError = GateErrorState(
+-                    message: failureMessage,
+-                    diagnostic: error.localizedDescription
+-                )
++                gateError = GateErrorState(message: failureMessage, diagnostic: error.localizedDescription)
+             }
+             await editor.refreshEngineState()
+-            if editor.workingRoot == dir {
+-                await load(showProgress: false)
+-            }
++            if editor.workingRoot == dir { await load(showProgress: false) }
+         }
+     }
+ 
+-    /// Dismissible user-safe feedback for the rare race where a ready control becomes blocked on click.
+     private func gateErrorBanner(_ error: GateErrorState) -> some View {
+         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+             Image(systemName: "exclamationmark.triangle.fill")
+@@ -597,99 +989,23 @@ struct PipelinePanelView: View {
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .fixedSize(horizontal: false, vertical: true)
+             Spacer(minLength: AppTheme.Spacing.sm)
+-            Button {
++            Button("Ask the agent") {
+                 editor.agentService.send(
+                     text: "Resolve this pipeline gate failure before requesting approval again: \(error.diagnostic)",
+-                    mentions: [], hidden: true)
++                    mentions: [],
++                    hidden: true
++                )
++                editor.agentPanelVisible = true
+                 gateError = nil
+-            } label: {
+-                Text("Ask the agent")
+-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                    .foregroundStyle(AppTheme.Accent.timecodeColor)
+             }
+-            .buttonStyle(.plain)
+-            .help("Hand this refusal to the agent so it can resolve it")
++            .buttonStyle(.capsule(.secondary, size: .regular))
+             Button { gateError = nil } label: {
+                 Image(systemName: "xmark")
+                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+             }
+             .buttonStyle(.plain)
+             .help("Dismiss")
+         }
+-        .padding(AppTheme.Spacing.sm)
+-        .frame(maxWidth: .infinity, alignment: .leading)
+-        .background(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                .fill(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.faint))
+-        )
+-        .overlay(
+-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                .strokeBorder(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline)
+-        )
+-    }
+-
+-    /// Contract-driven routing (docs/UI_UX_CONCEPT.md §7): the phase's declared surface, clickable —
+-    /// review phases open Review, prose phases open Story.
+-    @ViewBuilder
+-    /// The route to a phase's artifact. It carries a visible LABEL, not just an icon: this is the only
+-    /// way to read what a gate is about to approve, and a bare glyph made it unfindable in the field.
+-    /// A tooltip doesn't fix that — it appears on hover, so you must already suspect the control exists.
+-    private func surfaceIcon(for phase: String) -> some View {
+-        if let route = PipelineSurfaceRouting.route(
+-            for: phase,
+-            contract: editor.uiContract,
+-            availablePackSurfaces: editor.availableCockpitPackSurfaces
+-        ) {
+-            let isEnabled = route.destination != .chat
+-            Button {
+-                switch route.destination {
+-                case .tab(let target):
+-                    editor.cockpitTab = target
+-                    editor.cockpitPackSurfaceID = nil
+-                case .pack(let id):
+-                    editor.cockpitPackSurfaceID = id
+-                case .storyboard:
+-                    storyboardReviewRequested = true
+-                case .chat:
+-                    break
+-                }
+-            } label: {
+-                HStack(spacing: AppTheme.Spacing.xxs) {
+-                    Image(systemName: route.icon)
+-                        .frame(width: AppTheme.IconSize.xs)
+-                    Text(route.label)
+-                }
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .lineLimit(1)
+-                .padding(.horizontal, AppTheme.Spacing.xs)
+-                .frame(maxWidth: .infinity, minHeight: AppTheme.IconSize.smMd, alignment: .leading)
+-            }
+-            .buttonStyle(.inlineAction(.neutral))
+-            .disabled(!isEnabled)
+-            .help(isEnabled
+-                  ? "Open \(route.label) to read this phase's work · compute: \(route.taskClass)"
+-                  : "Answered in the chat · compute: \(route.taskClass)")
+-        }
+-    }
+-
+-    private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool, awaitingApproval: Bool) -> some View {
+-        let label = isRunning ? "In progress"
+-            : phase.approved ? "Approved"
+-            : phase.state == "needs_revision" ? "Needs revision"
+-            : awaitingApproval ? "In progress" : "Not started"
+-        let symbol = isRunning ? "circle.dotted.circle"
+-            : phase.approved ? "checkmark.circle.fill"
+-            : phase.state == "needs_revision" ? "exclamationmark.triangle.fill"
+-            : awaitingApproval ? "circle.dotted.circle" : "circle"
+-        let color = isRunning ? editor.projectPalette.accent
+-            : phase.approved ? AppTheme.Status.successColor
+-            : phase.state == "needs_revision" ? AppTheme.Status.errorColor : AppTheme.Text.mutedColor
+-        return Image(systemName: symbol)
+-            .interfaceFont(size: AppTheme.Typography.ui)
+-            .foregroundStyle(color)
+-            .accessibilityLabel(label)
+-            .help(phase.notes.map { "\(label): \($0)" } ?? label)
+     }
+ 
+     private func centeredProgress() -> some View {
+@@ -699,17 +1015,15 @@ struct PipelinePanelView: View {
+ 
+     private func refreshApprovalReadiness() {
+         readinessToken += 1
+-        guard case .loaded(let data) = state,
+-              let data,
+-              editor.workingRoot != nil
+-        else {
++        guard case .loaded(let navigation) = state,
++              let data = navigation.state,
++              editor.workingRoot != nil else {
+             approvalPhase = nil
+             approvalReadiness = .blocked("The pipeline state is unavailable.")
+             mutationReadiness = .blocked("The pipeline state is unavailable.")
+             return
+         }
+-        let phase = data.nextPhaseName
+-        approvalPhase = phase
++        approvalPhase = data.nextPhaseName
+         approvalReadiness = .blocked("Checking approval readiness.")
+         mutationReadiness = .blocked("Checking gate controls.")
+         readinessRefreshQueued = true
+@@ -731,8 +1045,7 @@ struct PipelinePanelView: View {
+                 )
+                 guard token == readinessToken,
+                       approvalPhase == currentPhase,
+-                      editor.workingRoot == currentDir
+-                else { continue }
++                      editor.workingRoot == currentDir else { continue }
+                 mutationReadiness = readiness.mutations
+                 approvalReadiness = readiness.approval
+             } while readinessRefreshQueued
+@@ -741,9 +1054,10 @@ struct PipelinePanelView: View {
+     }
+ 
+     private func load(showProgress: Bool = true) async {
+-        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+-            dataRoot = nil
+-            state = .loaded(editor.projectState)
++        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil,
++           let contract = editor.uiContract {
++            state = .loaded(ProductionNavigationData(contract: contract, state: editor.projectState))
++            normalizeSelection()
+             return
+         }
+         guard let dir = editor.workingRoot else {
+@@ -754,14 +1068,20 @@ struct PipelinePanelView: View {
+         dataRoot = DataRootResolver.dataRoot(of: dir)
+         loadToken += 1
+         let token = loadToken
+-        if showProgress {
+-            state = .loading
+-        }
+-        let result = await CockpitDataService.projectState(projectDir: dir)
++        if showProgress { state = .loading }
++        let result = CockpitDataService.productionNavigation(
++            projectDir: dir,
++            declaredPack: editor.declaredPluginName,
++            declaredBinding: editor.declaredPluginBinding
++        )
+         guard token == loadToken else { return }
+         switch result {
+-        case .success(let data):
+-            state = .loaded(data)
++        case .success(let navigation):
++            state = .loaded(navigation)
++            normalizeSelection(
++                honorRequestedSurface: editor.cockpitTab != .pipeline
++                    || editor.cockpitPackSurfaceID != nil
++            )
+             refreshApprovalReadiness()
+         case .failure(let error):
+             approvalPhase = nil
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/PipelineStoryboardReviewSheet.swift b/Sources/NexGenVideo/Inspector/Cockpit/PipelineStoryboardReviewSheet.swift
+index ac0b7fa0..6ce4850f 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/PipelineStoryboardReviewSheet.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/PipelineStoryboardReviewSheet.swift
+@@ -2,6 +2,7 @@ import NexGenEngine
+ import SwiftUI
+ 
+ struct PipelineStoryboardReviewSheet: View {
++    var embedded = false
+     @Environment(EditorViewModel.self) private var editor
+     @Environment(\.dismiss) private var dismiss
+ 
+@@ -20,7 +21,7 @@ struct PipelineStoryboardReviewSheet: View {
+             case .loading:
+                 statusState(title: "Storyboard", message: nil, isLoading: true)
+             case .loaded(let storyboard):
+-                StoryboardReviewSheet(storyboard: storyboard)
++                StoryboardReviewSheet(storyboard: storyboard, embedded: embedded)
+             case .missing:
+                 statusState(
+                     title: "No Storyboard",
+@@ -72,9 +73,11 @@ struct PipelineStoryboardReviewSheet: View {
+                         .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
+                 }
+                 Spacer()
+-                Button("Done") { dismiss() }
+-                    .buttonStyle(.capsule(.secondary, size: .regular))
+-                    .keyboardShortcut(.cancelAction)
++                if !embedded {
++                    Button("Done") { dismiss() }
++                        .buttonStyle(.capsule(.secondary, size: .regular))
++                        .keyboardShortcut(.cancelAction)
++                }
+             }
+             if isLoading {
+                 ProgressView("Loading Storyboard…")
+@@ -89,8 +92,8 @@ struct PipelineStoryboardReviewSheet: View {
+         }
+         .padding(AppTheme.Spacing.xlXxl)
+         .frame(
+-            minWidth: AppTheme.ComponentSize.formatSheetWidth,
+-            minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight,
++            minWidth: embedded ? nil : AppTheme.ComponentSize.formatSheetWidth,
++            minHeight: embedded ? nil : AppTheme.ComponentSize.formatSheetCardListMinHeight,
+             alignment: .topLeading
+         )
+     }
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/ProductionStyleReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/ProductionStyleReviewView.swift
+index f178ba2a..ad919169 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/ProductionStyleReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/ProductionStyleReviewView.swift
+@@ -3,6 +3,7 @@ import NexGenEngine
+ 
+ struct ProductionStyleReviewView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var allowsMutation = true
+     @State private var snapshot: Snapshot?
+     @State private var failed = false
+     @State private var expanded = false
+@@ -61,7 +62,9 @@ struct ProductionStyleReviewView: View {
+                                 Text("The approved original song determines the music and timing.")
+                                     .interfaceFont(size: AppTheme.Typography.ui)
+                             }
+-                            if snapshot.approved { TimelineStyleReviewView() }
++                            if snapshot.approved {
++                                TimelineStyleReviewView(allowsMutation: allowsMutation)
++                            }
+                         }
+                         .frame(maxWidth: .infinity, alignment: .leading)
+                         .padding(.top, AppTheme.Spacing.sm)
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift b/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
+index bc1b5101..0a45f5dc 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
+@@ -1,22 +1,13 @@
+-import AppKit
+ import SwiftUI
+ 
+-/// Tabs of the Project cockpit. Pipeline (status + gates + budget) is the control room and leads as the
+-/// default landing tab; the rest follow the production timeline left→right — Story (brief + treatment),
+-/// Bible, Shotlist, Review (frames + sanity findings). `project` is the settings view, reached via the
+-/// trailing gear, never a peer tab.
+-enum CockpitTab: String, Hashable, CaseIterable {
++/// Legacy deep-link targets; the production navigator resolves artifacts through the active contract.
++enum CockpitTab: String, Hashable {
+     case pipeline = "Pipeline"
+     case story = "Story"
+     case bible = "Bible"
+     case shotlist = "Shotlist"
+     case review = "Review"
+     case project = "Project"
+-
+-    // Tab budget stays ≤5 (Fable's width math): sanity findings live inside Review — both are
+-    // quality-control surfaces over the same shots. Order: the control room first, then the artifacts
+-    // in phase order (brief/treatment → bible → shotlist → frames/sanity).
+-    static let visibleTabs: [CockpitTab] = [.pipeline, .story, .bible, .shotlist, .review]
+ }
+ 
+ /// The Project cockpit — the canonical home for project-level artifacts (the engine-read Bible /
+@@ -27,45 +18,37 @@ struct ProjectCockpitView: View {
+     @Environment(EditorViewModel.self) private var editor
+ 
+     var body: some View {
+-        @Bindable var editor = editor
+-        let packSurfaces = editor.availableCockpitPackSurfaces
+-        var titles = CockpitTab.visibleTabs.map(\.rawValue)
+-        titles.insert(contentsOf: packSurfaces.map(\.title), at: min(1, titles.count))
+-        let selectedSurface = packSurfaces.first { $0.id == editor.cockpitPackSurfaceID }
+-        let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
+-
+-        return VStack(spacing: AppTheme.Spacing.none) {
++        VStack(spacing: AppTheme.Spacing.none) {
+             HStack(spacing: AppTheme.Spacing.none) {
+-                SegmentedTabBar(
+-                    titles: titles,
+-                    selected: selectedTitle
+-                ) { title in
+-                    if let surface = packSurfaces.first(where: { $0.title == title }) {
+-                        editor.cockpitPackSurfaceID = surface.id
+-                    } else if let tab = CockpitTab(rawValue: title) {
+-                        editor.cockpitTab = tab
++                if editor.cockpitTab == .project {
++                    Button {
++                        editor.cockpitTab = .pipeline
+                         editor.cockpitPackSurfaceID = nil
++                    } label: {
++                        Label("Production", systemImage: "chevron.left")
++                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                     }
++                    .buttonStyle(.plain)
++                    .background(
++                        AppRelaunchClickProbe(identifier: "production.settings.back")
++                    )
++                } else {
++                    Text("Production")
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
+                 }
++                Spacer(minLength: AppTheme.Spacing.none)
+                 settingsButton
+             }
++            .padding(.leading, AppTheme.Spacing.md)
+             .panelHeaderBar()
+             Group {
+-                if let surface = selectedSurface {
+-                    packSurfaceView(surface)
+-                } else {
+-                    switch editor.cockpitTab {
+-                    case .story: StoryPanelView()
+-                    case .bible: BiblePanelView()
+-                    case .pipeline: PipelinePanelView()
+-                    case .shotlist: ShotlistPanelView()
+-                    case .review: ReviewPanelView()
+-                    case .project: ProjectSettingsView()
+-                    }
+-                }
++                if editor.cockpitTab == .project { ProjectSettingsView() }
++                else { PipelinePanelView() }
+             }
+             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+-            .clipped()  // a panel may never paint over the cockpit tab bar
++            .clipped()
+         }
+         .task(id: editor.projectURL) {
+             applyPackSurfaces([])
+@@ -74,14 +57,6 @@ struct ProjectCockpitView: View {
+         .onChange(of: editor.engineStateRevision) { _, _ in Task { await resolvePackSurface() } }
+     }
+ 
+-    private func packSurfaceView(_ surface: CockpitSurfaceData) -> some View {
+-        DeclarativePackSurfaceView(surface: surface) {
+-            applyPackSurfaces(
+-                editor.availableCockpitPackSurfaces.filter { $0.id != surface.id }
+-            )
+-        }
+-    }
+-
+     private func resolvePackSurface() async {
+         let declared = editor.uiContract?.cockpitSurfaces ?? []
+         guard !declared.isEmpty, let dir = editor.workingRoot else {
+@@ -127,6 +102,12 @@ struct ProjectCockpitView: View {
+         .padding(.trailing, AppTheme.Spacing.sm)
+         .accessibilityLabel("Project settings")
+         .help("Project settings")
++        .background(
++            AppRelaunchClickProbe(
++                identifier: "production.settings",
++                acceptanceState: selected
++            )
++        )
+     }
+ }
+ 
+@@ -152,6 +133,10 @@ struct ProjectSettingsView: View {
+                     menuRow("Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
+                 }
+ 
++                if let state = editor.projectState {
++                    spendSection(state)
++                }
++
+                 pluginSection
+             }
+             .padding(.horizontal, AppTheme.Spacing.lg)
+@@ -162,6 +147,49 @@ struct ProjectSettingsView: View {
+ 
+     // MARK: - Format plugin (the activation surface — Epic #98 / #95 C3)
+ 
++    private func spendSection(_ state: ProjectStateData) -> some View {
++        section("Spend") {
++            plainRow("Planning budget", euro(state.budgetEur))
++            plainRow(
++                state.spendComplete ? "Verified spend" : "Verified spend at least",
++                euro(state.budgetSpentEur)
++            )
++            plainRow(
++                "Planning remaining",
++                state.budgetRemainingEur.map(euro) ?? "Unknown"
++            )
++            plainRow(
++                "Hard-stop remaining",
++                state.hardStopRemainingEur.map(euro) ?? "No hard stop"
++            )
++            plainRow("Active reservations", String(state.activeReservations))
++            plainRow(
++                "Unknown spend records",
++                state.spendComplete
++                    ? "None"
++                    : String(state.unpricedTransactions + state.legacyGenerations)
++            )
++        }
++        .overlay(alignment: .topLeading) {
++            AppRelaunchClickProbe(
++                identifier: "production.budget.status",
++                acceptanceState: state.spendComplete,
++                acceptanceValue: [
++                    euro(state.budgetSpentEur),
++                    state.budgetRemainingEur.map(euro) ?? "Unknown",
++                    String(state.activeReservations),
++                    state.spendComplete ? "None" : "Unknown",
++                ].joined(separator: "|")
++            )
++            .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++            .allowsHitTesting(false)
++        }
++    }
++
++    private func euro(_ amount: Double) -> String {
++        String(format: "€%.2f", amount)
++    }
++
+     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic
+     /// workflow. The pane shows ONLY the project's state — the active pack with its global
+     /// actions, or the choose entry. Browsing/activating lives in `PluginPickerView`.
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/ReviewPanelView.swift b/Sources/NexGenVideo/Inspector/Cockpit/ReviewPanelView.swift
+index 0eac4a9f..476d9def 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/ReviewPanelView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/ReviewPanelView.swift
+@@ -7,6 +7,16 @@ import SwiftUI
+ 
+ struct ReviewPanelView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var artifact: PipelineReviewArtifact?
++    var allowsMutation: Bool
++
++    init(
++        artifact: PipelineReviewArtifact? = nil,
++        allowsMutation: Bool = true
++    ) {
++        self.artifact = artifact
++        self.allowsMutation = allowsMutation
++    }
+ 
+     private enum LoadState: Equatable {
+         case idle
+@@ -51,21 +61,47 @@ struct ReviewPanelView: View {
+             .onChange(of: editor.engineStateRevision) { _, _ in
+                 Task { await load() }
+             }
++            .overlay(alignment: .topLeading) {
++                AppRelaunchClickProbe(
++                    identifier: "production.review.mutations",
++                    acceptanceState: allowsMutation
++                )
++                .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++                .allowsHitTesting(false)
++            }
+     }
+ 
+     @ViewBuilder
+     private var layout: some View {
+-        if case .failed(.notInitialized) = state {
++        if case .failed(.notInitialized) = state, artifact != .render {
+             // No pipeline yet: the whole pane is one "Start production" call to action. Stacking the
+             // Sanity strip below would render a second, identical "No production pipeline" block —
+             // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
+             content
++        } else if artifact == .frames {
++            VStack(spacing: AppTheme.Spacing.none) {
++                ProductionStyleReviewView(allowsMutation: false)
++                FrameFindingsReviewView(allowsMutation: allowsMutation)
++                content
++                    .frame(minHeight: AppTheme.Spacing.none)
++                    .clipped()
++            }
++        } else if artifact == .render {
++            ScrollView {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
++                    ProductionStyleReviewView(allowsMutation: allowsMutation)
++                    TakeReviewView(allowsMutation: allowsMutation)
++                    SequenceReviewView(allowsMutation: allowsMutation)
++                }
++                .padding(AppTheme.Spacing.md)
++                .frame(maxWidth: .infinity, alignment: .leading)
++            }
+         } else {
+             VStack(spacing: AppTheme.Spacing.none) {
+-                ProductionStyleReviewView()
+-                FrameFindingsReviewView()
+-                TakeReviewView()
+-                SequenceReviewView()
++                ProductionStyleReviewView(allowsMutation: allowsMutation)
++                FrameFindingsReviewView(allowsMutation: allowsMutation)
++                TakeReviewView(allowsMutation: allowsMutation)
++                SequenceReviewView(allowsMutation: allowsMutation)
+                 content
+                     .frame(minHeight: AppTheme.Spacing.none)
+                     .clipped()
+@@ -139,6 +175,7 @@ struct ReviewPanelView: View {
+                         .foregroundStyle(AppTheme.Text.tertiaryColor)
+                     Button("Clear") { remixSelection[shot.shotId] = [] }
+                         .controlSize(.small)
++                        .disabled(!allowsMutation)
+                 }
+                 if (remixSelection[shot.shotId]?.count ?? 0) >= 2 {
+                     Button("Remix…") {
+@@ -151,6 +188,7 @@ struct ReviewPanelView: View {
+                         remixShot = shot.shotId
+                     }
+                     .controlSize(.small)
++                    .disabled(!allowsMutation)
+                     .popover(isPresented: remixPopoverBinding(shot.shotId)) {
+                         remixPopover(shot.shotId)
+                     }
+@@ -195,6 +233,7 @@ struct ReviewPanelView: View {
+             }
+             .contentShape(Rectangle())
+             .onTapGesture {
++                guard allowsMutation else { return }
+                 // Tap picks the tile as a remix source ("composition of 2 + lighting of 4").
+                 var set = remixSelection[shotId] ?? []
+                 if !set.insert(frame.name).inserted { set.remove(frame.name) }
+@@ -203,12 +242,14 @@ struct ReviewPanelView: View {
+             HStack(spacing: AppTheme.Spacing.xs) {
+                 Button("Use") { accept(frame, shotId: shotId) }
+                     .controlSize(.small)
++                    .disabled(!allowsMutation)
+                 Button("Redo…") {
+                     redoReason = .continuity
+                     redoNote = ""
+                     redoTarget = RedoTarget(shotId: shotId, frameName: frame.name)
+                 }
+                 .controlSize(.small)
++                .disabled(!allowsMutation)
+             }
+         }
+         .frame(width: AppTheme.ComponentSize.reviewThumbnailWidth)
+@@ -397,6 +438,7 @@ struct ReviewPanelView: View {
+     }
+ 
+     private func send(_ turn: AgentControlTurn) {
++        guard allowsMutation else { return }
+         editor.agentService.send(controlTurn: turn)
+         editor.agentPanelVisible = true
+     }
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/SequenceReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/SequenceReviewView.swift
+index 39228e1d..04452fea 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/SequenceReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/SequenceReviewView.swift
+@@ -4,6 +4,7 @@ import SwiftUI
+ 
+ struct SequenceReviewView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var allowsMutation = true
+     @State private var snapshot: PipelineSequenceReviewStore.Snapshot?
+     @State private var player: AVPlayer?
+     @State private var reviewedAdjacentPairs = false
+@@ -31,9 +32,9 @@ struct SequenceReviewView: View {
+                     Text("\(snapshot.plan.selectedMedia.count) sources · \(snapshot.reel.durationFrames) frames · exact EDL \(snapshot.reel.edlSHA256.prefix(10))")
+                         .foregroundStyle(AppTheme.Text.secondaryColor)
+                     Toggle("I reviewed every adjacent cut", isOn: $reviewedAdjacentPairs)
+-                        .disabled(busy || snapshot.plan.selectedMedia.count < 2)
++                        .disabled(!allowsMutation || busy || snapshot.plan.selectedMedia.count < 2)
+                     Toggle("I watched the complete reel with audio", isOn: $reviewedWholePlayback)
+-                        .disabled(busy)
++                        .disabled(!allowsMutation || busy)
+                     findingEditor(snapshot: snapshot)
+                     if !findings.isEmpty {
+                         ForEach(Array(findings.enumerated()), id: \.element.id) { index, finding in
+@@ -47,18 +48,19 @@ struct SequenceReviewView: View {
+                                 Spacer(minLength: AppTheme.Spacing.none)
+                                 Button("Remove") { findings.remove(at: index) }
+                                     .buttonStyle(InlineActionButtonStyle())
+-                                    .disabled(busy)
++                                    .disabled(!allowsMutation || busy)
+                             }
+                         }
+                     }
+                     HStack(spacing: AppTheme.Spacing.sm) {
+                         Button("Rebuild reel") { beginReview() }
+                             .buttonStyle(InlineActionButtonStyle())
+-                            .disabled(busy)
++                            .disabled(!allowsMutation || busy)
+                         Button("Record review") { save(snapshot: snapshot) }
+                             .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                             .disabled(
+-                                busy
++                                !allowsMutation
++                                    || busy
+                                     || !reviewedWholePlayback
+                                     || (snapshot.plan.selectedMedia.count > 1 && !reviewedAdjacentPairs)
+                             )
+@@ -66,7 +68,7 @@ struct SequenceReviewView: View {
+                 } else {
+                     Button("Build review reel") { beginReview() }
+                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+-                        .disabled(busy)
++                        .disabled(!allowsMutation || busy)
+                 }
+                 if busy { ProgressView().controlSize(.small) }
+                 if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+@@ -94,6 +96,7 @@ struct SequenceReviewView: View {
+                     }
+                 }
+             }
++            .disabled(!allowsMutation)
+             HStack(spacing: AppTheme.Spacing.sm) {
+                 Picker("Severity", selection: $severity) {
+                     Text("Info").tag(SequenceReviewSeverityV1.info)
+@@ -108,17 +111,19 @@ struct SequenceReviewView: View {
+                     Text("Rewind plan").tag(SequenceReviewActionV1.rewind)
+                 }
+             }
++            .disabled(!allowsMutation)
+             TextField("Shot IDs, separated by commas", text: $shotIDs)
+-                .disabled(busy)
++                .disabled(!allowsMutation || busy)
+             HStack(spacing: AppTheme.Spacing.sm) {
+                 TextField("First frame", value: $startFrame, format: .number)
+                 TextField("End frame", value: $endFrame, format: .number)
+             }
++            .disabled(!allowsMutation)
+             TextField("Describe only what you observed", text: $evidence)
+-                .disabled(busy)
++                .disabled(!allowsMutation || busy)
+             Button("Add finding") { addFinding(snapshot: snapshot) }
+                 .buttonStyle(InlineActionButtonStyle())
+-                .disabled(busy || !validDraft(snapshot: snapshot))
++                .disabled(!allowsMutation || busy || !validDraft(snapshot: snapshot))
+         }
+         .padding(AppTheme.Spacing.sm)
+         .background(AppTheme.Background.raisedColor)
+@@ -163,6 +168,7 @@ struct SequenceReviewView: View {
+     }
+ 
+     private func beginReview() {
++        guard allowsMutation else { return }
+         player?.pause()
+         busy = true
+         message = nil
+@@ -191,6 +197,7 @@ struct SequenceReviewView: View {
+     }
+ 
+     private func save(snapshot: PipelineSequenceReviewStore.Snapshot) {
++        guard allowsMutation else { return }
+         busy = true
+         message = nil
+         let recordedFindings = findings
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/StoryModel.swift b/Sources/NexGenVideo/Inspector/Cockpit/StoryModel.swift
+index e693b626..9b3de3b3 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/StoryModel.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/StoryModel.swift
+@@ -190,17 +190,22 @@ struct TreatmentData: Decodable, Sendable, Equatable {
+     }
+ }
+ 
+-/// The per-phase UI contract (surface + task class) — drives phase routing in the Pipeline panel —
+-/// plus any pack-contributed cockpit surfaces.
++/// Resolved phase navigation contract plus pack-contributed cockpit surfaces.
+ struct ContractData: Decodable, Sendable, Equatable {
+     var phases: [String: ContractEntry]
++    var phaseOrder: [String]
+     var cockpitSurfaces: [CockpitSurfaceData]
+ 
+-    enum CodingKeys: String, CodingKey { case phases; case cockpitSurfaces = "cockpit_surfaces" }
++    enum CodingKeys: String, CodingKey {
++        case phases
++        case phaseOrder = "phase_order"
++        case cockpitSurfaces = "cockpit_surfaces"
++    }
+ 
+     init(from decoder: Decoder) throws {
+         let c = try decoder.container(keyedBy: CodingKeys.self)
+         phases = try c.decodeIfPresent([String: ContractEntry].self, forKey: .phases) ?? [:]
++        phaseOrder = try c.decodeIfPresent([String].self, forKey: .phaseOrder) ?? []
+         let declared = try c.decodeIfPresent(
+             [CockpitSurfaceData].self,
+             forKey: .cockpitSurfaces
+@@ -339,15 +344,21 @@ enum CockpitSurfacePrimitiveData: Decodable, Sendable, Equatable {
+ struct ContractEntry: Decodable, Sendable, Equatable {
+     var surface: String
+     var taskClass: String
++    var artifactSelector: String?
++    var displayLabel: String?
+ 
+     enum CodingKeys: String, CodingKey {
+         case surface
+         case taskClass = "task_class"
++        case artifactSelector = "artifact_selector"
++        case displayLabel = "display_label"
+     }
+ 
+     init(from decoder: Decoder) throws {
+         let c = try decoder.container(keyedBy: CodingKeys.self)
+         surface = try c.decodeIfPresent(String.self, forKey: .surface) ?? ""
+         taskClass = try c.decodeIfPresent(String.self, forKey: .taskClass) ?? ""
++        artifactSelector = try c.decodeIfPresent(String.self, forKey: .artifactSelector)
++        displayLabel = try c.decodeIfPresent(String.self, forKey: .displayLabel)
+     }
+ }
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/StoryPanelView.swift b/Sources/NexGenVideo/Inspector/Cockpit/StoryPanelView.swift
+index 6dbfa1fb..fa0f0d17 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/StoryPanelView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/StoryPanelView.swift
+@@ -7,6 +7,16 @@ import SwiftUI
+ 
+ struct StoryPanelView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var artifact: PipelineStoryArtifact?
++    var allowsMutation: Bool
++
++    init(
++        artifact: PipelineStoryArtifact? = nil,
++        allowsMutation: Bool = true
++    ) {
++        self.artifact = artifact
++        self.allowsMutation = allowsMutation
++    }
+ 
+     private enum TreatmentState: Equatable {
+         case idle, loading
+@@ -47,8 +57,7 @@ struct StoryPanelView: View {
+             } else {
+                 ScrollView {
+                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+-                        briefSection
+-                        treatmentSection
++                        selectedSections
+                     }
+                     .padding(.horizontal, AppTheme.Spacing.lg)
+                     .padding(.vertical, AppTheme.Spacing.md)
+@@ -61,6 +70,27 @@ struct StoryPanelView: View {
+             Task { await loadTreatment() }
+         }
+         .onChange(of: editor.brief, initial: true) { _, brief in seedBriefEdits(brief) }
++        .overlay(alignment: .topLeading) {
++            AppRelaunchClickProbe(
++                identifier: "production.story.mutations",
++                acceptanceState: allowsMutation
++            )
++            .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++            .allowsHitTesting(false)
++        }
++    }
++
++    @ViewBuilder
++    private var selectedSections: some View {
++        switch artifact {
++        case .some(.brief):
++            briefSection
++        case .some(.treatment):
++            treatmentSection
++        case nil:
++            briefSection
++            treatmentSection
++        }
+     }
+ 
+     // MARK: - Brief
+@@ -273,6 +303,7 @@ struct StoryPanelView: View {
+                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .labelsHidden()
++                .disabled(!allowsMutation)
+         }
+     }
+ 
+@@ -295,6 +326,7 @@ struct StoryPanelView: View {
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+             }
+             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
++            .disabled(!allowsMutation)
+             Spacer(minLength: 0)
+         }
+     }
+@@ -308,6 +340,7 @@ struct StoryPanelView: View {
+             }
+             .buttonStyle(.capsule(.prominent, size: .regular))
+             .controlSize(.small)
++            .disabled(!allowsMutation)
+         }
+     }
+ 
+@@ -423,6 +456,7 @@ struct StoryPanelView: View {
+             TextField(placeholder, text: draft)
+                 .textFieldStyle(.roundedBorder)
+                 .interfaceFont(size: AppTheme.Typography.ui)
++                .disabled(!allowsMutation)
+                 .onSubmit {
+                     submit(
+                         draft: draft,
+@@ -443,7 +477,10 @@ struct StoryPanelView: View {
+                     .interfaceFont(size: AppTheme.Typography.section)
+             }
+             .buttonStyle(.plain)
+-            .disabled(!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++            .disabled(
++                !allowsMutation
++                    || (!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++            )
+         }
+     }
+ 
+@@ -453,6 +490,7 @@ struct StoryPanelView: View {
+         action: String,
+         command: (String) -> String
+     ) {
++        guard allowsMutation else { return }
+         let text = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+         guard allowEmpty || !text.isEmpty else { return }
+         draft.wrappedValue = ""
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/TakeRangeReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/TakeRangeReviewView.swift
+index 7eb17f4e..b23728bc 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/TakeRangeReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/TakeRangeReviewView.swift
+@@ -48,16 +48,19 @@ struct TakeRangeReviewView: View {
+                             Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation)
+                             Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable)
+                         }
+-                    }.disabled(busy)
+-                    TextField("Describe what you observed throughout this range", text: $observation).disabled(busy)
++                    }.disabled(busy || !canWrite)
++                    TextField("Describe what you observed throughout this range", text: $observation)
++                        .disabled(busy || !canWrite)
+                     Button("Accept range pass") {
++                        guard canWrite else { return }
+                         findings.append(.init(pass: pass, verdict: verdict, observation: observation,
+                             startSeconds: 0, endSeconds: range.durationSeconds))
+                         observation = ""; verdict = .conforms
+                     }.buttonStyle(InlineActionButtonStyle(variant: .approval))
+-                        .disabled(busy || !validRange || player == nil || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++                        .disabled(busy || !canWrite || !validRange || player == nil || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                 } else if reviewID == nil {
+                     Button("Save reviewed range") {
++                        guard canWrite else { return }
+                         let selectedRange = range
+                         let observations = findings
+                         busy = true
+@@ -72,10 +75,12 @@ struct TakeRangeReviewView: View {
+                     }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !validRange || !canWrite)
+                 }
+                 if reviewID != nil || !savedRanges.isEmpty {
+-                    Toggle("Include take audio", isOn: $includeAudio).disabled(busy)
++                    Toggle("Include take audio", isOn: $includeAudio)
++                        .disabled(busy || !canWrite)
+                 }
+                 if let reviewID {
+                     Button("Add reviewed range at playhead") {
++                        guard canWrite else { return }
+                         let withAudio = includeAudio
+                         busy = true
+                         Task {
+@@ -88,7 +93,7 @@ struct TakeRangeReviewView: View {
+                     }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canWrite)
+                 }
+                 Button("Discard range review draft") { reset() }
+-                    .buttonStyle(InlineActionButtonStyle()).disabled(busy)
++                    .buttonStyle(InlineActionButtonStyle()).disabled(busy || !canWrite)
+                 if !savedRanges.isEmpty {
+                     DisclosureGroup("Saved reviewed ranges") {
+                         ForEach(savedRanges) { stored in
+@@ -99,6 +104,7 @@ struct TakeRangeReviewView: View {
+                                     Text("\(finding.pass.label): \(finding.observation)")
+                                 }
+                                 Button("Add this reviewed range at playhead") {
++                                    guard canWrite else { return }
+                                     let withAudio = includeAudio
+                                     busy = true
+                                     Task {
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/TakeRepairView.swift b/Sources/NexGenVideo/Inspector/Cockpit/TakeRepairView.swift
+index 00dab652..8f3e3f5d 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/TakeRepairView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/TakeRepairView.swift
+@@ -29,16 +29,18 @@ struct TakeRepairView: View {
+                     .foregroundStyle(AppTheme.Text.secondaryColor)
+                 Picker("Next action", selection: $operation) {
+                     ForEach(TakeRepairPlan.Operation.allCases, id: \.self) { Text($0.label).tag($0) }
+-                }.disabled(busy)
+-                TextField("Explain the single change, clean rewrite or stop", text: $reason).disabled(busy)
++                }.disabled(busy || !canWrite)
++                TextField("Explain the single change, clean rewrite or stop", text: $reason)
++                    .disabled(busy || !canWrite)
+                 DisclosureGroup("Iteration limits") {
+                     TextField("Rolls per prompt revision", value: $policy.rollsPerPrompt, format: .number)
+                     TextField("Failed iterations before clean rewrite", value: $policy.failuresBeforeRewrite, format: .number)
+                     TextField("Clean failures before model-limit review", value: $policy.cleanFailuresBeforeModelLimit, format: .number)
+                     TextField("Control channels before model-limit review", value: $policy.channelsBeforeModelLimit, format: .number)
+                     TextField("Iterations before simplifying the shot", value: $policy.iterationsBeforeSimplification, format: .number)
+-                }.disabled(busy)
++                }.disabled(busy || !canWrite)
+                 Button("Save iteration decision") {
++                    guard canWrite else { return }
+                     let choice = operation, explanation = reason, limits = policy
+                     busy = true
+                     Task {
+@@ -52,6 +54,7 @@ struct TakeRepairView: View {
+                 }.buttonStyle(InlineActionButtonStyle(variant: .approval))
+                     .disabled(busy || !canWrite || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (try? policy.validate()) == nil)
+                 Button("Continue with agent") {
++                    guard canWrite else { return }
+                     editor.agentService.send(controlTurn: AgentControlTurn(
+                         command: "Read get_render_manifest for \(snapshot.take.phase) and the recorded iteration decision for shot \(snapshot.take.shotID). Apply that decision through the canonical workflow. A stop or rescue decision must not start a generation. Changes to approved shot truth require explicit rewind. Any generation still needs the existing spend approval.",
+                         selections: [.init(label: "Shot", values: [snapshot.take.shotID]), .init(label: "Decision", values: [operation.label])],
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
+index c69ed9c8..74ea0e1a 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
+@@ -4,6 +4,7 @@ import NexGenEngine
+ 
+ struct TakeReviewView: View {
+     @Environment(EditorViewModel.self) private var editor
++    var allowsMutation = true
+     @State private var presented = false
+     @State private var takes: [PipelineRenderTakeV1] = []
+     @State private var selectedID = ""
+@@ -43,8 +44,14 @@ struct TakeReviewView: View {
+                 }.disabled(busy)
+                 if let snapshot {
+                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
+-                    TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
+-                    TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
++                    TakeRangeReviewView(
++                        snapshot: snapshot,
++                        wholeTakePlayer: player,
++                        canWrite: canWrite && allowsMutation
++                    )
++                    .id(snapshot.take.id)
++                    TakeRepairView(snapshot: snapshot, canWrite: canWrite && allowsMutation)
++                        .id(snapshot.take.id)
+                     DisclosureGroup("Submitted direction and image references") {
+                         ScrollView {
+                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+@@ -65,7 +72,9 @@ struct TakeReviewView: View {
+                             } catch { message = error.localizedDescription }
+                             busy = false
+                         }
+-                    }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canSelect || !canWrite)
++                    }
++                    .buttonStyle(InlineActionButtonStyle(variant: .approval))
++                    .disabled(busy || !canSelect || !canWrite || !allowsMutation)
+                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
+                         let pass = TakeReview.Pass.allCases[findings.count]
+                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
+@@ -79,17 +88,20 @@ struct TakeReviewView: View {
+                             if pass != .identity { Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation) }
+                             if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
+                         }
++                        .disabled(!allowsMutation)
+                         TextField("Describe what you observed in this take", text: $observation)
++                            .disabled(!allowsMutation)
+                         HStack {
+                             TextField("Start seconds", value: $start, format: .number)
+                             TextField("End seconds", value: $end, format: .number)
+                         }
++                        .disabled(!allowsMutation)
+                         Button("Record pass") {
+                             findings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: start, endSeconds: end))
+                             observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds
+                         }
+                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+-                        .disabled(busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++                        .disabled(!allowsMutation || busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                             || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
+                     } else {
+                         ForEach(findings, id: \.pass) { finding in
+@@ -105,14 +117,17 @@ struct TakeReviewView: View {
+                                 } catch { message = error.localizedDescription }
+                                 busy = false
+                             }
+-                        }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canWrite)
++                        }
++                        .buttonStyle(InlineActionButtonStyle(variant: .approval))
++                        .disabled(busy || !canWrite || !allowsMutation)
+                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
+-                            .buttonStyle(InlineActionButtonStyle()).disabled(busy)
++                            .buttonStyle(InlineActionButtonStyle())
++                            .disabled(busy || !allowsMutation)
+                     }
+                 }
+             }
+             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+-            if !canWrite { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
++            if !canWrite || !allowsMutation { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
+         }
+         .padding(AppTheme.Spacing.lg)
+         }
+@@ -128,7 +143,7 @@ struct TakeReviewView: View {
+     private func load() async {
+         canWrite = false
+         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
+-        canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
++        canWrite = allowsMutation && (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
+         do {
+             let values = try await Task.detached(priority: .userInitiated) {
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/TimelineStyleReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/TimelineStyleReviewView.swift
+index 64cc79fc..bd24e2b8 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/TimelineStyleReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/TimelineStyleReviewView.swift
+@@ -1,6 +1,8 @@
+ import SwiftUI
+ 
+ struct TimelineStyleReviewView: View {
++    var allowsMutation = true
++
+     private enum ReviewChoice: String, CaseIterable {
+         case pass
+         case fail
+@@ -43,6 +45,7 @@ struct TimelineStyleReviewView: View {
+             Text("Review the actual cut in the Timeline player. Image, motion, editing and sound criteria remain unreviewed until you record an observation or explicitly accept a deviation.")
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+             Button("Review current timeline") {
++                guard allowsMutation else { return }
+                 busy = true
+                 Task {
+                     let home = editor.workingRoot
+@@ -67,7 +70,7 @@ struct TimelineStyleReviewView: View {
+                 }
+             }
+             .buttonStyle(InlineActionButtonStyle(variant: .approval))
+-            .disabled(busy)
++            .disabled(!allowsMutation || busy)
+             if let snapshot, snapshot.home == editor.workingRoot {
+                 ForEach(snapshot.style.criteria, id: \.auditKey) { criterion in
+                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+@@ -83,12 +86,17 @@ struct TimelineStyleReviewView: View {
+                                 Text(choice.label).tag(choice.rawValue)
+                             }
+                         }
+-                        .disabled(snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true)
++                        .disabled(
++                            !allowsMutation
++                                || snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true
++                        )
+                         TextField("Observation and time range, or reason for accepting the deviation", text: Binding(
+                             get: { observations[criterion.auditKey] ?? "" }, set: { observations[criterion.auditKey] = $0 }))
++                            .disabled(!allowsMutation)
+                     }
+                 }
+                 Button("Record this timeline review") {
++                    guard allowsMutation else { return }
+                     let findings = snapshot.style.criteria.compactMap { criterion -> TimelineStyleFinding? in
+                         guard let choice = choices[criterion.auditKey] else { return nil }
+                         return TimelineStyleReview.makeFinding(
+@@ -116,9 +124,15 @@ struct TimelineStyleReviewView: View {
+                     }
+                 }
+                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
+-                .disabled(busy || snapshot.style.criteria.contains {
+-                    choices[$0.auditKey] == nil || (observations[$0.auditKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+-                })
++                .disabled(
++                    !allowsMutation
++                        || busy
++                        || snapshot.style.criteria.contains {
++                            choices[$0.auditKey] == nil
++                                || (observations[$0.auditKey] ?? "")
++                                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++                        }
++                )
+             }
+             if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+         }
+diff --git a/Sources/NexGenVideo/UI/AppTheme.swift b/Sources/NexGenVideo/UI/AppTheme.swift
+index 78a06e43..94697de3 100644
+--- a/Sources/NexGenVideo/UI/AppTheme.swift
++++ b/Sources/NexGenVideo/UI/AppTheme.swift
+@@ -370,11 +370,10 @@ enum AppTheme {
+         static let shortcutsWindow = CGSize(width: 700, height: 520)
+         static let shortcutKeyColumnWidth: CGFloat = 118
+         static let storyboardReviewWidth: CGFloat = 900
+-        static let pipelineActionFitWidth: CGFloat = 240
+-        static let pipelineCompactWidth: CGFloat = 380
+         static let pipelineRowMinHeight: CGFloat = 40
+-        static let pipelineSurfaceWidth: CGFloat = 76
+-        static let pipelineApprovalWidth: CGFloat = 62
++        static let productionNavigationWidth: CGFloat = 228
++        static let productionInteractionMaxWidth: CGFloat = 460
++        static let phaseDockMinHeight: CGFloat = 88
+         static let cockpitLabelWidth: CGFloat = 76
+         static let cockpitMessageMaxWidth: CGFloat = 320
+         static let packSurfaceRowHeight: CGFloat = 68
+diff --git a/Tests/NexGenVideoTests/Agent/WorkflowToolsTests.swift b/Tests/NexGenVideoTests/Agent/WorkflowToolsTests.swift
+index b37f1093..319ce2cb 100644
+--- a/Tests/NexGenVideoTests/Agent/WorkflowToolsTests.swift
++++ b/Tests/NexGenVideoTests/Agent/WorkflowToolsTests.swift
+@@ -1324,7 +1324,7 @@ struct WorkflowToolsTests {
+         #expect(blocked2.isError == true)
+         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
+ 
+-        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
++        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+         _ = try await h.runOK(
+             "write_analysis_interpretation",
+             args: [
+@@ -1355,6 +1355,20 @@ struct WorkflowToolsTests {
+         ).approval
+         #expect(ready.isReady)
+         #expect(ready.blocker == nil)
++
++        try FileManager.default.removeItem(at: analysisURL)
++        do {
++            try await NativeGateWriter.approve(
++                projectDir: FrameInventory.projectHome(of: dataRoot),
++                phase: "analysis",
++                declaredPack: "musicvideo",
++                declaredBinding: binding,
++                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
++            )
++            Issue.record("Native approval did not revalidate the artifact after readiness was displayed")
++        } catch {
++            #expect(error.localizedDescription.contains("analysis artifact"))
++        }
+     }
+ 
+     @Test("gate mutations are refused while a phase runner is active")
+@@ -1485,7 +1499,7 @@ struct WorkflowToolsTests {
+         #expect(settledReadiness.approval.isReady)
+     }
+ 
+-    @Test("completed pipeline keeps rewind controls available without an approval target")
++    @Test("completed pipeline rewind preserves takes and timeline clips")
+     func completedPipelineKeepsRewindAvailable() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+         defer { try? FileManager.default.removeItem(at: cleanup) }
+@@ -1506,6 +1520,38 @@ struct WorkflowToolsTests {
+         #expect(readiness.mutations.isReady)
+         #expect(!readiness.approval.isReady)
+         #expect(readiness.approval.blocker?.contains("already approved") == true)
++
++        let home = FrameInventory.projectHome(of: dataRoot)
++        let timelineURL = home.appendingPathComponent(Project.timelineFilename)
++        let retainedClip = Clip(
++            mediaRef: "retained-media",
++            startFrame: 0,
++            durationFrames: 24
++        )
++        let retainedTimeline = Fixtures.timeline(
++            tracks: [Fixtures.videoTrack(clips: [retainedClip])]
++        )
++        try JSONEncoder().encode(retainedTimeline).write(to: timelineURL)
++        let timelineBefore = try Data(contentsOf: timelineURL)
++        let takeURL = dataRoot
++            .appendingPathComponent(PipelineLayout.rendersDir, isDirectory: true)
++            .appendingPathComponent("shot-001/take-002.mp4")
++        try FileManager.default.createDirectory(
++            at: takeURL.deletingLastPathComponent(),
++            withIntermediateDirectories: true
++        )
++        let takeBytes = Data("retained-take".utf8)
++        try takeBytes.write(to: takeURL)
++
++        try NativeGateWriter.rewind(
++            projectDir: home,
++            targetPhase: "brief",
++            declaredPack: nil,
++            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
++        )
++
++        #expect(try Data(contentsOf: takeURL) == takeBytes)
++        #expect(try Data(contentsOf: timelineURL) == timelineBefore)
+     }
+ 
+     @Test("Brief work is structurally blocked until its host-owned intake is resolved")
+diff --git a/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift b/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
+index 153f4a02..74f23808 100644
+--- a/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
++++ b/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
+@@ -253,7 +253,8 @@ struct PackSurfaceTests {
+     func contractCockpitSurfaces() throws {
+         let json = """
+         {"surfaces":["choice","prose","review"],
+-         "phases":{"analysis":{"surface":"choice","task_class":"classification"}},
++         "phase_order":["analysis"],
++         "phases":{"analysis":{"surface":"choice","task_class":"classification","artifact_selector":"host.analysis"}},
+          "cockpit_surfaces":[{
+            "id":"analysis","title":"Analysis","symbol":"waveform","phase":"analysis",
+            "data_file":"analysis/{songStem}.json",
+@@ -284,13 +285,17 @@ struct PackSurfaceTests {
+                 for: "analysis",
+                 contract: c,
+                 availablePackSurfaces: []
+-            )?.destination == .chat
++            )?.destination == .interaction
+         )
+ 
+         let reviewContract = try JSONDecoder().decode(
+             ContractData.self,
+-            from: Data(#"{"phases":{"production_design":{"surface":"review","task_class":"review"},"storyboard":{"surface":"review","task_class":"review"},"bible":{"surface":"review","task_class":"review"},"shotlist":{"surface":"review","task_class":"review"},"sanity":{"surface":"review","task_class":"review"},"frames":{"surface":"review","task_class":"review"}}}"#.utf8)
++            from: Data(#"{"phase_order":["brief","production_design","treatment","storyboard","bible","shotlist","sanity","frames","render"],"phases":{"brief":{"surface":"prose","task_class":"review","artifact_selector":"host.brief"},"production_design":{"surface":"review","task_class":"review","artifact_selector":"host.production_design"},"treatment":{"surface":"prose","task_class":"review","artifact_selector":"host.treatment"},"storyboard":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"},"bible":{"surface":"review","task_class":"review","artifact_selector":"host.bible"},"shotlist":{"surface":"review","task_class":"review","artifact_selector":"host.shotlist"},"sanity":{"surface":"review","task_class":"review","artifact_selector":"host.sanity_report"},"frames":{"surface":"review","task_class":"review","artifact_selector":"host.frames_manifest"},"render":{"surface":"review","task_class":"review","artifact_selector":"host.render_manifest"}}}"#.utf8)
+         )
++        #expect(PipelineSurfaceRouting.route(for: "brief", contract: reviewContract,
++            availablePackSurfaces: [])?.destination == .story(.brief))
++        #expect(PipelineSurfaceRouting.route(for: "treatment", contract: reviewContract,
++            availablePackSurfaces: [])?.destination == .story(.treatment))
+         #expect(PipelineSurfaceRouting.route(for: "storyboard", contract: reviewContract,
+             availablePackSurfaces: [])?.destination == .storyboard)
+         #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
+@@ -298,13 +303,15 @@ struct PackSurfaceTests {
+         #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,
+             availablePackSurfaces: [])?.destination == .tab(.shotlist))
+         #expect(PipelineSurfaceRouting.route(for: "sanity", contract: reviewContract,
+-            availablePackSurfaces: [])?.destination == .tab(.review))
++            availablePackSurfaces: [])?.destination == .sanity)
+         #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
+-            availablePackSurfaces: [])?.destination == .tab(.review))
++            availablePackSurfaces: [])?.destination == .review(.frames))
++        #expect(PipelineSurfaceRouting.route(for: "render", contract: reviewContract,
++            availablePackSurfaces: [])?.destination == .review(.render))
+         let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
+             contract: reviewContract, availablePackSurfaces: []))
+-        #expect(unavailable.destination == .chat)
+-        #expect(unavailable.label == "In chat")
++        #expect(unavailable.destination == .productionDesign)
++        #expect(unavailable.label == "Production Design")
+ 
+         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
+         #expect(legacy.cockpitSurfaces.isEmpty)
+@@ -319,6 +326,128 @@ struct PackSurfaceTests {
+         #expect(surface.id == "analysis")
+         #expect(surface.dataFile == "analysis/{songStem}.json")
+         #expect(surface.layout.count == 3)
++        #expect(contract.phaseOrder == PipelineAgentContract.musicvideoPhases)
++        #expect(contract.phases["analysis"]?.artifactSelector == "host.analysis")
++    }
++
++    @Test("generic and Musicvideo navigation use their resolved native phase contracts")
++    func nativeContractPhaseOrders() throws {
++        PackCatalog.register(MusicvideoPack())
++        let generic = try JSONDecoder().decode(
++            ContractData.self,
++            from: NativeCockpitReader.contractJSON()
++        )
++        let musicvideo = try JSONDecoder().decode(
++            ContractData.self,
++            from: NativeCockpitReader.contractJSON(activePack: "musicvideo")
++        )
++
++        #expect(generic.phaseOrder == coreGatePhases)
++        #expect(!generic.phaseOrder.contains("analysis"))
++        #expect(musicvideo.phaseOrder == PipelineAgentContract.musicvideoPhases)
++        #expect(musicvideo.phaseOrder.firstIndex(of: "analysis") == 1)
++    }
++
++    @Test("artifact selectors route renamed phases without a host phase-name switch")
++    func routesByArtifactSelector() throws {
++        let contract = try JSONDecoder().decode(
++            ContractData.self,
++            from: Data(#"{"phase_order":["pack_story"],"phases":{"pack_story":{"surface":"review","task_class":"review","artifact_selector":"host.storyboard"}}}"#.utf8)
++        )
++        #expect(PipelineSurfaceRouting.route(
++            for: "pack_story",
++            contract: contract,
++            availablePackSurfaces: []
++        )?.destination == .storyboard)
++    }
++
++    @Test("dock readiness presents shared blockers without exposing tool or path diagnostics")
++    func readinessPresentation() {
++        let analysis = PipelineReadinessPresentation.current(
++            selector: "host.analysis",
++            phaseLabel: "Audio Analysis",
++            approval: .blocked("run_phase found no analysis artifact at /tmp/private/analysis.json"),
++            mutations: .ready,
++            hostDecisionRequirement: nil
++        )
++        #expect(analysis.message == "Complete Audio Analysis with a verified beat grid and section structure.")
++        #expect(!analysis.message.contains("run_phase"))
++        #expect(!analysis.message.contains("/tmp"))
++        #expect(analysis.diagnostic?.contains("run_phase") == true)
++
++        let decision = PipelineReadinessPresentation.current(
++            selector: "host.production_design",
++            phaseLabel: "Production Design",
++            approval: .ready,
++            mutations: .ready,
++            hostDecisionRequirement: "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase."
++        )
++        #expect(decision.message == "Answer \u{201C}Choose a visual direction\u{201D} in Agent before changing the phase.")
++        #expect(decision.diagnostic != nil)
++
++        let intake = PipelineReadinessPresentation.current(
++            selector: "host.project_track",
++            phaseLabel: "Project Init",
++            approval: .blocked("Complete the host-owned Track card before working on Project Init."),
++            mutations: .ready,
++            hostDecisionRequirement: nil
++        )
++        #expect(intake.message == "Complete the Track card before approving Project Init.")
++    }
++
++    @Test("navigation validation rejects stale state and selection keeps browsing separate from execution")
++    func validatesNavigationAndSelection() throws {
++        let contract = try JSONDecoder().decode(
++            ContractData.self,
++            from: Data(#"{"phase_order":["project_init","brief"],"phases":{"project_init":{"surface":"choice","task_class":"classification","artifact_selector":"host.project_track"},"brief":{"surface":"prose","task_class":"creative_long","artifact_selector":"host.brief"}}}"#.utf8)
++        )
++        let state = try JSONDecoder().decode(
++            ProjectStateData.self,
++            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"project_init","approved":true,"state":"approved"},{"phase":"brief","approved":false,"state":"pending"}],"next_phase":"brief"}"#.utf8)
++        )
++        let navigation = try ProductionNavigationData.validated(contract: contract, state: state)
++        #expect(navigation.state?.nextPhaseName == "brief")
++        #expect(PipelineNavigationSelection.normalized(
++            requestedPhase: "project_init",
++            requestedTab: .pipeline,
++            requestedPackSurfaceID: nil,
++            state: state,
++            contract: contract,
++            availablePackSurfaces: []
++        ) == "project_init")
++        #expect(PipelineNavigationSelection.normalized(
++            requestedPhase: "removed_phase",
++            requestedTab: .pipeline,
++            requestedPackSurfaceID: nil,
++            state: state,
++            contract: contract,
++            availablePackSurfaces: []
++        ) == "brief")
++        #expect(PipelineNavigationSelection.normalized(
++            requestedPhase: nil,
++            requestedTab: .story,
++            requestedPackSurfaceID: nil,
++            state: state,
++            contract: contract,
++            availablePackSurfaces: []
++        ) == "brief")
++
++        let missingNext = try JSONDecoder().decode(
++            ProjectStateData.self,
++            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"project_init","approved":true,"state":"approved"},{"phase":"brief","approved":false,"state":"pending"}]}"#.utf8)
++        )
++        #expect(missingNext.nextPhaseName == nil)
++        #expect(throws: ProductionNavigationData.ValidationError.self) {
++            try ProductionNavigationData.validated(contract: contract, state: missingNext)
++        }
++
++        let staleOrder = try JSONDecoder().decode(
++            ProjectStateData.self,
++            from: Data(#"{"project":"demo","mode":"default","phases":[{"phase":"brief","approved":false,"state":"pending"},{"phase":"project_init","approved":true,"state":"approved"}],"next_phase":"brief"}"#.utf8)
++        )
++        #expect(throws: ProductionNavigationData.ValidationError.self) {
++            try ProductionNavigationData.validated(contract: contract, state: staleOrder)
++        }
+     }
+ 
+     @Test("pack data resolver is project-local, JSON-only, and unambiguous")
+diff --git a/Tests/NexGenVideoTests/Plugins/PluginEngineContractTests.swift b/Tests/NexGenVideoTests/Plugins/PluginEngineContractTests.swift
+index 83f28659..921ac8b7 100644
+--- a/Tests/NexGenVideoTests/Plugins/PluginEngineContractTests.swift
++++ b/Tests/NexGenVideoTests/Plugins/PluginEngineContractTests.swift
+@@ -183,6 +183,68 @@ struct ProjectPackGateTests {
+         #expect(ProjectPackGate.evaluate(projectURL: project) == .unreadable)
+     }
+ 
++    @Test func productionNavigationNeverFallsBackForInvalidPackState() throws {
++        let project = FileManager.default.temporaryDirectory
++            .appendingPathComponent(
++                "navigation-pack-gate-\(UUID().uuidString)",
++                isDirectory: true
++            )
++        try FileManager.default.createDirectory(
++            at: project,
++            withIntermediateDirectories: true
++        )
++        defer { try? FileManager.default.removeItem(at: project) }
++        let binding = try #require(ProjectPackBinding(
++            id: "musicvideo",
++            version: "0.0.4",
++            projectSchema: "musicvideo/legacy"
++        ))
++
++        let missing = CockpitDataService.productionNavigation(
++            projectDir: project,
++            declaredPack: binding.id,
++            declaredBinding: binding
++        )
++        if case .success = missing { Issue.record("Missing pack settings degraded to generic navigation") }
++
++        let unavailableBinding = try #require(ProjectPackBinding(
++            id: "missingpack",
++            version: "1.0.0",
++            projectSchema: "missingpack/1.0.0"
++        ))
++        try ProjectPluginSettings.setActivePlugin(
++            unavailableBinding,
++            projectURL: project
++        )
++        let unavailable = CockpitDataService.productionNavigation(
++            projectDir: project,
++            declaredPack: unavailableBinding.id,
++            declaredBinding: unavailableBinding
++        )
++        if case .success = unavailable { Issue.record("An unavailable pack degraded to generic navigation") }
++
++        try Data("{not-json".utf8).write(
++            to: project.appendingPathComponent(ProjectPluginSettings.filename)
++        )
++        let unreadable = CockpitDataService.productionNavigation(
++            projectDir: project,
++            declaredPack: nil,
++            declaredBinding: nil
++        )
++        if case .success = unreadable { Issue.record("Unreadable pack settings degraded to generic navigation") }
++
++        try Data(#"{"activePlugin":"other"}"#.utf8).write(
++            to: project.appendingPathComponent(ProjectPluginSettings.filename),
++            options: .atomic
++        )
++        let mismatched = CockpitDataService.productionNavigation(
++            projectDir: project,
++            declaredPack: binding.id,
++            declaredBinding: binding
++        )
++        if case .success = mismatched { Issue.record("Mismatched pack settings degraded to generic navigation") }
++    }
++
+     @Test func registeredPackOpens() {
+         #expect(ProjectPackGate.requirement(packID: "musicvideo", isRegistered: true, record: record(state: .loaded))
+                 == .satisfied)
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index de88db67..37368e5b 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -24,6 +24,12 @@ EXPECTED_KEYFRAME_LANES = {
+     "audio": ["volume"],
+     "video": ["position", "scale", "rotation", "opacity", "crop"],
+ }
++EXPECTED_PRODUCTION_SURFACES = {
++    ("brief", "brief"),
++    ("treatment", "treatment"),
++    ("frames", "frames"),
++    ("render", "render"),
++}
+ SCALES = (1.0, 1.25, 1.5)
+ 
+ 
+@@ -167,6 +173,15 @@ def run_scale(executable, output, scale):
+     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
+     invariants = [row for row in rows if row.get("event") == "invariants"]
+     inspector = [row for row in rows if row.get("event") == "inspector"]
++    production_surfaces = [
++        row for row in rows if row.get("event") == "production-surface"
++    ]
++    production_dock = [row for row in rows if row.get("event") == "production-dock"]
++    production_budget = [row for row in rows if row.get("event") == "production-budget"]
++    production_rewind = [row for row in rows if row.get("event") == "production-rewind"]
++    production_read_only = [
++        row for row in rows if row.get("event") == "production-read-only"
++    ]
+     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
+     screenshots = [
+         row.get("screenshot")
+@@ -177,6 +192,14 @@ def run_scale(executable, output, scale):
+         for row in inspector
+         if row.get("keyframes") != "open"
+     ]
++    screenshots += [
++        row.get("screenshot")
++        for row in production_surfaces
++        + production_dock
++        + production_budget
++        + production_rewind
++        + production_read_only
++    ]
+     screenshots += [
+         layout.get("screenshot")
+         for row in open_keyframes
+@@ -204,12 +227,38 @@ def run_scale(executable, output, scale):
+         and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
+         and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
+         and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
++        and {
++            (row.get("phase"), row.get("artifact"))
++            for row in production_surfaces
++        }
++        == EXPECTED_PRODUCTION_SURFACES
++        and len(production_surfaces) == len(EXPECTED_PRODUCTION_SURFACES)
++        and all(
++            row.get("focusedWorkspace") == "production"
++            for row in production_surfaces
++        )
++        and len(production_dock) == 1
++        and production_dock[0].get("approvalEnabled") is False
++        and "Frames" in production_dock[0].get("requirement", "")
++        and "/" not in production_dock[0].get("requirement", "")
++        and "write_" not in production_dock[0].get("requirement", "")
++        and len(production_budget) == 1
++        and production_budget[0].get("status") == "€0.00|€125.00|0|None"
++        and len(production_rewind) == 1
++        and production_rewind[0].get("phase") == "brief"
++        and len(production_read_only) == 1
++        and production_read_only[0].get("inspectedPhase") == "brief"
++        and production_read_only[0].get("runningPhase") == "frames"
+         and invariants[0].get("liveStateUnchanged") is True
+         and invariants[0].get("projectBytesUnchanged") is True
+         and invariants[0].get("undoUnchanged") is True
+         and invariants[0].get("workingCopyUnchanged") is True
+         and len(screenshots)
+-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
++        == 8
++        + len(EXPECTED_INSPECTOR_CASES)
++        + len(EXPECTED_KEYFRAME_LANES)
++        + len(EXPECTED_PRODUCTION_SURFACES)
++        + 4
+         and valid_images
+     )
+     return {

@@ -1,0 +1,130 @@
+[
+  {
+    "name": "Gate names viewed phase before revision",
+    "pass": true
+  },
+  {
+    "name": "Revision dialog names the same target",
+    "pass": true
+  },
+  {
+    "name": "Planning cannot mutate approved timing or action",
+    "pass": true
+  },
+  {
+    "name": "Storyboard edit opens explicit rewind without changing approvals",
+    "pass": true
+  },
+  {
+    "name": "Confirmed timing revision invalidates downstream",
+    "pass": true
+  },
+  {
+    "name": "Planning list contains no duplicate shot strip",
+    "pass": true
+  },
+  {
+    "name": "Blocking shot chooser has no transport",
+    "pass": true
+  },
+  {
+    "name": "References show rendered image by default",
+    "pass": true
+  },
+  {
+    "name": "Sketch comparison is optional and leaves approvals unchanged",
+    "pass": true
+  },
+  {
+    "name": "Postproduction has no invisible trim controls or duplicate clip list",
+    "pass": true
+  },
+  {
+    "name": "Inspector tabs fit one icon row",
+    "pass": true
+  },
+  {
+    "name": "Inspector header stays put while its body scrolls",
+    "pass": true
+  },
+  {
+    "name": "Export action belongs to output dock, not status",
+    "pass": true
+  },
+  {
+    "name": "Export history does not start a different output",
+    "pass": true
+  },
+  {
+    "name": "Media retains all search scopes inside search field",
+    "pass": true
+  },
+  {
+    "name": "Transcript scope actually controls search",
+    "pass": true
+  },
+  {
+    "name": "Storyboard selection is visible after opening and rerendering",
+    "pass": true
+  },
+  {
+    "name": "Scene selection is distinct from shot selection",
+    "pass": true
+  },
+  {
+    "name": "Returning from a scene restores the selected shot",
+    "pass": true
+  },
+  {
+    "name": "Text focus updates the document inspector without changing shot selection",
+    "pass": true
+  },
+  {
+    "name": "Revised scene alternative stays inside its document",
+    "pass": true
+  },
+  {
+    "name": "Postproduction hints describe available actions",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Medien",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Audio",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Storyboard",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Shotplanung",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: References",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Review",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Takes",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Schnitt",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Postproduction",
+    "pass": true
+  },
+  {
+    "name": "Shared pane height: Export",
+    "pass": true
+  }
+]

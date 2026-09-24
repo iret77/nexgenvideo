@@ -1,0 +1,12 @@
+(async()=>{const out=[],q=s=>document.querySelector(s),click=s=>{if(!q(s))throw Error('Missing '+s);q(s).click()},assert=(n,v)=>{if(!v)throw Error(n);out.push(n)},wait=ms=>new Promise(r=>setTimeout(r,ms));try{
+assert('Animatic initial total',q('.s-anim-time').textContent.includes('00:20:00'));
+click('[data-anim="next"]');assert('Next cut',q('.s-anim-shot').textContent.startsWith('s002'));
+click('[data-anim="previous"]');assert('Previous cut',q('.s-anim-shot').textContent.startsWith('s001'));
+click('[data-assistant-tab="chat"]');assert('Chat visible',!q('.s-conversation').hidden);q('#ngvs-note').value='Hold the confrontation';q('#ngvs-note').dispatchEvent(new Event('input',{bubbles:true}));click('[data-add-note]');assert('Bounded request',q('.s-assistant-job').textContent.includes('Hold the confrontation'));
+click('[data-open="shotlist"]');q('[data-duration="0"]').value='4';click('[data-apply-timing]');click('[data-show-animatic]');assert('Timing derived',q('.s-anim-time').textContent.includes('00:21:00'));
+click('[data-run-task]');assert('Running phase locked',q('[data-approve]').disabled);await wait(2900);assert('Review ready',!q('.s-assistant-review').hidden&&q('[data-propose-hold]'));click('[data-propose-hold]');assert('Proposal visible',q('[data-apply-hold]'));click('[data-apply-hold]');assert('Proposal invalidates review',q('.s-assistant-review').textContent.includes('No current review'));assert('Proposal updates timing',q('.s-anim-time').textContent.includes('00:22:00'));
+click('[data-resource="sources"]');click('[data-import-preview]');click('[data-stage-import]');assert('Import staged unresolved',q('.s-import-status').textContent.includes('unresolved'));q('[data-import-choice]').value='local';click('[data-stage-import]');assert('Import preserves approvals',q('.s-import-status').textContent.includes('No approved artifact changed'));
+window.mockTweak.obj.workflow='Generic';window.mockTweak.cb();assert('Generic omits analysis',!q('.s-phase-list [data-open="analysis"]'));assert('Generic count',q('.s-phase-count').textContent.includes('of 10'));
+click('[data-open="storyboard"]');click('[data-mode="animatic"]');assert('Generic animatic',!!q('[data-anim="play"]'));
+assert('No horizontal overflow',document.documentElement.scrollWidth<=innerWidth+1);out.push('PASS');
+}catch(e){out.push('FAIL '+e.message)}document.body.insertAdjacentHTML('beforeend','<pre id="test-results">'+JSON.stringify(out)+'</pre>')})();

@@ -1,0 +1,72 @@
+{
+  "results": [
+    {
+      "name": "Media commands have distinct icons and accessible names",
+      "pass": true
+    },
+    {
+      "name": "Folder removal belongs only to folder tools",
+      "pass": true
+    },
+    {
+      "name": "Import icon opens existing import sheet",
+      "pass": true
+    },
+    {
+      "name": "Generation icon opens provider and prompt configuration without starting",
+      "pass": true
+    },
+    {
+      "name": "Organization opens a proposal before making changes",
+      "pass": true
+    },
+    {
+      "name": "Search index control opens the index settings",
+      "pass": true
+    },
+    {
+      "name": "New-folder icon opens name entry",
+      "pass": true
+    },
+    {
+      "name": "Selected folder enables its own rename and remove controls",
+      "pass": true
+    },
+    {
+      "name": "Folder removal asks confirmation and names its target",
+      "pass": true
+    },
+    {
+      "name": "KI icon is inside ring and label outside",
+      "pass": true
+    },
+    {
+      "name": "KI indicator still opens the correct flyout",
+      "pass": true
+    },
+    {
+      "name": "Folder tools remain visible at 1048",
+      "pass": true
+    },
+    {
+      "name": "Media command row stays in its pane at 1048",
+      "pass": true
+    },
+    {
+      "name": "Folder tools remain visible at 768",
+      "pass": true
+    },
+    {
+      "name": "Media command row stays in its pane at 768",
+      "pass": true
+    },
+    {
+      "name": "Folder tools remain visible at 390",
+      "pass": true
+    },
+    {
+      "name": "Media command row stays in its pane at 390",
+      "pass": true
+    }
+  ]
+}

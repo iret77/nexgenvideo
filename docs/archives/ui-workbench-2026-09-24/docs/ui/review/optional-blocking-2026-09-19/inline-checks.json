@@ -1,0 +1,26 @@
+[
+  {
+    "name": "space",
+    "colors": 545,
+    "height": 850,
+    "overflow": false,
+    "iconCount": 16,
+    "unpaintedIcons": 0
+  },
+  {
+    "name": "camera",
+    "colors": 503,
+    "height": 850,
+    "overflow": false,
+    "iconCount": 13,
+    "unpaintedIcons": 0
+  },
+  {
+    "name": "outputs",
+    "colors": 258,
+    "height": 850,
+    "overflow": false,
+    "iconCount": 6,
+    "unpaintedIcons": 0
+  }
+]

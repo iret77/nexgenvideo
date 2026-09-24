@@ -1,0 +1,4374 @@
+diff --git a/.github/workflows/diagnostic-acceptance.yml b/.github/workflows/diagnostic-acceptance.yml
+index ebfc3820..894094e4 100644
+--- a/.github/workflows/diagnostic-acceptance.yml
++++ b/.github/workflows/diagnostic-acceptance.yml
+@@ -84,6 +84,8 @@ jobs:
+           [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+       - name: Verify signed capture, replay, startup and retained key bytes
+         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
++      - name: Exercise native Export Cancel, Retry and Reveal actions
++        run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
+       - name: Record candidate identity
+         run: |
+           python3 - <<'PY'
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+index 46f9a42b..e859b1d2 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+@@ -91,11 +91,11 @@ extension ToolExecutor {
+         ) {
+             job = joined
+         } else {
+-            _ = try PipelineDeliveryStore.adoptCurrentTimeline(
++            _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
+                 editor: editor,
+                 requireSequenceReview: false
+             )
+-            job = try ExportQueue.shared.enqueueDelivery(
++            job = try await ExportQueue.shared.enqueueDelivery(
+                 editor: editor,
+                 spec: spec,
+                 format: format,
+@@ -105,19 +105,24 @@ extension ToolExecutor {
+             )
+         }
+ 
+-        return try jsonResult([
+-            "status": "started",
++        var result: [String: Any] = [
++            "status": job.status.rawValue,
+             "jobID": job.id,
+             "mode": ExportProjectMode.video.rawValue,
+-            "path": outputURL.path,
++            "path": job.destinationURL?.path ?? outputURL.path,
+             "codec": format.displayName,
+             "resolution": resolution.rawValue,
+             "durationFrames": job.durationFrames ?? timeline.totalFrames,
+             "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
+                 / Double(max(1, job.fps ?? timeline.fps)),
+             "fps": job.fps ?? timeline.fps,
+-            "note": "Rendering in the background. A system notification will report completion or failure.",
+-        ])
++            "note": videoExportNote(for: job),
++        ]
++        if let failure = job.failure { result["error"] = failure }
++        if let sha256 = job.outputSHA256 { result["outputSha256"] = sha256 }
++        if let byteCount = job.outputByteCount { result["outputByteCount"] = byteCount }
++        if !job.warnings.isEmpty { result["warnings"] = job.warnings }
++        return try jsonResult(result)
+     }
+ 
+     private func exportXML(
+@@ -126,7 +131,7 @@ extension ToolExecutor {
+         requestID: String?
+     ) async throws -> ToolResult {
+         let timeline = editor.timeline
+-        let job = try ExportQueue.shared.enqueueInterchange(
++        let job = try await ExportQueue.shared.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: outputURL,
+@@ -159,7 +164,7 @@ extension ToolExecutor {
+         requestID: String?
+     ) async throws -> ToolResult {
+         let timeline = editor.timeline
+-        let job = try ExportQueue.shared.enqueueInterchange(
++        let job = try await ExportQueue.shared.enqueueInterchange(
+             editor: editor,
+             format: .fcpxml,
+             outputURL: outputURL,
+@@ -233,7 +238,7 @@ extension ToolExecutor {
+         outputURL: URL,
+         requestID: String?
+     ) async throws -> ToolResult {
+-        let job = try ExportQueue.shared.enqueueProjectPackage(
++        let job = try await ExportQueue.shared.enqueueProjectPackage(
+             editor: editor,
+             outputURL: outputURL,
+             requestID: requestID
+@@ -262,16 +267,28 @@ extension ToolExecutor {
+     }
+ 
+     private func requireCompleted(_ job: ExportJob) async throws {
+-        let completed = await withTaskCancellationHandler {
+-            await ExportQueue.shared.waitForCompletion(jobID: job.id)
+-        } onCancel: {
+-            Task { @MainActor in ExportQueue.shared.cancel(jobID: job.id) }
++        let completed = await ExportQueue.shared.waitForCompletion(jobID: job.id)
++        if Task.isCancelled {
++            throw CancellationError()
+         }
+         guard let completed, completed.status == .completed else {
+             throw ToolError("export_project: \(completed?.failure ?? "export did not complete")")
+         }
+     }
+ 
++    private func videoExportNote(for job: ExportJob) -> String {
++        switch job.status {
++        case .pending: "Waiting for earlier exports."
++        case .preparing: "Preparing the bound export sources."
++        case .exporting: "Rendering in the background."
++        case .cancelling: "Cancelling the export."
++        case .completed: "Export completed."
++        case .failed: "Export failed."
++        case .cancelled: "Export cancelled."
++        case .interrupted: "Export interrupted before completion."
++        }
++    }
++
+     private func exportDestination(
+         outputPath: String?,
+         mode: ExportProjectMode,
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+index e0c95fe6..3baa110d 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+@@ -3286,7 +3286,7 @@ extension ToolExecutor {
+                     PipelineAssemblyStore.DriftAction(rawValue: $0)
+                 }
+                 if action == .adopt {
+-                    let finished = try PipelineDeliveryStore.adoptCurrentTimeline(
++                    let finished = try await PipelineDeliveryStore.adoptCurrentTimeline(
+                         editor: editor,
+                         requireSequenceReview: false
+                     )
+diff --git a/Sources/NexGenVideo/App/AppDelegate.swift b/Sources/NexGenVideo/App/AppDelegate.swift
+index a3729a6e..66b79964 100644
+--- a/Sources/NexGenVideo/App/AppDelegate.swift
++++ b/Sources/NexGenVideo/App/AppDelegate.swift
+@@ -16,9 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+ 
+         let isRelaunchSelfTest = AppRelaunchSelfTest.isRequested
+         let relaunchIntent = AppRelaunchIntentStore.consumeForLaunch(
+-            isSelfTest: isRelaunchSelfTest
++            isSelfTest: isRelaunchSelfTest || ExportActionsSelfTest.isRequested
+         )
+-        if isRelaunchSelfTest {
++        if ExportActionsSelfTest.isRequested {
++            Task { @MainActor in
++                await Task.yield()
++                await ExportActionsSelfTest.runIfRequested()
++            }
++        } else if isRelaunchSelfTest {
+             AppRelaunchSelfTest.checkpoint("home-controller-requested")
+             let home = HomeWindowController.shared
+             AppRelaunchSelfTest.checkpoint("home-controller-ready")
+@@ -45,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+             }
+         }
+         Task.detached(priority: .utility) {
++            do {
++                try ExportPublishRecoveryStore.recoverAll()
++            } catch {
++                Log.export.error("publish recovery failed: \(error.localizedDescription)")
++            }
+             Project.ensureStorageDirectory()
+             ProjectStorageMigration.cleanUpProjectsFolder()
+             // Retire idle working copies + caches (frees both stores). Open docs and still-present
+diff --git a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+index c64262a2..4a949e7c 100644
+--- a/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
++++ b/Sources/NexGenVideo/App/AppRelaunchSelfTest.swift
+@@ -264,7 +264,7 @@ enum AppRelaunchSelfTest {
+         return predicate()
+     }
+ 
+-    private static func postMouseClick(
++    static func postMouseClick(
+         identifier: String,
+         in window: NSWindow?
+     ) -> String? {
+@@ -276,21 +276,8 @@ enum AppRelaunchSelfTest {
+               let probe = findClickProbe(in: root, identifier: identifier) else {
+             return "the control geometry probe was absent"
+         }
+-        guard probe.window === window else { return "the control probe belonged to another window" }
+-        guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
+-
+-        let frame = probe.bounds
+-        guard frame.width.isFinite, frame.height.isFinite,
+-              frame.width > 0, frame.height > 0 else {
+-            return "the control had no finite clickable frame"
+-        }
+-        let location = probe.convert(
+-            NSPoint(x: frame.midX, y: frame.midY),
+-            to: nil
+-        )
+-        let contentPoint = root.convert(location, from: nil)
+-        guard root.bounds.contains(contentPoint) else {
+-            return "the control frame was outside the Home window"
++        guard let location = clickLocation(for: probe, in: root, window: window) else {
++            return "the control was clipped or had no native hit target"
+         }
+         let timestamp = ProcessInfo.processInfo.systemUptime
+         guard let down = NSEvent.mouseEvent(
+@@ -321,7 +308,20 @@ enum AppRelaunchSelfTest {
+         return nil
+     }
+ 
+-    private static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
++    static func scrollClickProbeToVisible(identifier: String, in window: NSWindow?) -> String? {
++        guard let window else { return "the window was unavailable" }
++        guard let root = window.contentView,
++              let probe = findClickProbe(in: root, identifier: identifier) else {
++            return "the control geometry probe was absent"
++        }
++        guard probe.window === window else { return "the control probe belonged to another window" }
++        guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
++        _ = probe.scrollToVisible(probe.bounds)
++        window.displayIfNeeded()
++        return nil
++    }
++
++    static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+         guard let window,
+               window.isVisible,
+               window.isKeyWindow,
+@@ -330,25 +330,56 @@ enum AppRelaunchSelfTest {
+               let probe = findClickProbe(in: root, identifier: identifier),
+               probe.window === window,
+               !probe.isHiddenOrHasHiddenAncestor else { return false }
++        return clickLocation(for: probe, in: root, window: window) != nil
++    }
++
++    private static func clickLocation(
++        for probe: NSView,
++        in root: NSView,
++        window: NSWindow
++    ) -> NSPoint? {
+         let frame = probe.bounds
+         guard frame.width.isFinite, frame.height.isFinite,
+-              frame.width > 0, frame.height > 0 else { return false }
++              frame.width > 0, frame.height > 0 else { return nil }
++        let frameInRoot = probe.convert(frame, to: root)
++        guard root.bounds.contains(frameInRoot) else { return nil }
++        var ancestor = probe.superview
++        while let current = ancestor {
++            if current is NSClipView {
++                let frameInClipView = probe.convert(frame, to: current)
++                guard current.bounds.contains(frameInClipView) else { return nil }
++            }
++            ancestor = current.superview
++        }
+         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+-        return root.bounds.contains(root.convert(location, from: nil))
++        let contentPoint = root.convert(location, from: nil)
++        guard root.bounds.contains(contentPoint),
++              let hitTarget = root.hitTest(contentPoint),
++              hitTarget.window === window,
++              !hitTarget.isHiddenOrHasHiddenAncestor else { return nil }
++        return location
+     }
+ 
+     private static func isClickProbeAbsent(identifier: String, in window: NSWindow?) -> Bool {
+         guard let root = window?.contentView else { return false }
+-        return findClickProbe(in: root, identifier: identifier) == nil
++        return findClickProbes(in: root, identifier: identifier).isEmpty
+     }
+ 
+     private static func findClickProbe(in view: NSView, identifier: String) -> NSView? {
++        let matches = findClickProbes(in: view, identifier: identifier)
++        return matches.count == 1 ? matches[0] : nil
++    }
++
++    private static func findClickProbes(in view: NSView, identifier: String) -> [NSView] {
++        var matches: [NSView] = []
+         if view is AppRelaunchClickProbeView,
+-           view.identifier?.rawValue == identifier { return view }
++           view.identifier?.rawValue == identifier {
++            matches.append(view)
++        }
+         for child in view.subviews {
+-            if let match = findClickProbe(in: child, identifier: identifier) { return match }
++            matches.append(contentsOf: findClickProbes(in: child, identifier: identifier))
+         }
+-        return nil
++        return matches
+     }
+ 
+     private static func write(_ value: String, to url: URL) {
+diff --git a/Sources/NexGenVideo/App/ExportActionsSelfTest.swift b/Sources/NexGenVideo/App/ExportActionsSelfTest.swift
+new file mode 100644
+index 00000000..1c8fd534
+--- /dev/null
++++ b/Sources/NexGenVideo/App/ExportActionsSelfTest.swift
+@@ -0,0 +1,233 @@
++import AppKit
++import Darwin
++import SwiftUI
++
++@MainActor
++enum ExportActionsSelfTest {
++    static var isRequested: Bool {
++        ProcessInfo.processInfo.environment["NGV_EXPORT_ACTIONS_SELFTEST"] == "1"
++    }
++
++    private(set) static var revealedURL: URL?
++
++    static func recordReveal(_ url: URL) {
++        guard isRequested else { return }
++        revealedURL = url.standardizedFileURL
++    }
++
++    static func runIfRequested() async {
++        guard isRequested else { return }
++        do {
++            try await run()
++        } catch {
++            fail(error.localizedDescription)
++        }
++    }
++
++    private static func run() async throws {
++        guard let evidencePath = ProcessInfo.processInfo.environment[
++            "NGV_EXPORT_ACTIONS_SELFTEST_OUTPUT"
++        ], !evidencePath.isEmpty else {
++            throw ToolError("NGV_EXPORT_ACTIONS_SELFTEST_OUTPUT is required.")
++        }
++        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "export-actions-selftest-\(UUID().uuidString)",
++            isDirectory: true
++        )
++        defer { try? FileManager.default.removeItem(at: root) }
++        let package = root.appendingPathComponent("Actions.ngv", isDirectory: true)
++        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
++        try JSONEncoder().encode(Timeline()).write(
++            to: package.appendingPathComponent(Project.timelineFilename)
++        )
++        try JSONEncoder().encode(MediaManifest()).write(
++            to: package.appendingPathComponent(Project.manifestFilename)
++        )
++        try JSONEncoder().encode(GenerationLog()).write(
++            to: package.appendingPathComponent(Project.generationLogFilename)
++        )
++        _ = try ProjectIdentity.uuid(for: package)
++
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        guard let ownerKey = editor.openWorkingCopyKey else {
++            throw ToolError("The native export self-test project did not open.")
++        }
++        let queue = ExportQueue.shared
++        let completedURL = root.appendingPathComponent("completed.xml")
++        let completed = try await queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: completedURL,
++            projectName: "Actions"
++        )
++        let completedResult = await queue.waitForCompletion(jobID: completed.id)
++        guard completedResult?.status == .completed else {
++            throw ToolError("The native export self-test could not prepare a completed job.")
++        }
++
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++            queue.cancelAll(ownerKey: ownerKey)
++            editor.releaseWorkingCopy()
++        }
++        let cancellable = try await queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: root.appendingPathComponent("cancel.xml"),
++            projectName: "Actions"
++        )
++
++        let host = NSHostingController(rootView: ExportView().environment(editor))
++        let window = NSWindow(contentViewController: host)
++        window.setContentSize(AppTheme.ComponentSize.exportWindow)
++        window.center()
++        window.makeKeyAndOrderFront(nil)
++        NSApp.activate(ignoringOtherApps: true)
++
++        try await verifyActions(for: [completed, cancellable], window: window)
++
++        let initialCount = queue.jobs(ownerKey: ownerKey).count
++        try await click(job: completed, action: "cancel", window: window)
++        try await click(job: completed, action: "retry", window: window)
++        await settleActions()
++        guard completed.status == .completed,
++              queue.jobs(ownerKey: ownerKey).count == initialCount else {
++            throw ToolError("Completed-job disabled actions changed queue state.")
++        }
++
++        try await click(job: cancellable, action: "retry", window: window)
++        try await click(job: cancellable, action: "reveal", window: window)
++        guard cancellable.status == .pending,
++              queue.jobs(ownerKey: ownerKey).count == initialCount,
++              revealedURL == nil else {
++            throw ToolError("Pending-job disabled actions changed queue state.")
++        }
++        try await click(job: cancellable, action: "cancel", window: window)
++        guard await waitUntil(timeout: .seconds(2), { cancellable.status == .cancelled }) else {
++            throw ToolError("The visible Cancel action did not cancel its bound job.")
++        }
++
++        try await click(job: cancellable, action: "cancel", window: window)
++        try await click(job: cancellable, action: "reveal", window: window)
++        await settleActions()
++        guard cancellable.status == .cancelled,
++              queue.jobs(ownerKey: ownerKey).count == initialCount,
++              revealedURL == nil else {
++            throw ToolError("Cancelled-job disabled actions changed queue state.")
++        }
++
++        try await click(job: completed, action: "reveal", window: window)
++        guard await waitUntil(timeout: .seconds(2), {
++            revealedURL == completedURL.standardizedFileURL
++        }) else {
++            throw ToolError("The visible Reveal action did not reveal its bound destination.")
++        }
++        window.makeKeyAndOrderFront(nil)
++        NSApp.activate(ignoringOtherApps: true)
++
++        try await click(job: cancellable, action: "retry", window: window)
++        guard await waitUntil(timeout: .seconds(2), {
++            queue.jobs(ownerKey: ownerKey).count == initialCount + 1
++        }), let retried = queue.jobs(ownerKey: ownerKey).first(where: {
++            $0.id != cancellable.id && $0.destinationURL == cancellable.destinationURL
++        }), retried.status == .pending else {
++            throw ToolError("The visible Retry action did not enqueue its bound source.")
++        }
++        try await verifyActions(for: [completed, cancellable, retried], window: window)
++
++        queue.cancel(jobID: retried.id)
++        ExportCoordinator.endExport()
++        gateHeld = false
++        await queue.waitUntilIdle(ownerKey: ownerKey)
++        window.orderOut(nil)
++
++        let evidence: [String: Any] = [
++            "ownerKey": ownerKey,
++            "completedJobID": completed.id,
++            "cancelledJobID": cancellable.id,
++            "retriedFromJobID": cancellable.id,
++            "retryJobID": retried.id,
++            "revealedPath": completedURL.path,
++            "cancelStatus": cancellable.status.rawValue,
++            "retryStatus": retried.status.rawValue,
++        ]
++        let data = try JSONSerialization.data(
++            withJSONObject: evidence,
++            options: [.prettyPrinted, .sortedKeys]
++        )
++        try data.write(to: URL(fileURLWithPath: evidencePath), options: .atomic)
++        FileHandle.standardOutput.write(Data("SELFTEST_EXPORT_ACTIONS_OK\n".utf8))
++        editor.releaseWorkingCopy()
++        exit(0)
++    }
++
++    private static func verifyActions(for jobs: [ExportJob], window: NSWindow) async throws {
++        for job in jobs {
++            for action in ["cancel", "retry", "reveal"] {
++                try await prepareAction(job: job, action: action, window: window)
++            }
++        }
++    }
++
++    private static func prepareAction(
++        job: ExportJob,
++        action: String,
++        window: NSWindow
++    ) async throws {
++        let identifier = "export.job.\(job.id).\(action)"
++        var failure = "the native action remained clipped or had no hit target"
++        guard await waitUntil(timeout: .seconds(5), {
++            if let scrollFailure = AppRelaunchSelfTest.scrollClickProbeToVisible(
++                identifier: identifier,
++                in: window
++            ) {
++                failure = scrollFailure
++                return false
++            }
++            failure = "the native action remained clipped or had no hit target"
++            return AppRelaunchSelfTest.isClickProbeReady(identifier: identifier, in: window)
++        }) else {
++            throw ToolError("\(identifier): \(failure)")
++        }
++    }
++
++    private static func click(job: ExportJob, action: String, window: NSWindow) async throws {
++        let identifier = "export.job.\(job.id).\(action)"
++        try await prepareAction(job: job, action: action, window: window)
++        if let failure = AppRelaunchSelfTest.postMouseClick(
++            identifier: identifier,
++            in: window
++        ) {
++            throw ToolError("\(identifier): \(failure)")
++        }
++    }
++
++    private static func settleActions() async {
++        try? await Task.sleep(for: .milliseconds(200))
++    }
++
++    private static func waitUntil(
++        timeout: Duration,
++        _ predicate: () -> Bool
++    ) async -> Bool {
++        let clock = ContinuousClock()
++        let deadline = clock.now.advanced(by: timeout)
++        while clock.now < deadline {
++            if predicate() { return true }
++            do {
++                try await Task.sleep(for: .milliseconds(50))
++            } catch {
++                return predicate()
++            }
++        }
++        return predicate()
++    }
++
++    private static func fail(_ reason: String) -> Never {
++        FileHandle.standardError.write(Data("SELFTEST_EXPORT_ACTIONS_FAIL \(reason)\n".utf8))
++        exit(1)
++    }
++}
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 96a8b89b..924f02e0 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -456,12 +456,14 @@ final class EditorViewModel {
+                 if exportIsRunning {
+                     await ExportQueue.shared.waitUntilIdle(ownerKey: key)
+                 }
++                ExportQueue.shared.release(ownerKey: key)
+                 ProjectWorkingCopy.discard(
+                     key: key,
+                     ifGeneration: generation
+                 )
+             }
+         } else {
++            ExportQueue.shared.release(ownerKey: key)
+             ProjectWorkingCopy.discard(
+                 key: key,
+                 ifGeneration: generation
+@@ -517,9 +519,11 @@ final class EditorViewModel {
+         hasProductionPipeline = roots.contains { DataRootResolver.dataRoot(of: $0) != nil }
+         if let dataRoot = workingCopyHome.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+             do {
+-                if try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot),
+-                   let key = openWorkingCopyKey {
+-                    try ProjectWorkingCopy.markDirty(key: key)
++                if let key = openWorkingCopyKey,
++                   try ExportQueue.shared.recoverInterruptedDeliveries(
++                       ownerKey: key,
++                       dataRoot: dataRoot
++                   ) {
+                     onPipelineChanged?()
+                 }
+             } catch {
+diff --git a/Sources/NexGenVideo/Export/ExportPublishRecoveryStore.swift b/Sources/NexGenVideo/Export/ExportPublishRecoveryStore.swift
+new file mode 100644
+index 00000000..ec55d121
+--- /dev/null
++++ b/Sources/NexGenVideo/Export/ExportPublishRecoveryStore.swift
+@@ -0,0 +1,528 @@
++import Darwin
++import Foundation
++
++struct ExportFileIdentity: Codable, Equatable, Sendable {
++    let device: UInt64
++    let inode: UInt64
++
++    static func capture(_ url: URL) throws -> ExportFileIdentity? {
++        var value = stat()
++        guard lstat(url.path, &value) == 0 else {
++            if errno == ENOENT { return nil }
++            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
++        }
++        guard (value.st_mode & S_IFMT) != S_IFLNK else {
++            throw ToolError("Export paths cannot be symbolic links.")
++        }
++        return .init(device: UInt64(value.st_dev), inode: UInt64(value.st_ino))
++    }
++}
++
++enum ExportPublishRecoveryStore {
++    private struct SimulatedCrash: Error {}
++    private struct SimulatedCommittedCleanupFailure: Error {}
++
++    struct Publication: Sendable {
++        let targetURL: URL
++        let temporaryURL: URL
++        let initialState: ExportQueue.PathState
++        let initialIdentity: ExportFileIdentity?
++        let publishedState: ExportQueue.PathState
++        let publishedIdentity: ExportFileIdentity?
++        let jobID: String
++        let expectsDirectory: Bool
++    }
++
++    struct Result: Sendable {
++        let publications: [Publication]
++
++        func state(for url: URL) -> ExportQueue.PathState {
++            publications.first {
++                $0.targetURL.standardizedFileURL == url.standardizedFileURL
++            }?.publishedState ?? .absent
++        }
++
++        func verifyPublished(
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws {
++            for publication in publications {
++                if isCancelled() { throw CancellationError() }
++                guard try ExportPublishRecoveryStore.matches(
++                    publication.targetURL,
++                    state: publication.publishedState,
++                    identity: publication.publishedIdentity,
++                    isCancelled: isCancelled
++                ) else {
++                    throw ToolError("A published export changed before its evidence was recorded.")
++                }
++            }
++        }
++    }
++
++    private struct Journal: Codable {
++        enum Phase: String, Codable {
++            case prepared
++            case committed
++        }
++
++        struct Target: Codable {
++            let targetPath: String
++            let temporaryPath: String
++            let backupPath: String
++            let initialState: ExportQueue.PathState
++            let initialIdentity: ExportFileIdentity?
++            let publishedState: ExportQueue.PathState
++            let publishedIdentity: ExportFileIdentity?
++            let expectsDirectory: Bool
++        }
++
++        let schema: String
++        let transactionID: String
++        let jobID: String
++        var phase: Phase
++        let targets: [Target]
++    }
++
++    private static let schema = "nexgenvideo/export-publish-recovery/v1"
++    private static let lock = NSLock()
++
++    static var defaultRoot: URL {
++        AppPaths.recovery.appendingPathComponent("ExportPublish", isDirectory: true)
++    }
++
++    static func recoverAll(
++        root: URL = defaultRoot,
++        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
++        failCommittedJournalRemovalForTesting: Bool = false
++    ) throws {
++        lock.lock()
++        defer { lock.unlock() }
++        try recoverAllLocked(
++            root: root,
++            failCommittedCleanupAfterBackupRemovalForTesting:
++                failCommittedCleanupAfterBackupRemovalForTesting,
++            failCommittedJournalRemovalForTesting:
++                failCommittedJournalRemovalForTesting
++        )
++    }
++
++    static func publish(
++        _ publications: [Publication],
++        root: URL = defaultRoot,
++        isCancelled: @Sendable () -> Bool = { false },
++        crashAfterMutationForTesting: Int? = nil,
++        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
++        failCommittedJournalRemovalForTesting: Bool = false
++    ) throws -> Result {
++        guard let jobID = publications.first?.jobID,
++              UUID(uuidString: jobID) != nil,
++              publications.allSatisfy({ $0.jobID == jobID }),
++              !publications.isEmpty else {
++            throw ToolError("The export publication identity is invalid.")
++        }
++        let transactionID = UUID().uuidString.lowercased()
++        let targets = try publications.map { publication in
++            let target = publication.targetURL.standardizedFileURL
++            let temporary = publication.temporaryURL.standardizedFileURL
++            guard target.path.hasPrefix("/"),
++                  temporary == ExportQueue.DestinationBinding.makeTemporaryURL(
++                      url: target,
++                      jobID: jobID
++                  ).standardizedFileURL,
++                  publication.initialState.exists == (publication.initialIdentity != nil),
++                  publication.initialState.isDirectory == publication.expectsDirectory
++                    || !publication.initialState.exists,
++                  publication.publishedState.exists,
++                  publication.publishedIdentity != nil,
++                  publication.publishedState.isDirectory == publication.expectsDirectory else {
++                throw ToolError("The export publication paths are not bound to this job.")
++            }
++            return Journal.Target(
++                targetPath: target.path,
++                temporaryPath: temporary.path,
++                backupPath: backupURL(
++                    target: target,
++                    jobID: jobID,
++                    transactionID: transactionID
++                ).path,
++                initialState: publication.initialState,
++                initialIdentity: publication.initialIdentity,
++                publishedState: publication.publishedState,
++                publishedIdentity: publication.publishedIdentity,
++                expectsDirectory: publication.expectsDirectory
++            )
++        }
++        guard Set(targets.map(\.targetPath)).count == targets.count else {
++            throw ToolError("An export cannot publish two results to the same destination.")
++        }
++        let boundPaths = targets.flatMap { [$0.targetPath, $0.temporaryPath, $0.backupPath] }
++        guard Set(boundPaths).count == boundPaths.count else {
++            throw ToolError("The export publication paths overlap.")
++        }
++        var journal = Journal(
++            schema: schema,
++            transactionID: transactionID,
++            jobID: jobID,
++            phase: .prepared,
++            targets: targets
++        )
++
++        lock.lock()
++        defer { lock.unlock() }
++        try recoverAllLocked(root: root)
++        if isCancelled() { throw CancellationError() }
++        try ensureRoot(root)
++        let journalURL = root.appendingPathComponent("\(transactionID).json")
++        try write(journal, to: journalURL)
++        do {
++            let fm = FileManager.default
++            var mutationCount = 0
++            for target in journal.targets {
++                guard try matches(
++                    URL(fileURLWithPath: target.targetPath),
++                    state: target.initialState,
++                    identity: target.initialIdentity,
++                    isCancelled: isCancelled
++                ), try matches(
++                    URL(fileURLWithPath: target.temporaryPath),
++                    state: target.publishedState,
++                    identity: target.publishedIdentity,
++                    isCancelled: isCancelled
++                ), try ExportQueue.PathState.capture(
++                    URL(fileURLWithPath: target.backupPath),
++                    isCancelled: isCancelled
++                ) == .absent else {
++                    throw ToolError("The export destination changed while publication was starting.")
++                }
++            }
++            for target in journal.targets {
++                if isCancelled() { throw CancellationError() }
++                let targetURL = URL(fileURLWithPath: target.targetPath)
++                let temporaryURL = URL(fileURLWithPath: target.temporaryPath)
++                let backupURL = URL(fileURLWithPath: target.backupPath)
++                guard try matches(
++                    targetURL,
++                    state: target.initialState,
++                    identity: target.initialIdentity,
++                    isCancelled: isCancelled
++                ), try matches(
++                    temporaryURL,
++                    state: target.publishedState,
++                    identity: target.publishedIdentity,
++                    isCancelled: isCancelled
++                ), try ExportQueue.PathState.capture(
++                    backupURL,
++                    isCancelled: isCancelled
++                ) == .absent else {
++                    throw ToolError("The export destination changed while publication was starting.")
++                }
++                if target.initialState.exists {
++                    try fm.moveItem(at: targetURL, to: backupURL)
++                    mutationCount += 1
++                    if mutationCount == crashAfterMutationForTesting { throw SimulatedCrash() }
++                }
++                if isCancelled() { throw CancellationError() }
++                try fm.moveItem(at: temporaryURL, to: targetURL)
++                mutationCount += 1
++                if mutationCount == crashAfterMutationForTesting { throw SimulatedCrash() }
++            }
++        } catch {
++            let publicationError = error
++            if error is SimulatedCrash { throw error }
++            do {
++                try recoverPrepared(journal, journalURL: journalURL)
++            } catch {
++                throw ToolError(
++                    "Export publication failed and recovery is incomplete: "
++                        + error.localizedDescription
++                )
++            }
++            throw publicationError
++        }
++
++        journal.phase = .committed
++        try write(journal, to: journalURL)
++        try recoverCommitted(
++            journal,
++            journalURL: journalURL,
++            failAfterBackupRemovalForTesting:
++                failCommittedCleanupAfterBackupRemovalForTesting,
++            failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
++        )
++        return Result(publications: publications)
++    }
++
++    private static func recoverAllLocked(
++        root: URL,
++        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
++        failCommittedJournalRemovalForTesting: Bool = false
++    ) throws {
++        let fm = FileManager.default
++        guard fm.fileExists(atPath: root.path) else { return }
++        try ensureRoot(root)
++        let files = try fm.contentsOfDirectory(
++            at: root,
++            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]
++        ).filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
++        for url in files {
++            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
++            guard values.isRegularFile == true, values.isSymbolicLink != true else {
++                throw ToolError("An export recovery record is not a regular file.")
++            }
++            let journal = try JSONDecoder().decode(Journal.self, from: Data(contentsOf: url))
++            try validate(journal, journalURL: url, root: root)
++            switch journal.phase {
++            case .prepared:
++                try recoverPrepared(journal, journalURL: url)
++            case .committed:
++                try recoverCommitted(
++                    journal,
++                    journalURL: url,
++                    failAfterBackupRemovalForTesting:
++                        failCommittedCleanupAfterBackupRemovalForTesting,
++                    failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
++                )
++            }
++        }
++    }
++
++    private static func recoverPrepared(_ journal: Journal, journalURL: URL) throws {
++        let fm = FileManager.default
++        var failures: [String] = []
++        for target in journal.targets.reversed() {
++            do {
++                let targetURL = URL(fileURLWithPath: target.targetPath)
++                let temporaryURL = URL(fileURLWithPath: target.temporaryPath)
++                let backupURL = URL(fileURLWithPath: target.backupPath)
++                var targetState = try ExportQueue.PathState.capture(targetURL)
++                let backupState = try ExportQueue.PathState.capture(backupURL)
++                let targetIsInitial = try matches(
++                    targetURL,
++                    state: target.initialState,
++                    identity: target.initialIdentity
++                )
++                let targetIsPublished = try matches(
++                    targetURL,
++                    state: target.publishedState,
++                    identity: target.publishedIdentity
++                )
++                let backupIsInitial = try matches(
++                    backupURL,
++                    state: target.initialState,
++                    identity: target.initialIdentity
++                )
++
++                if target.initialState.exists {
++                    if backupState.exists, !backupIsInitial {
++                        try preserveConflict(backupURL, transactionID: journal.transactionID)
++                    }
++                    if !targetIsInitial {
++                        if targetState.exists {
++                            if targetIsPublished {
++                                try fm.removeItem(at: targetURL)
++                            } else {
++                                try preserveConflict(targetURL, transactionID: journal.transactionID)
++                            }
++                            targetState = .absent
++                        }
++                        if backupIsInitial {
++                            try fm.moveItem(at: backupURL, to: targetURL)
++                            targetState = target.initialState
++                        }
++                    } else if backupIsInitial {
++                        try fm.removeItem(at: backupURL)
++                    }
++                    guard try matches(
++                        targetURL,
++                        state: target.initialState,
++                        identity: target.initialIdentity
++                    ) else {
++                        throw ToolError("The previous export could not be restored at \(targetURL.path).")
++                    }
++                } else {
++                    if targetIsPublished {
++                        try fm.removeItem(at: targetURL)
++                    } else if targetState.exists {
++                        try preserveConflict(targetURL, transactionID: journal.transactionID)
++                    }
++                    if backupState.exists {
++                        try preserveConflict(backupURL, transactionID: journal.transactionID)
++                    }
++                }
++
++                let temporaryState = try ExportQueue.PathState.capture(temporaryURL)
++                if try matches(
++                    temporaryURL,
++                    state: target.publishedState,
++                    identity: target.publishedIdentity
++                ) {
++                    try fm.removeItem(at: temporaryURL)
++                } else if temporaryState.exists {
++                    try preserveConflict(temporaryURL, transactionID: journal.transactionID)
++                }
++            } catch {
++                failures.append(error.localizedDescription)
++            }
++        }
++        guard failures.isEmpty else {
++            throw ToolError(failures.joined(separator: " "))
++        }
++        try fm.removeItem(at: journalURL)
++    }
++
++    private static func recoverCommitted(
++        _ journal: Journal,
++        journalURL: URL,
++        failAfterBackupRemovalForTesting: Int? = nil,
++        failJournalRemovalForTesting: Bool = false
++    ) throws {
++        let fm = FileManager.default
++        for target in journal.targets {
++            let targetURL = URL(fileURLWithPath: target.targetPath)
++            guard try matches(
++                targetURL,
++                state: target.publishedState,
++                identity: target.publishedIdentity
++            ) else {
++                throw ToolError("A committed export changed before publish recovery completed.")
++            }
++        }
++        var removedBackupCount = 0
++        for target in journal.targets {
++            let backupURL = URL(fileURLWithPath: target.backupPath)
++            let backupState = try ExportQueue.PathState.capture(backupURL)
++            if try matches(
++                backupURL,
++                state: target.initialState,
++                identity: target.initialIdentity
++            ), backupState.exists {
++                try fm.removeItem(at: backupURL)
++                removedBackupCount += 1
++                if removedBackupCount == failAfterBackupRemovalForTesting {
++                    throw SimulatedCommittedCleanupFailure()
++                }
++            } else if backupState.exists {
++                try preserveConflict(backupURL, transactionID: journal.transactionID)
++            }
++            let temporaryURL = URL(fileURLWithPath: target.temporaryPath)
++            let temporaryState = try ExportQueue.PathState.capture(temporaryURL)
++            if try matches(
++                temporaryURL,
++                state: target.publishedState,
++                identity: target.publishedIdentity
++            ) {
++                try fm.removeItem(at: temporaryURL)
++            } else if temporaryState.exists {
++                try preserveConflict(temporaryURL, transactionID: journal.transactionID)
++            }
++        }
++        if failJournalRemovalForTesting {
++            throw SimulatedCommittedCleanupFailure()
++        }
++        try fm.removeItem(at: journalURL)
++    }
++
++    private static func validate(_ journal: Journal, journalURL: URL, root: URL) throws {
++        guard journal.schema == schema,
++              UUID(uuidString: journal.transactionID) != nil,
++              UUID(uuidString: journal.jobID) != nil,
++              journalURL.deletingPathExtension().lastPathComponent == journal.transactionID,
++              !journal.targets.isEmpty,
++              Set(journal.targets.map(\.targetPath)).count == journal.targets.count else {
++            throw ToolError("An export recovery record has an invalid identity.")
++        }
++        let boundPaths = journal.targets.flatMap {
++            [$0.targetPath, $0.temporaryPath, $0.backupPath]
++        }
++        guard Set(boundPaths).count == boundPaths.count else {
++            throw ToolError("An export recovery record contains overlapping paths.")
++        }
++        let resolvedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
++        guard journalURL.deletingLastPathComponent().resolvingSymlinksInPath() == resolvedRoot else {
++            throw ToolError("An export recovery record escaped its runtime store.")
++        }
++        for target in journal.targets {
++            let targetURL = URL(fileURLWithPath: target.targetPath).standardizedFileURL
++            let temporaryURL = URL(fileURLWithPath: target.temporaryPath).standardizedFileURL
++            let expectedTemporary = ExportQueue.DestinationBinding.makeTemporaryURL(
++                url: targetURL,
++                jobID: journal.jobID
++            ).standardizedFileURL
++            let expectedBackup = backupURL(
++                target: targetURL,
++                jobID: journal.jobID,
++                transactionID: journal.transactionID
++            ).standardizedFileURL
++            guard target.targetPath.hasPrefix("/"),
++                  targetURL.deletingLastPathComponent().resolvingSymlinksInPath()
++                    == targetURL.deletingLastPathComponent(),
++                  temporaryURL == expectedTemporary,
++                  URL(fileURLWithPath: target.backupPath).standardizedFileURL == expectedBackup,
++                  target.initialState.exists == (target.initialIdentity != nil),
++                  target.initialState.isDirectory == target.expectsDirectory
++                    || !target.initialState.exists,
++                  target.publishedState.exists,
++                  target.publishedIdentity != nil,
++                  target.publishedState.isDirectory == target.expectsDirectory else {
++                throw ToolError("An export recovery record contains unbound paths.")
++            }
++        }
++    }
++
++    private static func backupURL(target: URL, jobID: String, transactionID: String) -> URL {
++        target.deletingLastPathComponent().appendingPathComponent(
++            ".\(target.lastPathComponent).\(jobID).\(transactionID).backup"
++        )
++    }
++
++    private static func preserveConflict(_ url: URL, transactionID: String) throws {
++        let fm = FileManager.default
++        guard fm.fileExists(atPath: url.path) else { return }
++        let parent = url.deletingLastPathComponent()
++        let ext = url.pathExtension
++        let base = url.deletingPathExtension().lastPathComponent
++            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
++        var index = 0
++        while true {
++            let suffix = index == 0 ? "" : " \(index + 1)"
++            let name = ext.isEmpty
++                ? "\(base) Recovered Conflict \(transactionID.prefix(8))\(suffix)"
++                : "\(base) Recovered Conflict \(transactionID.prefix(8))\(suffix).\(ext)"
++            let destination = parent.appendingPathComponent(name)
++            if !fm.fileExists(atPath: destination.path) {
++                try fm.moveItem(at: url, to: destination)
++                return
++            }
++            index += 1
++        }
++    }
++
++    private static func matches(
++        _ url: URL,
++        state: ExportQueue.PathState,
++        identity: ExportFileIdentity?,
++        isCancelled: @Sendable () -> Bool = { false }
++    ) throws -> Bool {
++        if isCancelled() { throw CancellationError() }
++        let before = try ExportFileIdentity.capture(url)
++        guard before == identity else { return false }
++        let actual = try ExportQueue.PathState.capture(url, isCancelled: isCancelled)
++        let after = try ExportFileIdentity.capture(url)
++        return actual == state && after == identity && before == after
++    }
++
++    private static func ensureRoot(_ root: URL) throws {
++        let fm = FileManager.default
++        try fm.createDirectory(at: root, withIntermediateDirectories: true)
++        let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
++        guard values.isDirectory == true, values.isSymbolicLink != true else {
++            throw ToolError("The export recovery store is unavailable.")
++        }
++    }
++
++    private static func write(_ journal: Journal, to url: URL) throws {
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = [.sortedKeys]
++        try encoder.encode(journal).write(to: url, options: .atomic)
++    }
++}
+diff --git a/Sources/NexGenVideo/Export/ExportQueue.swift b/Sources/NexGenVideo/Export/ExportQueue.swift
+index 2427d461..7bdba671 100644
+--- a/Sources/NexGenVideo/Export/ExportQueue.swift
++++ b/Sources/NexGenVideo/Export/ExportQueue.swift
+@@ -35,7 +35,7 @@ final class ExportJob: Identifiable {
+     let ownerKey: String
+     let projectID: String
+     let kind: ExportJobKind
+-    let destinationURL: URL?
++    fileprivate(set) var destinationURL: URL?
+     let title: String
+     let createdAt: Date
+     let durationFrames: Int?
+@@ -52,6 +52,7 @@ final class ExportJob: Identifiable {
+     fileprivate(set) var outputByteCount: Int64?
+     fileprivate(set) var fcpxmlReport: FCPXMLExportReport?
+     fileprivate(set) var projectReport: ProjectPackageExporter.Report?
++    fileprivate(set) var acceptsCancellation = true
+ 
+     init(
+         id: String,
+@@ -98,7 +99,7 @@ final class ExportJob: Identifiable {
+     }
+ 
+     var canCancel: Bool {
+-        [.pending, .preparing, .exporting].contains(status)
++        acceptsCancellation && [.pending, .preparing, .exporting].contains(status)
+     }
+ 
+     var canReveal: Bool {
+@@ -123,6 +124,11 @@ final class ExportQueue {
+     @ObservationIgnored private var cancellationRequests: Set<String> = []
+     @ObservationIgnored private var drainTask: Task<Void, Never>?
+     @ObservationIgnored private var cancellationFlags: [String: ExportCancellationFlag] = [:]
++    @ObservationIgnored private var fingerprintsByID: [String: String] = [:]
++    @ObservationIgnored private var deliveryRootsByID: [String: URL] = [:]
++    @ObservationIgnored private var recoveredDeliveryIdentities: [String: RecoveredDeliveryIdentity] = [:]
++    @ObservationIgnored private var completionWaiters: [String: [UUID: CheckedContinuation<ExportJob?, Never>]] = [:]
++    @ObservationIgnored private var idleWaiters: [String: [UUID: CheckedContinuation<Void, Never>]] = [:]
+ 
+     func jobs(ownerKey: String?) -> [ExportJob] {
+         guard let ownerKey else { return [] }
+@@ -138,7 +144,7 @@ final class ExportQueue {
+            !current.status.isTerminal {
+             return current
+         }
+-        return jobs.first { $0.ownerKey == ownerKey && $0.status == .pending }
++        return jobs.first { $0.ownerKey == ownerKey && !$0.status.isTerminal }
+     }
+ 
+     func joinedDeliveryJob(
+@@ -151,13 +157,23 @@ final class ExportQueue {
+     ) throws -> ExportJob? {
+         guard let requestID, let ownerKey = editor.openWorkingCopyKey else { return nil }
+         let id = try jobID(requestID)
+-        return try joinedJob(
+-            id: id,
+-            fingerprint: fingerprint(
+-                ownerKey, specID, String(describing: format), resolution.rawValue,
+-                outputURL.standardizedFileURL.path
+-            )
++        let expectedFingerprint = fingerprint(
++            ownerKey, specID, String(describing: format), resolution.rawValue,
++            outputURL.standardizedFileURL.path
+         )
++        if jobsByID[id] == nil,
++           let dataRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
++            _ = loadPersistedDeliveryJobs(ownerKey: ownerKey, dataRoot: dataRoot)
++        }
++        if let identity = recoveredDeliveryIdentities[id] {
++            guard identity.ownerKey == ownerKey,
++                  identity.specID == specID,
++                  identity.outputURL == outputURL.standardizedFileURL else {
++                throw ToolError("An export job with this ID is already bound to different inputs.")
++            }
++            return jobsByID[id]
++        }
++        return try joinedJob(id: id, fingerprint: expectedFingerprint)
+     }
+ 
+     func enqueueDelivery(
+@@ -167,7 +183,7 @@ final class ExportQueue {
+         resolution: ExportResolution,
+         outputURL: URL,
+         requestID: String? = nil
+-    ) throws -> ExportJob {
++    ) async throws -> ExportJob {
+         guard let root = editor.workingRoot,
+               let dataRoot = DataRootResolver.dataRoot(of: root),
+               let ownerKey = editor.openWorkingCopyKey else {
+@@ -181,90 +197,133 @@ final class ExportQueue {
+         if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
+             return existing
+         }
+-        try PipelineDeliveryStore.recoverInterruptedJobs(
+-            dataRoot: dataRoot,
+-            excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
+-            willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
+-            didRecover: { cleanupTemporaryState(for: $0) }
+-        )
+         let timeline = editor.timeline
+         let resolver = editor.mediaResolver.snapshot()
+-        let finished = try PipelineDeliveryStore.requireCurrentFinished(
+-            dataRoot: dataRoot,
+-            timeline: timeline
+-        )
+-        try PipelineDeliveryStore.requireBoundFinished(
+-            dataRoot: dataRoot,
+-            finished: finished,
+-            timeline: timeline,
+-            resolver: resolver
+-        )
+-        let extensionFiles = try PipelineDeliveryStore.extensionFiles(
+-            for: spec,
+-            dataRoot: dataRoot
+-        )
+-        let source = try SourceBinding.video(
+-            timeline: timeline,
+-            resolver: resolver,
+-            additionalFiles: extensionFiles
+-        )
+-        let destination = try DestinationBinding(
+-            url: outputURL,
+-            jobID: id,
+-            expectsDirectory: false
+-        )
+-        try source.rejectDestination(destination.url)
+-        try ProjectWorkingCopy.markDirty(key: ownerKey)
+-        let attempt = try PipelineDeliveryStore.enqueueAttempt(
++        let job = registerPreparing(
+             id: id,
+-            dataRoot: dataRoot,
+-            finished: finished,
+-            spec: spec,
+-            format: format,
+-            resolution: resolution,
+-            outputURL: destination.url,
+-            timeline: timeline,
+-            resolver: resolver
+-        )
+-        let changeHandler = projectChangeHandler(
+-            editor: editor,
+-            ownerKey: ownerKey,
+-            root: root
+-        )
+-        let currentHandler = projectCurrentHandler(
+-            editor: editor,
+             ownerKey: ownerKey,
+-            root: root,
+-            timelineSHA256: finished.manifest.timelineSHA256
+-        )
+-        let payload = DeliveryPayload(
+-            dataRoot: dataRoot,
+-            timeline: timeline,
+-            resolver: resolver,
+-            finished: finished,
+-            spec: spec,
+-            format: format,
+-            resolution: resolution,
+-            attempt: attempt
+-        )
+-        return register(Request(
+-            id: id,
+-            ownerKey: ownerKey,
+-            projectID: finished.plan.projectID,
++            projectID: editor.projectId ?? ownerKey,
+             kind: .video,
+-            title: destination.url.lastPathComponent,
+-            durationFrames: timeline.totalFrames,
+-            fps: timeline.fps,
+-            width: timeline.width,
+-            height: timeline.height,
++            title: outputURL.lastPathComponent,
++            timeline: timeline,
+             fingerprint: fingerprint,
+-            source: source,
+-            destination: destination,
+-            companionDestination: nil,
+-            payload: .delivery(payload),
+-            changeHandler: changeHandler,
+-            currentHandler: currentHandler
+-        ))
++            deliveryRoot: dataRoot
++        )
++        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
++        var preparedFrozen: FrozenSources?
++        do {
++            let prepared = try await withTaskCancellationHandler {
++                try await Task.detached(priority: .userInitiated) {
++                    try ExportPublishRecoveryStore.recoverAll()
++                    let finished = try PipelineDeliveryStore.requireCurrentFinished(
++                        dataRoot: dataRoot,
++                        timeline: timeline,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    let extensionFiles = try PipelineDeliveryStore.extensionFiles(
++                        for: spec,
++                        dataRoot: dataRoot
++                    )
++                    let source = try SourceBinding.video(
++                        timeline: timeline,
++                        resolver: resolver,
++                        additionalFiles: extensionFiles,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    let destination = try DestinationBinding(
++                        url: outputURL,
++                        jobID: id,
++                        expectsDirectory: false,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    try source.rejectDestination(destination.url)
++                    let frozen = try source.freeze(
++                        jobID: id,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    do {
++                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++                        try PipelineDeliveryStore.requireBoundFinished(
++                            dataRoot: dataRoot,
++                            finished: finished,
++                            timeline: timeline,
++                            resolver: resolver,
++                            isCancelled: { cancellationFlag.isCancelled }
++                        )
++                    } catch {
++                        frozen.remove()
++                        throw error
++                    }
++                    return PreparedDelivery(
++                        source: source,
++                        frozen: frozen,
++                        destination: destination,
++                        finished: finished
++                    )
++                }.value
++            } onCancel: {
++                cancellationFlag.cancel()
++            }
++            preparedFrozen = prepared.frozen
++            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
++            try throwIfCancelled(id)
++            try recoverInterruptedDeliveries(ownerKey: ownerKey, dataRoot: dataRoot)
++            try ProjectWorkingCopy.markDirty(key: ownerKey)
++            let attempt = try PipelineDeliveryStore.enqueueAttempt(
++                id: id,
++                dataRoot: dataRoot,
++                finished: prepared.finished,
++                spec: spec,
++                format: format,
++                resolution: resolution,
++                outputURL: prepared.destination.url,
++                timeline: timeline,
++                resolver: resolver,
++                bindingAlreadyValidated: true
++            )
++            let payload = DeliveryPayload(
++                dataRoot: dataRoot,
++                timeline: timeline,
++                resolver: resolver,
++                finished: prepared.finished,
++                spec: spec,
++                format: format,
++                resolution: resolution,
++                attempt: attempt
++            )
++            install(Request(
++                id: id,
++                ownerKey: ownerKey,
++                projectID: prepared.finished.plan.projectID,
++                kind: .video,
++                title: prepared.destination.url.lastPathComponent,
++                durationFrames: timeline.totalFrames,
++                fps: timeline.fps,
++                width: timeline.width,
++                height: timeline.height,
++                fingerprint: fingerprint,
++                source: prepared.source,
++                frozenSources: prepared.frozen,
++                destination: prepared.destination,
++                companionDestination: nil,
++                payload: .delivery(payload),
++                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
++                currentHandler: projectCurrentHandler(
++                    editor: editor,
++                    ownerKey: ownerKey,
++                    root: root,
++                    timelineSHA256: prepared.finished.manifest.timelineSHA256
++                ),
++                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
++            ), for: job)
++            preparedFrozen = nil
++            return job
++        } catch {
++            preparedFrozen?.remove()
++            failPreparation(job, error: error)
++            throw error
++        }
+     }
+ 
+     func enqueueInterchange(
+@@ -275,7 +334,7 @@ final class ExportQueue {
+         fcpxmlVersion: FCPXMLVersion = .default,
+         fcpxmlTarget: FCPXMLTarget = .default,
+         requestID: String? = nil
+-    ) throws -> ExportJob {
++    ) async throws -> ExportJob {
+         guard format == .xml || format == .fcpxml else {
+             throw ToolError("Interchange jobs require XML or FCPXML.")
+         }
+@@ -293,13 +352,6 @@ final class ExportQueue {
+         }
+         let timeline = editor.timeline
+         let resolver = editor.mediaResolver.snapshot()
+-        let source = try SourceBinding.interchange(timeline: timeline, resolver: resolver)
+-        let destination = try DestinationBinding(
+-            url: outputURL,
+-            jobID: id,
+-            expectsDirectory: false
+-        )
+-        try source.rejectDestination(destination.url)
+         let payload = InterchangePayload(
+             timeline: timeline,
+             resolver: resolver,
+@@ -308,44 +360,104 @@ final class ExportQueue {
+             fcpxmlVersion: fcpxmlVersion,
+             fcpxmlTarget: fcpxmlTarget
+         )
+-        let companionDestination: DestinationBinding?
+-        if format == .fcpxml {
+-            companionDestination = try DestinationBinding(
+-                url: FCPXMLExporter.mediaDirectory(for: outputURL),
+-                jobID: id,
+-                expectsDirectory: true
+-            )
+-        } else {
+-            companionDestination = nil
+-        }
+-        if let companionDestination {
+-            try source.rejectDestination(companionDestination.url)
+-        }
+-        return register(Request(
++        let job = registerPreparing(
+             id: id,
+             ownerKey: ownerKey,
+             projectID: editor.projectId ?? ownerKey,
+             kind: format == .xml ? .xml : .fcpxml,
+-            title: destination.url.lastPathComponent,
+-            durationFrames: timeline.totalFrames,
+-            fps: timeline.fps,
+-            width: timeline.width,
+-            height: timeline.height,
++            title: outputURL.lastPathComponent,
++            timeline: timeline,
+             fingerprint: fingerprint,
+-            source: source,
+-            destination: destination,
+-            companionDestination: companionDestination,
+-            payload: .interchange(payload),
+-            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
+-            currentHandler: { false }
+-        ))
++            deliveryRoot: nil
++        )
++        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
++        var preparedFrozen: FrozenSources?
++        do {
++            let prepared = try await withTaskCancellationHandler {
++                try await Task.detached(priority: .userInitiated) {
++                    try ExportPublishRecoveryStore.recoverAll()
++                    let source = try SourceBinding.interchange(
++                        timeline: timeline,
++                        resolver: resolver,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    let destination = try DestinationBinding(
++                        url: outputURL,
++                        jobID: id,
++                        expectsDirectory: false,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    try source.rejectDestination(destination.url)
++                    let companion: DestinationBinding?
++                    if format == .fcpxml {
++                        companion = try DestinationBinding(
++                            url: FCPXMLExporter.mediaDirectory(for: destination.url),
++                            jobID: id,
++                            expectsDirectory: true,
++                            isCancelled: { cancellationFlag.isCancelled }
++                        )
++                        try source.rejectDestination(companion!.url)
++                    } else {
++                        companion = nil
++                    }
++                    let frozen = try source.freeze(
++                        jobID: id,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    do {
++                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++                    } catch {
++                        frozen.remove()
++                        throw error
++                    }
++                    return PreparedSources(
++                        source: source,
++                        frozen: frozen,
++                        destination: destination,
++                        companionDestination: companion
++                    )
++                }.value
++            } onCancel: {
++                cancellationFlag.cancel()
++            }
++            preparedFrozen = prepared.frozen
++            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
++            try throwIfCancelled(id)
++            install(Request(
++                id: id,
++                ownerKey: ownerKey,
++                projectID: editor.projectId ?? ownerKey,
++                kind: format == .xml ? .xml : .fcpxml,
++                title: prepared.destination.url.lastPathComponent,
++                durationFrames: timeline.totalFrames,
++                fps: timeline.fps,
++                width: timeline.width,
++                height: timeline.height,
++                fingerprint: fingerprint,
++                source: prepared.source,
++                frozenSources: prepared.frozen,
++                destination: prepared.destination,
++                companionDestination: prepared.companionDestination,
++                payload: .interchange(payload),
++                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
++                currentHandler: { false },
++                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
++            ), for: job)
++            preparedFrozen = nil
++            return job
++        } catch {
++            preparedFrozen?.remove()
++            failPreparation(job, error: error)
++            throw error
++        }
+     }
+ 
+     func enqueueProjectPackage(
+         editor: EditorViewModel,
+         outputURL: URL,
+         requestID: String? = nil
+-    ) throws -> ExportJob {
++    ) async throws -> ExportJob {
+         guard let root = editor.workingRoot,
+               let ownerKey = editor.openWorkingCopyKey else {
+             throw ToolError("Open a project before exporting a NexGenVideo project.")
+@@ -360,20 +472,10 @@ final class ExportQueue {
+         let timeline = editor.timeline
+         let manifest = editor.mediaManifest
+         let generationLog = editor.generationLog
+-        let source = try SourceBinding.projectPackage(
+-            timeline: timeline,
+-            manifest: manifest,
+-            sourceRoot: root
+-        )
+-        let destination = try DestinationBinding(
+-            url: outputURL,
+-            jobID: id,
+-            expectsDirectory: true
+-        )
+-        try source.rejectDestination(destination.url)
+         let sourcePath = root.standardizedFileURL.path
+-        guard destination.url.path != sourcePath,
+-              !destination.url.path.hasPrefix(sourcePath + "/") else {
++        let standardizedOutput = outputURL.standardizedFileURL
++        guard standardizedOutput.path != sourcePath,
++              !standardizedOutput.path.hasPrefix(sourcePath + "/") else {
+             throw ToolError("Export the project package outside its source working copy.")
+         }
+         let payload = ProjectPayload(
+@@ -382,31 +484,101 @@ final class ExportQueue {
+             generationLog: generationLog,
+             sourceRoot: root
+         )
+-        return register(Request(
++        let job = registerPreparing(
+             id: id,
+             ownerKey: ownerKey,
+             projectID: editor.projectId ?? ownerKey,
+             kind: .project,
+-            title: destination.url.lastPathComponent,
+-            durationFrames: timeline.totalFrames,
+-            fps: timeline.fps,
+-            width: timeline.width,
+-            height: timeline.height,
++            title: standardizedOutput.lastPathComponent,
++            timeline: timeline,
+             fingerprint: fingerprint,
+-            source: source,
+-            destination: destination,
+-            companionDestination: nil,
+-            payload: .project(payload),
+-            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
+-            currentHandler: { false }
+-        ))
++            deliveryRoot: nil
++        )
++        let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
++        var preparedFrozen: FrozenSources?
++        do {
++            let prepared = try await withTaskCancellationHandler {
++                try await Task.detached(priority: .userInitiated) {
++                    try ExportPublishRecoveryStore.recoverAll()
++                    let source = try SourceBinding.projectPackage(
++                        timeline: timeline,
++                        manifest: manifest,
++                        sourceRoot: root,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    let destination = try DestinationBinding(
++                        url: standardizedOutput,
++                        jobID: id,
++                        expectsDirectory: true,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    let resolvedSource = root.standardizedFileURL.resolvingSymlinksInPath()
++                    guard destination.url != resolvedSource,
++                          !destination.url.path.hasPrefix(resolvedSource.path + "/") else {
++                        throw ToolError("Export the project package outside its source working copy.")
++                    }
++                    try source.rejectDestination(destination.url)
++                    let frozen = try source.freeze(
++                        jobID: id,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                    do {
++                        try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                        try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++                    } catch {
++                        frozen.remove()
++                        throw error
++                    }
++                    return PreparedSources(
++                        source: source,
++                        frozen: frozen,
++                        destination: destination,
++                        companionDestination: nil
++                    )
++                }.value
++            } onCancel: {
++                cancellationFlag.cancel()
++            }
++            preparedFrozen = prepared.frozen
++            try requireEnqueueContext(editor: editor, ownerKey: ownerKey, root: root, jobID: id)
++            try throwIfCancelled(id)
++            install(Request(
++                id: id,
++                ownerKey: ownerKey,
++                projectID: editor.projectId ?? ownerKey,
++                kind: .project,
++                title: prepared.destination.url.lastPathComponent,
++                durationFrames: timeline.totalFrames,
++                fps: timeline.fps,
++                width: timeline.width,
++                height: timeline.height,
++                fingerprint: fingerprint,
++                source: prepared.source,
++                frozenSources: prepared.frozen,
++                destination: prepared.destination,
++                companionDestination: nil,
++                payload: .project(payload),
++                changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
++                currentHandler: { false },
++                ownershipHandler: projectOwnershipHandler(editor: editor, ownerKey: ownerKey, root: root)
++            ), for: job)
++            preparedFrozen = nil
++            return job
++        } catch {
++            preparedFrozen?.remove()
++            failPreparation(job, error: error)
++            throw error
++        }
+     }
+ 
+     func cancel(jobID: String) {
+         guard let job = jobsByID[jobID], job.canCancel else { return }
+         cancellationRequests.insert(jobID)
+         cancellationFlags[jobID]?.cancel()
+-        if job.status == .pending, currentID != jobID {
++        if currentID != jobID, job.status == .preparing {
++            job.status = .cancelling
++            job.detail = "Cancelling"
++        } else if job.status == .pending, currentID != jobID {
+             do {
+                 try recordCancellation(for: jobID, reason: "Export cancelled before preparation.")
+                 job.status = .cancelled
+@@ -420,6 +592,7 @@ final class ExportQueue {
+             requests[jobID]?.changeHandler()
+             cancellationFlags.removeValue(forKey: jobID)
+             cancellationRequests.remove(jobID)
++            resumeWaiters(for: job)
+         } else {
+             job.status = .cancelling
+             job.detail = "Cancelling"
+@@ -433,6 +606,24 @@ final class ExportQueue {
+         }
+     }
+ 
++    func release(ownerKey: String) {
++        guard !hasActiveJobs(ownerKey: ownerKey) else { return }
++        let ids = jobs.filter { $0.ownerKey == ownerKey }.map(\.id)
++        let roots = Set(ids.compactMap { requests[$0]?.frozenSources.root })
++        for root in roots { try? FileManager.default.removeItem(at: root) }
++        jobs.removeAll { $0.ownerKey == ownerKey }
++        for id in ids {
++            jobsByID.removeValue(forKey: id)
++            requests.removeValue(forKey: id)
++            fingerprintsByID.removeValue(forKey: id)
++            deliveryRootsByID.removeValue(forKey: id)
++            recoveredDeliveryIdentities.removeValue(forKey: id)
++            cancellationFlags.removeValue(forKey: id)
++            cancellationRequests.remove(id)
++            pendingIDs.removeAll { $0 == id }
++        }
++    }
++
+     func canRetry(jobID: String) -> Bool {
+         guard let job = jobsByID[jobID] else { return false }
+         return [.failed, .cancelled].contains(job.status) && requests[jobID] != nil
+@@ -457,7 +648,8 @@ final class ExportQueue {
+                 resolution: payload.resolution,
+                 outputURL: retried.destination.url,
+                 timeline: payload.timeline,
+-                resolver: payload.resolver
++                resolver: payload.resolver,
++                bindingAlreadyValidated: true
+             )
+             retried.payload = .delivery(payload.withAttempt(attempt))
+         }
+@@ -465,15 +657,43 @@ final class ExportQueue {
+     }
+ 
+     func waitForCompletion(jobID: String) async -> ExportJob? {
+-        while let job = jobsByID[jobID], !job.status.isTerminal {
+-            try? await Task.sleep(for: .milliseconds(50))
++        if Task.isCancelled { return jobsByID[jobID] }
++        guard let job = jobsByID[jobID], !job.status.isTerminal else {
++            return jobsByID[jobID]
++        }
++        let waiterID = UUID()
++        return await withTaskCancellationHandler {
++            await withCheckedContinuation { continuation in
++                guard !Task.isCancelled,
++                      let current = jobsByID[jobID],
++                      !current.status.isTerminal else {
++                    continuation.resume(returning: jobsByID[jobID])
++                    return
++                }
++                completionWaiters[jobID, default: [:]][waiterID] = continuation
++            }
++        } onCancel: {
++            Task { @MainActor [weak self] in
++                self?.cancelCompletionWaiter(jobID: jobID, waiterID: waiterID)
++            }
+         }
+-        return jobsByID[jobID]
+     }
+ 
+     func waitUntilIdle(ownerKey: String) async {
+-        while jobs.contains(where: { $0.ownerKey == ownerKey && !$0.status.isTerminal }) {
+-            try? await Task.sleep(for: .milliseconds(50))
++        if Task.isCancelled || !hasActiveJobs(ownerKey: ownerKey) { return }
++        let waiterID = UUID()
++        await withTaskCancellationHandler {
++            await withCheckedContinuation { continuation in
++                guard !Task.isCancelled, hasActiveJobs(ownerKey: ownerKey) else {
++                    continuation.resume()
++                    return
++                }
++                idleWaiters[ownerKey, default: [:]][waiterID] = continuation
++            }
++        } onCancel: {
++            Task { @MainActor [weak self] in
++                self?.cancelIdleWaiter(ownerKey: ownerKey, waiterID: waiterID)
++            }
+         }
+     }
+ 
+@@ -482,11 +702,9 @@ final class ExportQueue {
+         guard let ownerKey, let dataRoot else { return false }
+         var recovered = false
+         do {
+-            recovered = try PipelineDeliveryStore.recoverInterruptedJobs(
+-                dataRoot: dataRoot,
+-                excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
+-                willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
+-                didRecover: { cleanupTemporaryState(for: $0) }
++            recovered = try recoverInterruptedDeliveries(
++                ownerKey: ownerKey,
++                dataRoot: dataRoot
+             )
+             for attempt in try PipelineDeliveryStore.listAttempts(dataRoot: dataRoot) {
+                 guard jobsByID[attempt.id] == nil else { continue }
+@@ -498,6 +716,13 @@ final class ExportQueue {
+                 case .queued, .running: .interrupted
+                 }
+                 let destination = attempt.outputPath.map { URL(fileURLWithPath: $0) }
++                let boundTimelineURL = dataRoot.appendingPathComponent(
++                    "delivery/timelines/\(attempt.finishedTimelineSHA256).json"
++                )
++                let boundTimeline = try? JSONDecoder().decode(
++                    Timeline.self,
++                    from: Data(contentsOf: boundTimelineURL)
++                )
+                 let job = ExportJob(
+                     id: attempt.id,
+                     ownerKey: ownerKey,
+@@ -505,6 +730,10 @@ final class ExportQueue {
+                     kind: .video,
+                     destinationURL: destination,
+                     title: destination?.lastPathComponent ?? "Interrupted export",
++                    durationFrames: boundTimeline?.totalFrames,
++                    fps: boundTimeline?.fps ?? attempt.spec.fpsNumerator,
++                    width: boundTimeline?.width ?? attempt.spec.width,
++                    height: boundTimeline?.height ?? attempt.spec.height,
+                     status: status,
+                     progress: status == .completed ? 1 : 0,
+                     detail: status == .completed ? "Completed" : status.rawValue.capitalized,
+@@ -515,6 +744,11 @@ final class ExportQueue {
+                 )
+                 jobs.append(job)
+                 jobsByID[job.id] = job
++                recoveredDeliveryIdentities[job.id] = .init(
++                    ownerKey: ownerKey,
++                    specID: attempt.spec.id,
++                    outputURL: destination?.standardizedFileURL
++                )
+                 if attempt.status == .interrupted {
+                     cleanupTemporaryState(for: attempt)
+                 }
+@@ -526,25 +760,63 @@ final class ExportQueue {
+         }
+     }
+ 
+-    private func register(_ request: Request) -> ExportJob {
++    private func registerPreparing(
++        id: String,
++        ownerKey: String,
++        projectID: String,
++        kind: ExportJobKind,
++        title: String,
++        timeline: Timeline,
++        fingerprint: String,
++        deliveryRoot: URL?
++    ) -> ExportJob {
+         let job = ExportJob(
+-            id: request.id,
+-            ownerKey: request.ownerKey,
+-            projectID: request.projectID,
+-            kind: request.kind,
+-            destinationURL: request.destination.url,
+-            title: request.title,
+-            durationFrames: request.durationFrames,
+-            fps: request.fps,
+-            width: request.width,
+-            height: request.height
++            id: id,
++            ownerKey: ownerKey,
++            projectID: projectID,
++            kind: kind,
++            destinationURL: nil,
++            title: title,
++            durationFrames: timeline.totalFrames,
++            fps: timeline.fps,
++            width: timeline.width,
++            height: timeline.height,
++            status: .preparing,
++            detail: "Preparing"
+         )
+         jobs.append(job)
+         jobsByID[job.id] = job
+-        requests[job.id] = request
++        fingerprintsByID[id] = fingerprint
++        if let deliveryRoot { deliveryRootsByID[id] = deliveryRoot.standardizedFileURL }
+         cancellationFlags[job.id] = ExportCancellationFlag()
++        return job
++    }
++
++    private func install(_ request: Request, for job: ExportJob) {
++        guard jobsByID[job.id] === job, !job.status.isTerminal else {
++            request.frozenSources.remove()
++            return
++        }
++        requests[job.id] = request
++        job.destinationURL = request.destination.url
++        job.status = .pending
++        job.detail = "Waiting"
+         pendingIDs.append(job.id)
+         startDrainIfNeeded()
++    }
++
++    private func register(_ request: Request) -> ExportJob {
++        let job = registerPreparing(
++            id: request.id,
++            ownerKey: request.ownerKey,
++            projectID: request.projectID,
++            kind: request.kind,
++            title: request.title,
++            timeline: request.payload.timeline,
++            fingerprint: request.fingerprint,
++            deliveryRoot: request.payload.dataRoot
++        )
++        install(request, for: job)
+         return job
+     }
+ 
+@@ -575,8 +847,6 @@ final class ExportQueue {
+         }
+         var deliveryAttempt: DeliveryAttemptV1?
+         var published = false
+-        var frozenSources: FrozenSources?
+-        defer { frozenSources?.remove() }
+         do {
+             try throwIfCancelled(job.id)
+             let cancellationFlag = cancellationFlags[job.id] ?? ExportCancellationFlag()
+@@ -584,11 +854,13 @@ final class ExportQueue {
+                 isCancelled: { cancellationFlag.isCancelled }
+             )
+             defer { ExportCoordinator.endExport() }
++            try requireCurrent(request, job: job)
+             try throwIfCancelled(job.id)
+ 
+             job.status = .preparing
+             job.detail = "Preparing"
+             await Task.yield()
++            try requireCurrent(request, job: job)
+             try throwIfCancelled(job.id)
+             if case .delivery(let payload) = request.payload {
+                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
+@@ -610,24 +882,16 @@ final class ExportQueue {
+                         isCancelled: { cancellationFlag.isCancelled }
+                     )
+                 }.value
++                try requireCurrent(request, job: job)
+             }
+             let source = request.source
+-            let jobID = job.id
+-            try await Task.detached(priority: .userInitiated) {
+-                try source.verify(isCancelled: { cancellationFlag.isCancelled })
+-            }.value
+-            let frozen = try await Task.detached(priority: .userInitiated) {
+-                try source.freeze(
+-                    jobID: jobID,
+-                    isCancelled: { cancellationFlag.isCancelled }
+-                )
+-            }.value
+-            frozenSources = frozen
+-            try throwIfCancelled(job.id)
++            let frozen = request.frozenSources
+             try await Task.detached(priority: .userInitiated) {
+                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+             }.value
++            try requireCurrent(request, job: job)
++            try throwIfCancelled(job.id)
+ 
+             let service = ExportService()
+             activeService = service
+@@ -684,6 +948,7 @@ final class ExportQueue {
+                     event: event
+                 )
+             }
++            try requireCurrent(request, job: job)
+ 
+             if let error = service.error {
+                 if cancellationRequests.contains(job.id) || error == "Export was cancelled" {
+@@ -696,6 +961,7 @@ final class ExportQueue {
+                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+             }.value
++            try requireCurrent(request, job: job)
+             if case .delivery(let payload) = request.payload {
+                 let dataRoot = payload.dataRoot
+                 let finished = payload.finished
+@@ -710,6 +976,7 @@ final class ExportQueue {
+                         isCancelled: { cancellationFlag.isCancelled }
+                     )
+                 }.value
++                try requireCurrent(request, job: job)
+             }
+ 
+             let deliveryEvidence: PipelineDeliveryStore.OutputEvidence?
+@@ -723,11 +990,13 @@ final class ExportQueue {
+             } else {
+                 deliveryEvidence = nil
+             }
++            try requireCurrent(request, job: job)
+             try throwIfCancelled(job.id)
+             try await Task.detached(priority: .userInitiated) {
+                 try source.verify(isCancelled: { cancellationFlag.isCancelled })
+                 try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
+             }.value
++            try requireCurrent(request, job: job)
+             if case .delivery(let payload) = request.payload {
+                 let dataRoot = payload.dataRoot
+                 let finished = payload.finished
+@@ -742,6 +1011,7 @@ final class ExportQueue {
+                         isCancelled: { cancellationFlag.isCancelled }
+                     )
+                 }.value
++                try requireCurrent(request, job: job)
+                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
+             }
+             var publications = [DestinationBinding.Publication(
+@@ -756,8 +1026,22 @@ final class ExportQueue {
+                     temporaryURL: companionTemporaryURL
+                 ))
+             }
+-            try DestinationBinding.publish(publications)
++            job.acceptsCancellation = false
++            job.detail = "Publishing"
++            let publicationResult = try await Task.detached(priority: .userInitiated) {
++                try DestinationBinding.publish(
++                    publications,
++                    isCancelled: { cancellationFlag.isCancelled }
++                )
++            }.value
+             published = true
++            try requireQueueIdentity(request, job: job)
++            try await Task.detached(priority: .userInitiated) {
++                try publicationResult.verifyPublished(
++                    isCancelled: { false }
++                )
++            }.value
++            try requireQueueIdentity(request, job: job)
+ 
+             switch request.payload {
+             case .delivery(let payload):
+@@ -770,6 +1054,7 @@ final class ExportQueue {
+                     finished: payload.finished,
+                     outputURL: request.destination.url,
+                     evidence: deliveryEvidence,
++                    publishedState: publicationResult.state(for: request.destination.url),
+                     selectIfCurrent: request.currentHandler()
+                 )
+                 job.outputSHA256 = result.attempt.outputSHA256
+@@ -779,18 +1064,17 @@ final class ExportQueue {
+                 }
+                 request.changeHandler()
+             case .interchange:
+-                let values = try request.destination.url.resourceValues(
+-                    forKeys: [.fileSizeKey, .isRegularFileKey]
+-                )
+-                guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
++                guard case .file(let sha256, let size) = publicationResult.state(
++                    for: request.destination.url
++                ), size > 0 else {
+                     throw ToolError("The exported interchange file is missing or empty.")
+                 }
+-                job.outputSHA256 = try FileDigest.sha256(of: request.destination.url)
++                job.outputSHA256 = sha256
+                 job.outputByteCount = Int64(size)
+                 job.fcpxmlReport = fcpxmlReport
+                 job.warnings = fcpxmlReport?.warnings.map(\.message) ?? []
+             case .project:
+-                let state = try PathState.capture(request.destination.url)
++                let state = publicationResult.state(for: request.destination.url)
+                 job.outputSHA256 = state.digest
+                 job.outputByteCount = projectReport?.totalBytes
+                 job.projectReport = projectReport
+@@ -804,6 +1088,7 @@ final class ExportQueue {
+             job.progress = 1
+             job.status = .completed
+             job.detail = "Completed"
++            resumeWaiters(for: job)
+             AppNotifications.exportComplete(
+                 name: job.title,
+                 outputURL: request.destination.url,
+@@ -841,6 +1126,7 @@ final class ExportQueue {
+             if !cancelled {
+                 AppNotifications.exportFailed(name: job.title, reason: reason)
+             }
++            resumeWaiters(for: job)
+         }
+         cancellationRequests.remove(job.id)
+         cancellationFlags.removeValue(forKey: job.id)
+@@ -863,9 +1149,23 @@ final class ExportQueue {
+         }
+     }
+ 
++    private func requireCurrent(_ request: Request, job: ExportJob) throws {
++        try requireQueueIdentity(request, job: job)
++        guard request.ownershipHandler() else {
++            throw CancellationError()
++        }
++    }
++
++    private func requireQueueIdentity(_ request: Request, job: ExportJob) throws {
++        guard jobsByID[job.id] === job,
++              requests[job.id]?.fingerprint == request.fingerprint else {
++            throw CancellationError()
++        }
++    }
++
+     private func joinedJob(id: String, fingerprint: String) throws -> ExportJob? {
+         guard let existing = jobsByID[id] else { return nil }
+-        guard requests[id]?.fingerprint == fingerprint else {
++        guard fingerprintsByID[id] == fingerprint else {
+             throw ToolError("An export job with this ID is already bound to different inputs.")
+         }
+         return existing
+@@ -883,17 +1183,87 @@ final class ExportQueue {
+         FileDigest.sha256(of: Data(parts.joined(separator: "\u{0}").utf8))
+     }
+ 
+-    private func activeDeliveryIDs(dataRoot: URL) -> Set<String> {
+-        Set(requests.compactMap { id, request in
+-            guard let job = jobsByID[id], !job.status.isTerminal,
+-                  case .delivery(let payload) = request.payload,
+-                  payload.dataRoot.standardizedFileURL == dataRoot.standardizedFileURL else {
+-                return nil
+-            }
++    func activeDeliveryIDs(dataRoot: URL) -> Set<String> {
++        let root = dataRoot.standardizedFileURL
++        return Set(deliveryRootsByID.compactMap { id, candidate in
++            guard candidate == root,
++                  let job = jobsByID[id],
++                  !job.status.isTerminal else { return nil }
+             return id
+         })
+     }
+ 
++    @discardableResult
++    func recoverInterruptedDeliveries(ownerKey: String, dataRoot: URL) throws -> Bool {
++        try PipelineDeliveryStore.recoverInterruptedJobs(
++            dataRoot: dataRoot,
++            excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
++            willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
++            didRecover: { cleanupTemporaryState(for: $0) }
++        )
++    }
++
++    private func requireEnqueueContext(
++        editor: EditorViewModel,
++        ownerKey: String,
++        root: URL,
++        jobID: String
++    ) throws {
++        guard jobsByID[jobID]?.status.isTerminal == false,
++              editor.openWorkingCopyKey == ownerKey,
++              editor.workingRoot?.standardizedFileURL == root.standardizedFileURL else {
++            throw CancellationError()
++        }
++    }
++
++    private func failPreparation(_ job: ExportJob, error: Error) {
++        guard !job.status.isTerminal else { return }
++        let cancelled = cancellationRequests.contains(job.id)
++            || cancellationFlags[job.id]?.isCancelled == true
++            || error is CancellationError
++        job.status = cancelled ? .cancelled : .failed
++        job.detail = cancelled ? "Cancelled" : "Failed"
++        job.failure = cancelled ? "Export cancelled" : error.localizedDescription
++        cancellationRequests.remove(job.id)
++        cancellationFlags.removeValue(forKey: job.id)
++        resumeWaiters(for: job)
++    }
++
++    private func hasActiveJobs(ownerKey: String) -> Bool {
++        jobs.contains { $0.ownerKey == ownerKey && !$0.status.isTerminal }
++    }
++
++    private func resumeWaiters(for job: ExportJob) {
++        guard job.status.isTerminal else { return }
++        let completions = completionWaiters.removeValue(forKey: job.id) ?? [:]
++        for continuation in completions.values {
++            continuation.resume(returning: job)
++        }
++        guard !hasActiveJobs(ownerKey: job.ownerKey) else { return }
++        let idle = idleWaiters.removeValue(forKey: job.ownerKey) ?? [:]
++        for continuation in idle.values { continuation.resume() }
++    }
++
++    private func cancelCompletionWaiter(jobID: String, waiterID: UUID) {
++        guard let continuation = completionWaiters[jobID]?.removeValue(forKey: waiterID) else {
++            return
++        }
++        if completionWaiters[jobID]?.isEmpty == true {
++            completionWaiters.removeValue(forKey: jobID)
++        }
++        continuation.resume(returning: jobsByID[jobID])
++    }
++
++    private func cancelIdleWaiter(ownerKey: String, waiterID: UUID) {
++        guard let continuation = idleWaiters[ownerKey]?.removeValue(forKey: waiterID) else {
++            return
++        }
++        if idleWaiters[ownerKey]?.isEmpty == true {
++            idleWaiters.removeValue(forKey: ownerKey)
++        }
++        continuation.resume()
++    }
++
+     private func cleanupTemporaryState(for attempt: DeliveryAttemptV1) {
+         if let outputPath = attempt.outputPath {
+             let outputURL = URL(fileURLWithPath: outputPath)
+@@ -939,9 +1309,41 @@ final class ExportQueue {
+             return FileDigest.sha256(of: timelineData) == timelineSHA256
+         }
+     }
++
++    private func projectOwnershipHandler(
++        editor: EditorViewModel,
++        ownerKey: String,
++        root: URL
++    ) -> @MainActor () -> Bool {
++        { [weak editor] in
++            guard let editor else { return false }
++            return editor.openWorkingCopyKey == ownerKey
++                && editor.workingRoot?.standardizedFileURL == root.standardizedFileURL
++        }
++    }
+ }
+ 
+-private extension ExportQueue {
++extension ExportQueue {
++    struct RecoveredDeliveryIdentity {
++        let ownerKey: String
++        let specID: String
++        let outputURL: URL?
++    }
++
++    struct PreparedSources: Sendable {
++        let source: SourceBinding
++        let frozen: FrozenSources
++        let destination: DestinationBinding
++        let companionDestination: DestinationBinding?
++    }
++
++    struct PreparedDelivery: Sendable {
++        let source: SourceBinding
++        let frozen: FrozenSources
++        let destination: DestinationBinding
++        let finished: PipelineDeliveryStore.FinishedState
++    }
++
+     struct Request {
+         var id: String
+         let ownerKey: String
+@@ -954,11 +1356,13 @@ private extension ExportQueue {
+         let height: Int
+         let fingerprint: String
+         let source: SourceBinding
++        let frozenSources: FrozenSources
+         var destination: DestinationBinding
+         var companionDestination: DestinationBinding?
+         var payload: Payload
+         let changeHandler: @MainActor () -> Void
+         let currentHandler: @MainActor () -> Bool
++        let ownershipHandler: @MainActor () -> Bool
+ 
+         func withID(_ id: String) -> Request {
+             var copy = self
+@@ -973,6 +1377,19 @@ private extension ExportQueue {
+         case delivery(DeliveryPayload)
+         case interchange(InterchangePayload)
+         case project(ProjectPayload)
++
++        var timeline: Timeline {
++            switch self {
++            case .delivery(let value): value.timeline
++            case .interchange(let value): value.timeline
++            case .project(let value): value.timeline
++            }
++        }
++
++        var dataRoot: URL? {
++            if case .delivery(let value) = self { return value.dataRoot }
++            return nil
++        }
+     }
+ 
+     struct DeliveryPayload {
+@@ -1027,11 +1444,16 @@ private extension ExportQueue {
+         let media: [Media]
+         let rootURL: URL?
+         let rootState: PathState?
++        let rootExclusions: Set<String>
++        let separatelyCapturedPaths: Set<String>
++        let excludesWorkingCopyRuntime: Bool
++        let verifyLiveRoot: Bool
+ 
+         static func video(
+             timeline: Timeline,
+             resolver: MediaResolver,
+-            additionalFiles: [(path: String, url: URL)]
++            additionalFiles: [(path: String, url: URL)],
++            isCancelled: @Sendable () -> Bool = { false }
+         ) throws -> SourceBinding {
+             let tracks = timeline.tracks.filter {
+                 !$0.hidden && ($0.type != .audio || !$0.muted)
+@@ -1041,24 +1463,31 @@ private extension ExportQueue {
+                 refs: mediaRefs(timeline.tracks),
+                 requiredRefs: mediaRefs(tracks),
+                 resolver: resolver,
+-                additionalFiles: additionalFiles
++                additionalFiles: additionalFiles,
++                isCancelled: isCancelled
+             )
+         }
+ 
+-        static func interchange(timeline: Timeline, resolver: MediaResolver) throws -> SourceBinding {
++        static func interchange(
++            timeline: Timeline,
++            resolver: MediaResolver,
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws -> SourceBinding {
+             try make(
+                 timeline: timeline,
+                 refs: mediaRefs(timeline.tracks),
+                 requiredRefs: [],
+                 resolver: resolver,
+-                additionalFiles: []
++                additionalFiles: [],
++                isCancelled: isCancelled
+             )
+         }
+ 
+         static func projectPackage(
+             timeline: Timeline,
+             manifest: MediaManifest,
+-            sourceRoot: URL
++            sourceRoot: URL,
++            isCancelled: @Sendable () -> Bool = { false }
+         ) throws -> SourceBinding {
+             let resolver = MediaResolver(manifest: { manifest }, projectURL: { sourceRoot })
+             let refs = Set(manifest.entries.compactMap { entry in
+@@ -1070,13 +1499,35 @@ private extension ExportQueue {
+                 refs: refs,
+                 requiredRefs: [],
+                 resolver: resolver,
+-                additionalFiles: []
++                additionalFiles: [],
++                isCancelled: isCancelled
+             )
++            var separatelyCapturedPaths: Set<String> = []
++            if let dataRoot = DataRootResolver.dataRoot(of: sourceRoot) {
++                let source = sourceRoot.standardizedFileURL
++                let data = dataRoot.standardizedFileURL
++                let relative = data == source
++                    ? ""
++                    : String(data.path.dropFirst(source.path.count + 1))
++                separatelyCapturedPaths.insert(
++                    relative.isEmpty ? "delivery" : "\(relative)/delivery"
++                )
++            }
++            let exclusions = separatelyCapturedPaths
+             return .init(
+                 timelineSHA256: binding.timelineSHA256,
+                 media: binding.media,
+                 rootURL: sourceRoot,
+-                rootState: try PathState.capture(sourceRoot)
++                rootState: try PathState.capture(
++                    sourceRoot,
++                    excluding: exclusions,
++                    excludingWorkingCopyRuntime: true,
++                    isCancelled: isCancelled
++                ),
++                rootExclusions: exclusions,
++                separatelyCapturedPaths: separatelyCapturedPaths,
++                excludesWorkingCopyRuntime: true,
++                verifyLiveRoot: false
+             )
+         }
+ 
+@@ -1087,8 +1538,13 @@ private extension ExportQueue {
+                     throw ToolError("Export source changed or is offline: \(item.ref)")
+                 }
+             }
+-            if let rootURL, let rootState,
+-               try PathState.capture(rootURL, isCancelled: isCancelled) != rootState {
++            if verifyLiveRoot, let rootURL, let rootState,
++               try PathState.capture(
++                   rootURL,
++                   excluding: rootExclusions,
++                   excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
++                   isCancelled: isCancelled
++               ) != rootState {
+                 throw ToolError("The project source changed after this export was queued.")
+             }
+         }
+@@ -1107,16 +1563,18 @@ private extension ExportQueue {
+             refs: Set<String>,
+             requiredRefs: Set<String>,
+             resolver: MediaResolver,
+-            additionalFiles: [(path: String, url: URL)]
++            additionalFiles: [(path: String, url: URL)],
++            isCancelled: @Sendable () -> Bool
+         ) throws -> SourceBinding {
+             let timelineData = try PipelineAssemblyStore.canonical(timeline)
+             var media = try refs.sorted().compactMap { ref in
++                if isCancelled() { throw CancellationError() }
+                 guard let url = resolver.expectedURL(for: ref) else {
+                     if !requiredRefs.contains(ref) { return nil }
+                     throw ToolError("Export source is unresolved: \(resolver.displayName(for: ref))")
+                 }
+                 let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+-                let state = try PathState.capture(resolved)
++                let state = try PathState.capture(resolved, isCancelled: isCancelled)
+                 if state == .absent, requiredRefs.contains(ref) {
+                     throw ToolError("Export source is offline: \(resolver.displayName(for: ref))")
+                 }
+@@ -1131,8 +1589,9 @@ private extension ExportQueue {
+                 )
+             }
+             media += try additionalFiles.map { item in
++                if isCancelled() { throw CancellationError() }
+                 let resolved = item.url.standardizedFileURL.resolvingSymlinksInPath()
+-                let state = try PathState.capture(resolved)
++                let state = try PathState.capture(resolved, isCancelled: isCancelled)
+                 guard case .file = state else {
+                     throw ToolError("A required delivery extension is missing: \(item.path)")
+                 }
+@@ -1147,7 +1606,11 @@ private extension ExportQueue {
+                 timelineSHA256: FileDigest.sha256(of: timelineData),
+                 media: media,
+                 rootURL: nil,
+-                rootState: nil
++                rootState: nil,
++                rootExclusions: [],
++                separatelyCapturedPaths: [],
++                excludesWorkingCopyRuntime: false,
++                verifyLiveRoot: true
+             )
+         }
+ 
+@@ -1203,6 +1666,8 @@ private extension ExportQueue {
+                     try Self.copyDirectory(
+                         from: rootURL,
+                         to: destination,
++                        excluding: rootExclusions,
++                        excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
+                         isCancelled: isCancelled
+                     )
+                     guard try PathState.capture(
+@@ -1211,6 +1676,21 @@ private extension ExportQueue {
+                     ) == rootState else {
+                         throw ToolError("The project source changed while it was being frozen.")
+                     }
++                    guard try PathState.capture(
++                        rootURL,
++                        excluding: rootExclusions,
++                        excludingWorkingCopyRuntime: excludesWorkingCopyRuntime,
++                        isCancelled: isCancelled
++                    ) == rootState else {
++                        throw ToolError("The project source changed while it was being frozen.")
++                    }
++                    for relative in separatelyCapturedPaths.sorted() {
++                        try Self.copyConsistentDirectory(
++                            from: rootURL.appendingPathComponent(relative),
++                            to: destination.appendingPathComponent(relative),
++                            isCancelled: isCancelled
++                        )
++                    }
+                     frozenProjectRoot = destination
+                 } else {
+                     frozenProjectRoot = nil
+@@ -1219,7 +1699,9 @@ private extension ExportQueue {
+                     root: root,
+                     files: frozenFiles,
+                     projectRoot: frozenProjectRoot,
+-                    projectState: rootState
++                    projectState: frozenProjectRoot.map {
++                        try PathState.capture($0, isCancelled: isCancelled)
++                    }
+                 )
+             } catch {
+                 try? fm.removeItem(at: root)
+@@ -1258,6 +1740,8 @@ private extension ExportQueue {
+         private static func copyDirectory(
+             from source: URL,
+             to destination: URL,
++            excluding exclusions: Set<String> = [],
++            excludingWorkingCopyRuntime: Bool = false,
+             isCancelled: @Sendable () -> Bool
+         ) throws {
+             let fm = FileManager.default
+@@ -1274,6 +1758,12 @@ private extension ExportQueue {
+             for case let item as URL in enumerator {
+                 if isCancelled() { throw CancellationError() }
+                 let relative = String(item.path.dropFirst(source.path.count + 1))
++                if isExcluded(relative, exclusions: exclusions)
++                    || (excludingWorkingCopyRuntime
++                        && ProjectWorkingCopy.isPackageRuntimePath(relative)) {
++                    enumerator.skipDescendants()
++                    continue
++                }
+                 let target = destination.appendingPathComponent(relative)
+                 let values = try item.resourceValues(
+                     forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+@@ -1295,6 +1785,29 @@ private extension ExportQueue {
+             }
+         }
+ 
++        private static func copyConsistentDirectory(
++            from source: URL,
++            to destination: URL,
++            isCancelled: @Sendable () -> Bool
++        ) throws {
++            let fm = FileManager.default
++            guard fm.fileExists(atPath: source.path) else { return }
++            for _ in 0..<5 {
++                if isCancelled() { throw CancellationError() }
++                let before = try PathState.capture(source, isCancelled: isCancelled)
++                try? fm.removeItem(at: destination)
++                try copyDirectory(from: source, to: destination, isCancelled: isCancelled)
++                let copied = try PathState.capture(destination, isCancelled: isCancelled)
++                let after = try PathState.capture(source, isCancelled: isCancelled)
++                if before == after, copied == before { return }
++            }
++            throw ToolError("The project delivery history changed while it was being frozen.")
++        }
++
++        private static func isExcluded(_ relative: String, exclusions: Set<String>) -> Bool {
++            exclusions.contains { relative == $0 || relative.hasPrefix($0 + "/") }
++        }
++
+         private static func mediaRefs(_ tracks: [Track]) -> Set<String> {
+             Set(tracks.flatMap { track in
+                 track.clips.compactMap { clip in
+@@ -1304,32 +1817,43 @@ private extension ExportQueue {
+         }
+     }
+ 
+-    struct DestinationBinding {
+-        struct Publication {
++    struct DestinationBinding: Sendable {
++        struct Publication: Sendable {
+             let binding: DestinationBinding
+             let temporaryURL: URL
+         }
+ 
+         let url: URL
+         let initialState: PathState
++        let initialIdentity: ExportFileIdentity?
+         let jobID: String
+         let temporaryURL: URL
+         let expectsDirectory: Bool
+ 
+-        init(url: URL, jobID: String, expectsDirectory: Bool) throws {
+-            let standardized = url.standardizedFileURL
+-            let parent = standardized.deletingLastPathComponent()
++        init(
++            url: URL,
++            jobID: String,
++            expectsDirectory: Bool,
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws {
++            let requested = url.standardizedFileURL
++            let parent = requested.deletingLastPathComponent().resolvingSymlinksInPath()
++            let standardized = parent.appendingPathComponent(requested.lastPathComponent)
+             let values = try parent.resourceValues(forKeys: [.isDirectoryKey])
+             guard values.isDirectory == true else {
+                 throw ToolError("The export destination directory does not exist.")
+             }
+-            let initialState = try PathState.capture(standardized)
++            let initialState = try PathState.capture(
++                standardized,
++                isCancelled: isCancelled
++            )
+             guard !initialState.exists
+                     || initialState.isDirectory == expectsDirectory else {
+                 throw ToolError("The export destination has the wrong file type.")
+             }
+             self.url = standardized
+             self.initialState = initialState
++            self.initialIdentity = try ExportFileIdentity.capture(standardized)
+             self.jobID = jobID
+             self.temporaryURL = Self.makeTemporaryURL(url: standardized, jobID: jobID)
+             self.expectsDirectory = expectsDirectory
+@@ -1352,100 +1876,76 @@ private extension ExportQueue {
+             .init(
+                 url: url,
+                 initialState: initialState,
++                initialIdentity: initialIdentity,
+                 jobID: jobID,
+                 expectsDirectory: expectsDirectory
+             )
+         }
+ 
+-        func publish(temporaryURL: URL) throws {
+-            try Self.publish([.init(binding: self, temporaryURL: temporaryURL)])
++        func publish(
++            temporaryURL: URL,
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws -> ExportPublishRecoveryStore.Result {
++            try Self.publish(
++                [.init(binding: self, temporaryURL: temporaryURL)],
++                isCancelled: isCancelled
++            )
+         }
+ 
+-        static func publish(_ publications: [Publication]) throws {
++        static func publish(
++            _ publications: [Publication],
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws -> ExportPublishRecoveryStore.Result {
+             guard Set(publications.map { $0.binding.url }).count == publications.count else {
+                 throw ToolError("An export cannot publish two results to the same destination.")
+             }
++            if isCancelled() { throw CancellationError() }
++            var prepared: [ExportPublishRecoveryStore.Publication] = []
+             for publication in publications {
+                 let binding = publication.binding
+-                guard try PathState.capture(binding.url) == binding.initialState else {
++                guard try PathState.capture(
++                    binding.url,
++                    isCancelled: isCancelled
++                ) == binding.initialState else {
+                     throw ToolError("The export destination changed after this job was queued.")
+                 }
+-                let temporaryValues = try publication.temporaryURL.resourceValues(
+-                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
++                let temporaryState = try PathState.capture(
++                    publication.temporaryURL,
++                    isCancelled: isCancelled
+                 )
+-                let typeMatches = binding.expectsDirectory
+-                    ? temporaryValues.isDirectory == true
+-                    : temporaryValues.isRegularFile == true
+-                guard temporaryValues.isSymbolicLink != true,
+-                      typeMatches else {
++                guard temporaryState.exists,
++                      temporaryState.isDirectory == binding.expectsDirectory else {
+                     throw ToolError("The export produced no temporary result.")
+                 }
++                prepared.append(.init(
++                    targetURL: binding.url,
++                    temporaryURL: publication.temporaryURL,
++                    initialState: binding.initialState,
++                    initialIdentity: binding.initialIdentity,
++                    publishedState: temporaryState,
++                    publishedIdentity: try ExportFileIdentity.capture(
++                        publication.temporaryURL
++                    ),
++                    jobID: binding.jobID,
++                    expectsDirectory: binding.expectsDirectory
++                ))
+             }
+-
+-            let fm = FileManager.default
+-            if let publication = publications.first, publications.count == 1 {
+-                let binding = publication.binding
+-                if binding.initialState.exists {
+-                    _ = try fm.replaceItemAt(
+-                        binding.url,
+-                        withItemAt: publication.temporaryURL
+-                    )
+-                } else {
+-                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
+-                }
+-                return
+-            }
+-            var backups: [(target: URL, backup: URL)] = []
+-            var installed: [URL] = []
+-            do {
+-                for publication in publications {
+-                    let binding = publication.binding
+-                    if binding.initialState.exists {
+-                        let backup = binding.url.deletingLastPathComponent()
+-                            .appendingPathComponent(
+-                                ".\(binding.url.lastPathComponent).\(binding.jobID).backup"
+-                            )
+-                        guard !fm.fileExists(atPath: backup.path) else {
+-                            throw ToolError("An export backup already exists for this job and destination.")
+-                        }
+-                        try fm.moveItem(at: binding.url, to: backup)
+-                        backups.append((binding.url, backup))
+-                    }
+-                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
+-                    installed.append(binding.url)
+-                }
+-            } catch {
+-                let failure = error
+-                var rollbackFailures: [String] = []
+-                for target in installed.reversed() where fm.fileExists(atPath: target.path) {
+-                    do { try fm.removeItem(at: target) }
+-                    catch { rollbackFailures.append(target.lastPathComponent) }
+-                }
+-                for item in backups.reversed() where fm.fileExists(atPath: item.backup.path) {
+-                    do { try fm.moveItem(at: item.backup, to: item.target) }
+-                    catch { rollbackFailures.append(item.target.lastPathComponent) }
+-                }
+-                guard rollbackFailures.isEmpty else {
+-                    throw ToolError(
+-                        "Export publish failed and rollback could not restore: "
+-                            + rollbackFailures.joined(separator: ", ")
+-                    )
+-                }
+-                throw failure
+-            }
+-            for item in backups where fm.fileExists(atPath: item.backup.path) {
+-                try? fm.removeItem(at: item.backup)
+-            }
++            return try ExportPublishRecoveryStore.publish(
++                prepared,
++                isCancelled: isCancelled
++            )
+         }
+ 
+         private init(
+             url: URL,
+             initialState: PathState,
++            initialIdentity: ExportFileIdentity?,
+             jobID: String,
+             expectsDirectory: Bool
+         ) {
+             self.url = url
+             self.initialState = initialState
++            self.initialIdentity = initialIdentity
+             self.jobID = jobID
+             self.temporaryURL = Self.makeTemporaryURL(url: url, jobID: jobID)
+             self.expectsDirectory = expectsDirectory
+@@ -1506,7 +2006,7 @@ private extension ExportQueue {
+         }
+     }
+ 
+-    enum PathState: Equatable, Sendable {
++    enum PathState: Equatable, Sendable, Codable {
+         case absent
+         case file(sha256: String, byteCount: Int)
+         case directory(sha256: String)
+@@ -1524,6 +2024,8 @@ private extension ExportQueue {
+         }
+         static func capture(
+             _ url: URL,
++            excluding exclusions: Set<String> = [],
++            excludingWorkingCopyRuntime: Bool = false,
+             isCancelled: @Sendable () -> Bool = { false }
+         ) throws -> PathState {
+             if isCancelled() { throw CancellationError() }
+@@ -1556,10 +2058,17 @@ private extension ExportQueue {
+             var entries: [String] = []
+             for case let child as URL in enumerator {
+                 if isCancelled() { throw CancellationError() }
++                let relative = String(child.path.dropFirst(url.path.count + 1))
++                if exclusions.contains(where: {
++                    relative == $0 || relative.hasPrefix($0 + "/")
++                }) || (excludingWorkingCopyRuntime
++                    && ProjectWorkingCopy.isPackageRuntimePath(relative)) {
++                    enumerator.skipDescendants()
++                    continue
++                }
+                 let childValues = try child.resourceValues(
+                     forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
+                 )
+-                let relative = String(child.path.dropFirst(url.path.count + 1))
+                 if childValues.isSymbolicLink == true {
+                     throw ToolError("Export directories cannot contain symbolic links.")
+                 } else if childValues.isDirectory == true {
+diff --git a/Sources/NexGenVideo/Export/ExportView.swift b/Sources/NexGenVideo/Export/ExportView.swift
+index 3378424f..073f25ac 100644
+--- a/Sources/NexGenVideo/Export/ExportView.swift
++++ b/Sources/NexGenVideo/Export/ExportView.swift
+@@ -336,7 +336,7 @@ struct ExportView: View {
+                 }
+             }
+             .buttonStyle(.capsule(.secondary, size: .regular))
+-            .disabled(activeJob?.status == .cancelling)
++            .disabled(activeJob != nil && activeJob?.canCancel != true)
+             .keyboardShortcut(.cancelAction)
+             Button("Export") { startExport() }
+                 .buttonStyle(.glassProminent)
+@@ -390,6 +390,8 @@ struct ExportView: View {
+             HStack(spacing: AppTheme.Spacing.sm) {
+                 Button("Cancel") { queue.cancel(jobID: job.id) }
+                     .disabled(!job.canCancel)
++                    .accessibilityIdentifier("export.job.\(job.id).cancel")
++                    .background { exportActionProbe(job: job, action: "cancel") }
+                 Button("Retry") {
+                     do {
+                         let retry = try queue.retry(jobID: job.id)
+@@ -400,12 +402,17 @@ struct ExportView: View {
+                     }
+                 }
+                 .disabled(!queue.canRetry(jobID: job.id))
++                .accessibilityIdentifier("export.job.\(job.id).retry")
++                .background { exportActionProbe(job: job, action: "retry") }
+                 Button("Reveal") {
+                     if let url = job.destinationURL {
+                         NSWorkspace.shared.activateFileViewerSelecting([url])
++                        ExportActionsSelfTest.recordReveal(url)
+                     }
+                 }
+                 .disabled(!job.canReveal)
++                .accessibilityIdentifier("export.job.\(job.id).reveal")
++                .background { exportActionProbe(job: job, action: "reveal") }
+                 Spacer()
+             }
+             .buttonStyle(.capsule(.secondary, size: .small))
+@@ -423,6 +430,15 @@ struct ExportView: View {
+         .onTapGesture { selectedJobID = job.id }
+     }
+ 
++    @ViewBuilder
++    private func exportActionProbe(job: ExportJob, action: String) -> some View {
++        if ExportActionsSelfTest.isRequested {
++            AppRelaunchClickProbe(identifier: "export.job.\(job.id).\(action)")
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .allowsHitTesting(false)
++        }
++    }
++
+     private func statusSymbol(_ status: ExportJobStatus) -> String {
+         switch status {
+         case .pending: "clock"
+@@ -540,7 +556,7 @@ struct ExportView: View {
+                 defer { preparingDelivery = false }
+                 do {
+                     if mode == .xml || mode == .fcpxml {
+-                        let job = try queue.enqueueInterchange(
++                        let job = try await queue.enqueueInterchange(
+                             editor: editor,
+                             format: format,
+                             outputURL: url,
+@@ -552,7 +568,7 @@ struct ExportView: View {
+                         ngvResult = "Queued · \(job.id.prefix(8))"
+                         return
+                     }
+-                    _ = try PipelineDeliveryStore.adoptCurrentTimeline(
++                    _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
+                         editor: editor,
+                         requireSequenceReview: requireSequenceReview
+                     )
+@@ -565,7 +581,7 @@ struct ExportView: View {
+                         resolution: resolution,
+                         requireSequenceReview: requireSequenceReview
+                     )
+-                    let job = try queue.enqueueDelivery(
++                    let job = try await queue.enqueueDelivery(
+                         editor: editor,
+                         spec: spec,
+                         format: format,
+@@ -595,7 +611,7 @@ struct ExportView: View {
+                 preparingDelivery = true
+                 defer { preparingDelivery = false }
+                 do {
+-                    let job = try queue.enqueueProjectPackage(
++                    let job = try await queue.enqueueProjectPackage(
+                         editor: editor,
+                         outputURL: url
+                     )
+diff --git a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+index 4f07d830..8801187b 100644
+--- a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
++++ b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+@@ -23,6 +23,17 @@ enum PipelineDeliveryStore {
+         let selectionWarning: String?
+     }
+ 
++    private struct AdoptionPreparation: Sendable {
++        let metadata: ProjectMeta
++        let timelineData: Data
++        let timelineSHA256: String
++        let timelinePath: String
++        let plan: FinishPlanV1
++        let planData: Data
++        let media: [RenderPublishedArtifactV1]
++        let assemblyIsCurrent: Bool
++    }
++
+     static let selectionPath = "delivery/selection.v1.json"
+     private static let attemptsDirectory = "delivery/attempts"
+     private static let jobsDirectory = "delivery/jobs"
+@@ -32,86 +43,58 @@ enum PipelineDeliveryStore {
+     static func adoptCurrentTimeline(
+         editor: EditorViewModel,
+         requireSequenceReview: Bool
+-    ) throws -> FinishedState {
++    ) async throws -> FinishedState {
+         guard let home = editor.workingRoot,
+               let dataRoot = DataRootResolver.dataRoot(of: home),
+               let workingCopyKey = editor.openWorkingCopyKey else {
+             throw ToolError("Open a project before preparing delivery.")
+         }
+-        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
+-            ProjectMeta.self,
+-            at: PipelineLayout.projectFile
+-        )
+-        let timelineData = try PipelineAssemblyStore.canonical(editor.timeline)
+-        guard editor.timeline.totalFrames > 0,
+-              editor.timeline.tracks.contains(where: {
+-                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
+-              }) else {
+-            throw ToolError("Add visible video to the timeline before preparing delivery.")
+-        }
+-        let timelineSHA256 = FileDigest.sha256(of: timelineData)
+-        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
+-
+-        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
+-        let assemblyIsCurrent = assembly.map {
+-            $0.manifest.timelineFingerprint == timelineSHA256
+-        } ?? false
+-        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
+-            try FileDigest.sha256(of: ProjectLocalFile.resolve(
+-                AssemblyManifestV1.relativePath,
+-                dataRoot: dataRoot
+-            ))
+-        } else {
+-            nil
++        let boundTimeline = editor.timeline
++        let boundManifest = editor.mediaManifest
++        let boundResolver = editor.mediaResolver.snapshot()
++        let cancellationFlag = ExportCancellationFlag()
++        let prepared = try await withTaskCancellationHandler {
++            try await Task.detached(priority: .userInitiated) {
++                try prepareAdoption(
++                    dataRoot: dataRoot,
++                    timeline: boundTimeline,
++                    resolver: boundResolver,
++                    requireSequenceReview: requireSequenceReview,
++                    isCancelled: { cancellationFlag.isCancelled }
++                )
++            }.value
++        } onCancel: {
++            cancellationFlag.cancel()
+         }
+-
+-        let sequenceReviewSHA256: String?
+-        do {
+-            _ = try PipelineSequenceReviewStore.requireCurrent(
+-                dataRoot: dataRoot,
+-                timeline: editor.timeline
+-            )
+-            sequenceReviewSHA256 = try FileDigest.sha256(of: ProjectLocalFile.resolve(
+-                SequenceReviewV1.relativePath,
+-                dataRoot: dataRoot
+-            ))
+-        } catch {
+-            if requireSequenceReview {
+-                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
+-            }
+-            sequenceReviewSHA256 = nil
++        guard editor.openWorkingCopyKey == workingCopyKey,
++              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL,
++              editor.mediaManifest == boundManifest,
++              FileDigest.sha256(
++                  of: try PipelineAssemblyStore.canonical(editor.timeline)
++              ) == prepared.timelineSHA256,
++              try YAMLArtifactStore(dataRoot: dataRoot).load(
++                  ProjectMeta.self,
++                  at: PipelineLayout.projectFile
++              ) == prepared.metadata else {
++            throw CancellationError()
+         }
+-
+-        let plan = FinishPlanV1(
+-            projectID: metadata.project,
+-            sourceTimelineSHA256: timelineSHA256,
+-            assemblyManifestSHA256: assemblyManifestSHA256,
+-            sequenceReviewSHA256: sequenceReviewSHA256,
+-            operations: []
+-        )
+-        try DeliveryValidatorV1.validate(plan: plan)
+-        let planData = try PipelineAssemblyStore.canonical(plan)
+-        let media = try currentMediaProofs(
+-            timeline: editor.timeline,
+-            resolver: editor.mediaResolver.snapshot()
+-        )
+         let manifest = FinishedTimelineManifestV1(
+-            projectID: metadata.project,
+-            finishPlanSHA256: FileDigest.sha256(of: planData),
+-            timelinePath: timelinePath,
+-            timelineSHA256: timelineSHA256,
+-            media: media,
++            projectID: prepared.metadata.project,
++            finishPlanSHA256: FileDigest.sha256(of: prepared.planData),
++            timelinePath: prepared.timelinePath,
++            timelineSHA256: prepared.timelineSHA256,
++            media: prepared.media,
+             operationProofs: [],
+-            adoptedManualTimeline: !assemblyIsCurrent
++            adoptedManualTimeline: !prepared.assemblyIsCurrent
+         )
+         try DeliveryValidatorV1.validate(
+             manifest: manifest,
+-            plan: plan,
+-            planSHA256: FileDigest.sha256(of: planData),
+-            currentTimelineSHA256: timelineSHA256
++            plan: prepared.plan,
++            planSHA256: FileDigest.sha256(of: prepared.planData),
++            currentTimelineSHA256: prepared.timelineSHA256
+         )
+         let manifestData = try PipelineAssemblyStore.canonical(manifest)
+-        let timelineURL = dataRoot.appendingPathComponent(timelinePath)
++        let timelineURL = dataRoot.appendingPathComponent(prepared.timelinePath)
+         let planURL = dataRoot.appendingPathComponent(FinishPlanV1.relativePath)
+         let manifestURL = dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath)
+         try ProjectWorkingCopy.markDirty(key: workingCopyKey)
+@@ -124,19 +107,19 @@ enum PipelineDeliveryStore {
+                 withIntermediateDirectories: true
+             )
+             if FileManager.default.fileExists(atPath: timelineURL.path) {
+-                guard try Data(contentsOf: timelineURL) == timelineData else {
++                guard try Data(contentsOf: timelineURL) == prepared.timelineData else {
+                     throw ToolError("An immutable finished timeline has different bytes.")
+                 }
+             } else {
+-                try timelineData.write(to: timelineURL, options: .atomic)
++                try prepared.timelineData.write(to: timelineURL, options: .atomic)
+             }
+-            try planData.write(to: planURL, options: .atomic)
++            try prepared.planData.write(to: planURL, options: .atomic)
+             try manifestData.write(to: manifestURL, options: .atomic)
+         }
+         editor.onPipelineChanged?()
+         return .init(
+-            plan: plan,
+-            planData: planData,
++            plan: prepared.plan,
++            planData: prepared.planData,
+             manifest: manifest,
+             manifestData: manifestData
+         )
+@@ -144,8 +127,10 @@ enum PipelineDeliveryStore {
+ 
+     static func requireCurrentFinished(
+         dataRoot: URL,
+-        timeline: Timeline
++        timeline: Timeline,
++        isCancelled: @Sendable () -> Bool = { false }
+     ) throws -> FinishedState {
++        if isCancelled() { throw CancellationError() }
+         let planData = try Data(contentsOf: ProjectLocalFile.resolve(
+             FinishPlanV1.relativePath,
+             dataRoot: dataRoot
+@@ -167,37 +152,44 @@ enum PipelineDeliveryStore {
+             planSHA256: FileDigest.sha256(of: planData),
+             currentTimelineSHA256: timelineSHA256
+         )
+-        let frozenTimeline = try ProjectLocalFile.requireHash(
++        let frozenTimeline = try requireCancellableHash(
+             manifest.timelineSHA256,
+             at: manifest.timelinePath,
+-            dataRoot: dataRoot
++            dataRoot: dataRoot,
++            isCancelled: isCancelled
+         )
+         guard try Data(contentsOf: frozenTimeline) == timelineData else {
+             throw ToolError("The finished timeline snapshot is stale.")
+         }
+         for item in manifest.media {
++            if isCancelled() { throw CancellationError() }
+             let url = try boundURL(item.path, dataRoot: dataRoot)
+-            guard try FileDigest.sha256(of: url) == item.sha256 else {
++            guard try cancellableSHA256(of: url, isCancelled: isCancelled) == item.sha256 else {
+                 throw ToolError("Finished media changed or is offline: \(item.path)")
+             }
+         }
+         for operation in plan.operations {
+-            _ = try ProjectLocalFile.requireHash(
++            if isCancelled() { throw CancellationError() }
++            _ = try requireCancellableHash(
+                 operation.settingsSHA256,
+                 at: operation.settingsPath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+-            _ = try ProjectLocalFile.requireHash(
++            _ = try requireCancellableHash(
+                 operation.outputSHA256,
+                 at: operation.outputPath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+         }
+         if let expectedAssembly = plan.assemblyManifestSHA256 {
+-            let currentAssembly = try ProjectLocalFile.requireHash(
++            if isCancelled() { throw CancellationError() }
++            let currentAssembly = try requireCancellableHash(
+                 expectedAssembly,
+                 at: AssemblyManifestV1.relativePath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+             _ = currentAssembly
+             guard let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot),
+@@ -206,15 +198,18 @@ enum PipelineDeliveryStore {
+             }
+         }
+         if let expectedReview = plan.sequenceReviewSHA256 {
+-            _ = try ProjectLocalFile.requireHash(
++            if isCancelled() { throw CancellationError() }
++            _ = try requireCancellableHash(
+                 expectedReview,
+                 at: SequenceReviewV1.relativePath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+             _ = try PipelineSequenceReviewStore.requireCurrent(
+                 dataRoot: dataRoot,
+                 timeline: timeline
+             )
++            if isCancelled() { throw CancellationError() }
+         }
+         return .init(
+             plan: plan,
+@@ -298,10 +293,11 @@ enum PipelineDeliveryStore {
+               finished.planData == (try PipelineAssemblyStore.canonical(finished.plan)) else {
+             throw ToolError("The bound delivery evidence is not canonical.")
+         }
+-        let frozenTimeline = try ProjectLocalFile.requireHash(
++        let frozenTimeline = try requireCancellableHash(
+             finished.manifest.timelineSHA256,
+             at: finished.manifest.timelinePath,
+-            dataRoot: dataRoot
++            dataRoot: dataRoot,
++            isCancelled: isCancelled
+         )
+         guard try Data(contentsOf: frozenTimeline) == timelineData else {
+             throw ToolError("The bound finished timeline snapshot changed.")
+@@ -316,31 +312,35 @@ enum PipelineDeliveryStore {
+         }
+         for operation in finished.plan.operations {
+             if isCancelled() { throw CancellationError() }
+-            _ = try ProjectLocalFile.requireHash(
++            _ = try requireCancellableHash(
+                 operation.settingsSHA256,
+                 at: operation.settingsPath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+-            _ = try ProjectLocalFile.requireHash(
++            _ = try requireCancellableHash(
+                 operation.outputSHA256,
+                 at: operation.outputPath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+         }
+         if let assemblySHA256 = finished.plan.assemblyManifestSHA256 {
+             if isCancelled() { throw CancellationError() }
+-            _ = try ProjectLocalFile.requireHash(
++            _ = try requireCancellableHash(
+                 assemblySHA256,
+                 at: AssemblyManifestV1.relativePath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+         }
+         if let sequenceReviewSHA256 = finished.plan.sequenceReviewSHA256 {
+             if isCancelled() { throw CancellationError() }
+-            _ = try ProjectLocalFile.requireHash(
++            _ = try requireCancellableHash(
+                 sequenceReviewSHA256,
+                 at: SequenceReviewV1.relativePath,
+-                dataRoot: dataRoot
++                dataRoot: dataRoot,
++                isCancelled: isCancelled
+             )
+         }
+     }
+@@ -369,7 +369,8 @@ enum PipelineDeliveryStore {
+         resolution: ExportResolution,
+         outputURL: URL,
+         timeline: Timeline,
+-        resolver: MediaResolver
++        resolver: MediaResolver,
++        bindingAlreadyValidated: Bool = false
+     ) throws -> DeliveryAttemptV1 {
+         try safeID(id)
+         let currentURL = dataRoot.appendingPathComponent(
+@@ -399,12 +400,14 @@ enum PipelineDeliveryStore {
+               spec.fpsDenominator == 1 else {
+             throw ToolError("The delivery spec does not match the bound timeline.")
+         }
+-        try requireBoundFinished(
+-            dataRoot: dataRoot,
+-            finished: finished,
+-            timeline: timeline,
+-            resolver: resolver
+-        )
++        if !bindingAlreadyValidated {
++            try requireBoundFinished(
++                dataRoot: dataRoot,
++                finished: finished,
++                timeline: timeline,
++                resolver: resolver
++            )
++        }
+         let requiresReview = spec.requirements.contains {
+             $0.id == "core.sequence-review" && $0.required
+         }
+@@ -458,14 +461,14 @@ enum PipelineDeliveryStore {
+         finished: FinishedState,
+         outputURL: URL,
+         evidence: OutputEvidence,
++        publishedState: ExportQueue.PathState,
+         selectIfCurrent: Bool
+     ) throws -> FinishResult {
+-        guard try FileDigest.sha256(of: outputURL) == evidence.sha256 else {
++        guard case .file(let sha256, let byteCount) = publishedState,
++              sha256 == evidence.sha256 else {
+             throw ToolError("The published delivery bytes do not match the verified export.")
+         }
+-        let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+-        guard values.isRegularFile == true,
+-              values.fileSize == Int(evidence.byteCount) else {
++        guard byteCount == Int(evidence.byteCount) else {
+             throw ToolError("The published delivery size changed before its receipt was recorded.")
+         }
+         let succeeded = copy(
+@@ -553,10 +556,11 @@ enum PipelineDeliveryStore {
+         service: ExportService
+     ) async throws -> DeliveryAttemptV1 {
+         guard let home = editor.workingRoot,
+-              let dataRoot = DataRootResolver.dataRoot(of: home) else {
++              let dataRoot = DataRootResolver.dataRoot(of: home),
++              let ownerKey = editor.openWorkingCopyKey else {
+             throw ToolError("Open a project before exporting a delivery.")
+         }
+-        let job = try ExportQueue.shared.enqueueDelivery(
++        let job = try await ExportQueue.shared.enqueueDelivery(
+             editor: editor,
+             spec: spec,
+             format: format,
+@@ -574,7 +578,24 @@ enum PipelineDeliveryStore {
+             throw ToolError(reason)
+         }
+         service.progress = 1
+-        return try loadAttempt(id: job.id, dataRoot: dataRoot)
++        let jobID = job.id
++        let cancellationFlag = ExportCancellationFlag()
++        let attempt = try await withTaskCancellationHandler {
++            try await Task.detached(priority: .userInitiated) {
++                try loadAttempt(
++                    id: jobID,
++                    dataRoot: dataRoot,
++                    isCancelled: { cancellationFlag.isCancelled }
++                )
++            }.value
++        } onCancel: {
++            cancellationFlag.cancel()
++        }
++        guard editor.openWorkingCopyKey == ownerKey,
++              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL else {
++            throw CancellationError()
++        }
++        return attempt
+     }
+ 
+     @discardableResult
+@@ -617,7 +638,12 @@ enum PipelineDeliveryStore {
+         return recovered
+     }
+ 
+-    static func loadAttempt(id: String, dataRoot: URL) throws -> DeliveryAttemptV1 {
++    static func loadAttempt(
++        id: String,
++        dataRoot: URL,
++        isCancelled: @Sendable () -> Bool = { false }
++    ) throws -> DeliveryAttemptV1 {
++        if isCancelled() { throw CancellationError() }
+         try safeID(id)
+         let path = "\(attemptsDirectory)/\(id).v1.json"
+         let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+@@ -629,13 +655,103 @@ enum PipelineDeliveryStore {
+         }
+         if value.status == .succeeded {
+             let output = try boundURL(value.outputPath ?? "", dataRoot: dataRoot)
+-            guard try FileDigest.sha256(of: output) == value.outputSHA256 else {
++            guard try cancellableSHA256(
++                of: output,
++                isCancelled: isCancelled
++            ) == value.outputSHA256 else {
+                 throw ToolError("The selected delivery output bytes changed.")
+             }
+         }
+         return value
+     }
+ 
++    private static func prepareAdoption(
++        dataRoot: URL,
++        timeline: Timeline,
++        resolver: MediaResolver,
++        requireSequenceReview: Bool,
++        isCancelled: @Sendable () -> Bool
++    ) throws -> AdoptionPreparation {
++        if isCancelled() { throw CancellationError() }
++        guard timeline.totalFrames > 0,
++              timeline.tracks.contains(where: {
++                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
++              }) else {
++            throw ToolError("Add visible video to the timeline before preparing delivery.")
++        }
++        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
++            ProjectMeta.self,
++            at: PipelineLayout.projectFile
++        )
++        let timelineData = try PipelineAssemblyStore.canonical(timeline)
++        let timelineSHA256 = FileDigest.sha256(of: timelineData)
++        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
++
++        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
++        let assemblyIsCurrent = assembly.map {
++            $0.manifest.timelineFingerprint == timelineSHA256
++        } ?? false
++        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
++            try cancellableSHA256(
++                of: ProjectLocalFile.resolve(
++                    AssemblyManifestV1.relativePath,
++                    dataRoot: dataRoot
++                ),
++                isCancelled: isCancelled
++            )
++        } else {
++            nil
++        }
++
++        let sequenceReviewSHA256: String?
++        do {
++            if isCancelled() { throw CancellationError() }
++            _ = try PipelineSequenceReviewStore.requireCurrent(
++                dataRoot: dataRoot,
++                timeline: timeline
++            )
++            if isCancelled() { throw CancellationError() }
++            sequenceReviewSHA256 = try cancellableSHA256(
++                of: ProjectLocalFile.resolve(
++                    SequenceReviewV1.relativePath,
++                    dataRoot: dataRoot
++                ),
++                isCancelled: isCancelled
++            )
++        } catch {
++            if isCancelled() { throw CancellationError() }
++            if requireSequenceReview {
++                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
++            }
++            sequenceReviewSHA256 = nil
++        }
++
++        let plan = FinishPlanV1(
++            projectID: metadata.project,
++            sourceTimelineSHA256: timelineSHA256,
++            assemblyManifestSHA256: assemblyManifestSHA256,
++            sequenceReviewSHA256: sequenceReviewSHA256,
++            operations: []
++        )
++        try DeliveryValidatorV1.validate(plan: plan)
++        let planData = try PipelineAssemblyStore.canonical(plan)
++        let media = try currentMediaProofs(
++            timeline: timeline,
++            resolver: resolver,
++            isCancelled: isCancelled
++        )
++        return .init(
++            metadata: metadata,
++            timelineData: timelineData,
++            timelineSHA256: timelineSHA256,
++            timelinePath: timelinePath,
++            plan: plan,
++            planData: planData,
++            media: media,
++            assemblyIsCurrent: assemblyIsCurrent
++        )
++    }
++
+     private static func currentMediaProofs(
+         timeline: Timeline,
+         resolver: MediaResolver,
+@@ -768,6 +884,32 @@ enum PipelineDeliveryStore {
+         )
+         var paths = [currentURL, eventURL]
+         if terminal { paths.append(attemptURL) }
++        if FileManager.default.fileExists(atPath: currentURL.path) {
++            let currentData = try Data(contentsOf: currentURL)
++            let current = try JSONDecoder().decode(DeliveryAttemptV1.self, from: currentData)
++            if ![.queued, .running].contains(current.status) {
++                guard currentData == bytes else {
++                    throw ToolError("A terminal delivery attempt cannot transition to another status.")
++                }
++                return
++            }
++            let allowed: Bool = switch (current.status, attempt.status) {
++            case (.queued, .queued), (.queued, .running), (.queued, .failed),
++                 (.queued, .cancelled), (.queued, .interrupted),
++                 (.running, .running), (.running, .succeeded), (.running, .failed),
++                 (.running, .cancelled), (.running, .interrupted):
++                true
++            default:
++                false
++            }
++            guard allowed else {
++                throw ToolError("Delivery attempt status cannot move backward.")
++            }
++        } else {
++            guard attempt.status == .queued else {
++                throw ToolError("A delivery attempt must begin in the queued state.")
++            }
++        }
+         try ArtifactTransaction.perform(paths: paths, dataRoot: dataRoot) {
+             try FileManager.default.createDirectory(
+                 at: eventDirectory,
+@@ -908,6 +1050,24 @@ enum PipelineDeliveryStore {
+         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+     }
+ 
++    private static func requireCancellableHash(
++        _ expectedSHA256: String,
++        at relativePath: String,
++        dataRoot: URL,
++        isCancelled: @Sendable () -> Bool
++    ) throws -> URL {
++        let url = try ProjectLocalFile.resolve(relativePath, dataRoot: dataRoot)
++        let actual = try cancellableSHA256(of: url, isCancelled: isCancelled)
++        guard actual == expectedSHA256 else {
++            throw ProjectLocalFileError.hashMismatch(
++                path: relativePath,
++                expected: expectedSHA256,
++                actual: actual
++            )
++        }
++        return url
++    }
++
+     private static func boundURL(_ path: String, dataRoot: URL) throws -> URL {
+         if path.hasPrefix("/") {
+             let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+diff --git a/Sources/NexGenVideo/Project/ProjectWorkingCopy.swift b/Sources/NexGenVideo/Project/ProjectWorkingCopy.swift
+index dc0c2c47..3d2a8f6e 100644
+--- a/Sources/NexGenVideo/Project/ProjectWorkingCopy.swift
++++ b/Sources/NexGenVideo/Project/ProjectWorkingCopy.swift
+@@ -14,6 +14,11 @@ enum ProjectWorkingCopy {
+         generationMarker,
+     ])
+ 
++    static func isPackageRuntimePath(_ relativePath: String) -> Bool {
++        !relativePath.contains("/")
++            && (internalNames.contains(relativePath) || relativePath.hasPrefix(".chat-"))
++    }
++
+     static func home(_ key: String) -> URL { AppPaths.workingCopy(projectId: key) }
+ 
+     struct OpenResult: Sendable {
+diff --git a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+index bd5964df..beb8d212 100644
+--- a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+@@ -141,4 +141,158 @@ struct ExportProjectToolTests {
+         #expect((report?["featureMatrix"] as? [[String: Any]])?.isEmpty == false)
+         #expect(try String(contentsOf: outputURL, encoding: .utf8).contains("<fcpxml version=\"1.14\">"))
+     }
++
++    @Test func videoRejoinReportsActualPendingTerminalAndInterruptedState() async throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-tool-video-\(UUID().uuidString)", isDirectory: true)
++        let generated = try await ImageVideoGenerator.blackVideo(
++            size: CGSize(width: 320, height: 180)
++        )
++        let source = root.appendingPathComponent("source.mov")
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        try FileManager.default.copyItem(at: generated, to: source)
++        var timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
++            Fixtures.clip(mediaRef: "source", start: 0, duration: 30),
++        ])])
++        timeline.width = 320
++        timeline.height = 180
++        let h = ToolHarness(timeline: timeline)
++        let packageRoot = try openProject(h, name: "VideoStatus")
++        h.editor.mediaManifest.entries = [MediaManifestEntry(
++            id: "source",
++            name: "Source",
++            type: .video,
++            source: .external(absolutePath: source.path),
++            duration: 1
++        )]
++        let dataRoot = try #require(h.editor.workingRoot.flatMap {
++            DataRootResolver.dataRoot(of: $0)
++        })
++        try YAMLArtifactStore(dataRoot: dataRoot).save(
++            ProjectMeta(project: "video-status", mode: .generic),
++            to: PipelineLayout.projectFile
++        )
++        defer {
++            h.editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: packageRoot)
++            try? FileManager.default.removeItem(at: root)
++        }
++
++        let pendingID = UUID().uuidString
++        let pendingURL = root.appendingPathComponent("pending.mp4")
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let pending = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": pendingURL.path,
++            "requestID": pendingID,
++        ]) as? [String: Any]
++        #expect(pending?["status"] as? String == "pending")
++        let pendingJobID = try #require(pending?["jobID"] as? String)
++        ExportQueue.shared.cancel(jobID: pendingJobID)
++        _ = await ExportQueue.shared.waitForCompletion(jobID: pendingJobID)
++        let cancelled = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": pendingURL.path,
++            "requestID": pendingID,
++        ]) as? [String: Any]
++        #expect(cancelled?["status"] as? String == "cancelled")
++        #expect((cancelled?["error"] as? String)?.contains("cancelled") == true)
++        ExportCoordinator.endExport()
++        gateHeld = false
++
++        let completedID = UUID().uuidString
++        let completedURL = root.appendingPathComponent("completed.mp4")
++        let started = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": completedURL.path,
++            "requestID": completedID,
++        ]) as? [String: Any]
++        let completedJobID = try #require(started?["jobID"] as? String)
++        _ = await ExportQueue.shared.waitForCompletion(jobID: completedJobID)
++        let completed = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": completedURL.path,
++            "requestID": completedID,
++        ]) as? [String: Any]
++        #expect(completed?["status"] as? String == "completed")
++        #expect((completed?["outputSha256"] as? String)?.count == 64)
++        #expect(((completed?["outputByteCount"] as? NSNumber)?.int64Value ?? 0) > 0)
++
++        let failedID = UUID().uuidString
++        let failedURL = root.appendingPathComponent("failed.mp4")
++        try Data("original".utf8).write(to: failedURL)
++        await ExportCoordinator.acquireExport()
++        gateHeld = true
++        let initial = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": failedURL.path,
++            "requestID": failedID,
++        ]) as? [String: Any]
++        let failedJobID = try #require(initial?["jobID"] as? String)
++        try Data("external replacement".utf8).write(to: failedURL, options: .atomic)
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await ExportQueue.shared.waitForCompletion(jobID: failedJobID)
++        let failed = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": failedURL.path,
++            "requestID": failedID,
++        ]) as? [String: Any]
++        #expect(failed?["status"] as? String == "failed")
++        #expect((failed?["error"] as? String)?.contains("destination changed") == true)
++
++        let interruptedID = UUID().uuidString.lowercased()
++        let interruptedURL = root.appendingPathComponent("interrupted.mp4")
++        let interruptedSpec = try PipelineDeliveryStore.defaultSpec(
++            id: "agent.H.264.720p",
++            targetKind: .derivative,
++            timeline: timeline,
++            format: .h264,
++            resolution: .r720p,
++            requireSequenceReview: false
++        )
++        let interruptedAttempt = DeliveryAttemptV1(
++            id: interruptedID,
++            spec: interruptedSpec,
++            finishedTimelineSHA256: FileDigest.sha256(
++                of: try PipelineAssemblyStore.canonical(timeline)
++            ),
++            status: .queued,
++            outputPath: interruptedURL.path,
++            createdAt: "2026-09-24T00:00:00Z"
++        )
++        let currentURL = dataRoot.appendingPathComponent(
++            "delivery/jobs/\(interruptedID)/current.v1.json"
++        )
++        try FileManager.default.createDirectory(
++            at: currentURL.deletingLastPathComponent(),
++            withIntermediateDirectories: true
++        )
++        try PipelineAssemblyStore.canonical(interruptedAttempt).write(to: currentURL)
++        let interrupted = try await h.runOK("export_project", args: [
++            "mode": "video",
++            "codec": "H.264",
++            "resolution": "720p",
++            "outputPath": interruptedURL.path,
++            "requestID": interruptedID,
++        ]) as? [String: Any]
++        #expect(interrupted?["status"] as? String == "interrupted")
++        #expect((interrupted?["error"] as? String)?.contains("interrupted") == true)
++    }
+ }
+diff --git a/Tests/NexGenVideoTests/Export/ExportQueueTests.swift b/Tests/NexGenVideoTests/Export/ExportQueueTests.swift
+index 955a7b39..66679b45 100644
+--- a/Tests/NexGenVideoTests/Export/ExportQueueTests.swift
++++ b/Tests/NexGenVideoTests/Export/ExportQueueTests.swift
+@@ -39,14 +39,14 @@ struct ExportQueueTests {
+         }
+ 
+         let requestID = UUID().uuidString
+-        let first = try queue.enqueueInterchange(
++        let first = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: firstURL,
+             projectName: "Queue",
+             requestID: requestID
+         )
+-        let joined = try queue.enqueueInterchange(
++        let joined = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: firstURL,
+@@ -54,8 +54,8 @@ struct ExportQueueTests {
+             requestID: requestID
+         )
+         #expect(first === joined)
+-        #expect(throws: (any Error).self) {
+-            _ = try queue.enqueueInterchange(
++        await #expect(throws: (any Error).self) {
++            _ = try await queue.enqueueInterchange(
+                 editor: editor,
+                 format: .xml,
+                 outputURL: root.appendingPathComponent("different.xml"),
+@@ -64,7 +64,7 @@ struct ExportQueueTests {
+             )
+         }
+ 
+-        let cancelled = try queue.enqueueInterchange(
++        let cancelled = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: cancelledURL,
+@@ -73,20 +73,20 @@ struct ExportQueueTests {
+         queue.cancel(jobID: cancelled.id)
+         #expect(cancelled.status == .cancelled)
+ 
+-        let collisionWinner = try queue.enqueueInterchange(
++        let collisionWinner = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: collisionURL,
+             projectName: "Queue"
+         )
+-        let collisionLoser = try queue.enqueueInterchange(
++        let collisionLoser = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: collisionURL,
+             projectName: "Queue"
+         )
+         try Data("original target".utf8).write(to: changedTargetURL)
+-        let changedTarget = try queue.enqueueInterchange(
++        let changedTarget = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: changedTargetURL,
+@@ -97,7 +97,7 @@ struct ExportQueueTests {
+             at: removedDirectory,
+             withIntermediateDirectories: true
+         )
+-        let writerFailure = try queue.enqueueInterchange(
++        let writerFailure = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: writerFailureURL,
+@@ -171,7 +171,7 @@ struct ExportQueueTests {
+         defer {
+             if gateHeld { ExportCoordinator.endExport() }
+         }
+-        let job = try queue.enqueueInterchange(
++        let job = try await queue.enqueueInterchange(
+             editor: editor,
+             format: .xml,
+             outputURL: output,
+@@ -210,13 +210,13 @@ struct ExportQueueTests {
+         defer {
+             if gateHeld { ExportCoordinator.endExport() }
+         }
+-        let firstJob = try ExportQueue.shared.enqueueInterchange(
++        let firstJob = try await ExportQueue.shared.enqueueInterchange(
+             editor: firstEditor,
+             format: .xml,
+             outputURL: root.appendingPathComponent("first.xml"),
+             projectName: "First"
+         )
+-        let secondJob = try ExportQueue.shared.enqueueInterchange(
++        let secondJob = try await ExportQueue.shared.enqueueInterchange(
+             editor: secondEditor,
+             format: .xml,
+             outputURL: root.appendingPathComponent("second.xml"),
+@@ -224,10 +224,12 @@ struct ExportQueueTests {
+         )
+ 
+         firstEditor.releaseWorkingCopy()
+-        #expect(firstJob.status == .cancelled)
++        #expect([.cancelling, .cancelled].contains(firstJob.status))
+         #expect(secondJob.status == .pending)
+         #expect(ExportQueue.shared.jobs(ownerKey: firstKey).contains { $0.id == firstJob.id })
+         #expect(ExportQueue.shared.jobs(ownerKey: secondKey).contains { $0.id == secondJob.id })
++        _ = await ExportQueue.shared.waitForCompletion(jobID: firstJob.id)
++        #expect(firstJob.status == .cancelled)
+ 
+         ExportCoordinator.endExport()
+         gateHeld = false
+@@ -245,27 +247,31 @@ struct ExportQueueTests {
+         defer { fixture.remove() }
+         let queue = ExportQueue()
+         let output = fixture.root.appendingPathComponent("cancel-preparing.mp4")
+-        let job = try queue.enqueueDelivery(
+-            editor: fixture.editor,
+-            spec: fixture.spec,
+-            format: .h264,
+-            resolution: .r720p,
+-            outputURL: output
+-        )
+-
+-        let reachedPreparing = await wait(job, for: .preparing)
+-        #expect(reachedPreparing)
++        let enqueue = Task {
++            try await queue.enqueueDelivery(
++                editor: fixture.editor,
++                spec: fixture.spec,
++                format: .h264,
++                resolution: .r720p,
++                outputURL: output
++            )
++        }
++        let ownerKey = try #require(fixture.editor.openWorkingCopyKey)
++        var preparing: ExportJob?
++        for _ in 0..<1_000 {
++            preparing = queue.jobs(ownerKey: ownerKey).first { $0.status == .preparing }
++            if preparing != nil { break }
++            try await Task.sleep(for: .milliseconds(2))
++        }
++        let job = try #require(preparing)
+         queue.cancel(jobID: job.id)
++        _ = await enqueue.result
+         _ = await queue.waitForCompletion(jobID: job.id)
+ 
+         #expect(job.status == .cancelled)
+         #expect(!FileManager.default.fileExists(atPath: output.path))
+-        let attempt = try PipelineDeliveryStore.loadAttempt(
+-            id: job.id,
+-            dataRoot: fixture.dataRoot
+-        )
+-        #expect(attempt.status == .cancelled)
+-        #expect(attempt.outputSHA256 == nil)
++        #expect(try PipelineDeliveryStore.listAttempts(dataRoot: fixture.dataRoot)
++            .allSatisfy { $0.id != job.id })
+     }
+ 
+     @Test("cancelling an active renderer leaves no output or success receipt")
+@@ -277,7 +283,7 @@ struct ExportQueueTests {
+         defer { fixture.remove() }
+         let queue = ExportQueue()
+         let output = fixture.root.appendingPathComponent("cancel-exporting.mp4")
+-        let job = try queue.enqueueDelivery(
++        let job = try await queue.enqueueDelivery(
+             editor: fixture.editor,
+             spec: fixture.spec,
+             format: .h264,
+@@ -315,7 +321,7 @@ struct ExportQueueTests {
+         defer {
+             if gateHeld { ExportCoordinator.endExport() }
+         }
+-        let job = try queue.enqueueDelivery(
++        let job = try await queue.enqueueDelivery(
+             editor: fixture.editor,
+             spec: fixture.spec,
+             format: .h264,
+@@ -355,7 +361,7 @@ struct ExportQueueTests {
+         defer { fixture.remove() }
+         let queue = ExportQueue()
+         let output = fixture.root.appendingPathComponent("timeline.fcpxml")
+-        let job = try queue.enqueueInterchange(
++        let job = try await queue.enqueueInterchange(
+             editor: fixture.editor,
+             format: .fcpxml,
+             outputURL: output,
+@@ -427,6 +433,439 @@ struct ExportQueueTests {
+         ).status == .interrupted)
+     }
+ 
++    @Test("editor refresh preserves queued and running delivery attempts owned by this process")
++    func editorRefreshPreservesActiveDelivery() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "RefreshActive",
++            durationFrames: 150
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue.shared
++        let output = fixture.root.appendingPathComponent("refresh-active.mp4")
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let job = try await queue.enqueueDelivery(
++            editor: fixture.editor,
++            spec: fixture.spec,
++            format: .h264,
++            resolution: .r720p,
++            outputURL: output
++        )
++
++        await fixture.editor.refreshEngineState()
++        let queued = try currentAttempt(id: job.id, dataRoot: fixture.dataRoot)
++        #expect(queued.status == .queued)
++
++        ExportCoordinator.endExport()
++        gateHeld = false
++        #expect(await wait(job, for: .exporting))
++        await fixture.editor.refreshEngineState()
++        let running = try currentAttempt(id: job.id, dataRoot: fixture.dataRoot)
++        #expect(running.status == .running)
++
++        queue.cancel(jobID: job.id)
++        _ = await queue.waitForCompletion(jobID: job.id)
++        #expect(job.status == .cancelled)
++    }
++
++    @Test("package snapshot survives a preceding delivery, later edits, and retry")
++    func projectSnapshotKeepsEnqueuedTruthAcrossMixedQueueAndRetry() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "MixedPackage",
++            durationFrames: 30
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue()
++        let deliveryURL = fixture.root.appendingPathComponent("mixed.mp4")
++        let packageURL = fixture.root.appendingPathComponent("MixedCopy.ngv", isDirectory: true)
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++
++        let delivery = try await queue.enqueueDelivery(
++            editor: fixture.editor,
++            spec: fixture.spec,
++            format: .h264,
++            resolution: .r720p,
++            outputURL: deliveryURL
++        )
++        let package = try await queue.enqueueProjectPackage(
++            editor: fixture.editor,
++            outputURL: packageURL
++        )
++        var changed = fixture.editor.timeline
++        changed.tracks[0].clips[0].durationFrames = 90
++        fixture.editor.timeline = changed
++        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
++        try Data("external destination".utf8).write(
++            to: packageURL.appendingPathComponent("owner.txt")
++        )
++
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await queue.waitForCompletion(jobID: delivery.id)
++        _ = await queue.waitForCompletion(jobID: package.id)
++        #expect(delivery.status == .completed)
++        #expect(package.status == .failed)
++        #expect(package.failure?.contains("destination changed") == true)
++
++        try FileManager.default.removeItem(at: packageURL)
++        changed.tracks[0].clips[0].durationFrames = 120
++        fixture.editor.timeline = changed
++        let retry = try queue.retry(jobID: package.id)
++        _ = await queue.waitForCompletion(jobID: retry.id)
++
++        #expect(retry.status == .completed)
++        let exportedTimeline = try JSONDecoder().decode(
++            Timeline.self,
++            from: Data(contentsOf: packageURL.appendingPathComponent(Project.timelineFilename))
++        )
++        #expect(exportedTimeline.totalFrames == fixture.timeline.totalFrames)
++        #expect(exportedTimeline.totalFrames == 30)
++        let packagedDataRoot = try #require(DataRootResolver.dataRoot(of: packageURL))
++        let packagedDelivery = try currentAttempt(id: delivery.id, dataRoot: packagedDataRoot)
++        #expect(packagedDelivery.status == .queued)
++        #expect(!FileManager.default.fileExists(
++            atPath: packageURL.appendingPathComponent(".ngv-dirty").path
++        ))
++        #expect(!FileManager.default.fileExists(
++            atPath: packageURL.appendingPathComponent(".ngv-open-generation").path
++        ))
++        #expect(!FileManager.default.fileExists(
++            atPath: packageURL.appendingPathComponent(".ngv-materialized").path
++        ))
++    }
++
++    @Test("a cancelled waiter returns without cancelling shared work")
++    func waiterCancellationDoesNotCancelJoinedJob() async throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-waiter-\(UUID().uuidString)", isDirectory: true)
++        let package = root.appendingPathComponent("Waiter.ngv", isDirectory: true)
++        defer { try? FileManager.default.removeItem(at: root) }
++        try Fixtures.prepareProjectPackage(at: package)
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        defer { editor.releaseWorkingCopy() }
++        let ownerKey = try #require(editor.openWorkingCopyKey)
++        let queue = ExportQueue()
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let job = try await queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: root.appendingPathComponent("waiter.xml"),
++            projectName: "Waiter"
++        )
++        let cancelledWaiter = Task { await queue.waitForCompletion(jobID: job.id) }
++        let survivingWaiter = Task { await queue.waitForCompletion(jobID: job.id) }
++        let idleWaiter = Task { await queue.waitUntilIdle(ownerKey: ownerKey) }
++
++        cancelledWaiter.cancel()
++        idleWaiter.cancel()
++        let cancelledResult = await cancelledWaiter.value
++        await idleWaiter.value
++        #expect(cancelledResult?.id == job.id)
++        #expect(job.status == .pending)
++
++        ExportCoordinator.endExport()
++        gateHeld = false
++        let completed = await survivingWaiter.value
++        #expect(completed?.status == .completed)
++    }
++
++    @Test("publish recovery rolls an interrupted FCPXML group back as one generation")
++    func publishRecoveryRestoresGroupAndPreservesForeignChanges() throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-publish-recovery-\(UUID().uuidString)", isDirectory: true)
++        let recovery = root.appendingPathComponent("recovery", isDirectory: true)
++        let document = root.appendingPathComponent("timeline.fcpxml")
++        let media = root.appendingPathComponent("timeline Media", isDirectory: true)
++        let jobID = UUID().uuidString.lowercased()
++        defer { try? FileManager.default.removeItem(at: root) }
++        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
++        try Data("old-document".utf8).write(to: document)
++        try Data("old-media".utf8).write(to: media.appendingPathComponent("clip.mov"))
++
++        let temporaryDocument = ExportQueue.DestinationBinding.makeTemporaryURL(
++            url: document,
++            jobID: jobID
++        )
++        let temporaryMedia = ExportQueue.DestinationBinding.makeTemporaryURL(
++            url: media,
++            jobID: jobID
++        )
++        try Data("new-document".utf8).write(to: temporaryDocument)
++        try FileManager.default.createDirectory(at: temporaryMedia, withIntermediateDirectories: true)
++        try Data("new-media".utf8).write(to: temporaryMedia.appendingPathComponent("clip.mov"))
++        let publications = try [
++            ExportPublishRecoveryStore.Publication(
++                targetURL: document,
++                temporaryURL: temporaryDocument,
++                initialState: ExportQueue.PathState.capture(document),
++                initialIdentity: try ExportFileIdentity.capture(document),
++                publishedState: ExportQueue.PathState.capture(temporaryDocument),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryDocument),
++                jobID: jobID,
++                expectsDirectory: false
++            ),
++            ExportPublishRecoveryStore.Publication(
++                targetURL: media,
++                temporaryURL: temporaryMedia,
++                initialState: ExportQueue.PathState.capture(media),
++                initialIdentity: try ExportFileIdentity.capture(media),
++                publishedState: ExportQueue.PathState.capture(temporaryMedia),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryMedia),
++                jobID: jobID,
++                expectsDirectory: true
++            ),
++        ]
++
++        #expect(throws: (any Error).self) {
++            _ = try ExportPublishRecoveryStore.publish(
++                publications,
++                root: recovery,
++                crashAfterMutationForTesting: 3
++            )
++        }
++        try Data("foreign-document".utf8).write(to: document, options: .atomic)
++        try Data("foreign-temp-media".utf8).write(
++            to: temporaryMedia.appendingPathComponent("clip.mov"),
++            options: .atomic
++        )
++        try ExportPublishRecoveryStore.recoverAll(root: recovery)
++        try ExportPublishRecoveryStore.recoverAll(root: recovery)
++
++        #expect(try Data(contentsOf: document) == Data("old-document".utf8))
++        #expect(try Data(contentsOf: media.appendingPathComponent("clip.mov")) == Data("old-media".utf8))
++        let conflicts = try FileManager.default.contentsOfDirectory(
++            at: root,
++            includingPropertiesForKeys: nil
++        ).filter { $0.lastPathComponent.contains("Recovered Conflict") }
++        #expect(conflicts.count == 2)
++        #expect(conflicts.contains {
++            (try? Data(contentsOf: $0.appendingPathComponent("clip.mov")))
++                == Data("foreign-temp-media".utf8)
++        })
++        #expect(try FileManager.default.contentsOfDirectory(atPath: recovery.path).isEmpty)
++
++        try Data("second-document".utf8).write(to: temporaryDocument)
++        try FileManager.default.createDirectory(at: temporaryMedia, withIntermediateDirectories: true)
++        try Data("second-media".utf8).write(to: temporaryMedia.appendingPathComponent("clip.mov"))
++        let repeatedIDPublications = try [
++            ExportPublishRecoveryStore.Publication(
++                targetURL: document,
++                temporaryURL: temporaryDocument,
++                initialState: ExportQueue.PathState.capture(document),
++                initialIdentity: try ExportFileIdentity.capture(document),
++                publishedState: ExportQueue.PathState.capture(temporaryDocument),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryDocument),
++                jobID: jobID,
++                expectsDirectory: false
++            ),
++            ExportPublishRecoveryStore.Publication(
++                targetURL: media,
++                temporaryURL: temporaryMedia,
++                initialState: ExportQueue.PathState.capture(media),
++                initialIdentity: try ExportFileIdentity.capture(media),
++                publishedState: ExportQueue.PathState.capture(temporaryMedia),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryMedia),
++                jobID: jobID,
++                expectsDirectory: true
++            ),
++        ]
++        _ = try ExportPublishRecoveryStore.publish(repeatedIDPublications, root: recovery)
++        #expect(try Data(contentsOf: document) == Data("second-document".utf8))
++        #expect(try Data(contentsOf: media.appendingPathComponent("clip.mov")) == Data("second-media".utf8))
++
++        try Data("third-document".utf8).write(to: temporaryDocument)
++        try FileManager.default.createDirectory(at: temporaryMedia, withIntermediateDirectories: true)
++        try Data("third-media".utf8).write(to: temporaryMedia.appendingPathComponent("clip.mov"))
++        let firstMoveCrash = try [
++            ExportPublishRecoveryStore.Publication(
++                targetURL: document,
++                temporaryURL: temporaryDocument,
++                initialState: ExportQueue.PathState.capture(document),
++                initialIdentity: try ExportFileIdentity.capture(document),
++                publishedState: ExportQueue.PathState.capture(temporaryDocument),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryDocument),
++                jobID: jobID,
++                expectsDirectory: false
++            ),
++            ExportPublishRecoveryStore.Publication(
++                targetURL: media,
++                temporaryURL: temporaryMedia,
++                initialState: ExportQueue.PathState.capture(media),
++                initialIdentity: try ExportFileIdentity.capture(media),
++                publishedState: ExportQueue.PathState.capture(temporaryMedia),
++                publishedIdentity: try ExportFileIdentity.capture(temporaryMedia),
++                jobID: jobID,
++                expectsDirectory: true
++            ),
++        ]
++        #expect(throws: (any Error).self) {
++            _ = try ExportPublishRecoveryStore.publish(
++                firstMoveCrash,
++                root: recovery,
++                crashAfterMutationForTesting: 1
++            )
++        }
++        try ExportPublishRecoveryStore.recoverAll(root: recovery)
++        #expect(try Data(contentsOf: document) == Data("second-document".utf8))
++        #expect(try Data(contentsOf: media.appendingPathComponent("clip.mov")) == Data("second-media".utf8))
++
++        let symlink = root.appendingPathComponent("linked.xml")
++        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: document)
++        #expect(throws: (any Error).self) {
++            _ = try ExportQueue.DestinationBinding(
++                url: symlink,
++                jobID: UUID().uuidString.lowercased(),
++                expectsDirectory: false
++            )
++        }
++    }
++
++    @Test("committed publish cleanup failures preserve the new FCPXML generation")
++    func committedPublishCleanupFailuresPreservePublishedGroup() throws {
++        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "export-committed-cleanup-\(UUID().uuidString)",
++            isDirectory: true
++        )
++        defer { try? FileManager.default.removeItem(at: root) }
++
++        for failureIndex in [1, 2] {
++            let fixture = try makePublishRecoveryFixture(
++                root: root.appendingPathComponent("backup-\(failureIndex)", isDirectory: true)
++            )
++            #expect(throws: (any Error).self) {
++                _ = try ExportPublishRecoveryStore.publish(
++                    fixture.publications,
++                    root: fixture.recovery,
++                    failCommittedCleanupAfterBackupRemovalForTesting: failureIndex
++                )
++            }
++            try expectPublishedRecoveryFixture(fixture)
++
++            try ExportPublishRecoveryStore.recoverAll(root: fixture.recovery)
++            try ExportPublishRecoveryStore.recoverAll(root: fixture.recovery)
++            try expectPublishedRecoveryFixture(fixture, journalExists: false)
++            #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.recovery.path).isEmpty)
++        }
++
++        let journalFixture = try makePublishRecoveryFixture(
++            root: root.appendingPathComponent("journal", isDirectory: true)
++        )
++        #expect(throws: (any Error).self) {
++            _ = try ExportPublishRecoveryStore.publish(
++                journalFixture.publications,
++                root: journalFixture.recovery,
++                failCommittedJournalRemovalForTesting: true
++            )
++        }
++        try expectPublishedRecoveryFixture(journalFixture)
++
++        for _ in 0..<2 {
++            #expect(throws: (any Error).self) {
++                try ExportPublishRecoveryStore.recoverAll(
++                    root: journalFixture.recovery,
++                    failCommittedJournalRemovalForTesting: true
++                )
++            }
++            try expectPublishedRecoveryFixture(journalFixture)
++        }
++        try ExportPublishRecoveryStore.recoverAll(root: journalFixture.recovery)
++        try ExportPublishRecoveryStore.recoverAll(root: journalFixture.recovery)
++        try expectPublishedRecoveryFixture(journalFixture, journalExists: false)
++        #expect(
++            try FileManager.default.contentsOfDirectory(atPath: journalFixture.recovery.path).isEmpty
++        )
++    }
++
++    private struct PublishRecoveryFixture {
++        let recovery: URL
++        let document: URL
++        let media: URL
++        let publications: [ExportPublishRecoveryStore.Publication]
++    }
++
++    private func makePublishRecoveryFixture(root: URL) throws -> PublishRecoveryFixture {
++        let recovery = root.appendingPathComponent("recovery", isDirectory: true)
++        let document = root.appendingPathComponent("timeline.fcpxml")
++        let media = root.appendingPathComponent("timeline Media", isDirectory: true)
++        let jobID = UUID().uuidString.lowercased()
++        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
++        try Data("old-document".utf8).write(to: document)
++        try Data("old-media".utf8).write(to: media.appendingPathComponent("clip.mov"))
++
++        let temporaryDocument = ExportQueue.DestinationBinding.makeTemporaryURL(
++            url: document,
++            jobID: jobID
++        )
++        let temporaryMedia = ExportQueue.DestinationBinding.makeTemporaryURL(
++            url: media,
++            jobID: jobID
++        )
++        try Data("new-document".utf8).write(to: temporaryDocument)
++        try FileManager.default.createDirectory(at: temporaryMedia, withIntermediateDirectories: true)
++        try Data("new-media".utf8).write(to: temporaryMedia.appendingPathComponent("clip.mov"))
++
++        return try PublishRecoveryFixture(
++            recovery: recovery,
++            document: document,
++            media: media,
++            publications: [
++                ExportPublishRecoveryStore.Publication(
++                    targetURL: document,
++                    temporaryURL: temporaryDocument,
++                    initialState: ExportQueue.PathState.capture(document),
++                    initialIdentity: ExportFileIdentity.capture(document),
++                    publishedState: ExportQueue.PathState.capture(temporaryDocument),
++                    publishedIdentity: ExportFileIdentity.capture(temporaryDocument),
++                    jobID: jobID,
++                    expectsDirectory: false
++                ),
++                ExportPublishRecoveryStore.Publication(
++                    targetURL: media,
++                    temporaryURL: temporaryMedia,
++                    initialState: ExportQueue.PathState.capture(media),
++                    initialIdentity: ExportFileIdentity.capture(media),
++                    publishedState: ExportQueue.PathState.capture(temporaryMedia),
++                    publishedIdentity: ExportFileIdentity.capture(temporaryMedia),
++                    jobID: jobID,
++                    expectsDirectory: true
++                ),
++            ]
++        )
++    }
++
++    private func expectPublishedRecoveryFixture(
++        _ fixture: PublishRecoveryFixture,
++        journalExists: Bool = true
++    ) throws {
++        #expect(try Data(contentsOf: fixture.document) == Data("new-document".utf8))
++        #expect(
++            try Data(contentsOf: fixture.media.appendingPathComponent("clip.mov"))
++                == Data("new-media".utf8)
++        )
++        let records = try FileManager.default.contentsOfDirectory(
++            at: fixture.recovery,
++            includingPropertiesForKeys: nil
++        ).filter { $0.pathExtension == "json" }
++        #expect(records.count == (journalExists ? 1 : 0))
++    }
++
++    private func currentAttempt(id: String, dataRoot: URL) throws -> DeliveryAttemptV1 {
++        let url = dataRoot.appendingPathComponent("delivery/jobs/\(id)/current.v1.json")
++        return try JSONDecoder().decode(DeliveryAttemptV1.self, from: Data(contentsOf: url))
++    }
++
+     private struct DeliveryFixture {
+         let root: URL
+         let editor: EditorViewModel
+@@ -511,7 +950,7 @@ struct ExportQueueTests {
+             extensionRefs = ["assets/bound.bin"]
+         }
+ 
+-        _ = try PipelineDeliveryStore.adoptCurrentTimeline(
++        _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
+             editor: editor,
+             requireSequenceReview: false
+         )
+diff --git a/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift b/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
+index d0005349..0e753770 100644
+--- a/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
++++ b/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
+@@ -147,6 +147,14 @@ struct PipelineDeliveryStoreTests {
+             id: running.id,
+             dataRoot: dataRoot
+         ) == recovered)
++        #expect(throws: (any Error).self) {
++            _ = try PipelineDeliveryStore.markRunning(running, dataRoot: dataRoot)
++        }
++        let currentAfterRejectedTransition = try JSONDecoder().decode(
++            DeliveryAttemptV1.self,
++            from: Data(contentsOf: job.appendingPathComponent("current.v1.json"))
++        )
++        #expect(currentAfterRejectedTransition == recovered)
+     }
+ 
+     @Test("a bound success receipt stays historical when the current finish changes")
+@@ -274,6 +282,7 @@ struct PipelineDeliveryStoreTests {
+                 byteCount: Int64(outputSize),
+                 probeQC: qc
+             ),
++            publishedState: try ExportQueue.PathState.capture(output),
+             selectIfCurrent: true
+         )
+         let succeeded = result.attempt
+diff --git a/scripts/export_actions_acceptance.py b/scripts/export_actions_acceptance.py
+new file mode 100644
+index 00000000..94a278d9
+--- /dev/null
++++ b/scripts/export_actions_acceptance.py
+@@ -0,0 +1,67 @@
++#!/usr/bin/env python3
++import argparse
++import json
++import os
++import subprocess
++from pathlib import Path
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("app", type=Path)
++    parser.add_argument("--output", required=True, type=Path)
++    args = parser.parse_args()
++
++    executable = args.app / "Contents" / "MacOS" / "NexGenVideo"
++    if not executable.is_file():
++        raise SystemExit(f"app executable not found: {executable}")
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    environment = {
++        **os.environ,
++        "NGV_EXPORT_ACTIONS_SELFTEST": "1",
++        "NGV_EXPORT_ACTIONS_SELFTEST_OUTPUT": str(args.output.resolve()),
++    }
++    completed = subprocess.run(
++        [str(executable)],
++        env=environment,
++        capture_output=True,
++        text=True,
++        timeout=90,
++        check=False,
++    )
++    if completed.returncode != 0:
++        raise SystemExit(
++            f"native export actions failed ({completed.returncode})\n"
++            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
++        )
++    if "SELFTEST_EXPORT_ACTIONS_OK" not in completed.stdout:
++        raise SystemExit(f"native export actions produced no success marker: {completed.stdout}")
++    evidence = json.loads(args.output.read_text())
++    required = {
++        "ownerKey",
++        "completedJobID",
++        "cancelledJobID",
++        "retriedFromJobID",
++        "retryJobID",
++        "revealedPath",
++        "cancelStatus",
++        "retryStatus",
++    }
++    if set(evidence) != required:
++        raise SystemExit(f"unexpected native export evidence keys: {sorted(evidence)}")
++    if evidence["cancelStatus"] != "cancelled" or evidence["retryStatus"] != "cancelled":
++        raise SystemExit(f"native export action states are wrong: {evidence}")
++    if evidence["retriedFromJobID"] != evidence["cancelledJobID"]:
++        raise SystemExit(f"native retry was not bound to the cancelled job: {evidence}")
++    job_ids = [
++        evidence["completedJobID"],
++        evidence["cancelledJobID"],
++        evidence["retryJobID"],
++    ]
++    if len(set(job_ids)) != len(job_ids):
++        raise SystemExit(f"native export actions did not bind distinct jobs: {job_ids}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/test_ci_workflow.py b/scripts/test_ci_workflow.py
+index 6314d4e5..3bef31a5 100644
+--- a/scripts/test_ci_workflow.py
++++ b/scripts/test_ci_workflow.py
+@@ -8,6 +8,7 @@ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ CI = ROOT / ".github/workflows/ci.yml"
++DIAGNOSTIC_ACCEPTANCE = ROOT / ".github/workflows/diagnostic-acceptance.yml"
+ 
+ 
+ class CIWorkflowTests(unittest.TestCase):
+@@ -49,6 +50,12 @@ class CIWorkflowTests(unittest.TestCase):
+         self.assertNotIn("render_agent_chat_spec.py", build)
+         self.assertNotIn("pull_request:", (ROOT / ".github/workflows/bundle.yml").read_text())
+ 
++    def test_native_export_actions_run_on_the_current_macos_acceptance_host(self):
++        text = DIAGNOSTIC_ACCEPTANCE.read_text()
++        self.assertIn("runs-on: macos-26", text)
++        self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", text)
++        self.assertIn("evidence/export-actions.json", text)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

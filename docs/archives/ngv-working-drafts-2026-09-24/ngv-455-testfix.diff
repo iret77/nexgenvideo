@@ -1,0 +1,65 @@
+diff --git a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+index 76b79d45..50b87a22 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+@@ -12,37 +12,48 @@ struct AgentRuntimeContractTests {
+         var fence = AgentRuntimeEventFence()
+         fence.begin(sessionID: sessionID, turnID: turnID)
+ 
+-        #expect(!fence.accepts(.init(
++        let acceptsForeignSession = fence.accepts(.init(
+             sessionID: UUID(),
+             turnID: turnID,
+             event: .text(messageID: nil, value: "foreign session", isDelta: true)
+-        )))
+-        #expect(!fence.accepts(.init(
++        ))
++        #expect(!acceptsForeignSession)
++
++        let acceptsForeignTurn = fence.accepts(.init(
+             sessionID: sessionID,
+             turnID: UUID(),
+             event: .text(messageID: nil, value: "foreign turn", isDelta: true)
+-        )))
+-        #expect(fence.accepts(.init(
++        ))
++        #expect(!acceptsForeignTurn)
++
++        let acceptsCurrentEvent = fence.accepts(.init(
+             sessionID: sessionID,
+             turnID: turnID,
+             event: .text(messageID: nil, value: "accepted", isDelta: true)
+-        )))
+-        #expect(fence.accepts(.init(
++        ))
++        #expect(acceptsCurrentEvent)
++
++        let acceptsTerminal = fence.accepts(.init(
+             sessionID: sessionID,
+             turnID: turnID,
+             event: .terminal(.completed(.endTurn))
+-        )))
++        ))
++        #expect(acceptsTerminal)
+         #expect(fence.receivedTerminal)
+-        #expect(!fence.accepts(.init(
++
++        let acceptsSecondTerminal = fence.accepts(.init(
+             sessionID: sessionID,
+             turnID: turnID,
+             event: .terminal(.failed)
+-        )))
+-        #expect(!fence.accepts(.init(
++        ))
++        #expect(!acceptsSecondTerminal)
++
++        let acceptsLateEvent = fence.accepts(.init(
+             sessionID: sessionID,
+             turnID: turnID,
+             event: .text(messageID: nil, value: "late", isDelta: true)
+-        )))
++        ))
++        #expect(!acceptsLateEvent)
+     }
+ 
+     @Test("relay emits exactly one terminal and closes against late provider events")

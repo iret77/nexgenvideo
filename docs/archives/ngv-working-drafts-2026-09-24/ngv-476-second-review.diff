@@ -1,0 +1,1272 @@
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+index 1a0d6fec..41944475 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+@@ -48,7 +48,7 @@ extension ToolExecutor {
+         resolution: ExportResolution,
+         outputURL: URL
+     ) throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
++        guard ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
+             throw ToolError("export_project: Another export is already in progress.")
+         }
+ 
+@@ -120,7 +120,7 @@ extension ToolExecutor {
+     }
+ 
+     private func exportProjectPackage(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
++        guard ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
+             throw ToolError("export_project: Another export is already in progress.")
+         }
+         defer { ExportCoordinator.endExport() }
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index ebad23a2..ef30d341 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -415,7 +415,7 @@ enum WorkspaceUIAcceptance {
+             )
+             guard await waitUntil(timeout: .seconds(5), {
+                       probeValue(identifier: "editor.status.aiJobs", in: window) == "idle"
+-                  }), ExportCoordinator.beginExportIfIdle(),
++                  }), ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey),
+                   await waitUntil(timeout: .seconds(5), {
+                       probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
+                   }),
+@@ -474,6 +474,7 @@ enum WorkspaceUIAcceptance {
+                 ]
+             )
+             await captureBudgetCases(
++                document: document,
+                 editor: editor,
+                 window: window,
+                 host: host,
+@@ -530,7 +531,7 @@ enum WorkspaceUIAcceptance {
+                          warnings: "Planning budget has €0.75 remaining.",
+                          transactionState: "Charged")
+         case "exceeded":
+-            return .init(label: "Budget €12.50 / €10.00",
++            return .init(label: "Budget €12.50 / €10.00 · Stop reached",
+                          total: "Reserved + charged total|€12.50",
+                          planning: "Planning budget|€10.00 · €2.50 over",
+                          hardStop: "Hard stop|€12.00 · €0.50 over",
+@@ -540,7 +541,7 @@ enum WorkspaceUIAcceptance {
+             let reason: String
+             switch name {
+             case "unknown-currency": reason = "currency conversion"
+-            case "subscription-credits": reason = "subscription/credit monetary cost"
++            case "subscription-credits": reason = "monetary cost for subscription credits"
+             default: reason = "provider price"
+             }
+             return .init(label: "Budget ≥€0.00 / €10.00",
+@@ -560,13 +561,13 @@ enum WorkspaceUIAcceptance {
+                          total: "Reserved + charged total|€4.00",
+                          planning: "Planning budget|€10.00 · €6.00 remaining",
+                          hardStop: "Hard stop|€12.00 · €8.00 remaining",
+-                         warnings: nil, transactionState: "Submitted · attention")
++                         warnings: nil, transactionState: "Submitted · Check charge")
+         case "released":
+             return .init(label: "Budget €0.00 / €10.00", total: normalTotal,
+                          planning: normalPlanning, hardStop: normalStop,
+                          warnings: nil, transactionState: "Released")
+         case "exceeded-unknown":
+-            return .init(label: "Budget ≥€12.50 / €10.00",
++            return .init(label: "Budget ≥€12.50 / €10.00 · Stop reached",
+                          total: "Verified reserved + charged total at least|€12.50",
+                          planning: "Planning budget|€10.00 · at least €2.50 over",
+                          hardStop: "Hard stop|€12.00 · at least €0.50 over",
+@@ -578,6 +579,7 @@ enum WorkspaceUIAcceptance {
+     }
+ 
+     private static func captureBudgetCases(
++        document: VideoProject,
+         editor: EditorViewModel,
+         window: NSWindow,
+         host: NSView,
+@@ -654,6 +656,7 @@ enum WorkspaceUIAcceptance {
+             popoverContent.layoutSubtreeIfNeeded()
+             let visible = budgetVisibleExpectations(for: item.name)
+             guard probeValue(identifier: "editor.status.budget.label", in: window) == visible.label,
++                  budgetAccessibilityFits(in: window, label: visible.label, scale: scale),
+                   probeValueAnywhere(identifier: "editor.status.budget.total", preferredWindow: window)
+                     == visible.total,
+                   probeValueAnywhere(identifier: "editor.status.budget.planning", preferredWindow: window)
+@@ -664,7 +667,13 @@ enum WorkspaceUIAcceptance {
+                     == visible.warnings,
+                   (visible.transactionState == nil || probeValueAnywhere(
+                       identifier: "editor.status.budget.transactionState", preferredWindow: window
+-                  ) == visible.transactionState) else {
++                  ) == visible.transactionState),
++                  accessibilityContains(
++                      visible.total.components(separatedBy: "|"), in: popoverContent
++                  ),
++                  accessibilityContains(
++                      visible.hardStop.components(separatedBy: "|"), in: popoverContent
++                  ) else {
+                 fail("budget case \(item.name) did not render its expected labels", scale: scale)
+             }
+             let popoverName = "scale-\(scaleLabel(scale))-budget-\(item.name).png"
+@@ -716,6 +725,7 @@ enum WorkspaceUIAcceptance {
+                     "reserved": spendSnapshot.openReservationEur,
+                     "screenshot": popoverName,
+                     "statusValue": expectedPresentation.acceptanceValue,
++                    "accessibilityValue": visible.label,
+                 ]
+             )
+         }
+@@ -723,6 +733,9 @@ enum WorkspaceUIAcceptance {
+         await captureBudgetUnavailableLimits(
+             editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
+         )
++        await captureBudgetCombinedStatus(
++            editor: editor, window: window, host: host, evidenceURL: evidenceURL, scale: scale
++        )
+         await captureBudgetLifecycle(
+             editor: editor, window: window, evidenceURL: evidenceURL, scale: scale
+         )
+@@ -735,6 +748,13 @@ enum WorkspaceUIAcceptance {
+             evidenceURL: evidenceURL,
+             scale: scale
+         )
++        await captureBudgetLegacyRefresh(editor: editor, projectURL: projectURL, scale: scale)
++        await captureBudgetTwoProjectExports(
++            editor: editor, window: window, scale: scale
++        )
++        await captureBudgetSaveAs(
++            document: document, editor: editor, projectURL: projectURL, scale: scale
++        )
+     }
+ 
+     private static func budgetAcceptanceCases() -> [BudgetAcceptanceCase] {
+@@ -1034,7 +1054,7 @@ enum WorkspaceUIAcceptance {
+                 money: money(3), note: "Provider outcome requires reconciliation.")
+             await captureBudgetLifecycleStage("submitted-failure", editor: editor, window: window,
+                 evidenceURL: evidenceURL, scale: scale, label: "Budget €3.00 / €10.00",
+-                total: "Reserved + charged total|€3.00", state: "Submitted · attention", eventCount: 2)
++                total: "Reserved + charged total|€3.00", state: "Submitted · Check charge", eventCount: 2)
+ 
+             try editor.recordSpendEvent(authorization: authorization, kind: .charged,
+                                         money: money(2.75))
+@@ -1120,12 +1140,95 @@ enum WorkspaceUIAcceptance {
+             guard editor.projectState?.budgetEur == 10 else {
+                 fail("budget fixture limits did not restore", scale: scale)
+             }
++            let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
++            let validBrief = try Data(contentsOf: briefURL)
++            try Data("budget_stop_eur: [broken".utf8).write(to: briefURL, options: .atomic)
++            do {
++                _ = try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
++                fail("invalid brief was accepted by the guard", scale: scale)
++            } catch {}
++            await editor.refreshProjectState()
++            guard editor.projectState == nil,
++                  probeValue(identifier: "editor.status.budget.label", in: window)
++                    == "Budget · No spend · Limits unavailable" else {
++                fail("invalid brief was shown as an absent hard stop", scale: scale)
++            }
++            try validBrief.write(to: briefURL, options: .atomic)
++            await editor.refreshProjectState()
++            guard editor.projectState?.budgetStopEur == 12 else {
++                fail("valid hard stop did not restore", scale: scale)
++            }
+             emit("budget-limits-unavailable", scale: scale, fields: ["screenshot": screenshotName])
+         } catch {
+             fail("unavailable-limit fixture failed: \(error.localizedDescription)", scale: scale)
+         }
+     }
+ 
++    private static func captureBudgetCombinedStatus(
++        editor: EditorViewModel,
++        window: NSWindow,
++        host: NSView,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        guard let root = editor.workingRoot,
++              let dataRoot = DataRootResolver.dataRoot(of: root) else {
++            fail("combined budget status lost the production root", scale: scale)
++        }
++        let marker = dataRoot.appendingPathComponent(PipelineLayout.projectFile)
++        do {
++            try installBudgetLog(budgetLog(transactionEvents(
++                id: "combined-status", money: money(12.5), final: .charged
++            )), in: root, editor: editor)
++            let original = try Data(contentsOf: marker)
++            guard let yaml = String(data: original, encoding: .utf8) else {
++                fail("combined budget status could not read project metadata", scale: scale)
++            }
++            let pattern = try NSRegularExpression(pattern: "(?m)^budget_eur:.*$")
++            let range = NSRange(yaml.startIndex..<yaml.endIndex, in: yaml)
++            guard pattern.numberOfMatches(in: yaml, range: range) == 1 else {
++                fail("combined budget status had no unique planning limit", scale: scale)
++            }
++            let unavailable = pattern.stringByReplacingMatches(
++                in: yaml, range: range, withTemplate: "budget_eur: unavailable"
++            )
++            try Data(unavailable.utf8).write(to: marker, options: .atomic)
++            await editor.refreshProjectState()
++            guard let mutationID = editor.pipelinePhaseRunCoordinator.beginMutation(
++                projectRoot: dataRoot, label: "Budget status acceptance"
++            ), ExportCoordinator.beginExportIfIdle(projectKey: editor.openWorkingCopyKey) else {
++                fail("combined background status could not start", scale: scale)
++            }
++            let label = "Budget €12.50 · Planning limit unavailable · Stop unavailable"
++            guard await waitUntil(timeout: .seconds(5), {
++                host.layoutSubtreeIfNeeded()
++                return editor.projectState == nil
++                    && probeValue(identifier: "editor.status.budget.label", in: window) == label
++                    && probeValue(identifier: "editor.status.aiJobs", in: window) == "active"
++                    && probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
++                    && budgetAccessibilityFits(in: window, label: label, scale: scale)
++                    && accessibilityContains(["AI 1 running", "1 export running"], in: host)
++            }) else {
++                fail("combined budget and background status clipped or lost AX content", scale: scale)
++            }
++            let screenshotName = "scale-\(scaleLabel(scale))-budget-combined-status.png"
++            guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshotName)) else {
++                fail("combined budget status did not render", scale: scale)
++            }
++            ExportCoordinator.endExport()
++            editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: mutationID)
++            try original.write(to: marker, options: .atomic)
++            await editor.refreshProjectState()
++            guard editor.projectState?.budgetEur == 10 else {
++                fail("combined budget status did not restore project limits", scale: scale)
++            }
++            emit("budget-combined-status", scale: scale,
++                 fields: ["screenshot": screenshotName, "statusFrames": statusControlFrames(in: window)])
++        } catch {
++            fail("combined budget status failed: \(error.localizedDescription)", scale: scale)
++        }
++    }
++
+     private static func captureBudgetLifecycleStage(
+         _ name: String,
+         editor: EditorViewModel,
+@@ -1302,6 +1405,184 @@ enum WorkspaceUIAcceptance {
+         try? FileManager.default.removeItem(at: secondary)
+     }
+ 
++    private static func captureBudgetLegacyRefresh(
++        editor: EditorViewModel,
++        projectURL: URL,
++        scale: Double
++    ) async {
++        guard let root = editor.workingRoot else {
++            fail("legacy refresh lost the working copy", scale: scale)
++        }
++        let logURL = root.appendingPathComponent(Project.generationLogFilename)
++        let packageLogURL = projectURL.appendingPathComponent(Project.generationLogFilename)
++        do {
++            let packageBytes = try Data(contentsOf: packageLogURL)
++            var legacy = GenerationLog()
++            legacy.entries = [GenerationLogEntry(
++                id: "legacy-acceptance", model: "legacy-video", costCredits: 4, createdAt: nil
++            )]
++            editor.generationLog = legacy
++            try FileManager.default.removeItem(at: logURL)
++            try await editor.refreshBudgetStatus()
++            guard editor.generationLog == legacy,
++                  !FileManager.default.fileExists(atPath: logURL.path),
++                  try Data(contentsOf: packageLogURL) == packageBytes else {
++                fail("legacy refresh lost an in-memory journal or changed package bytes", scale: scale)
++            }
++            try editor.persistGenerationLog()
++            emit("budget-legacy-refresh", scale: scale, fields: ["preserved": true])
++        } catch {
++            fail("legacy refresh fixture failed: \(error.localizedDescription)", scale: scale)
++        }
++    }
++
++    private static func captureBudgetTwoProjectExports(
++        editor: EditorViewModel,
++        window: NSWindow,
++        scale: Double
++    ) async {
++        let secondary: URL
++        let secondDocument: VideoProject
++        let secondWindow: NSWindow
++        do {
++            secondary = try makeBareProjectFixture(scale: scale)
++            secondDocument = try await VideoProject.load(from: secondary)
++            secondDocument.makeWindowControllers()
++            guard let opened = secondDocument.windowControllers
++                .compactMap({ $0 as? EditorWindowController }).first?.window else {
++                fail("second project did not create an export status window", scale: scale)
++            }
++            secondWindow = opened
++            secondDocument.showWindows()
++        } catch {
++            fail("two-project export fixture failed: \(error.localizedDescription)", scale: scale)
++        }
++        defer {
++            secondWindow.orderOut(nil)
++            secondDocument.close()
++            if let key = ProjectIdentity.existingKey(for: secondary) {
++                ProjectWorkingCopy.discard(key: key)
++            }
++            try? FileManager.default.removeItem(at: secondary)
++        }
++        let secondKey = secondDocument.editorViewModel.openWorkingCopyKey
++        guard let firstKey = editor.openWorkingCopyKey,
++              let secondKey, firstKey != secondKey,
++              ExportCoordinator.beginExportIfIdle(projectKey: firstKey),
++              await waitUntil(timeout: .seconds(5), {
++                  probeValue(identifier: "editor.status.exportJobs", in: window) == "active"
++                      && probeValue(identifier: "editor.status.exportJobs", in: secondWindow) == "idle"
++                      && secondWindow.contentView.map {
++                          accessibilityContains(["Export in other project"], in: $0)
++                      } == true
++              }) else {
++            fail("export status was not bound to the first project", scale: scale)
++        }
++        let waiting = Task { await ExportCoordinator.acquireExport(projectKey: secondKey) }
++        guard await waitUntil(timeout: .seconds(5), {
++            ExportCoordinator.status(for: secondKey).waiting == 1
++        }) else {
++            fail("waiting export was not visible in the second project", scale: scale)
++        }
++        waiting.cancel()
++        guard await waiting.value == false,
++              ExportCoordinator.status(for: secondKey).waiting == 0 else {
++            fail("cancelled waiting export remained queued", scale: scale)
++        }
++        ExportCoordinator.endExport()
++        guard ExportCoordinator.beginExportIfIdle(projectKey: secondKey),
++              await waitUntil(timeout: .seconds(5), {
++                  probeValue(identifier: "editor.status.exportJobs", in: secondWindow) == "active"
++                      && probeValue(identifier: "editor.status.exportJobs", in: window) == "idle"
++                      && window.contentView.map {
++                          accessibilityContains(["Export in other project"], in: $0)
++                      } == true
++              }) else {
++            fail("export status was not bound to the second project", scale: scale)
++        }
++        ExportCoordinator.endExport()
++        emit("budget-two-project-export", scale: scale, fields: ["projectBound": true])
++    }
++
++    private static func captureBudgetSaveAs(
++        document: VideoProject,
++        editor: EditorViewModel,
++        projectURL: URL,
++        scale: Double
++    ) async {
++        guard let oldKey = editor.openWorkingCopyKey,
++              let root = editor.workingRoot else {
++            fail("Save As had no live working copy", scale: scale)
++        }
++        let saveAsURL = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "budget-save-as-\(UUID().uuidString).ngv", isDirectory: true
++        )
++        let saveToURL = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "budget-save-to-\(UUID().uuidString).ngv", isDirectory: true
++        )
++        defer {
++            if let key = ProjectIdentity.existingKey(for: saveAsURL) {
++                ProjectWorkingCopy.discard(key: key)
++            }
++            try? FileManager.default.removeItem(at: saveAsURL)
++            try? FileManager.default.removeItem(at: saveToURL)
++        }
++        do {
++            var log = budgetLog(transactionEvents(
++                id: "save-as-reserved", money: money(3), final: .reserved
++            ))
++            log.entries = [GenerationLogEntry(
++                id: "save-as-legacy", model: "legacy-video", costCredits: 7, createdAt: nil
++            )]
++            try installBudgetLog(log, in: root, editor: editor)
++            let beforeBytes = try Data(contentsOf: root.appendingPathComponent(Project.generationLogFilename))
++            let oldPackageURL = projectURL.appendingPathComponent(Project.generationLogFilename)
++            let oldPackageBytes = try Data(contentsOf: oldPackageURL)
++            try await saveBudgetDocument(document, to: saveAsURL, operation: .saveAsOperation)
++            guard document.fileURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
++                  editor.projectURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
++                  editor.openWorkingCopyKey != oldKey,
++                  editor.generationLog == log,
++                  let newRoot = editor.workingRoot,
++                  try Data(contentsOf: newRoot.appendingPathComponent(Project.generationLogFilename))
++                    == beforeBytes,
++                  try Data(contentsOf: saveAsURL.appendingPathComponent(Project.generationLogFilename))
++                    == beforeBytes,
++                  try Data(contentsOf: oldPackageURL) == oldPackageBytes else {
++                fail("Save As did not preserve all journal bytes", scale: scale)
++            }
++            document.updateChangeCount(.changeDone)
++            guard try Data(contentsOf: newRoot.appendingPathComponent(Project.generationLogFilename))
++                    == beforeBytes else {
++                fail("Save As checkpoint changed the journal", scale: scale)
++            }
++            try await saveBudgetDocument(document, to: saveToURL, operation: .saveToOperation)
++            guard document.fileURL?.standardizedFileURL == saveAsURL.standardizedFileURL,
++                  editor.generationLog == log,
++                  try Data(contentsOf: saveToURL.appendingPathComponent(Project.generationLogFilename))
++                    == beforeBytes else {
++                fail("Save To changed the live journal or its copied bytes", scale: scale)
++            }
++            emit("budget-save-as", scale: scale,
++                 fields: ["liveBytesPreserved": true, "copyBytesPreserved": true])
++        } catch {
++            fail("Save As acceptance failed: \(error.localizedDescription)", scale: scale)
++        }
++    }
++
++    private static func saveBudgetDocument(
++        _ document: VideoProject,
++        to url: URL,
++        operation: NSDocument.SaveOperationType
++    ) async throws {
++        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
++            document.save(to: url, ofType: Project.typeIdentifier, for: operation) { error in
++                if let error { continuation.resume(throwing: error) }
++                else { continuation.resume() }
++            }
++        }
++    }
++
+     private static func captureInspectorCases(
+         editor: EditorViewModel,
+         window: NSWindow,
+@@ -1844,6 +2125,75 @@ enum WorkspaceUIAcceptance {
+             })
+     }
+ 
++    private struct AccessibilityObservation {
++        let label: String?
++        let value: String?
++        let frame: NSRect
++    }
++
++    private static func accessibilityObservations(in root: NSView) -> [AccessibilityObservation] {
++        var observations: [AccessibilityObservation] = []
++        var visited: Set<ObjectIdentifier> = []
++
++        func visit(_ item: Any) {
++            guard let object = item as? NSObject,
++                  visited.insert(ObjectIdentifier(object)).inserted else { return }
++            if let view = item as? NSView {
++                if view.isAccessibilityElement() {
++                    observations.append(AccessibilityObservation(
++                        label: view.accessibilityLabel(),
++                        value: view.accessibilityValue() as? String,
++                        frame: view.accessibilityFrame()
++                    ))
++                }
++                for child in view.accessibilityChildren() ?? [] { visit(child) }
++                for child in view.subviews { visit(child) }
++            } else if let element = item as? NSAccessibilityElement {
++                observations.append(AccessibilityObservation(
++                    label: element.accessibilityLabel(),
++                    value: element.accessibilityValue() as? String,
++                    frame: element.accessibilityFrame()
++                ))
++                for child in element.accessibilityChildren() ?? [] { visit(child) }
++            }
++        }
++
++        visit(root)
++        return observations
++    }
++
++    private static func accessibilityContains(_ strings: [String], in root: NSView) -> Bool {
++        let visible = accessibilityObservations(in: root)
++            .filter { $0.frame.width > 0 && $0.frame.height > 0 }
++            .flatMap { [$0.label, $0.value].compactMap { $0 } }
++            .joined(separator: " ")
++        return strings.allSatisfy { visible.contains($0) }
++    }
++
++    private static func budgetAccessibilityFits(
++        in window: NSWindow,
++        label: String,
++        scale: Double
++    ) -> Bool {
++        guard let root = window.contentView,
++              let probe = findProbe(in: root, identifier: "editor.status.budget") else {
++            return false
++        }
++        let frame = probe.convert(probe.bounds, to: root)
++        let fontSize = AppTheme.Typography.metadata * scale
++        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
++        let textWidth = (label as NSString).size(withAttributes: [.font: font]).width
++        let requiredWidth = textWidth + fontSize + AppTheme.Spacing.xs
++            + AppTheme.Spacing.sm * 2
++        let hasAXValue = accessibilityObservations(in: root).contains {
++            $0.label == "Project budget" && $0.value == label
++                && $0.frame.width >= requiredWidth
++                && $0.frame.height > 0
++        }
++        return hasAXValue && frame.width >= requiredWidth
++            && statusControlsAreContained(in: window)
++    }
++
+     private static func visibleProbe(
+         identifier: String,
+         in window: NSWindow,
+diff --git a/Sources/NexGenVideo/Editor/BudgetStatusView.swift b/Sources/NexGenVideo/Editor/BudgetStatusView.swift
+index 0e9e8b3f..983cf88d 100644
+--- a/Sources/NexGenVideo/Editor/BudgetStatusView.swift
++++ b/Sources/NexGenVideo/Editor/BudgetStatusView.swift
+@@ -78,8 +78,13 @@ struct ProjectBudgetPresentation: Equatable {
+         }
+         switch hardStop {
+         case .amount(let stop):
+-            if case .amount = planningBudget { break }
+-            label += " · Stop \(Self.euro(stop))"
++            if spend.verifiedEur >= stop {
++                label += " · Stop reached"
++            } else if case .amount = planningBudget {
++                break
++            } else {
++                label += " · Stop \(Self.euro(stop))"
++            }
+         case .unavailable:
+             label += " · Stop unavailable"
+         default:
+@@ -97,6 +102,7 @@ struct ProjectBudgetPresentation: Equatable {
+             || limitIsExceeded(hardStop, spend: spend.verifiedEur) {
+             return .error
+         }
++        if limitsAreUnavailable { return .warning }
+         guard spend.isComplete else { return .warning }
+         if limitIsLow(planningBudget, spend: spend.verifiedEur)
+             || limitIsLow(hardStop, spend: spend.verifiedEur) {
+@@ -113,7 +119,7 @@ struct ProjectBudgetPresentation: Equatable {
+         if spend.unpricedTransactionCount > 0 {
+             appendPricingWarning(.priceUnavailable, label: "provider price", spend: spend, to: &result)
+             appendPricingWarning(.currencyUnavailable, label: "currency conversion", spend: spend, to: &result)
+-            appendPricingWarning(.subscriptionCredits, label: "subscription/credit monetary cost", spend: spend, to: &result)
++            appendPricingWarning(.subscriptionCredits, label: "monetary cost for subscription credits", spend: spend, to: &result)
+         }
+         if spend.legacyGenerationCount > 0 {
+             result.append(
+@@ -267,6 +273,7 @@ private struct BudgetStatusButton: View {
+     @State private var isPresented = false
+     @State private var isRefreshing = false
+     @State private var refreshError: String?
++    @State private var refreshRequest = UUID()
+ 
+     var body: some View {
+         let presentation = presentation
+@@ -321,6 +328,8 @@ private struct BudgetStatusButton: View {
+             )
+         }
+         .onChange(of: editor.projectURL) { _, _ in
++            refreshRequest = UUID()
++            isRefreshing = false
+             isPresented = false
+             refreshError = nil
+         }
+@@ -339,13 +348,20 @@ private struct BudgetStatusButton: View {
+         guard !isRefreshing else { return }
+         isRefreshing = true
+         refreshError = nil
++        let request = UUID()
++        let projectURL = editor.projectURL
++        refreshRequest = request
+         Task { @MainActor in
+             do {
+                 try await editor.refreshBudgetStatus()
+             } catch {
+-                refreshError = "Budget details could not be refreshed."
++                if refreshRequest == request, editor.projectURL == projectURL {
++                    refreshError = "Budget details could not be refreshed."
++                }
++            }
++            if refreshRequest == request, editor.projectURL == projectURL {
++                isRefreshing = false
+             }
+-            isRefreshing = false
+         }
+     }
+ 
+@@ -481,7 +497,7 @@ private struct BudgetDetailPopover: View {
+     private func reservationSuffix(_ spend: ProjectSpendSnapshot) -> String? {
+         var parts: [String] = []
+         if spend.activeReservationCount > 0 {
+-            parts.append(String(spend.activeReservationCount))
++            parts.append("\(spend.activeReservationCount) open")
+         }
+         if spend.unpricedTransactionCount > 0 {
+             parts.append("\(spend.unpricedTransactionCount) unpriced")
+@@ -602,17 +618,17 @@ private struct BudgetDetailPopover: View {
+                         }
+                     }
+             }
+-            Text("\(item.provider.displayName) · \(routeLabel(item.transport)) · \(billingLabel(item.billing))")
++            Text("\(item.provider.displayName) · \(billingLabel(item.billing))")
+                 .interfaceFont(size: AppTheme.Typography.metadata)
+                 .foregroundStyle(AppTheme.Text.tertiaryColor)
+                 .lineLimit(1)
+                 .truncationMode(.middle)
+-            Text(item.endpoint)
+-                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+-                .foregroundStyle(AppTheme.Text.mutedColor)
+-                .lineLimit(1)
+-                .truncationMode(.middle)
+-                .textSelection(.enabled)
++            DisclosureGroup("Request details") {
++                Text("\(routeLabel(item.transport)) · \(item.endpoint)")
++                    .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                    .foregroundStyle(AppTheme.Text.mutedColor)
++                    .textSelection(.enabled)
++            }
+             moneyLabel(item)
+         }
+         .padding(AppTheme.Spacing.sm)
+@@ -636,7 +652,7 @@ private struct BudgetDetailPopover: View {
+                 Text(ProjectBudgetPresentation.euro(money.eurAmount))
+                     .foregroundStyle(AppTheme.Text.secondaryColor)
+                     .monospacedDigit()
+-                Text("\(money.nativeCurrency) \(ProjectBudgetPresentation.decimal(money.nativeAmount)) · rate \(money.exchangeRateDate)")
++                Text("\(money.nativeCurrency) \(ProjectBudgetPresentation.decimal(money.nativeAmount)) · converted on \(money.exchangeRateDate)")
+                     .foregroundStyle(AppTheme.Text.mutedColor)
+                     .lineLimit(1)
+             }
+@@ -651,7 +667,7 @@ private struct BudgetDetailPopover: View {
+         case .priced: "Monetary record unavailable"
+         case .priceUnavailable: "Provider price unavailable"
+         case .currencyUnavailable: "Currency conversion unavailable"
+-        case .subscriptionCredits: "Subscription/credits · monetary project cost unavailable"
++        case .subscriptionCredits: "Subscription credits · price in euros unavailable"
+         }
+     }
+ 
+@@ -754,7 +770,7 @@ private struct BudgetDetailPopover: View {
+     private func stateLabel(_ item: ProjectSpendLineItem) -> String {
+         switch item.state {
+         case .reserved: "Reserved"
+-        case .submitted: item.needsAttention ? "Submitted · attention" : "Submitted"
++        case .submitted: item.needsAttention ? "Submitted · Check charge" : "Submitted"
+         case .charged: "Charged"
+         case .released: "Released"
+         }
+@@ -787,24 +803,33 @@ private struct BudgetDetailPopover: View {
+ 
+ private struct AIJobStatusButton: View {
+     @Environment(EditorViewModel.self) private var editor
++    @Environment(\.interfaceScale) private var interfaceScale
+     @State private var isPresented = false
+ 
+     var body: some View {
+         let jobs = currentJobs
++        let needsAttention = editor.generationBatchCoordinator.error != nil
++        let label = needsAttention
++            ? (jobs.isEmpty ? "AI needs attention" : "AI \(jobs.count) running · Check batch")
++            : (jobs.isEmpty ? "AI idle" : "AI \(jobs.count) running")
+         statusButton(
+             identifier: "editor.status.aiJobs",
+-            label: jobs.isEmpty ? "AI" : "AI \(jobs.count)",
+-            systemName: jobs.isEmpty ? "sparkles" : "sparkles.rectangle.stack.fill",
++            label: label,
++            systemName: needsAttention ? "exclamationmark.triangle.fill"
++                : (jobs.isEmpty ? "sparkles" : "sparkles.rectangle.stack.fill"),
+             active: !jobs.isEmpty,
++            attention: needsAttention,
+             presented: isPresented
+         ) { isPresented.toggle() }
+         .accessibilityLabel("AI background jobs")
+-        .accessibilityValue(jobs.isEmpty ? "No active jobs" : "\(jobs.count) active")
++        .accessibilityValue(label)
+         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+             jobPopover(
+                 title: "AI Jobs",
+                 jobs: jobs,
++                attention: needsAttention ? "Generation batch needs attention" : nil,
+                 empty: "No active AI jobs",
++                scale: interfaceScale,
+                 closeIdentifier: "editor.status.aiJobs.close",
+                 close: { isPresented = false }
+             )
+@@ -819,36 +844,46 @@ private struct AIJobStatusButton: View {
+             jobs.append("Production · \(PhaseDisplay.label(phase))")
+         }
+         jobs.append(contentsOf: editor.mediaAssets.filter(\.isGenerating).map(\.generatingLabel))
+-        if editor.generationBatchCoordinator.error != nil { jobs.append("Generation batch needs attention") }
+         return jobs
+     }
+ }
+ 
+ private struct ExportJobStatusButton: View {
++    @Environment(EditorViewModel.self) private var editor
++    @Environment(\.interfaceScale) private var interfaceScale
+     @State private var isPresented = false
+-    @State private var isActive = ExportCoordinator.isExportActive
++    @State private var activityRevision = 0
+ 
+     var body: some View {
++        let _ = activityRevision
++        let status = ExportCoordinator.status(for: editor.openWorkingCopyKey)
++        let jobs = (status.running ? ["Export is running"] : [])
++            + Array(repeating: "Export is waiting", count: status.waiting)
++            + (status.otherProjectRunning ? ["Another project is exporting"] : [])
++        let label: String = status.running ? "1 export running"
++            : status.waiting > 0 ? "\(status.waiting) export\(status.waiting == 1 ? "" : "s") waiting"
++            : status.otherProjectRunning ? "Export in other project" : "No exports"
+         statusButton(
+             identifier: "editor.status.exportJobs",
+-            label: isActive ? "Export 1" : "Export",
+-            systemName: isActive ? "arrow.up.circle.fill" : "arrow.up.circle",
+-            active: isActive,
++            label: label,
++            systemName: status.running || status.waiting > 0 ? "arrow.up.circle.fill" : "arrow.up.circle",
++            active: status.running || status.waiting > 0,
+             presented: isPresented
+         ) { isPresented.toggle() }
+         .accessibilityLabel("Export background jobs")
+-        .accessibilityValue(isActive ? "One active export" : "No active exports")
++        .accessibilityValue(label)
+         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+             jobPopover(
+                 title: "Export Jobs",
+-                jobs: isActive ? ["Export is running"] : [],
++                jobs: jobs,
+                 empty: "No active exports",
++                scale: interfaceScale,
+                 closeIdentifier: "editor.status.exportJobs.close",
+                 close: { isPresented = false }
+             )
+         }
+         .onReceive(NotificationCenter.default.publisher(for: .exportActivityChanged)) { _ in
+-            isActive = ExportCoordinator.isExportActive
++            activityRevision &+= 1
+         }
+     }
+ }
+@@ -858,13 +893,15 @@ private func statusButton(
+     label: String,
+     systemName: String,
+     active: Bool,
++    attention: Bool = false,
+     presented: Bool,
+     action: @escaping () -> Void
+ ) -> some View {
+     Button(action: action) {
+         Label(label, systemImage: systemName)
+             .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
+-            .foregroundStyle(active ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
++            .foregroundStyle(attention ? AppTheme.Status.warningColor
++                : (active ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor))
+             .padding(.horizontal, AppTheme.Spacing.sm)
+             .frame(minHeight: AppTheme.Control.compactHeight)
+             .hoverHighlight(cornerRadius: AppTheme.Radius.xs)
+@@ -875,7 +912,7 @@ private func statusButton(
+             AppRelaunchClickProbe(
+                 identifier: identifier,
+                 acceptanceState: presented,
+-                acceptanceValue: active ? "active" : "idle"
++                acceptanceValue: attention ? "attention" : (active ? "active" : "idle")
+             )
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                 .allowsHitTesting(false)
+@@ -886,7 +923,9 @@ private func statusButton(
+ private func jobPopover(
+     title: String,
+     jobs: [String],
++    attention: String? = nil,
+     empty: String,
++    scale: Double,
+     closeIdentifier: String,
+     close: @escaping () -> Void
+ ) -> some View {
+@@ -909,7 +948,12 @@ private func jobPopover(
+                 }
+             }
+         }
+-        if jobs.isEmpty {
++        if let attention {
++            Label(attention, systemImage: "exclamationmark.triangle.fill")
++                .interfaceFont(size: AppTheme.Typography.ui)
++                .foregroundStyle(AppTheme.Status.warningColor)
++        }
++        if jobs.isEmpty && attention == nil {
+             Text(empty)
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.mutedColor)
+@@ -922,5 +966,5 @@ private func jobPopover(
+         }
+     }
+     .padding(AppTheme.Spacing.mdLg)
+-    .frame(width: AppTheme.ComponentSize.backgroundJobsPopoverWidth, alignment: .leading)
++    .frame(width: AppTheme.ComponentSize.backgroundJobsPopoverWidth * scale, alignment: .leading)
+ }
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+index 103f4232..ffdfb507 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+@@ -202,9 +202,10 @@ extension EditorViewModel {
+     }
+ 
+     func refreshBudgetStatus() async throws {
++        let fallback = generationLog
+         try await refreshBudgetStatus { url in
+             try await Task.detached(priority: .userInitiated) {
+-                try GenerationLogFile.loadIfPresent(from: url) ?? GenerationLog()
++                try GenerationLogFile.loadIfPresent(from: url) ?? fallback
+             }.value
+         }
+     }
+@@ -216,7 +217,6 @@ extension EditorViewModel {
+         let token = budgetStatusLoadToken
+         let requestedJournalGeneration = generationLogRevision
+         guard let root = workingRoot else {
+-            generationLog = GenerationLog()
+             await refreshProjectState()
+             return
+         }
+@@ -228,6 +228,12 @@ extension EditorViewModel {
+               workingRoot?.standardizedFileURL.resolvingSymlinksInPath() == requestedRoot else {
+             return
+         }
++        guard refreshed.version >= generationLog.version,
++              refreshed.entries.starts(with: generationLog.entries),
++              refreshed.spendEvents.starts(with: generationLog.spendEvents) else {
++            await refreshProjectState()
++            return
++        }
+         _ = try GenerationBudgetGuard.spendSnapshot(
+             log: refreshed,
+             generatedInputs: mediaAssets.compactMap(\.generationInput)
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 46dece06..4273071e 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -278,9 +278,15 @@ final class EditorViewModel {
+                 && nextProjectId == projectId
+                 && workingCopyHome != nil
+                 && activeWorkingCopyKey != nil
+-            if !keepsLiveDeclaration {
+-                projectStateLoadToken += 1
+-                budgetStatusLoadToken &+= 1
++            let retargetsLiveDocument = projectURL != nil
++                && projectURL == pendingLiveDocumentRetarget
++                && workingCopyHome != nil
++                && activeWorkingCopyKey == workingCopyKey
++                && nextProjectId != nil
++            pendingLiveDocumentRetarget = nil
++            projectStateLoadToken += 1
++            budgetStatusLoadToken &+= 1
++            if !keepsLiveDeclaration && !retargetsLiveDocument {
+                 projectState = nil
+                 generationLog = GenerationLog()
+                 capturePluginDeclaration(from: projectURL)
+@@ -324,6 +330,18 @@ final class EditorViewModel {
+     /// The key of the working copy this session actually opened and has been writing into.
+     var openWorkingCopyKey: String? { activeWorkingCopyKey }
+ 
++    func retargetSavedDocument(from oldURL: URL, to newURL: URL) {
++        guard projectURL?.standardizedFileURL == oldURL.standardizedFileURL,
++              workingCopyHome != nil,
++              activeWorkingCopyKey == workingCopyKey,
++              ProjectIdentity.existingUUID(for: newURL) != nil else {
++            projectURL = newURL
++            return
++        }
++        pendingLiveDocumentRetarget = newURL
++        projectURL = newURL
++    }
++
+     func adoptWorkingCopy(
+         _ result: ProjectWorkingCopy.OpenResult,
+         key: String,
+@@ -1534,5 +1552,6 @@ final class EditorViewModel {
+     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+     @ObservationIgnored var budgetStatusLoadToken: UInt64 = 0
+     @ObservationIgnored private(set) var generationLogRevision: UInt64 = 0
++    @ObservationIgnored private var pendingLiveDocumentRetarget: URL?
+ 
+ }
+diff --git a/Sources/NexGenVideo/Export/ExportCoordinator.swift b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+index 91cbaa9a..ff797d4c 100644
+--- a/Sources/NexGenVideo/Export/ExportCoordinator.swift
++++ b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+@@ -7,26 +7,59 @@ extension Notification.Name {
+ @MainActor
+ enum ExportCoordinator {
+     private static var exportActive = false
++    private static var activeProjectKey: String?
++    private struct WaitingExport { let projectKey: String? }
++    private static var waitingProjectKeys: [UUID: WaitingExport] = [:]
++
++    struct ProjectStatus {
++        let running: Bool
++        let waiting: Int
++        let otherProjectRunning: Bool
++    }
+ 
+     static var isExportActive: Bool { exportActive }
+ 
+-    static func beginExportIfIdle() -> Bool {
++    static func status(for projectKey: String?) -> ProjectStatus {
++        ProjectStatus(
++            running: exportActive && activeProjectKey == projectKey,
++            waiting: waitingProjectKeys.values.filter { $0.projectKey == projectKey }.count,
++            otherProjectRunning: exportActive && activeProjectKey != projectKey
++        )
++    }
++
++    static func beginExportIfIdle(projectKey: String? = nil) -> Bool {
+         guard !exportActive else { return false }
+         exportActive = true
++        activeProjectKey = projectKey
+         NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
+         return true
+     }
+ 
+-    static func acquireExport() async {
++    static func acquireExport(projectKey: String? = nil) async -> Bool {
++        let ticket = UUID()
++        waitingProjectKeys[ticket] = WaitingExport(projectKey: projectKey)
++        NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
++        defer {
++            waitingProjectKeys.removeValue(forKey: ticket)
++            NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
++        }
+         while exportActive {
+-            try? await Task.sleep(for: .milliseconds(50))
++            do {
++                try await Task.sleep(for: .milliseconds(50))
++            } catch {
++                return false
++            }
+         }
++        guard !Task.isCancelled else { return false }
+         exportActive = true
++        activeProjectKey = projectKey
+         NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
++        return true
+     }
+ 
+     static func endExport() {
+         exportActive = false
++        activeProjectKey = nil
+         NotificationCenter.default.post(name: .exportActivityChanged, object: nil)
+     }
+ 
+diff --git a/Sources/NexGenVideo/Export/ExportService.swift b/Sources/NexGenVideo/Export/ExportService.swift
+index e209696b..2330496b 100644
+--- a/Sources/NexGenVideo/Export/ExportService.swift
++++ b/Sources/NexGenVideo/Export/ExportService.swift
+@@ -38,7 +38,8 @@ final class ExportService {
+         format: ExportFormat,
+         resolution: ExportResolution,
+         outputURL: URL,
+-        acquireSlot: Bool = true
++        acquireSlot: Bool = true,
++        projectKey: String? = nil
+     ) async {
+         error = nil
+         lastReport = nil
+@@ -70,7 +71,10 @@ final class ExportService {
+         }
+ 
+         if acquireSlot {
+-            await ExportCoordinator.acquireExport()
++            guard await ExportCoordinator.acquireExport(projectKey: projectKey) else {
++                error = "Export was cancelled"
++                return
++            }
+         }
+         defer { if acquireSlot { ExportCoordinator.endExport() } }
+ 
+@@ -180,7 +184,8 @@ final class ExportService {
+         generationLog: GenerationLog,
+         sourceProjectURL: URL?,
+         outputURL: URL,
+-        acquireSlot: Bool = true
++        acquireSlot: Bool = true,
++        projectKey: String? = nil
+     ) async -> ProjectPackageExporter.Report? {
+         isExporting = true
+         progress = 0
+@@ -189,7 +194,10 @@ final class ExportService {
+         defer { isExporting = false }
+ 
+         if acquireSlot {
+-            await ExportCoordinator.acquireExport()
++            guard await ExportCoordinator.acquireExport(projectKey: projectKey) else {
++                error = "Export was cancelled"
++                return nil
++            }
+         }
+         defer { if acquireSlot { ExportCoordinator.endExport() } }
+ 
+diff --git a/Sources/NexGenVideo/Export/ExportView.swift b/Sources/NexGenVideo/Export/ExportView.swift
+index 5a5888d3..f174cef7 100644
+--- a/Sources/NexGenVideo/Export/ExportView.swift
++++ b/Sources/NexGenVideo/Export/ExportView.swift
+@@ -347,7 +347,8 @@ struct ExportView: View {
+                         resolver: editor.mediaResolver,
+                         format: format,
+                         resolution: resolution,
+-                        outputURL: url
++                        outputURL: url,
++                        projectKey: editor.openWorkingCopyKey
+                     )
+                     if service.error == nil { editor.showExportDialog = false }
+                     return
+@@ -405,7 +406,8 @@ struct ExportView: View {
+                     manifest: editor.mediaManifest,
+                     generationLog: editor.generationLog,
+                     sourceProjectURL: editor.workingRoot,
+-                    outputURL: url
++                    outputURL: url,
++                    projectKey: editor.openWorkingCopyKey
+                 )
+                 guard let report, service.error == nil else { return }
+                 if report.missing.isEmpty {
+diff --git a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+index 7a090d93..14dfa522 100644
+--- a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
++++ b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+@@ -333,7 +333,8 @@ enum PipelineDeliveryStore {
+                 resolver: editor.mediaResolver,
+                 format: format,
+                 resolution: resolution,
+-                outputURL: outputURL
++                outputURL: outputURL,
++                projectKey: editor.openWorkingCopyKey
+             )
+         } onCancel: {
+             Task { @MainActor in service.cancel() }
+diff --git a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+index bcfdd49e..1dbd60b7 100644
+--- a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
++++ b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+@@ -386,6 +386,10 @@ enum GenerationBudgetGuard {
+             }
+         }
+         guard let dataRoot else { return nil }
++        return try budgetStop(dataRoot: dataRoot)
++    }
++
++    nonisolated static func budgetStop(dataRoot: URL) throws -> Double? {
+         let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+         do {
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift b/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
+index 48f17f93..fc4fe390 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift
+@@ -210,14 +210,11 @@ enum NativeCockpitReader {
+             throw NativeError.notInitialized
+         }
+         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
+-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
+-            Brief.self,
+-            at: PipelineLayout.briefFile
+-        )
++        let budgetStopEur = try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
+         return try serialize(stateDictionary(
+             snapshot,
+             spend: spend,
+-            budgetStopEur: brief?.budgetStopEur
++            budgetStopEur: budgetStopEur
+         ))
+     }
+ 
+diff --git a/Sources/NexGenVideo/Project/VideoProject.swift b/Sources/NexGenVideo/Project/VideoProject.swift
+index 64559cc4..f6e425b2 100644
+--- a/Sources/NexGenVideo/Project/VideoProject.swift
++++ b/Sources/NexGenVideo/Project/VideoProject.swift
+@@ -598,7 +598,7 @@ final class VideoProject: NSDocument {
+                     // orphaned copy). A move/rename leaves nothing at oldURL, so existingKey is nil and we
+                     // discard nothing — the live copy stays under the unchanged UUID key.
+                     let oldKey = ProjectIdentity.existingKey(for: oldURL)
+-                    editorViewModel.projectURL = newURL
++                    editorViewModel.retargetSavedDocument(from: oldURL, to: newURL)
+                     editorViewModel.agentService.loadSessions(
+                         from: editorViewModel.workingCopyHome
+                     )
+diff --git a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+index 2577c3d5..f64612eb 100644
+--- a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+@@ -61,7 +61,7 @@ struct ExportProjectToolTests {
+         #expect(uniqueURL.deletingLastPathComponent().standardizedFileURL == downloads.standardizedFileURL)
+         #expect(uniqueURL.lastPathComponent == "\(base) 2.xml")
+ 
+-        await ExportCoordinator.acquireExport()
++        #expect(await ExportCoordinator.acquireExport())
+         defer { ExportCoordinator.endExport() }
+ 
+         let uiActiveXML = FileManager.default.temporaryDirectory
+diff --git a/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift b/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift
+index fe72900e..24abafdf 100644
+--- a/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift
++++ b/Tests/NexGenVideoTests/Editor/BudgetStatusTests.swift
+@@ -48,6 +48,7 @@ struct BudgetStatusTests {
+         )
+ 
+         #expect(unavailable.planningBudget == .unavailable)
++        #expect(unavailable.severity == .warning)
+         #expect(unavailable.compactLabel == "Budget · No spend · Limits unavailable")
+         #expect(unavailable.acceptanceValue.contains("planning=unknown"))
+         #expect(notSet.planningBudget == .notSet)
+@@ -111,6 +112,7 @@ struct BudgetStatusTests {
+         #expect(low.severity == .warning)
+         #expect(low.warnings.contains { $0.hasPrefix("Planning budget has") })
+         #expect(exceeded.severity == .error)
++        #expect(exceeded.compactLabel == "Budget €12.50 / €10.00 · Stop reached")
+         #expect(exceeded.warnings.contains { $0.hasPrefix("Planning budget exceeded") })
+         #expect(exceeded.warnings.contains { $0.hasPrefix("Hard stop exceeded") })
+     }
+@@ -149,7 +151,7 @@ struct BudgetStatusTests {
+         #expect(presentation.compactLabel == "Budget ≥€0.00 / €10.00")
+         #expect(presentation.warnings.contains { $0.contains("provider price") })
+         #expect(presentation.warnings.contains { $0.contains("currency conversion") })
+-        #expect(presentation.warnings.contains { $0.contains("subscription/credit") })
++        #expect(presentation.warnings.contains { $0.contains("subscription credits") })
+         let statuses = Set(presentation.spend?.lineItems.map(\.pricingStatus) ?? [])
+         #expect(statuses == Set([
+             .priceUnavailable,
+@@ -201,6 +203,72 @@ struct BudgetStatusTests {
+         #expect(try Data(contentsOf: logURL) == beforeBytes)
+     }
+ 
++    @Test("refresh keeps an in-memory legacy journal when the file is absent")
++    func refreshKeepsMissingDiskJournal() async throws {
++        let project = try package(named: "legacy-refresh")
++        let editor = EditorViewModel()
++        editor.projectURL = project
++        defer {
++            editor.releaseWorkingCopy()
++            if let key = ProjectIdentity.existingKey(for: project) {
++                ProjectWorkingCopy.discard(key: key)
++            }
++            try? FileManager.default.removeItem(at: project)
++        }
++        let root = try #require(editor.workingRoot)
++        let logURL = root.appendingPathComponent(Project.generationLogFilename)
++        try FileManager.default.removeItem(at: logURL)
++        var legacy = GenerationLog()
++        legacy.entries = [GenerationLogEntry(id: "legacy", model: "legacy-model",
++                                              costCredits: 3, createdAt: nil)]
++        editor.generationLog = legacy
++
++        try await editor.refreshBudgetStatus()
++
++        #expect(editor.generationLog == legacy)
++        #expect(!FileManager.default.fileExists(atPath: logURL.path))
++    }
++
++    @Test("refresh never replaces a newer in-memory journal with an older disk snapshot")
++    func refreshKeepsStaleDiskJournal() async throws {
++        let project = try package(named: "stale-refresh")
++        let editor = EditorViewModel()
++        editor.projectURL = project
++        defer {
++            editor.releaseWorkingCopy()
++            if let key = ProjectIdentity.existingKey(for: project) {
++                ProjectWorkingCopy.discard(key: key)
++            }
++            try? FileManager.default.removeItem(at: project)
++        }
++        let root = try #require(editor.workingRoot)
++        let logURL = root.appendingPathComponent(Project.generationLogFilename)
++        let diskBytes = try Data(contentsOf: logURL)
++        let newer = log(transaction(id: "unpersisted", money: money(3), final: .reserved))
++        editor.generationLog = newer
++
++        try await editor.refreshBudgetStatus()
++
++        #expect(editor.generationLog == newer)
++        #expect(try Data(contentsOf: logURL) == diskBytes)
++    }
++
++    @Test("absent stop and invalid brief remain distinct")
++    func strictBudgetStopReader() throws {
++        let dataRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "budget-stop-\(UUID().uuidString)", isDirectory: true
++        )
++        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: dataRoot) }
++        #expect(try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot) == nil)
++        try Data("budget_stop_eur: [broken".utf8).write(
++            to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
++        )
++        #expect(throws: GenerationBudgetError.self) {
++            try GenerationBudgetGuard.budgetStop(dataRoot: dataRoot)
++        }
++    }
++
+     @Test("project switch clears the previous journal before asynchronous refresh")
+     func projectSwitchClearsPreviousBudget() async throws {
+         let first = try package(named: "first")
+@@ -333,7 +401,7 @@ struct BudgetStatusTests {
+         let presentation = ProjectBudgetPresentation.make(log: log(events), generatedInputs: [],
+             projectState: try projectState(budget: 10, stop: 12), hasProductionPipeline: true)
+         #expect(presentation.severity == .error)
+-        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00")
++        #expect(presentation.compactLabel == "Budget ≥€12.50 / €10.00 · Stop reached")
+         #expect(presentation.warnings.contains("Planning budget exceeded by €2.50."))
+         #expect(presentation.warnings.contains("Hard stop exceeded by €0.50."))
+     }
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index 9cc347bf..3eec3b06 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -107,6 +107,8 @@ def valid_budget_row(row):
+         and valid_frame(row.get("popoverFrame"))
+         and isinstance(row.get("statusValue"), str)
+         and row["statusValue"].endswith(f"items={items}")
++        and isinstance(row.get("accessibilityValue"), str)
++        and row["accessibilityValue"].startswith("Budget")
+         and isinstance(row.get("screenshot"), str)
+     )
+ 
+@@ -192,7 +194,7 @@ def run_scale(executable, output, scale):
+                 "NGV_WORKSPACE_UI_SCALE": str(scale),
+                 "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
+             },
+-            timeout=120,
++            timeout=180,
+             check=False,
+             text=True,
+         )
+@@ -230,6 +232,10 @@ def run_scale(executable, output, scale):
+     budget = [row for row in rows if row.get("event") == "budget"]
+     budget_lifecycle = [row for row in rows if row.get("event") == "budget-lifecycle"]
+     unavailable_limits = [row for row in rows if row.get("event") == "budget-limits-unavailable"]
++    combined_status = [row for row in rows if row.get("event") == "budget-combined-status"]
++    legacy_refresh = [row for row in rows if row.get("event") == "budget-legacy-refresh"]
++    two_project_export = [row for row in rows if row.get("event") == "budget-two-project-export"]
++    save_as = [row for row in rows if row.get("event") == "budget-save-as"]
+     project_switch = [row for row in rows if row.get("event") == "budget-project-switch"]
+     background_status = [row for row in rows if row.get("event") == "background-status"]
+     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
+@@ -243,7 +249,7 @@ def run_scale(executable, output, scale):
+         if row.get("keyframes") != "open"
+     ]
+     screenshots += [row.get("screenshot") for row in budget + project_switch
+-                    + budget_lifecycle + unavailable_limits]
++                    + budget_lifecycle + unavailable_limits + combined_status]
+     screenshots += [
+         layout.get("screenshot")
+         for row in open_keyframes
+@@ -283,6 +289,15 @@ def run_scale(executable, output, scale):
+         and all(row.get("events") == EXPECTED_BUDGET_LIFECYCLE.get(row.get("state"))
+                 for row in budget_lifecycle)
+         and len(unavailable_limits) == 1
++        and len(combined_status) == 1
++        and valid_status_frames(combined_status[0])
++        and len(legacy_refresh) == 1
++        and legacy_refresh[0].get("preserved") is True
++        and len(two_project_export) == 1
++        and two_project_export[0].get("projectBound") is True
++        and len(save_as) == 1
++        and save_as[0].get("liveBytesPreserved") is True
++        and save_as[0].get("copyBytesPreserved") is True
+         and len(project_switch) == 1
+         and valid_status_frames(project_switch[0])
+         and valid_long_status_context(project_switch[0])
+@@ -301,7 +316,7 @@ def run_scale(executable, output, scale):
+         and invariants[0].get("workingCopyUnchanged") is True
+         and len(screenshots)
+         == 9 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+-        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 1
++        + len(EXPECTED_BUDGET_CASES) + len(EXPECTED_BUDGET_LIFECYCLE) + 2
+         and valid_images
+     )
+     return {

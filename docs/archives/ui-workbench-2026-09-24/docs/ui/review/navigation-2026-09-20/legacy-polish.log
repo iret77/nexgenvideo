@@ -1,0 +1,34 @@
+PASS Gate names viewed phase before revision
+PASS Revision dialog names the same target
+PASS Planning cannot mutate approved timing or action
+PASS Storyboard edit opens explicit rewind without changing approvals
+PASS Confirmed timing revision invalidates downstream
+PASS Planning list contains no duplicate shot strip
+PASS Blocking shot chooser has no transport
+PASS References show rendered image by default
+PASS Sketch comparison is optional and leaves approvals unchanged
+PASS Postproduction has no invisible trim controls or duplicate clip list
+PASS Inspector tabs fit one icon row
+PASS Inspector header stays put while its body scrolls
+PASS Export action belongs to output dock, not status
+PASS Export history does not start a different output
+PASS Media retains all search scopes inside search field
+PASS Transcript scope actually controls search
+PASS Storyboard selection is visible after opening and rerendering
+PASS Scene selection is distinct from shot selection
+PASS Returning from a scene restores the selected shot
+PASS Text focus updates the document inspector without changing shot selection
+PASS Revised scene alternative stays inside its document
+PASS Postproduction hints describe available actions
+PASS Shared pane height: Medien
+PASS Shared pane height: Audio
+PASS Shared pane height: Storyboard
+PASS Shared pane height: Shotplanung
+PASS Shared pane height: References
+PASS Shared pane height: Review
+PASS Shared pane height: Takes
+PASS Shared pane height: Schnitt
+PASS Shared pane height: Postproduction
+PASS Shared pane height: Export
+{"passed":32,"failed":[]}
+

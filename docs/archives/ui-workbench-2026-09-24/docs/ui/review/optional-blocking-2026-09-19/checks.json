@@ -1,0 +1,138 @@
+[
+  {
+    "name": "Greenfield does not invent a scene",
+    "pass": true
+  },
+  {
+    "name": "Shot planning has one successor and no duplicate Blocking tab",
+    "pass": true
+  },
+  {
+    "name": "Approval enters optional decision before References",
+    "pass": true
+  },
+  {
+    "name": "Skip is a valid, free, artifact-free path",
+    "pass": true
+  },
+  {
+    "name": "An existing project is not rewound by migration",
+    "pass": true
+  },
+  {
+    "name": "Blocking fixture exposes actual editable scene and shared cameras",
+    "pass": true
+  },
+  {
+    "name": "Scene viewport draws geometry",
+    "pass": true
+  },
+  {
+    "name": "Free orbit does not modify shot cameras or geometry",
+    "pass": true
+  },
+  {
+    "name": "Camera travel uses shot duration, with its own transport",
+    "pass": true
+  },
+  {
+    "name": "Camera travel really advances",
+    "pass": true
+  },
+  {
+    "name": "Switching to space stops playback and removes transport",
+    "pass": true
+  },
+  {
+    "name": "Object position changes update shared location truth",
+    "pass": true
+  },
+  {
+    "name": "Scene changes support undo",
+    "pass": true
+  },
+  {
+    "name": "Location duplicate affects selected shot only",
+    "pass": true
+  },
+  {
+    "name": "A second shot can reuse the same new location",
+    "pass": true
+  },
+  {
+    "name": "Clay snapshots are explicit outputs, not fabricated AI anchors",
+    "pass": true
+  },
+  {
+    "name": "Unsighted geometry cannot be approved",
+    "pass": true
+  },
+  {
+    "name": "Every snapshot must be sighted",
+    "pass": true
+  },
+  {
+    "name": "Geometry changes invalidate outputs without relabelling old evidence",
+    "pass": true
+  },
+  {
+    "name": "Fresh derived and accepted outputs allow References",
+    "pass": true
+  },
+  {
+    "name": "References carry a separate positioning source",
+    "pass": true
+  },
+  {
+    "name": "Approved scene is read-only",
+    "pass": true
+  },
+  {
+    "name": "Changing duration invalidates snapshot evidence",
+    "pass": true
+  },
+  {
+    "name": "Import with shot plan enters optional decision",
+    "pass": true
+  },
+  {
+    "name": "Video jobs reject stale Clay bindings",
+    "pass": true
+  },
+  {
+    "name": "Leaving an active scene requires explicit skip confirmation",
+    "pass": true
+  },
+  {
+    "name": "Cancelling skip preserves the location",
+    "pass": true
+  },
+  {
+    "name": "Confirmed skip retains the draft but removes its production role",
+    "pass": true
+  },
+  {
+    "name": "Skipped scene reactivation requires explicit rewind",
+    "pass": true
+  },
+  {
+    "name": "Reactivation restores editing with the same scene",
+    "pass": true
+  },
+  {
+    "name": "Generic workflow offers the same Blocking capability",
+    "pass": true
+  },
+  {
+    "name": "Lens belongs to Shot Planning and requires explicit rewind",
+    "pass": true
+  },
+  {
+    "name": "Missing pack blocks scene edits",
+    "pass": true
+  },
+  {
+    "name": "Scene controls fit at 130 percent",
+    "pass": true
+  }
+]

@@ -1,0 +1,599 @@
+diff --git a/Sources/NexGenVideo/Export/FCPXMLExporter.swift b/Sources/NexGenVideo/Export/FCPXMLExporter.swift
+index b9779f9d..e601374d 100644
+--- a/Sources/NexGenVideo/Export/FCPXMLExporter.swift
++++ b/Sources/NexGenVideo/Export/FCPXMLExporter.swift
+@@ -46,6 +46,37 @@ enum FCPXMLExporter {
+         let createdDirectory: URL?
+     }
+ 
++    private enum EmissionSelection {
++        static func supports(_ track: Track) -> Bool {
++            track.type.isVisual || track.type == .audio
++        }
++
++        static func includes(_ clip: Clip, on track: Track, resolver: MediaResolver) -> Bool {
++            guard supports(track), clip.durationFrames > 0 else { return false }
++            switch clip.mediaType {
++            case .text:
++                return clip.textContent?.isEmpty == false
++            case .audio, .video, .image:
++                return resolver.resolveURL(for: clip.mediaRef) != nil
++            case .lottie, .document:
++                return false
++            }
++        }
++
++        static func mediaRefs(
++            in timeline: Timeline,
++            resolver: MediaResolver
++        ) -> Set<String> {
++            Set(timeline.tracks.flatMap { track in
++                track.clips.compactMap { clip in
++                    guard clip.mediaType != .text,
++                          includes(clip, on: track, resolver: resolver) else { return nil }
++                    return clip.mediaRef
++                }
++            })
++        }
++    }
++
+     struct RenderedDocument: Sendable, Equatable {
+         let data: Data
+         let validation: FCPXMLValidationReport
+@@ -65,11 +96,7 @@ enum FCPXMLExporter {
+     ) async throws -> FCPXMLExportReport {
+         try validateOutputDestination(outputURL)
+         await progress(0)
+-        let mediaRefs = Set(timeline.tracks.flatMap { track in
+-            track.clips.compactMap { clip in
+-                clip.sourceClipType == .text ? nil : clip.mediaRef
+-            }
+-        })
++        let mediaRefs = EmissionSelection.mediaRefs(in: timeline, resolver: resolver)
+         try await checkCancellation(isCancelled)
+         let timing = await SourceTimingReader.cache(
+             mediaRefs: mediaRefs,
+@@ -585,6 +612,11 @@ enum FCPXMLExporter {
+             let enabled: Bool
+         }
+ 
++        private enum KeyframeLocalTimeline {
++            case media(origin: (numerator: Int64, denominator: Int64)?)
++            case title
++        }
++
+         private struct MediaResource {
+             let mediaRefs: [String]
+             let assetID: String
+@@ -881,8 +913,8 @@ enum FCPXMLExporter {
+                     ? [timeMapNode(for: clip, mediaDuration: resource.duration),
+                        cropNode(for: clip),
+                        FCPXMLNode(name: "adjust-conform", attributes: [("type", "fit")]),
+-                       transformNode(for: clip),
+-                       blendNode(for: clip)]
++                       transformNode(for: clip, localTimeline: .media(origin: nil)),
++                       blendNode(for: clip, localTimeline: .media(origin: nil))]
+                     : [timeMapNode(for: clip, mediaDuration: resource.duration), volumeNode(for: clip)]
+                 return FCPXMLNode(name: "ref-clip", attributes: attrs, children: children.compactMap { $0 })
+             }
+@@ -905,8 +937,14 @@ enum FCPXMLExporter {
+                 ),
+                 visual ? cropNode(for: clip) : nil,
+                 visual ? FCPXMLNode(name: "adjust-conform", attributes: [("type", "fit")]) : nil,
+-                visual ? transformNode(for: clip) : nil,
+-                visual ? blendNode(for: clip) : nil,
++                visual ? transformNode(
++                    for: clip,
++                    localTimeline: .media(origin: resource.timecode?.rationalSeconds)
++                ) : nil,
++                visual ? blendNode(
++                    for: clip,
++                    localTimeline: .media(origin: resource.timecode?.rationalSeconds)
++                ) : nil,
+                 resource.hasAudio ? volumeNode(for: linkedAudio ?? clip) : nil,
+             ]
+             let name = clip.mediaType == .image ? "video" : "asset-clip"
+@@ -939,7 +977,7 @@ enum FCPXMLExporter {
+             ]
+             let concreteChildren = children.compactMap { $0 }
+             var finalChildren = concreteChildren
+-            if let blend = blendNode(for: clip) { finalChildren.append(blend) }
++            if let blend = blendNode(for: clip, localTimeline: .title) { finalChildren.append(blend) }
+             return FCPXMLNode(name: "title", attributes: [
+                 ("ref", titleEffectID),
+                 ("name", content),
+@@ -951,11 +989,21 @@ enum FCPXMLExporter {
+             ], children: finalChildren)
+         }
+ 
+-        private func blendNode(for clip: Clip) -> FCPXMLNode? {
++        private func blendNode(
++            for clip: Clip,
++            localTimeline: KeyframeLocalTimeline
++        ) -> FCPXMLNode? {
+             let frames = clip.keyframeFrames(for: .opacity)
+             guard clip.opacity < 0.999_5 || !frames.isEmpty else { return nil }
+             let children = frames.isEmpty ? [] : [
+-                keyframeParam(name: "amount", base: formatNumber(clip.opacity), clip: clip, property: .opacity, frames: frames) {
++                keyframeParam(
++                    name: "amount",
++                    base: formatNumber(clip.opacity),
++                    clip: clip,
++                    property: .opacity,
++                    frames: frames,
++                    localTimeline: localTimeline
++                ) {
+                     self.formatNumber(clip.rawOpacityAt(frame: $0))
+                 },
+             ]
+@@ -966,7 +1014,10 @@ enum FCPXMLExporter {
+             )
+         }
+ 
+-        private func transformNode(for clip: Clip) -> FCPXMLNode? {
++        private func transformNode(
++            for clip: Clip,
++            localTimeline: KeyframeLocalTimeline
++        ) -> FCPXMLNode? {
+             let transform = clip.transform
+             let positionFrames = clip.keyframeFrames(for: .position)
+             let rotationFrames = clip.keyframeFrames(for: .rotation)
+@@ -988,7 +1039,8 @@ enum FCPXMLExporter {
+             var parameters: [FCPXMLNode] = []
+             if !scaleFrames.isEmpty {
+                 parameters.append(keyframeParam(
+-                    name: "scale", base: scale, clip: clip, property: .scale, frames: scaleFrames
++                    name: "scale", base: scale, clip: clip, property: .scale,
++                    frames: scaleFrames, localTimeline: localTimeline
+                 ) { frame in
+                     let size = clip.sizeAt(frame: frame)
+                     return self.scaleValue(width: size.width, height: size.height, for: clip)
+@@ -1000,7 +1052,8 @@ enum FCPXMLExporter {
+                     base: positionValue(for: transform, fit: fit),
+                     clip: clip,
+                     property: .position,
+-                    frames: positionFrames
++                    frames: positionFrames,
++                    localTimeline: localTimeline
+                 ) { self.positionValue(for: clip.transformAt(frame: $0), fit: fit) })
+             }
+             if !rotationFrames.isEmpty {
+@@ -1009,7 +1062,8 @@ enum FCPXMLExporter {
+                     base: formatNumber(-transform.rotation),
+                     clip: clip,
+                     property: .rotation,
+-                    frames: rotationFrames
++                    frames: rotationFrames,
++                    localTimeline: localTimeline
+                 ) { self.formatNumber(-clip.rotationAt(frame: $0)) })
+             }
+             return FCPXMLNode(name: "adjust-transform", attributes: attributes, children: parameters)
+@@ -1030,10 +1084,14 @@ enum FCPXMLExporter {
+             clip: Clip,
+             property: AnimatableProperty,
+             frames: [Int],
++            localTimeline: KeyframeLocalTimeline,
+             value: (Int) -> String
+         ) -> FCPXMLNode {
+             let keyframes = frames.sorted().map { frame -> FCPXMLNode in
+-                var attributes: [(String, String)] = [("time", keyframeTime(frame, clip: clip))]
++                var attributes: [(String, String)] = [(
++                    "time",
++                    keyframeTime(frame, clip: clip, localTimeline: localTimeline)
++                )]
+                 if clip.interpolation(for: property, atFrame: frame) == .linear {
+                     attributes.append(("curve", "linear"))
+                 }
+@@ -1045,14 +1103,28 @@ enum FCPXMLExporter {
+             ])
+         }
+ 
+-        private func keyframeTime(_ frame: Int, clip: Clip) -> String {
++        private func keyframeTime(
++            _ frame: Int,
++            clip: Clip,
++            localTimeline: KeyframeLocalTimeline
++        ) -> String {
++            let elapsed = frame - clip.startFrame
++            if case .title = localTimeline {
++                return time(frames: elapsed)
++            }
+             guard abs(clip.speed - 1) > 0.001 else {
+-                return time(frames: frame - clip.startFrame)
++                let (localFrame, overflow) = clip.trimStartFrame.addingReportingOverflow(elapsed)
++                guard !overflow else {
++                    recordTimingFailure("A keyframe time overflowed integer frame arithmetic.")
++                    return "0s"
++                }
++                guard case .media(let origin) = localTimeline else { return "0s" }
++                return time(frames: localFrame, from: origin)
+             }
+             let speed = rationalSpeed(clip.speed)
+             guard let trim = checkedMultiply(Int64(clip.trimStartFrame), speed.denominator),
+-                  let elapsed = checkedMultiply(Int64(frame - clip.startFrame), speed.numerator),
+-                  let numerator = checkedAdd(trim, elapsed),
++                  let scaledElapsed = checkedMultiply(Int64(elapsed), speed.numerator),
++                  let numerator = checkedAdd(trim, scaledElapsed),
+                   let denominator = checkedMultiply(Int64(fps), speed.numerator) else {
+                 recordTimingFailure("A keyframe time overflowed 64-bit rational arithmetic.")
+                 return "0s"
+@@ -1355,6 +1427,7 @@ enum FCPXMLExporter {
+             var audioOrdinal = 0
+             var result: [EmittableClip] = []
+             for track in timeline.tracks {
++                guard EmissionSelection.supports(track) else { continue }
+                 let lane: Int
+                 let enabled: Bool
+                 if track.type.isVisual {
+@@ -1365,11 +1438,9 @@ enum FCPXMLExporter {
+                     lane = -(audioOrdinal + 1)
+                     enabled = !track.muted
+                     audioOrdinal += 1
+-                } else {
+-                    continue
+-                }
++                } else { continue }
+                 result += track.clips
+-                    .filter(isEmittable)
++                    .filter { EmissionSelection.includes($0, on: track, resolver: resolver) }
+                     .sorted {
+                         if $0.startFrame != $1.startFrame { return $0.startFrame < $1.startFrame }
+                         return $0.id < $1.id
+@@ -1379,18 +1450,6 @@ enum FCPXMLExporter {
+             return result
+         }
+ 
+-        private func isEmittable(_ clip: Clip) -> Bool {
+-            guard clip.durationFrames > 0 else { return false }
+-            switch clip.mediaType {
+-            case .text:
+-                return clip.textContent?.isEmpty == false
+-            case .audio, .video, .image:
+-                return resolver.resolveURL(for: clip.mediaRef) != nil
+-            case .lottie, .document:
+-                return false
+-            }
+-        }
+-
+         private func indexLinkedPairs(_ clips: [EmittableClip]) {
+             var byGroup: [String: (video: [EmittableClip], audio: [EmittableClip])] = [:]
+             for item in clips {
+diff --git a/Sources/NexGenVideo/Export/XMLExporter.swift b/Sources/NexGenVideo/Export/XMLExporter.swift
+index 5bee20fa..80f9a2de 100644
+--- a/Sources/NexGenVideo/Export/XMLExporter.swift
++++ b/Sources/NexGenVideo/Export/XMLExporter.swift
+@@ -258,7 +258,7 @@ enum XMLExporter {
+             let entry = resolver.entry(for: mediaRef)
+             let url = resolver.resolveURL(for: mediaRef)
+             // Resolve matches media by exact filename + extension.
+-            let fileName = resolver.interchangeFilename(for: mediaRef)
++            let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
+             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.
+             let pathUrl = url
+                 .map { $0.absoluteString.replacingOccurrences(of: "file://", with: "file://localhost//") }
+diff --git a/Tests/NexGenVideoTests/Export/FCPXMLInteropContractTests.swift b/Tests/NexGenVideoTests/Export/FCPXMLInteropContractTests.swift
+index 6c029c3d..d5ca1a9b 100644
+--- a/Tests/NexGenVideoTests/Export/FCPXMLInteropContractTests.swift
++++ b/Tests/NexGenVideoTests/Export/FCPXMLInteropContractTests.swift
+@@ -372,6 +372,116 @@ struct FCPXMLInteropContractTests {
+         #expect(try values("//asset-clip[@name='Retime.mov']/timeMap/timept[2]/@value", in: xml) == ["1101/10s"])
+     }
+ 
++    @Test func keyframesUseEachOwningClipsLocalTimeline() throws {
++        let fixture = try makeFixture([
++            .init(id: "direct", storageName: "Direct.mov", originalFilename: "Direct.mov"),
++            .init(id: "still", storageName: "Still.png", originalFilename: "Still.png", type: .image),
++            .init(id: "compound", storageName: "Compound.mov", originalFilename: "Compound.mov", hasAudio: true),
++            .init(id: "retimed", storageName: "Retimed.mov", originalFilename: "Retimed.mov"),
++        ])
++        defer { try? FileManager.default.removeItem(at: fixture.root) }
++
++        var direct = Fixtures.clip(
++            id: "direct-clip", mediaRef: "direct", start: 30, duration: 60, trimStart: 10
++        )
++        direct.positionTrack = KeyframeTrack(keyframes: [
++            .init(frame: 0, value: .init(a: 0, b: 0)),
++            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
++        ])
++        var still = Fixtures.clip(
++            id: "still-clip", mediaRef: "still", mediaType: .image,
++            start: 120, duration: 60, trimStart: 5
++        )
++        still.positionTrack = KeyframeTrack(keyframes: [
++            .init(frame: 0, value: .init(a: 0, b: 0)),
++            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
++        ])
++        var compound = Fixtures.clip(
++            id: "compound-clip", mediaRef: "compound", start: 210, duration: 60, trimStart: 12
++        )
++        compound.positionTrack = KeyframeTrack(keyframes: [
++            .init(frame: 0, value: .init(a: 0, b: 0)),
++            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
++        ])
++        var retimed = Fixtures.clip(
++            id: "retimed-clip", mediaRef: "retimed",
++            start: 300, duration: 60, trimStart: 20, speed: 2
++        )
++        retimed.positionTrack = KeyframeTrack(keyframes: [
++            .init(frame: 0, value: .init(a: 0, b: 0)),
++            .init(frame: 15, value: .init(a: 0.1, b: 0.1)),
++        ])
++        var title = Fixtures.clip(
++            id: "title-clip", mediaRef: "", mediaType: .text,
++            start: 390, duration: 60, trimStart: 17, speed: 2
++        )
++        title.textContent = "Local title"
++        title.opacityTrack = KeyframeTrack(keyframes: [
++            .init(frame: 0, value: 1),
++            .init(frame: 15, value: 0.5),
++        ])
++
++        let rendered = try FCPXMLExporter.render(
++            timeline: Fixtures.timeline(fps: 30, tracks: [
++                Fixtures.videoTrack(clips: [direct, still, compound, retimed, title]),
++            ]),
++            resolver: fixture.resolver,
++            sourceTimecodes: [
++                "direct": .init(
++                    frame: 36_000,
++                    quanta: 30,
++                    dropFrame: true,
++                    tick: .init(numerator: 1_001, denominator: 30_000)
++                ),
++                "still": .init(
++                    frame: 300,
++                    quanta: 30,
++                    dropFrame: false,
++                    tick: .init(numerator: 1, denominator: 30)
++                ),
++                "compound": .init(
++                    frame: 36_000,
++                    quanta: 30,
++                    dropFrame: true,
++                    tick: .init(numerator: 1_001, denominator: 30_000)
++                ),
++                "retimed": .init(
++                    frame: 2_400,
++                    quanta: 24,
++                    dropFrame: false,
++                    tick: .init(numerator: 1_001, denominator: 24_000)
++                ),
++            ]
++        )
++        let xml = try document(rendered.data)
++
++        #expect(try values("//asset-clip[@name='Direct.mov']/@start", in: xml) == ["18023/15s"])
++        #expect(try values(
++            "//asset-clip[@name='Direct.mov']/adjust-transform/param[@name='position']//keyframe/@time",
++            in: xml
++        ) == ["18023/15s", "36061/30s"])
++        #expect(try values("//video[@name='Still.png']/@start", in: xml) == ["61/6s"])
++        #expect(try values(
++            "//video[@name='Still.png']/adjust-transform/param[@name='position']//keyframe/@time",
++            in: xml
++        ) == ["61/6s", "32/3s"])
++        #expect(try values("//ref-clip[@name='Compound.mov']/@start", in: xml) == ["2/5s"])
++        #expect(try values(
++            "//ref-clip[@name='Compound.mov']/adjust-transform/param[@name='position']//keyframe/@time",
++            in: xml
++        ) == ["2/5s", "9/10s"])
++        #expect(try values("//asset-clip[@name='Retimed.mov']/@start", in: xml) == ["1/3s"])
++        #expect(try values(
++            "//asset-clip[@name='Retimed.mov']/adjust-transform/param[@name='position']//keyframe/@time",
++            in: xml
++        ) == ["1/3s", "5/6s"])
++        #expect(try values("//title[@name='Local title']/@start", in: xml) == ["0s"])
++        #expect(try values(
++            "//title[@name='Local title']/adjust-blend/param[@name='amount']//keyframe/@time",
++            in: xml
++        ) == ["0s", "1/2s"])
++    }
++
+     @Test func projectAliasesRelinkOnceWithStableReadableIdentity() async throws {
+         let fixture = try makeFixture([
+             .init(id: "canonical", storageName: "Camera.mov", originalFilename: "Camera Original.mov"),
+@@ -497,6 +607,124 @@ struct FCPXMLInteropContractTests {
+         #expect(rendered.mediaBindings.map(\.filename) == ["Camera.mov", "Camera.mov"])
+     }
+ 
++    @Test func stagingAndEvidenceContainExactlyEmittedMedia() async throws {
++        let fixture = try makeFixture([
++            .init(id: "valid", storageName: "valid-storage.mov", originalFilename: "Valid.mov"),
++            .init(id: "lottie", storageName: "lottie-storage.json", type: .lottie),
++            .init(id: "document", storageName: "document-storage.md", type: .document),
++            .init(id: "zero", storageName: "zero-storage.mov"),
++            .init(id: "unsupported-track", storageName: "unsupported-track.mov"),
++            .init(id: "offline", storageName: "offline-storage.mov"),
++        ], projectOwned: true)
++        defer { try? FileManager.default.removeItem(at: fixture.root) }
++        let project = try #require(fixture.project)
++        let mediaDirectory = project.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
++        for name in [
++            "lottie-storage.json", "document-storage.md", "zero-storage.mov", "unsupported-track.mov",
++        ] {
++            let url = mediaDirectory.appendingPathComponent(name)
++            try FileManager.default.removeItem(at: url)
++            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
++        }
++        try FileManager.default.removeItem(at: mediaDirectory.appendingPathComponent("offline-storage.mov"))
++
++        let timeline = Fixtures.timeline(tracks: [
++            Fixtures.videoTrack(clips: [
++                Fixtures.clip(id: "valid-clip", mediaRef: "valid", start: 0, duration: 30),
++                Fixtures.clip(
++                    id: "lottie-clip", mediaRef: "lottie", mediaType: .lottie,
++                    start: 30, duration: 30
++                ),
++                Fixtures.clip(
++                    id: "document-clip", mediaRef: "document", mediaType: .document,
++                    start: 60, duration: 30
++                ),
++                Fixtures.clip(id: "zero-clip", mediaRef: "zero", start: 90, duration: 0),
++                Fixtures.clip(id: "offline-clip", mediaRef: "offline", start: 90, duration: 30),
++            ]),
++            Track(type: .document, clips: [
++                Fixtures.clip(
++                    id: "unsupported-track-clip", mediaRef: "unsupported-track",
++                    start: 0, duration: 30
++                ),
++            ]),
++        ])
++        let output = fixture.root.appendingPathComponent("Selection.fcpxml")
++        let report = try await FCPXMLExporter.export(
++            timeline: timeline,
++            resolver: fixture.resolver,
++            projectName: "Selection",
++            outputURL: output
++        )
++        let sidecar = fixture.root.appendingPathComponent("Selection Media", isDirectory: true)
++        let sidecarFiles = try FileManager.default.contentsOfDirectory(
++            at: sidecar,
++            includingPropertiesForKeys: [.isRegularFileKey]
++        ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
++        let binding = try #require(report.mediaBindings.first)
++        let bindingURL = try #require(URL(string: binding.sourceURL))
++
++        #expect(Set(report.warnings.map(\.code)) == [
++            "color_metadata_not_exported",
++            "document_not_timeline_media",
++            "lottie_requires_render",
++            "offline_media",
++        ])
++        #expect(report.warnings.first(where: {
++            $0.code == "lottie_requires_render"
++        })?.clipID == "lottie-clip")
++        #expect(report.warnings.first(where: {
++            $0.code == "document_not_timeline_media"
++        })?.clipID == "document-clip")
++        #expect(report.warnings.first(where: {
++            $0.code == "offline_media"
++        })?.clipID == "offline-clip")
++        #expect(report.validation.assetCount == 1)
++        #expect(report.mediaBindings.count == 1)
++        #expect(binding.mediaRefs == ["valid"])
++        #expect(report.stagedProjectMediaCount == 1)
++        #expect(sidecarFiles == [bindingURL])
++        #expect(binding.mediaSHA256 == (try FileDigest.sha256(of: bindingURL)))
++        #expect(binding.mediaByteCount == Int64((try Data(contentsOf: bindingURL)).count))
++        #expect(report.mediaByteCount == binding.mediaByteCount)
++    }
++
++    @Test func emittedMediaStillFailsOnARealReadError() async throws {
++        let fixture = try makeFixture([
++            .init(id: "invalid", storageName: "invalid-storage.mov", originalFilename: "Invalid.mov"),
++        ], projectOwned: true)
++        defer { try? FileManager.default.removeItem(at: fixture.root) }
++        let project = try #require(fixture.project)
++        let invalidSource = project
++            .appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
++            .appendingPathComponent("invalid-storage.mov")
++        try FileManager.default.removeItem(at: invalidSource)
++        try FileManager.default.createDirectory(at: invalidSource, withIntermediateDirectories: true)
++        let output = fixture.root.appendingPathComponent("Invalid.fcpxml")
++
++        do {
++            _ = try await FCPXMLExporter.export(
++                timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
++                    Fixtures.clip(id: "invalid-clip", mediaRef: "invalid", start: 0, duration: 30),
++                ])]),
++                resolver: fixture.resolver,
++                projectName: "Invalid",
++                outputURL: output
++            )
++            Issue.record("Non-regular emitted media unexpectedly exported")
++        } catch ExportError.xmlMediaReadFailed(let source, let reason) {
++            #expect(source == invalidSource.resolvingSymlinksInPath())
++            #expect(reason.contains("regular file"))
++        } catch {
++            Issue.record("Unexpected emitted-media error: \(error)")
++        }
++
++        #expect(!FileManager.default.fileExists(atPath: output.path))
++        #expect(!FileManager.default.fileExists(
++            atPath: fixture.root.appendingPathComponent("Invalid Media", isDirectory: true).path
++        ))
++    }
++
+     @Test func videoAudioCaptionsTransformsAndEffectsExportOrWarn() throws {
+         let fixture = try makeFixture([
+             .init(id: "video", storageName: "video.mov"),
+@@ -633,7 +861,7 @@ struct FCPXMLInteropContractTests {
+         try FileManager.default.createDirectory(at: directoryDestination, withIntermediateDirectories: true)
+         do {
+             _ = try await FCPXMLExporter.export(
+-                timeline: Fixtures.timeline(),
++                timeline: timeline,
+                 resolver: fixture.resolver,
+                 projectName: "Failure",
+                 outputURL: directoryDestination
+diff --git a/Tests/NexGenVideoTests/Export/XMLExporterTests.swift b/Tests/NexGenVideoTests/Export/XMLExporterTests.swift
+index e148f980..f85861ef 100644
+--- a/Tests/NexGenVideoTests/Export/XMLExporterTests.swift
++++ b/Tests/NexGenVideoTests/Export/XMLExporterTests.swift
+@@ -166,6 +166,50 @@ struct XMLExporterTests {
+         #expect(xml.contains("<end>90</end>")) // 30 + 60
+     }
+ 
++    @Test func readableClipNameKeepsXMEMLFileNameAlignedWithPathBasename() throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("XMLExporterIdentity-\(UUID().uuidString)", isDirectory: true)
++        let project = root.appendingPathComponent("Source.ngv", isDirectory: true)
++        let mediaDirectory = project.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
++        try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: root) }
++        let storageName = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.mov"
++        try Data("media".utf8).write(to: mediaDirectory.appendingPathComponent(storageName))
++        var entry = MediaManifestEntry(
++            id: "camera", name: "Camera", type: .video,
++            source: .project(relativePath: "\(Project.mediaDirectoryName)/\(storageName)"),
++            duration: 1
++        )
++        entry.originalFilename = "Camera Original.mov"
++        var manifest = MediaManifest()
++        manifest.entries = [entry]
++        let resolver = MediaResolver(manifest: { manifest }, projectURL: { project })
++        let output = root.appendingPathComponent("Readable.xml")
++
++        try XMLExporter.export(
++            timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
++                Fixtures.clip(id: "readable", mediaRef: "camera", start: 0, duration: 30),
++            ])]),
++            resolver: resolver,
++            outputURL: output
++        )
++        let document = try XMLDocument(data: Data(contentsOf: output), options: [.nodePreserveAll])
++        let clipName = try #require(
++            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/name").first?.stringValue
++        )
++        let fileName = try #require(
++            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/file/name").first?.stringValue
++        )
++        let pathURL = try #require(
++            document.nodes(forXPath: "//clipitem[@id='clipitem-readable']/file/pathurl").first?.stringValue
++        )
++
++        #expect(clipName == "Camera Original.mov")
++        #expect(fileName == storageName)
++        #expect(URL(string: pathURL)?.lastPathComponent == fileName)
++        #expect(clipName != fileName)
++    }
++
+     @Test func clipsReferencingUnresolvableMediaAreSkipped() throws {
+         // No manifest entry for the clip's mediaRef → resolveURL returns nil → sortEmittable
+         // drops the clip → no clipitem element in the output. Pins this fail-soft behavior
+diff --git a/docs/FCPXML_INTEROP.md b/docs/FCPXML_INTEROP.md
+index c1c44654..d9c1029c 100644
+--- a/docs/FCPXML_INTEROP.md
++++ b/docs/FCPXML_INTEROP.md
+@@ -33,7 +33,10 @@ No unsupported timeline feature is silently represented as if it survived the ha
+ 
+ All FCPXML times and container durations are reduced rational seconds. NTSC source rates use exact `1001/24000`,
+ `1001/30000`, or `1001/60000` frame durations, never rounded decimal rates. Source in/out includes
+-the exact source origin and trim; retimes keep an exact rational time map. Drop-frame changes the
++the exact source origin and trim; retimes keep an exact rational time map. Apple defines
++[`start` as the beginning of an element's local timeline](https://developer.apple.com/documentation/professional-video-applications/timing-attributes),
++so keyframes include that local start for direct and compound media while title keyframes remain
++zero-based. Drop-frame changes the
+ timecode numbering convention, not elapsed time. Other fractional rates remain exact (for example,
+ 29.5 fps is `2/59s`); their FCP format name stays undefined and the export reports a
+ `nonstandard_source_rate` warning instead of coercing them to a nearby NTSC rate.

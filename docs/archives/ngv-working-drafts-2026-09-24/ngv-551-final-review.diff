@@ -1,0 +1,1934 @@
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index b4925f13..a429dcbe 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -294,6 +294,7 @@ enum WorkspaceUIAcceptance {
+             let selectionPreviewHistory = editor.previewTabHistory
+             let selectionPreviewHistoryIndex = editor.previewTabHistoryIndex
+             let selectionSourceStates = editor.sourcePreviewStates
++            let selectionExplicitTimelineClipID = editor.explicitTimelineInspectionClipID
+ 
+             guard click(identifier: "selection.asset.selection-source", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+@@ -353,22 +354,60 @@ enum WorkspaceUIAcceptance {
+                   }) else {
+                 fail("offline source selection exposed an invalid placement command", scale: scale)
+             }
+-            editor.seekSourceToFrame(18)
+-            guard click(identifier: "source.markIn", in: window) == nil,
++            editor.currentFrame = 75
++            guard click(
++                identifier: "preview.scrub",
++                horizontalFraction: 18.5 / 120,
++                in: window
++            ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.sourcePlayheadFrame == 18 && editor.currentFrame == 75
++                  }),
++                  click(identifier: "source.markIn", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.activeSourcePreviewState?.inFrame == 18
+                   }) else {
+-                fail("source Mark In control did not write the source range", scale: scale)
++                fail("source scrub or Mark In did not write the source range", scale: scale)
+             }
+-            editor.seekSourceToFrame(72)
+-            guard pressKey(keyCode: 31, characters: "o", in: window) == nil,
++            guard pressKey(
++                keyCode: 124,
++                characters: "\u{F703}",
++                modifiers: [.shift],
++                in: window
++            ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.sourcePlayheadFrame == 23 && editor.currentFrame == 75
++                  }),
++                  click(
++                      identifier: "preview.scrub",
++                      horizontalFraction: 71.5 / 120,
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), { editor.sourcePlayheadFrame == 71 }),
++                  click(identifier: "preview.stepForward", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.sourcePlayheadFrame == 72 && editor.currentFrame == 75
++                  }),
++                  pressKey(keyCode: 123, characters: "\u{F702}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), { editor.sourcePlayheadFrame == 71 }),
++                  click(identifier: "preview.stepForward", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), { editor.sourcePlayheadFrame == 72 }),
++                  pressKey(keyCode: 31, characters: "o", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.activeSourcePreviewState?.outFrame == 72
+                   }) else {
+-                fail("source Mark Out keyboard command did not write the source range", scale: scale)
++                fail("source skip, arrow, step, or Mark Out command failed", scale: scale)
++            }
++            guard click(
++                identifier: "preview.scrub",
++                horizontalFraction: 42.5 / 120,
++                in: window
++            ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.sourcePlayheadFrame == 42 && editor.currentFrame == 75
++                  }) else {
++                fail("source scrub did not restore the marked source playhead", scale: scale)
+             }
+-            editor.seekSourceToFrame(42)
+-            editor.currentFrame = 75
+ 
+             let timelineBeforePlacement = editor.timeline
+             guard let acceptanceUndoManager = document.undoManager else {
+@@ -420,6 +459,16 @@ enum WorkspaceUIAcceptance {
+                   await waitUntil(timeout: .seconds(5), { editor.isPlaying }) else {
+                 fail("source transport did not start playback", scale: scale)
+             }
++            scheduleKeySequence([(53, "\u{1b}")], in: window)
++            guard contextClick(identifier: "selection.asset.selection-source", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourceAsset?.id == "selection-source"
++                          && editor.inspectedObject == .mediaAsset("selection-source")
++                          && editor.isPlaying
++                  }) else {
++                fail("same-source context activation interrupted playback", scale: scale)
++            }
++            try? await Task.sleep(for: .milliseconds(450))
+             guard click(identifier: "media.search", in: window) == nil,
+                   typeKeys(
+                       [
+@@ -501,9 +550,92 @@ enum WorkspaceUIAcceptance {
+                       editor.isTimelinePreviewActive
+                           && editor.selectedClipIds.isEmpty
+                           && editor.inspectedObject == nil
+-                  }) else {
++            }) else {
+                 fail("title or empty-area selection did not produce a deterministic context", scale: scale)
+             }
++            guard click(identifier: "selection.clip.selection-linked-video", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.selectedClipIds == ["selection-linked-video", "selection-linked-audio"]
++                          && editor.isTimelineBatchSelection
++                          && editor.inspectedObject == nil
++                          && probeState(identifier: "preview.selectionContext", in: window) == false
++                          && probeState(identifier: "inspector.selectionContext", in: window) == false
++                  }),
++                  pressKey(
++                      keyCode: 8,
++                      characters: "c",
++                      modifiers: [.command],
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), { editor.clipClipboard.count == 2 }),
++                  click(identifier: "selection.trackLock.selection-linked-audio-track", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.timeline.tracks.first(where: {
++                          $0.id == "selection-linked-audio-track"
++                      })?.editLocked == true
++                          && validatedMainMenuItemEnabled(title: "Paste") == false
++                  }) else {
++                fail("linked A/V selection or native disabled Paste validation failed", scale: scale)
++            }
++            let pasteBlockedTimeline = editor.timeline
++            guard pressKey(
++                keyCode: 9,
++                characters: "v",
++                modifiers: [.command],
++                in: window
++            ) == nil else {
++                fail("could not send the disabled Paste command", scale: scale)
++            }
++            try? await Task.sleep(for: .milliseconds(100))
++            guard editor.timeline == pasteBlockedTimeline,
++                  click(identifier: "selection.trackLock.selection-linked-audio-track", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.timeline.tracks.first(where: {
++                          $0.id == "selection-linked-audio-track"
++                      })?.editLocked == false
++                  }),
++                  click(identifier: "selection.clip.selection-title", in: window) == nil,
++                  click(
++                      identifier: "selection.clip.selection-clip",
++                      modifiers: [.shift],
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.selectedClipIds == ["selection-title", "selection-clip"]
++                          && editor.isTimelineBatchSelection
++                          && editor.inspectedObject == nil
++                  }) else {
++                fail("disabled Paste mutated the timeline or batch selection was lost", scale: scale)
++            }
++            scheduleKeySequence([(115, "\u{F729}"), (36, "\r")], in: window)
++            guard contextClick(identifier: "selection.clip.selection-clip", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.selectedClipIds == ["selection-title", "selection-clip"]
++                          && editor.activeTimelineInspectionClipID == "selection-clip"
++                          && editor.timelineInspectorClipIDs == ["selection-clip"]
++                          && editor.inspectedObject == .clip("selection-clip")
++                          && editor.selectionContextHint?.contains("Selection Source") == true
++                          && probeState(identifier: "preview.selectionContext", in: window) == true
++                          && probeState(identifier: "inspector.selectionContext", in: window) == true
++                          && probeState(
++                              identifier: "preview.selectionContext.selection-clip",
++                              in: window
++                          ) == true
++                          && probeState(
++                              identifier: "inspector.selectionContext.selection-clip",
++                              in: window
++                          ) == true
++                          && probeState(
++                              identifier: "inspector.clipMutation.selection-clip",
++                              in: window
++                          ) == true
++                  }),
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.clipClipboard.count == 1
++                          && editor.clipClipboard.first?.clip.id == "selection-clip"
++                  }) else {
++                fail("context click did not keep one visible and actionable clip target", scale: scale)
++            }
+             guard click(identifier: "selection.clip.selection-clip", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.isTimelinePreviewActive
+@@ -524,6 +656,28 @@ enum WorkspaceUIAcceptance {
+                           && editor.activeSourcePreviewState?.inFrame == 18
+                           && editor.activeSourcePreviewState?.outFrame == 72
+                   }),
++                  pressKey(
++                      keyCode: 6,
++                      characters: "z",
++                      modifiers: [.command],
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.clipFor(id: "selection-clip")?.durationFrames == 120
++                          && editor.activeSourceAsset?.id == "selection-source"
++                          && editor.inspectedObject == .mediaAsset("selection-source")
++                  }),
++                  pressKey(
++                      keyCode: 6,
++                      characters: "Z",
++                      modifiers: [.command, .shift],
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.clipFor(id: "selection-clip")?.durationFrames == 96
++                          && editor.activeSourceAsset?.id == "selection-source"
++                          && editor.inspectedObject == .mediaAsset("selection-source")
++                  }),
+                   click(identifier: "selection.clip.selection-clip", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.isTimelinePreviewActive
+@@ -572,6 +726,11 @@ enum WorkspaceUIAcceptance {
+                     "nativeTimelineTrim": true,
+                     "nativeTitleSelection": true,
+                     "nativeEmptySelection": true,
++                    "nativeLinkedAVSelection": true,
++                    "nativeContextTarget": true,
++                    "headerInspectorTargetMatched": true,
++                    "nativeTimelineUndoRedoAfterSourceSwitch": true,
++                    "nativeDisabledPaste": true,
+                     "sourceStatePreserved": editor.sourcePreviewState(for: "selection-source")
+                         == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72),
+                 ]
+@@ -681,7 +840,10 @@ enum WorkspaceUIAcceptance {
+                     "insertUndoVerified": true,
+                     "overwriteUndoVerified": true,
+                     "nativeSourceCommands": true,
++                    "nativeSourceScrub": true,
++                    "nativeSourceStepAndArrow": true,
+                     "nativeMultiselectDeselect": true,
++                    "sameSourceReactivationPreservedPlayback": true,
+                     "nativeSearchPreservedPlayback": true,
+                     "sortAndFilterPreservedPlayback": true,
+                     "listModePreserved": true,
+@@ -702,6 +864,7 @@ enum WorkspaceUIAcceptance {
+             editor.previewTabHistory = selectionPreviewHistory
+             editor.previewTabHistoryIndex = selectionPreviewHistoryIndex
+             editor.sourcePreviewStates = selectionSourceStates
++            editor.explicitTimelineInspectionClipID = selectionExplicitTimelineClipID
+             editor.sourcePlayheadFrame = selectionSourceFrame
+             editor.videoEngine?.activateTab(editor.activePreviewTab)
+             acceptanceUndoManager.removeAllActions()
+@@ -832,6 +995,24 @@ enum WorkspaceUIAcceptance {
+             durationFrames: 120
+         )
+         clip.id = "selection-clip"
++        var linkedVideo = Clip(
++            mediaRef: "selection-source",
++            mediaType: .video,
++            sourceClipType: .video,
++            startFrame: 150,
++            durationFrames: 30
++        )
++        linkedVideo.id = "selection-linked-video"
++        linkedVideo.linkGroupId = "selection-linked-pair"
++        var linkedAudio = Clip(
++            mediaRef: "selection-source",
++            mediaType: .audio,
++            sourceClipType: .video,
++            startFrame: 150,
++            durationFrames: 30
++        )
++        linkedAudio.id = "selection-linked-audio"
++        linkedAudio.linkGroupId = "selection-linked-pair"
+         var title = Clip(
+             mediaRef: "",
+             mediaType: .text,
+@@ -846,11 +1027,13 @@ enum WorkspaceUIAcceptance {
+         timeline.width = 640
+         timeline.height = 360
+         timeline.settingsConfigured = true
+-        var track = Track(type: .video, clips: [clip])
++        var track = Track(type: .video, clips: [clip, linkedVideo])
+         track.id = "selection-track"
+         var titleTrack = Track(type: .video, clips: [title])
+         titleTrack.id = "selection-title-track"
+-        timeline.tracks = [track, titleTrack]
++        var linkedAudioTrack = Track(type: .audio, clips: [linkedAudio])
++        linkedAudioTrack.id = "selection-linked-audio-track"
++        timeline.tracks = [track, titleTrack, linkedAudioTrack]
+         try JSONEncoder().encode(timeline).write(
+             to: projectURL.appendingPathComponent(Project.timelineFilename),
+             options: .atomic
+@@ -1293,6 +1476,7 @@ enum WorkspaceUIAcceptance {
+     private static func click(
+         identifier: String,
+         modifiers: NSEvent.ModifierFlags = [],
++        horizontalFraction: CGFloat = 0.5,
+         in window: NSWindow
+     ) -> String? {
+         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+@@ -1306,7 +1490,11 @@ enum WorkspaceUIAcceptance {
+         guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+             return "control has no finite frame"
+         }
+-        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
++        let fraction = max(0, min(1, horizontalFraction))
++        let location = probe.convert(
++            NSPoint(x: frame.minX + frame.width * fraction, y: frame.midY),
++            to: nil
++        )
+         guard root.bounds.contains(root.convert(location, from: nil)) else {
+             return "control is outside the window"
+         }
+@@ -1459,6 +1647,19 @@ enum WorkspaceUIAcceptance {
+         return probe.acceptanceState
+     }
+ 
++    private static func validatedMainMenuItemEnabled(title: String) -> Bool? {
++        guard let menu = NSApp.mainMenu else { return nil }
++        func find(in menu: NSMenu) -> NSMenuItem? {
++            menu.update()
++            for item in menu.items {
++                if item.title == title { return item }
++                if let submenu = item.submenu, let match = find(in: submenu) { return match }
++            }
++            return nil
++        }
++        return find(in: menu)?.isEnabled
++    }
++
+     private static func waitUntil(
+         timeout: Duration,
+         _ predicate: () -> Bool
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+ClipMutations.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+ClipMutations.swift
+index e4307caa..a94e351d 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+ClipMutations.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+ClipMutations.swift
+@@ -5,6 +5,7 @@ struct TimelineInteractionSnapshot {
+     let selectedGap: GapSelection?
+     let selectedTimelineRange: TimelineRangeSelection?
+     let inspectedObject: InspectedObject?
++    let explicitInspectionClipID: String?
+ }
+ 
+ /// Clip-level mutations: move, split, remove, speed, property edits, overwrite-style
+@@ -248,6 +249,7 @@ extension EditorViewModel {
+             if isTimelinePreviewActive,
+                case .clip(let inspectedID) = inspectedObject,
+                ids.contains(inspectedID) {
++                explicitTimelineInspectionClipID = nil
+                 inspectedObject = InspectedObject.fromSelection(
+                     clipIDs: selectedClipIds,
+                     mediaAssetIDs: [],
+@@ -349,7 +351,8 @@ extension EditorViewModel {
+             selectedClipIds: selectedClipIds,
+             selectedGap: selectedGap,
+             selectedTimelineRange: selectedTimelineRange,
+-            inspectedObject: inspectedObject
++            inspectedObject: inspectedObject,
++            explicitInspectionClipID: explicitTimelineInspectionClipID
+         )
+     }
+ 
+@@ -357,7 +360,19 @@ extension EditorViewModel {
+         selectedClipIds = snapshot.selectedClipIds
+         selectedGap = snapshot.selectedGap
+         selectedTimelineRange = snapshot.selectedTimelineRange
+-        inspectedObject = snapshot.inspectedObject
++        guard isTimelinePreviewActive else { return }
++        explicitTimelineInspectionClipID = snapshot.explicitInspectionClipID.flatMap {
++            findClip(id: $0) == nil ? nil : $0
++        }
++        if case .clip(let id) = snapshot.inspectedObject, findClip(id: id) == nil {
++            inspectedObject = InspectedObject.fromSelection(
++                clipIDs: selectedClipIds,
++                mediaAssetIDs: [],
++                isMarquee: false
++            )
++        } else {
++            inspectedObject = snapshot.inspectedObject
++        }
+     }
+ 
+     fileprivate func setClipSpeed(at loc: ClipLocation, newSpeed: Double) {
+@@ -681,31 +696,53 @@ extension EditorViewModel {
+     // MARK: - Playhead-relative operations
+ 
+     func splitAtPlayhead() {
+-        for id in selectedClipIds {
+-            splitClip(clipId: id, atFrame: currentFrame)
++        let selected = selectedClipIds
++        guard !selected.isEmpty else { return }
++        var representatives: [String] = []
++        var covered: Set<String> = []
++        for id in selected where !covered.contains(id) {
++            representatives.append(id)
++            covered.formUnion(expandToLinkGroup([id]))
++        }
++        withTimelineSwap(actionName: selected.count == 1 ? "Split Clip" : "Split Clips") {
++            for id in representatives {
++                splitClip(clipId: id, atFrame: currentFrame)
++            }
+         }
+     }
+ 
+     func trimStartToPlayhead() {
++        var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
+         for id in selectedClipIds {
+             guard let loc = findClip(id: id) else { continue }
+             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
+             let delta = currentFrame - clip.startFrame
+             let sourceDelta = Int((Double(delta) * clip.speed).rounded())
+-            trimClips([(clipId: id, trimStartFrame: clip.trimStartFrame + sourceDelta, trimEndFrame: clip.trimEndFrame)])
++            edits.append((
++                clipId: id,
++                trimStartFrame: clip.trimStartFrame + sourceDelta,
++                trimEndFrame: clip.trimEndFrame
++            ))
+         }
++        trimClips(edits)
+     }
+ 
+     func trimEndToPlayhead() {
++        var edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)] = []
+         for id in selectedClipIds {
+             guard let loc = findClip(id: id) else { continue }
+             let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+             guard currentFrame > clip.startFrame && currentFrame < clip.endFrame else { continue }
+             let delta = clip.endFrame - currentFrame
+             let sourceDelta = Int((Double(delta) * clip.speed).rounded())
+-            trimClips([(clipId: id, trimStartFrame: clip.trimStartFrame, trimEndFrame: clip.trimEndFrame + sourceDelta)])
++            edits.append((
++                clipId: id,
++                trimStartFrame: clip.trimStartFrame,
++                trimEndFrame: clip.trimEndFrame + sourceDelta
++            ))
+         }
++        trimClips(edits)
+     }
+ 
+     func deleteSelectedClips() {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Clipboard.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Clipboard.swift
+index 737f7abe..b83ac56e 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Clipboard.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Clipboard.swift
+@@ -21,7 +21,10 @@ extension EditorViewModel {
+ 
+     /// Snapshot the current selection into `clipClipboard`
+     func copySelectedClipsToClipboard() {
+-        let ids = selectedClipIds
++        copyClipsToClipboard(ids: selectedClipIds)
++    }
++
++    func copyClipsToClipboard(ids: Set<String>) {
+         guard !ids.isEmpty else { return }
+ 
+         var captures: [(clip: Clip, trackIndex: Int, trackId: String, trackType: ClipType)] = []
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+index b5874025..b1abc8d5 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+@@ -186,6 +186,7 @@ extension EditorViewModel {
+             selectedMediaAssetIds: selectedMediaAssetIds,
+             selectedFolderIds: selectedFolderIds,
+             inspectedObject: inspectedObject,
++            explicitTimelineInspectionClipID: explicitTimelineInspectionClipID,
+             previewTabs: previewTabs,
+             activePreviewTabId: activePreviewTabId,
+             previewTabHistory: previewTabHistory,
+@@ -216,6 +217,7 @@ extension EditorViewModel {
+         selectedMediaAssetIds = snapshot.selectedMediaAssetIds
+         selectedFolderIds = snapshot.selectedFolderIds
+         inspectedObject = snapshot.inspectedObject
++        explicitTimelineInspectionClipID = snapshot.explicitTimelineInspectionClipID
+         previewTabs = snapshot.previewTabs
+         activePreviewTabId = snapshot.activePreviewTabId
+         previewTabHistory = snapshot.previewTabHistory
+@@ -236,6 +238,7 @@ struct MediaLibraryUndoSnapshot {
+     let selectedMediaAssetIds: Set<String>
+     let selectedFolderIds: Set<String>
+     let inspectedObject: InspectedObject?
++    let explicitTimelineInspectionClipID: String?
+     let previewTabs: [PreviewTab]
+     let activePreviewTabId: String
+     let previewTabHistory: [String]
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
+index fd9c88fa..e6a385c4 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+PreviewTabs.swift
+@@ -1,5 +1,13 @@
+ import AppKit
+ 
++private struct SourceOverwritePlan {
++    let targetTrackID: String?
++    let linkedAudioTrackID: String?
++    let clearTrackIDs: [String]
++    let startFrame: Int
++    let endFrame: Int
++}
++
+ /// Preview identity and activation; tabs remain internal remembered-source state.
+ extension EditorViewModel {
+ 
+@@ -36,6 +44,31 @@ extension EditorViewModel {
+     var isTimelinePreviewActive: Bool { activePreviewTab == .timeline }
+     var isSourcePreviewActive: Bool { activeSourceAsset != nil }
+ 
++    var activeTimelineInspectionClipID: String? {
++        guard isTimelinePreviewActive else { return nil }
++        if let id = explicitTimelineInspectionClipID, findClip(id: id) != nil {
++            return id
++        }
++        guard selectedClipIds.count == 1, let id = selectedClipIds.first,
++              findClip(id: id) != nil else { return nil }
++        return id
++    }
++
++    var timelineInspectorClipIDs: Set<String> {
++        if let id = explicitTimelineInspectionClipID, isTimelinePreviewActive,
++           findClip(id: id) != nil {
++            return [id]
++        }
++        return selectedClipIds
++    }
++
++    var isTimelineBatchSelection: Bool {
++        isTimelinePreviewActive
++            && explicitTimelineInspectionClipID == nil
++            && !isMarqueeSelecting
++            && selectedClipIds.count > 1
++    }
++
+     func sourcePreviewState(for assetID: String) -> SourcePreviewState {
+         let duration = mediaAssets.first { $0.id == assetID }
+             .map { secondsToFrame(seconds: $0.duration, fps: timeline.fps) } ?? 0
+@@ -74,6 +107,7 @@ extension EditorViewModel {
+ 
+     func openPreviewTab(for asset: MediaAsset, atSourceFrame frame: Int? = nil) {
+         let tab = PreviewTab.mediaAsset(id: asset.id, name: asset.name, type: asset.type)
++        let wasActive = activePreviewTabId == tab.id
+         if !previewTabs.contains(where: { $0.id == tab.id }) {
+             previewTabs.append(tab)
+         }
+@@ -84,9 +118,14 @@ extension EditorViewModel {
+                 to: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+             )
+         }
++        explicitTimelineInspectionClipID = nil
+         activePreviewTabId = tab.id
+         sourcePlayheadFrame = sourcePreviewState(for: asset.id).playheadFrame
+-        videoEngine?.activateTab(tab)
++        if wasActive {
++            if frame != nil { videoEngine?.seek(to: sourcePlayheadFrame, mode: .exact) }
++        } else {
++            videoEngine?.activateTab(tab)
++        }
+         pushPreviewHistory(tab.id)
+     }
+ 
+@@ -109,20 +148,28 @@ extension EditorViewModel {
+         activateMediaAsset(asset, preservingSelection: true)
+     }
+ 
+-    func activateTimelineSelection(inspectedClipID: String? = nil) {
++    func activateTimelineSelection() {
++        explicitTimelineInspectionClipID = nil
++        activateTimelinePreview()
++        inspectedObject = InspectedObject.fromSelection(
++            clipIDs: selectedClipIds,
++            mediaAssetIDs: [],
++            isMarquee: isMarqueeSelecting
++        )
++    }
++
++    func activateTimelineClipContext(_ clipID: String) {
++        guard findClip(id: clipID) != nil else { return }
++        explicitTimelineInspectionClipID = clipID
++        activateTimelinePreview()
++        inspectedObject = .clip(clipID)
++    }
++
++    private func activateTimelinePreview() {
++        let wasActive = activePreviewTabId == PreviewTab.timeline.id
+         activePreviewTabId = PreviewTab.timeline.id
+-        videoEngine?.activateTab(.timeline)
++        if !wasActive { videoEngine?.activateTab(.timeline) }
+         pushPreviewHistory(PreviewTab.timeline.id)
+-
+-        if let inspectedClipID, findClip(id: inspectedClipID) != nil {
+-            inspectedObject = .clip(inspectedClipID)
+-        } else {
+-            inspectedObject = InspectedObject.fromSelection(
+-                clipIDs: selectedClipIds,
+-                mediaAssetIDs: [],
+-                isMarquee: isMarqueeSelecting
+-            )
+-        }
+     }
+ 
+     func activatePreviousSource() {
+@@ -192,10 +239,11 @@ extension EditorViewModel {
+     func canOverwriteSourceAsset(_ asset: MediaAsset) -> Bool {
+         guard asset.type.isPlaceable,
+               !asset.isGenerating,
+-              !isMediaOffline(asset.id) else { return false }
+-        return sourcePreviewState(for: asset.id).selectedFrames(
+-            durationFrames: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+-        ) != nil
++              !isMediaOffline(asset.id),
++              let frames = sourcePreviewState(for: asset.id).selectedFrames(
++                  durationFrames: secondsToFrame(seconds: asset.duration, fps: timeline.fps)
++              ) else { return false }
++        return sourceOverwritePlan(asset: asset, durationFrames: frames.count) != nil
+     }
+ 
+     @discardableResult
+@@ -214,17 +262,23 @@ extension EditorViewModel {
+               !asset.isGenerating,
+               !isMediaOffline(asset.id),
+               let frames = activeSourceSelectedFrames else { return [] }
+-        guard ripple ? canInsertActiveSource : canOverwriteActiveSource else { return [] }
++        let overwritePlan: SourceOverwritePlan?
++        if ripple {
++            guard canInsertSourceAsset(asset) else { return [] }
++            overwritePlan = nil
++        } else {
++            guard let plan = sourceOverwritePlan(asset: asset, durationFrames: frames.count) else {
++                return []
++            }
++            overwritePlan = plan
++        }
+         let fps = Double(timeline.fps)
+         let segment = (Double(frames.lowerBound) / fps)...(Double(frames.upperBound) / fps)
+-        let previousIDs = Set(timeline.tracks.flatMap(\.clips).map(\.id))
+         var created: [String] = []
+         withTimelineSwap(actionName: ripple ? "Insert Source" : "Overwrite Source") {
+-            let target = (ripple
+-                ? sourceEditTrackIndex(for: asset)
+-                : sourceOverwriteTrackIndex(for: asset, durationFrames: frames.count))
+-                ?? insertTrack(at: timeline.tracks.count, type: asset.type == .audio ? .audio : .video)
+             if ripple {
++                let target = sourceEditTrackIndex(for: asset)
++                    ?? insertTrack(at: timeline.tracks.count, type: asset.type == .audio ? .audio : .video)
+                 let sourceDuration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+                 created = rippleInsertClips(
+                     specs: [RippleInsertSpec(
+@@ -236,15 +290,45 @@ extension EditorViewModel {
+                     trackIndex: target,
+                     atFrame: currentFrame
+                 )
+-            } else {
+-                addClips(
+-                    assets: [asset],
++            } else if let overwritePlan {
++                for trackID in overwritePlan.clearTrackIDs {
++                    guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
++                        continue
++                    }
++                    clearRegion(
++                        trackIndex: trackIndex,
++                        start: overwritePlan.startFrame,
++                        end: overwritePlan.endFrame,
++                        prune: false
++                    )
++                }
++                let target = overwritePlan.targetTrackID.flatMap { id in
++                    timeline.tracks.firstIndex(where: { $0.id == id })
++                } ?? insertTrack(
++                    at: timeline.tracks.count,
++                    type: asset.type == .audio ? .audio : .video
++                )
++                let needsLinkedAudio = timeline.tracks[target].type == .video
++                    && asset.type == .video
++                    && asset.hasAudio
++                let linkedAudioTrackIndex: Int?
++                if needsLinkedAudio {
++                    linkedAudioTrackIndex = overwritePlan.linkedAudioTrackID.flatMap { id in
++                        timeline.tracks.firstIndex(where: { $0.id == id })
++                    } ?? insertTrack(at: timeline.tracks.count, type: .audio)
++                } else {
++                    linkedAudioTrackIndex = nil
++                }
++                created = placeClip(
++                    asset: asset,
+                     trackIndex: target,
+                     startFrame: currentFrame,
+-                    segments: [asset.id: segment]
++                    durationFrames: frames.count,
++                    linkedAudioTrackIndex: linkedAudioTrackIndex,
++                    sourceSegment: segment
+                 )
++                pruneEmptyTracks()
+             }
+-            created = timeline.tracks.flatMap(\.clips).map(\.id).filter { !previousIDs.contains($0) }
+         }
+         return created
+     }
+@@ -279,27 +363,117 @@ extension EditorViewModel {
+         }
+     }
+ 
+-    private func sourceOverwriteTrackIndex(for asset: MediaAsset, durationFrames: Int) -> Int? {
+-        let selected = timeline.tracks.indices.first {
+-            !timeline.tracks[$0].editLocked
+-                && sourceTrackIsCompatible(timeline.tracks[$0], with: asset)
+-                && timeline.tracks[$0].clips.contains(where: { selectedClipIds.contains($0.id) })
+-                && canClearRegion(
+-                    trackIndex: $0,
+-                    start: currentFrame,
+-                    end: currentFrame + durationFrames
+-                )
++    private func sourceOverwritePlan(asset: MediaAsset, durationFrames: Int) -> SourceOverwritePlan? {
++        let start = currentFrame
++        let end = currentFrame + durationFrames
++        let selectedTracks = timeline.tracks.indices.filter { index in
++            sourceTrackIsCompatible(timeline.tracks[index], with: asset)
++                && timeline.tracks[index].clips.contains { selectedClipIds.contains($0.id) }
+         }
+-        if let selected { return selected }
+-        return timeline.tracks.indices.first {
+-            !timeline.tracks[$0].editLocked
+-                && sourceTrackIsCompatible(timeline.tracks[$0], with: asset)
+-                && canClearRegion(
+-                    trackIndex: $0,
+-                    start: currentFrame,
+-                    end: currentFrame + durationFrames
+-                )
++        let otherTracks = timeline.tracks.indices.filter { index in
++            sourceTrackIsCompatible(timeline.tracks[index], with: asset)
++                && !selectedTracks.contains(index)
++        }
++        for targetIndex in selectedTracks + otherTracks {
++            if let plan = sourceOverwritePlan(
++                asset: asset,
++                targetTrackID: timeline.tracks[targetIndex].id,
++                startFrame: start,
++                endFrame: end
++            ) {
++                return plan
++            }
++        }
++        return sourceOverwritePlan(
++            asset: asset,
++            targetTrackID: nil,
++            startFrame: start,
++            endFrame: end
++        )
++    }
++
++    private func sourceOverwritePlan(
++        asset: MediaAsset,
++        targetTrackID: String?,
++        startFrame: Int,
++        endFrame: Int
++    ) -> SourceOverwritePlan? {
++        let needsLinkedAudio = asset.type == .video && asset.hasAudio
++        var audioCandidates: [String?] = [nil]
++        if needsLinkedAudio {
++            let linkedAudioIDs: [String] = targetTrackID.flatMap { id in
++                timeline.tracks.firstIndex(where: { $0.id == id })
++            }.map { targetIndex in
++                let overlapping = timeline.tracks[targetIndex].clips.filter {
++                    $0.startFrame < endFrame && startFrame < $0.endFrame
++                }
++                return overlapping.flatMap { clip in
++                    linkedPartnerIds(of: clip.id).compactMap { partnerID in
++                        guard let location = findClip(id: partnerID),
++                              timeline.tracks[location.trackIndex].type == .audio else { return nil }
++                        return timeline.tracks[location.trackIndex].id
++                    }
++                }
++            } ?? []
++            let availableAudioID = timeline.tracks.indices.first { index in
++                timeline.tracks[index].type == .audio
++                    && !timeline.tracks[index].editLocked
++                    && !timeline.tracks[index].clips.contains {
++                        $0.startFrame < endFrame && startFrame < $0.endFrame
++                    }
++            }.map { timeline.tracks[$0].id }
++            var uniqueLinkedAudioIDs: [String] = []
++            for id in linkedAudioIDs where !uniqueLinkedAudioIDs.contains(id) {
++                uniqueLinkedAudioIDs.append(id)
++            }
++            audioCandidates = uniqueLinkedAudioIDs.map { Optional($0) }
++            if let availableAudioID, !audioCandidates.contains(where: { $0 == availableAudioID }) {
++                audioCandidates.append(availableAudioID)
++            }
++            audioCandidates.append(nil)
++        }
++
++        for audioTrackID in audioCandidates {
++            let initial = Set([targetTrackID, audioTrackID].compactMap { $0 })
++            guard let clearTrackIDs = overwriteClearTrackIDs(
++                initialTrackIDs: initial,
++                startFrame: startFrame,
++                endFrame: endFrame
++            ) else { continue }
++            return SourceOverwritePlan(
++                targetTrackID: targetTrackID,
++                linkedAudioTrackID: audioTrackID,
++                clearTrackIDs: clearTrackIDs,
++                startFrame: startFrame,
++                endFrame: endFrame
++            )
++        }
++        return nil
++    }
++
++    private func overwriteClearTrackIDs(
++        initialTrackIDs: Set<String>,
++        startFrame: Int,
++        endFrame: Int
++    ) -> [String]? {
++        var pending = initialTrackIDs
++        var resolved: Set<String> = []
++        while let trackID = pending.popFirst() {
++            guard let index = timeline.tracks.firstIndex(where: { $0.id == trackID }),
++                  !timeline.tracks[index].editLocked,
++                  canClearRegion(trackIndex: index, start: startFrame, end: endFrame) else {
++                return nil
++            }
++            guard resolved.insert(trackID).inserted else { continue }
++            let overlapping = timeline.tracks[index].clips.filter {
++                $0.startFrame < endFrame && startFrame < $0.endFrame
++            }
++            for partnerID in overlapping.flatMap({ linkedPartnerIds(of: $0.id) }) {
++                guard let location = findClip(id: partnerID) else { continue }
++                pending.insert(timeline.tracks[location.trackIndex].id)
++            }
+         }
++        return timeline.tracks.compactMap { resolved.contains($0.id) ? $0.id : nil }
+     }
+ 
+     private func sourceTrackIsCompatible(_ track: Track, with asset: MediaAsset) -> Bool {
+@@ -380,6 +554,7 @@ extension EditorViewModel {
+     private func syncSelectionToActiveTab() {
+         switch activePreviewTab {
+         case .timeline:
++            explicitTimelineInspectionClipID = nil
+             inspectedObject = InspectedObject.fromSelection(
+                 clipIDs: selectedClipIds,
+                 mediaAssetIDs: [],
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Ripple.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Ripple.swift
+index 6142d50d..de5e39c5 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Ripple.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Ripple.swift
+@@ -1,5 +1,9 @@
+ import AppKit
+ 
++private enum RippleInsertError: Error {
++    case invalidatedPlan
++}
++
+ struct RippleRangesReport: Sendable {
+     let removedFrames: Int
+     let clearedTracks: Int
+@@ -242,7 +246,12 @@ extension EditorViewModel {
+                 if affected.contains(where: isClipEditLocked) { return true }
+             }
+         }
+-        return false
++        let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
++        return rippleInsertShiftPlan(
++            pushTrackIDs: pushTrackIDs,
++            atFrame: atFrame,
++            pushAmount: pushAmount
++        ) == nil
+     }
+ 
+     @discardableResult
+@@ -262,35 +271,41 @@ extension EditorViewModel {
+             needsLinkedAudio: needsLinkedAudio
+         ) else { return [] }
+         var created: [String] = []
+-        withTimelineSwap(actionName: "Ripple Insert Clips") {
+-            let linkedAudioTrackIndex: Int? = needsLinkedAudio
+-                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
+-                : nil
+-            let pushTracks = timeline.tracks.indices.filter {
+-                $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
+-            }
+-            for ti in pushTracks {
+-                if let straddler = timeline.tracks[ti].clips.first(where: {
+-                    $0.startFrame < atFrame && atFrame < $0.endFrame
+-                }) {
+-                    _ = splitClip(clipId: straddler.id, atFrame: atFrame)
++        do {
++            try withTimelineSwap(actionName: "Ripple Insert Clips") {
++                let linkedAudioTrackIndex: Int? = needsLinkedAudio
++                    ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
++                    : nil
++                let pushTracks = timeline.tracks.indices.filter {
++                    $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
+                 }
+-            }
+-            for ti in pushTracks {
+-                applyShifts(RippleEngine.computeRipplePush(
+-                    clips: timeline.tracks[ti].clips,
+-                    insertFrame: atFrame,
++                let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
++                for ti in pushTracks {
++                    if let straddler = timeline.tracks[ti].clips.first(where: {
++                        $0.startFrame < atFrame && atFrame < $0.endFrame
++                    }) {
++                        _ = splitClip(clipId: straddler.id, atFrame: atFrame)
++                    }
++                }
++                guard let shifts = rippleInsertShiftPlan(
++                    pushTrackIDs: pushTrackIDs,
++                    atFrame: atFrame,
+                     pushAmount: totalPush
+-                ))
++                ) else { throw RippleInsertError.invalidatedPlan }
++                applyShifts(shifts)
++                for index in timeline.tracks.indices { sortClips(trackIndex: index) }
++                created = createClips(
++                    from: assets,
++                    trackIndex: trackIndex,
++                    startFrame: atFrame,
++                    linkedAudioTrackIndex: linkedAudioTrackIndex,
++                    segments: segments
++                )
++                guard !created.isEmpty else { throw RippleInsertError.invalidatedPlan }
++                sortClips(trackIndex: trackIndex)
+             }
+-            created = createClips(
+-                from: assets,
+-                trackIndex: trackIndex,
+-                startFrame: atFrame,
+-                linkedAudioTrackIndex: linkedAudioTrackIndex,
+-                segments: segments
+-            )
+-            sortClips(trackIndex: trackIndex)
++        } catch {
++            return []
+         }
+         return created
+     }
+@@ -323,46 +338,98 @@ extension EditorViewModel {
+             needsLinkedAudio: needsLinkedAudio
+         ) else { return [] }
+         var created: [String] = []
+-        withTimelineSwap(actionName: specs.count == 1 ? "Ripple Insert Clip (Agent)" : "Ripple Insert Clips (Agent)") {
+-            // Pin the linked-audio destination before pushing so it ripples too; otherwise the
+-            // auto-created audio partner would land on an un-pushed track and overlap.
+-            let linkedAudioTrackIndex: Int? = needsLinkedAudio
+-                ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
+-                : nil
+-
+-            // Tracks the gap opens on. Splitting below doesn't add tracks, so these stay valid.
+-            let pushTracks = timeline.tracks.indices.filter {
+-                $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
++        do {
++            try withTimelineSwap(actionName: specs.count == 1 ? "Ripple Insert Clip (Agent)" : "Ripple Insert Clips (Agent)") {
++                let linkedAudioTrackIndex: Int? = needsLinkedAudio
++                    ? (existingLinkedAudioTrackIndex ?? insertTrack(at: timeline.tracks.count, type: .audio))
++                    : nil
++                let pushTracks = timeline.tracks.indices.filter {
++                    $0 == trackIndex || $0 == linkedAudioTrackIndex || timeline.tracks[$0].syncLocked
++                }
++                let pushTrackIDs = pushTracks.map { timeline.tracks[$0].id }
++                for ti in pushTracks {
++                    if let straddler = timeline.tracks[ti].clips.first(where: {
++                        $0.startFrame < atFrame && atFrame < $0.endFrame
++                    }) {
++                        _ = splitClip(clipId: straddler.id, atFrame: atFrame)
++                    }
++                }
++                guard let shifts = rippleInsertShiftPlan(
++                    pushTrackIDs: pushTrackIDs,
++                    atFrame: atFrame,
++                    pushAmount: totalPush
++                ) else { throw RippleInsertError.invalidatedPlan }
++                applyShifts(shifts)
++                for index in timeline.tracks.indices { sortClips(trackIndex: index) }
++
++                var cursor = atFrame
++                for spec in specs {
++                    let placed = placeClip(
++                        asset: spec.asset, trackIndex: trackIndex,
++                        startFrame: cursor, durationFrames: spec.durationFrames,
++                        linkedAudioTrackIndex: linkedAudioTrackIndex,
++                        trimStartFrame: spec.trimStartFrame, trimEndFrame: spec.trimEndFrame
++                    )
++                    guard !placed.isEmpty else { throw RippleInsertError.invalidatedPlan }
++                    created.append(contentsOf: placed)
++                    cursor += spec.durationFrames
++                }
+             }
++        } catch {
++            return []
++        }
++        return created
++    }
+ 
+-            // Insert-edit: split any clip straddling atFrame on each pushed track so its right
+-            // half rides the ripple instead of being overlapped. splitClip also splits linked
+-            // partners and regroups them, so a clip already cut via its partner is no longer a
+-            // straddler when its own track comes up.
+-            for ti in pushTracks {
+-                if let straddler = timeline.tracks[ti].clips.first(where: { $0.startFrame < atFrame && atFrame < $0.endFrame }) {
+-                    _ = splitClip(clipId: straddler.id, atFrame: atFrame)
+-                }
++    private func rippleInsertShiftPlan(
++        pushTrackIDs: [String],
++        atFrame: Int,
++        pushAmount: Int
++    ) -> [ClipShift]? {
++        var newStarts: [String: Int] = [:]
++        for trackID in pushTrackIDs {
++            guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
++                return nil
+             }
++            let track = timeline.tracks[trackIndex]
++            let shifts = RippleEngine.computeRipplePush(
++                clips: track.clips,
++                insertFrame: atFrame,
++                pushAmount: pushAmount
++            )
++            if track.editLocked, !shifts.isEmpty { return nil }
++            for shift in shifts { newStarts[shift.clipId] = shift.newStartFrame }
++        }
+ 
+-            for ti in pushTracks {
+-                applyShifts(RippleEngine.computeRipplePush(
+-                    clips: timeline.tracks[ti].clips, insertFrame: atFrame, pushAmount: totalPush
+-                ))
++        var pending = Array(newStarts.keys)
++        var visited: Set<String> = []
++        while let clipID = pending.popLast() {
++            guard visited.insert(clipID).inserted else { continue }
++            for partnerID in linkedPartnerIds(of: clipID) {
++                guard let location = findClip(id: partnerID),
++                      !timeline.tracks[location.trackIndex].editLocked else { return nil }
++                let partner = timeline.tracks[location.trackIndex].clips[location.clipIndex]
++                if newStarts[partnerID] == nil {
++                    newStarts[partnerID] = partner.startFrame + pushAmount
++                }
++                pending.append(partnerID)
+             }
++        }
+ 
+-            var cursor = atFrame
+-            for spec in specs {
+-                created.append(contentsOf: placeClip(
+-                    asset: spec.asset, trackIndex: trackIndex,
+-                    startFrame: cursor, durationFrames: spec.durationFrames,
+-                    linkedAudioTrackIndex: linkedAudioTrackIndex,
+-                    trimStartFrame: spec.trimStartFrame, trimEndFrame: spec.trimEndFrame
+-                ))
+-                cursor += spec.durationFrames
++        for trackIndex in timeline.tracks.indices {
++            let shifts = timeline.tracks[trackIndex].clips.compactMap { clip -> ClipShift? in
++                guard let start = newStarts[clip.id] else { return nil }
++                return ClipShift(clipId: clip.id, newStartFrame: start)
++            }
++            if !shifts.isEmpty, validateShifts(trackIndex: trackIndex, shifts: shifts) != nil {
++                return nil
++            }
++        }
++        return timeline.tracks.flatMap { track in
++            track.clips.compactMap { clip in
++                newStarts[clip.id].map { ClipShift(clipId: clip.id, newStartFrame: $0) }
+             }
+         }
+-        return created
+     }
+ 
+     // MARK: - Internal
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Tracks.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Tracks.swift
+index 7db89495..951feb50 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Tracks.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Tracks.swift
+@@ -93,6 +93,10 @@ extension EditorViewModel {
+         selectedClipIds.contains(where: isClipEditLocked)
+     }
+ 
++    var inspectedTimelineClipsAreEditLocked: Bool {
++        timelineInspectorClipIDs.contains(where: isClipEditLocked)
++    }
++
+     /// Flip a `Bool` on a track, register a reversing undo, and publish the change.
+     /// `onName` is used when the flag transitions false → true; `offName` for true → false.
+     private func toggleTrackFlag(
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 3187f349..40a8e5bc 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -155,6 +155,9 @@ final class EditorViewModel {
+     var selectionInspectedObject: InspectedObject? {
+         switch activePreviewTab {
+         case .timeline:
++            if let id = activeTimelineInspectionClipID {
++                return .clip(id)
++            }
+             return InspectedObject.fromSelection(
+                 clipIDs: selectedClipIds,
+                 mediaAssetIDs: [],
+@@ -169,7 +172,7 @@ final class EditorViewModel {
+     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
+     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
+     var selectionContextHint: String? {
+-        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
++        if isTimelineBatchSelection {
+             return "\(selectedClipIds.count) timeline clips are selected"
+         }
+         guard let object = inspectedObject else { return nil }
+@@ -902,6 +905,13 @@ final class EditorViewModel {
+         activePreviewTabId = previewTabs.contains { $0.id == state.activePreviewTabId }
+             ? state.activePreviewTabId
+             : PreviewTab.timeline.id
++        if activePreviewTabId == PreviewTab.timeline.id,
++           case .clip(let id) = inspectedObject,
++           selectedClipIds.count > 1 {
++            explicitTimelineInspectionClipID = id
++        } else {
++            explicitTimelineInspectionClipID = nil
++        }
+         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
+         sourcePlayheadFrame = max(0, state.sourceFrame)
+         mediaPanelTab = state.mediaPanelTab
+@@ -1261,6 +1271,10 @@ final class EditorViewModel {
+     // MARK: - Playback
+ 
+     func togglePlayback() {
++        if isSourcePreviewActive {
++            toggleSourcePlayback()
++            return
++        }
+         if let videoEngine {
+             videoEngine.togglePlayback()
+         } else {
+@@ -1299,7 +1313,9 @@ final class EditorViewModel {
+         } else {
+             currentFrame = clamped
+         }
+-        videoEngine?.seek(to: clamped, mode: mode)
++        if isTimelinePreviewActive {
++            videoEngine?.seek(to: clamped, mode: mode)
++        }
+     }
+ 
+     // MARK: - Source playback (for preview tabs)
+@@ -1315,13 +1331,26 @@ final class EditorViewModel {
+     }
+ 
+     func toggleSourcePlayback() {
++        guard let type = activePreviewTab.clipType,
++              type == .video || type == .audio || type == .lottie else {
++            if isPlaying { pause() }
++            return
++        }
+         videoEngine?.togglePlayback()
+     }
+ 
+-    func stepForward() { seekToFrame(currentFrame + 1) }
+-    func stepBackward() { seekToFrame(currentFrame - 1) }
+-    func skipForward(frames: Int = 5) { seekToFrame(currentFrame + frames) }
+-    func skipBackward(frames: Int = 5) { seekToFrame(currentFrame - frames) }
++    func stepForward() { seekActivePreview(by: 1) }
++    func stepBackward() { seekActivePreview(by: -1) }
++    func skipForward(frames: Int = 5) { seekActivePreview(by: frames) }
++    func skipBackward(frames: Int = 5) { seekActivePreview(by: -frames) }
++
++    private func seekActivePreview(by delta: Int) {
++        if isTimelinePreviewActive {
++            seekToFrame(currentFrame + delta)
++        } else if canEditActiveSourceRange {
++            seekSourceToFrame(sourcePlayheadFrame + delta)
++        }
++    }
+ 
+     // MARK: - Shared infrastructure
+ 
+@@ -1339,11 +1368,11 @@ final class EditorViewModel {
+     func notifyTimelineChanged() {
+         pendingRebuildTask?.cancel()
+         pendingRebuildTask = nil
+-        if isPlaying {
+-            videoEngine?.pause()
++        if isTimelinePreviewActive {
++            if isPlaying { videoEngine?.pause() }
++            videoEngine?.syncTextLayers()
++            videoEngine?.rebuild()
+         }
+-        videoEngine?.syncTextLayers()
+-        videoEngine?.rebuild()
+     }
+ 
+     /// Coalesce rapid rebuilds. An immediate `notifyTimelineChanged` cancels any pending debounced one.
+@@ -1353,8 +1382,10 @@ final class EditorViewModel {
+             try? await Task.sleep(for: debounce)
+             guard !Task.isCancelled, let self else { return }
+             self.pendingRebuildTask = nil
+-            if self.isPlaying { self.videoEngine?.pause() }
+-            self.videoEngine?.rebuild()
++            if self.isTimelinePreviewActive {
++                if self.isPlaying { self.videoEngine?.pause() }
++                self.videoEngine?.rebuild()
++            }
+         }
+     }
+ 
+@@ -1534,5 +1565,6 @@ final class EditorViewModel {
+     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+ 
+     var sourcePreviewStates: [String: SourcePreviewState] = [:]
++    var explicitTimelineInspectionClipID: String?
+ 
+ }
+diff --git a/Sources/NexGenVideo/Inspector/InspectorView.swift b/Sources/NexGenVideo/Inspector/InspectorView.swift
+index 8e91f7df..6c7132e3 100644
+--- a/Sources/NexGenVideo/Inspector/InspectorView.swift
++++ b/Sources/NexGenVideo/Inspector/InspectorView.swift
+@@ -63,9 +63,7 @@ struct InspectorView: View {
+     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
+     /// rule. Batch editing across selected clips stays a first-class NLE feature.
+     private var isMultiClipSelection: Bool {
+-        editor.activePreviewTab == .timeline
+-            && !editor.isMarqueeSelecting
+-            && editor.selectedClipIds.count > 1
++        editor.isTimelineBatchSelection
+     }
+ 
+     @ViewBuilder
+@@ -330,7 +328,7 @@ struct InspectorView: View {
+                 Button {
+                     if case .clip(let id) = item.1 {
+                         editor.selectedClipIds = [id]
+-                        editor.activateTimelineSelection(inspectedClipID: id)
++                        editor.activateTimelineSelection()
+                     } else {
+                         editor.inspectedObject = item.1
+                     }
+@@ -591,13 +589,21 @@ struct InspectorView: View {
+             .frame(maxWidth: .infinity, alignment: .leading)
+             .background {
+                 if WorkspaceUIAcceptance.isRequested {
+-                    AppRelaunchClickProbe(
+-                        identifier: "inspector.selectionContext",
+-                        acceptanceState: {
+-                            if case .clip = editor.inspectedObject { return true }
+-                            return false
+-                        }()
+-                    )
++                    ZStack {
++                        AppRelaunchClickProbe(
++                            identifier: "inspector.selectionContext",
++                            acceptanceState: {
++                                if case .clip = editor.inspectedObject { return true }
++                                return false
++                            }()
++                        )
++                        if case .clip(let clipID) = editor.inspectedObject {
++                            AppRelaunchClickProbe(
++                                identifier: "inspector.selectionContext.\(clipID)",
++                                acceptanceState: editor.timelineInspectorClipIDs == [clipID]
++                            )
++                        }
++                    }
+                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                     .allowsHitTesting(false)
+                 }
+@@ -749,7 +755,7 @@ struct InspectorView: View {
+     private func clipInspectorContent() -> some View {
+         let tabs = availableTabs
+         VStack(spacing: AppTheme.Spacing.none) {
+-            if editor.selectedTimelineClipsAreEditLocked {
++            if editor.inspectedTimelineClipsAreEditLocked {
+                 HStack(spacing: AppTheme.Spacing.xs) {
+                     Image(systemName: "lock.fill")
+                     Text("Track Locked")
+@@ -787,13 +793,22 @@ struct InspectorView: View {
+                     }
+                 }
+             }
+-            .disabled(editor.selectedTimelineClipsAreEditLocked)
++            .disabled(editor.inspectedTimelineClipsAreEditLocked)
+             .background {
+                 if WorkspaceUIAcceptance.isRequested {
+-                    AppRelaunchClickProbe(
+-                        identifier: "inspector.clipMutation",
+-                        acceptanceState: !editor.selectedTimelineClipsAreEditLocked
+-                    )
++                    ZStack {
++                        AppRelaunchClickProbe(
++                            identifier: "inspector.clipMutation",
++                            acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
++                        )
++                        if editor.timelineInspectorClipIDs.count == 1,
++                           let clipID = editor.timelineInspectorClipIDs.first {
++                            AppRelaunchClickProbe(
++                                identifier: "inspector.clipMutation.\(clipID)",
++                                acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
++                            )
++                        }
++                    }
+                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                     .allowsHitTesting(false)
+                 }
+@@ -1550,10 +1565,11 @@ struct InspectorView: View {
+     // MARK: - Helpers
+ 
+     private var selectedVisualClips: [Clip] {
+-        guard !editor.selectedClipIds.isEmpty else { return [] }
++        let ids = editor.timelineInspectorClipIDs
++        guard !ids.isEmpty else { return [] }
+         var out: [Clip] = []
+         for track in editor.timeline.tracks {
+-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType.isVisual {
++            for clip in track.clips where ids.contains(clip.id) && clip.mediaType.isVisual {
+                 out.append(clip)
+             }
+         }
+@@ -1561,10 +1577,11 @@ struct InspectorView: View {
+     }
+ 
+     var selectedAudioClips: [Clip] {
+-        guard !editor.selectedClipIds.isEmpty else { return [] }
++        let ids = editor.timelineInspectorClipIDs
++        guard !ids.isEmpty else { return [] }
+         var out: [Clip] = []
+         for track in editor.timeline.tracks {
+-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType == .audio {
++            for clip in track.clips where ids.contains(clip.id) && clip.mediaType == .audio {
+                 out.append(clip)
+             }
+         }
+diff --git a/Sources/NexGenVideo/Preview/PreviewContainerView.swift b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+index 92a0c51a..c0a83e2c 100644
+--- a/Sources/NexGenVideo/Preview/PreviewContainerView.swift
++++ b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+@@ -169,9 +169,12 @@ struct PreviewContainerView: View {
+ 
+     private func transportControls(duration: Int, compact: Bool) -> some View {
+         HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
+-            transportButton("backward.end.fill") { seekTo(0) }
++            transportButton("backward.end.fill", acceptanceIdentifier: "preview.seekStart") { seekTo(0) }
+             if !compact {
+-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
++                transportButton(
++                    "backward.frame.fill",
++                    acceptanceIdentifier: "preview.stepBackward"
++                ) { seekTo(playheadFrame - 1) }
+             }
+             transportButton(
+                 editor.isPlaying ? "pause.fill" : "play.fill",
+@@ -184,9 +187,12 @@ struct PreviewContainerView: View {
+                 }
+             }
+             if !compact {
+-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
++                transportButton(
++                    "forward.frame.fill",
++                    acceptanceIdentifier: "preview.stepForward"
++                ) { seekTo(playheadFrame + 1) }
+             }
+-            transportButton("forward.end.fill") { seekTo(duration) }
++            transportButton("forward.end.fill", acceptanceIdentifier: "preview.seekEnd") { seekTo(duration) }
+         }
+     }
+ 
+@@ -555,10 +561,18 @@ struct PreviewContainerView: View {
+         .workspaceHeaderContent()
+         .background {
+             if WorkspaceUIAcceptance.isRequested {
+-                AppRelaunchClickProbe(
+-                    identifier: "preview.selectionContext",
+-                    acceptanceState: isTimeline
+-                )
++                ZStack {
++                    AppRelaunchClickProbe(
++                        identifier: "preview.selectionContext",
++                        acceptanceState: isTimeline && editor.activeTimelineInspectionClipID != nil
++                    )
++                    if let clipID = editor.activeTimelineInspectionClipID {
++                        AppRelaunchClickProbe(
++                            identifier: "preview.selectionContext.\(clipID)",
++                            acceptanceState: isTimeline
++                        )
++                    }
++                }
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                 .allowsHitTesting(false)
+             }
+@@ -571,10 +585,10 @@ struct PreviewContainerView: View {
+ 
+     private var activeObjectName: String {
+         if let asset = activeMediaAsset { return asset.name }
+-        if editor.selectedClipIds.count > 1 { return "\(editor.selectedClipIds.count) clips" }
+-        if let id = editor.selectedClipIds.first, let location = editor.findClip(id: id) {
++        if let id = editor.activeTimelineInspectionClipID, let location = editor.findClip(id: id) {
+             return editor.clipDisplayLabel(for: editor.timeline.tracks[location.trackIndex].clips[location.clipIndex])
+         }
++        if editor.isTimelineBatchSelection { return "\(editor.selectedClipIds.count) clips" }
+         return "Timeline"
+     }
+ 
+@@ -645,6 +659,13 @@ struct PreviewContainerView: View {
+             )
+         }
+         .frame(height: AppTheme.ComponentSize.previewScrubberHeight)
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(identifier: "preview.scrub")
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
+         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubbing)
+         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubHovered)
+         .onDisappear {
+diff --git a/Sources/NexGenVideo/Preview/VideoEngine.swift b/Sources/NexGenVideo/Preview/VideoEngine.swift
+index 75dde894..b15e8baf 100644
+--- a/Sources/NexGenVideo/Preview/VideoEngine.swift
++++ b/Sources/NexGenVideo/Preview/VideoEngine.swift
+@@ -118,7 +118,7 @@ final class VideoEngine {
+         case .mediaAsset(let id, _, let type):
+             textController.textRoot.isHidden = true
+             guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
+-            if type == .image {
++            if type == .image || type == .document {
+                 replacePlayerItem(nil, reason: "imagePreview")
+             } else {
+                 previewAsset(asset)
+diff --git a/Sources/NexGenVideo/Timeline/TimelineInputController.swift b/Sources/NexGenVideo/Timeline/TimelineInputController.swift
+index e2400edb..60e0d9e3 100644
+--- a/Sources/NexGenVideo/Timeline/TimelineInputController.swift
++++ b/Sources/NexGenVideo/Timeline/TimelineInputController.swift
+@@ -112,7 +112,7 @@ final class TimelineInputController {
+             } else if !isOption, !editor.selectedClipIds.contains(clip.id) {
+                 editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
+             }
+-            editor.activateTimelineSelection(inspectedClipID: clip.id)
++            editor.activateTimelineSelection()
+ 
+             if editor.selectedTimelineClipsAreEditLocked {
+                 dragState = .idle
+diff --git a/Sources/NexGenVideo/Timeline/TimelineView+AudioSyncMenu.swift b/Sources/NexGenVideo/Timeline/TimelineView+AudioSyncMenu.swift
+index 729c0016..fb7f7a24 100644
+--- a/Sources/NexGenVideo/Timeline/TimelineView+AudioSyncMenu.swift
++++ b/Sources/NexGenVideo/Timeline/TimelineView+AudioSyncMenu.swift
+@@ -5,6 +5,7 @@ extension TimelineView {
+         guard let info = (sender as? NSMenuItem)?.representedObject as? [String: Any],
+               let referenceClipId = info["referenceClipId"] as? String,
+               let targetClipIds = info["targetClipIds"] as? [String], !targetClipIds.isEmpty else { return }
++        editor.activateTimelineSelection()
+         Task { @MainActor [weak self] in
+             guard let self else { return }
+             let report = await editor.syncAudio(referenceClipId: referenceClipId, targetClipIds: targetClipIds)
+diff --git a/Sources/NexGenVideo/Timeline/TimelineView.swift b/Sources/NexGenVideo/Timeline/TimelineView.swift
+index c396e3cb..90a5dc95 100644
+--- a/Sources/NexGenVideo/Timeline/TimelineView.swift
++++ b/Sources/NexGenVideo/Timeline/TimelineView.swift
+@@ -886,19 +886,25 @@ final class TimelineView: NSView {
+             editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
+             needsDisplay = true
+         }
+-        editor.activateTimelineSelection(inspectedClipID: clip.id)
++        editor.activateTimelineClipContext(clip.id)
+ 
+         let menu = NSMenu()
+         menu.autoenablesItems = false
+-        let targetClipIds = selectedClipIdsInTimelineOrder()
+-        let mutationAllowed = allowsEditChrome && !editor.selectedTimelineClipsAreEditLocked
+-
+-        let singleLinkGroup = editor.selectedClipIds == editor.expandToLinkGroup([clip.id])
++        let targetClipIds = [clip.id]
++        let contextMutationIDs = editor.expandToLinkGroup([clip.id])
++        let mutationAllowed = allowsEditChrome
++            && !contextMutationIDs.contains(where: editor.isClipEditLocked)
++        let selectedTargetClipIds = editor.timeline.tracks.flatMap(\.clips).compactMap { candidate in
++            editor.selectedClipIds.contains(candidate.id) ? candidate.id : nil
++        }
++        let batchMutationAllowed = allowsEditChrome
++            && !editor.selectedTimelineClipsAreEditLocked
+ 
+         // Timeline actions
+         var timelineItems: [NSMenuItem] = []
+         let copyItem = NSMenuItem(title: "Copy", action: #selector(performCopyClips(_:)), keyEquivalent: "")
+         copyItem.target = self
++        copyItem.representedObject = targetClipIds
+         timelineItems.append(copyItem)
+         if editor.canPasteClips(atTrack: hit.trackIndex, atFrame: clickFrame) {
+             let pasteItem = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
+@@ -906,14 +912,20 @@ final class TimelineView: NSView {
+             pasteItem.representedObject = ["trackIndex": hit.trackIndex, "frame": clickFrame] as [String: Any]
+             timelineItems.append(pasteItem)
+         }
+-        if mutationAllowed, editor.canLinkSelected {
+-            let item = NSMenuItem(title: "Link", action: #selector(performLink(_:)), keyEquivalent: "")
++        if mutationAllowed, clip.linkGroupId != nil {
++            let item = NSMenuItem(title: "Unlink", action: #selector(performUnlink(_:)), keyEquivalent: "")
+             item.target = self
++            item.representedObject = targetClipIds
+             timelineItems.append(item)
+         }
+-        if mutationAllowed, editor.canUnlinkSelected {
+-            let item = NSMenuItem(title: "Unlink", action: #selector(performUnlink(_:)), keyEquivalent: "")
++        if batchMutationAllowed, editor.canLinkSelected {
++            let item = NSMenuItem(
++                title: "Link Selected Clips",
++                action: #selector(performLinkSelected(_:)),
++                keyEquivalent: ""
++            )
+             item.target = self
++            item.representedObject = selectedTargetClipIds
+             timelineItems.append(item)
+         }
+ 
+@@ -932,7 +944,7 @@ final class TimelineView: NSView {
+ 
+         // Media
+         var mediaItems: [NSMenuItem] = []
+-        if mutationAllowed, clip.mediaType != .text, singleLinkGroup {
++        if mutationAllowed, clip.mediaType != .text {
+             let swapItem = NSMenuItem(title: "Swap Media", action: #selector(performSwapMedia(_:)), keyEquivalent: "")
+             swapItem.target = self
+             swapItem.representedObject = clip.id
+@@ -950,15 +962,20 @@ final class TimelineView: NSView {
+             item.representedObject = asset.id
+             mediaItems.append(item)
+         }
+-        // Sync
+         var syncItems: [NSMenuItem] = []
+-        if mutationAllowed, let pair = editor.audioSyncSelection() {
+-            let syncItem = NSMenuItem(title: "Synchronize", action: #selector(performSynchronize(_:)), keyEquivalent: "")
+-            syncItem.target = self
+-            syncItem.representedObject = ["referenceClipId": pair.referenceClipId, "targetClipIds": pair.targetClipIds] as [String: Any]
+-            syncItems.append(syncItem)
++        if batchMutationAllowed, let pair = editor.audioSyncSelection() {
++            let item = NSMenuItem(
++                title: "Synchronize Selected Clips",
++                action: #selector(performSynchronize(_:)),
++                keyEquivalent: ""
++            )
++            item.target = self
++            item.representedObject = [
++                "referenceClipId": pair.referenceClipId,
++                "targetClipIds": pair.targetClipIds,
++            ] as [String: Any]
++            syncItems.append(item)
+         }
+-
+         for group in [timelineItems, aiItems, mediaItems, syncItems] where !group.isEmpty {
+             if !menu.items.isEmpty { menu.addItem(.separator()) }
+             group.forEach { menu.addItem($0) }
+@@ -1005,13 +1022,6 @@ final class TimelineView: NSView {
+         menu.addItem(item)
+     }
+ 
+-    private func selectedClipIdsInTimelineOrder() -> [String] {
+-        let selected = editor.selectedClipIds
+-        return editor.timeline.tracks.flatMap(\.clips).compactMap { clip in
+-            selected.contains(clip.id) ? clip.id : nil
+-        }
+-    }
+-
+     @objc private func performAddClipsToChat(_ sender: Any?) {
+         guard let item = sender as? NSMenuItem,
+               let clipIds = item.representedObject as? [String] else { return }
+@@ -1032,7 +1042,9 @@ final class TimelineView: NSView {
+     }
+ 
+     @objc private func performCopyClips(_ sender: Any?) {
+-        editor.copySelectedClipsToClipboard()
++        guard let item = sender as? NSMenuItem,
++              let clipIds = item.representedObject as? [String] else { return }
++        editor.copyClipsToClipboard(ids: Set(clipIds))
+     }
+ 
+     @objc private func performPasteClips(_ sender: Any?) {
+@@ -1044,13 +1056,18 @@ final class TimelineView: NSView {
+         needsDisplay = true
+     }
+ 
+-    @objc private func performLink(_ sender: Any?) {
+-        editor.linkClips(ids: editor.selectedClipIds)
++    @objc private func performUnlink(_ sender: Any?) {
++        guard let item = sender as? NSMenuItem,
++              let clipIds = item.representedObject as? [String] else { return }
++        editor.unlinkClips(ids: Set(clipIds))
+         needsDisplay = true
+     }
+ 
+-    @objc private func performUnlink(_ sender: Any?) {
+-        editor.unlinkClips(ids: editor.selectedClipIds)
++    @objc private func performLinkSelected(_ sender: Any?) {
++        guard let item = sender as? NSMenuItem,
++              let clipIds = item.representedObject as? [String] else { return }
++        editor.activateTimelineSelection()
++        editor.linkClips(ids: Set(clipIds))
+         needsDisplay = true
+     }
+ 
+diff --git a/Tests/NexGenVideoTests/UI/SelectionContextTests.swift b/Tests/NexGenVideoTests/UI/SelectionContextTests.swift
+index 03124f31..cdd92c0e 100644
+--- a/Tests/NexGenVideoTests/UI/SelectionContextTests.swift
++++ b/Tests/NexGenVideoTests/UI/SelectionContextTests.swift
+@@ -45,7 +45,7 @@ struct SelectionContextTests {
+         editor.currentFrame = 91
+ 
+         editor.selectedClipIds = [clip.id]
+-        editor.activateTimelineSelection(inspectedClipID: clip.id)
++        editor.activateTimelineSelection()
+         editor.trimClips([(clipId: clip.id, trimStartFrame: 5, trimEndFrame: 0)])
+ 
+         #expect(editor.currentFrame == 91)
+@@ -97,6 +97,62 @@ struct SelectionContextTests {
+         #expect(editor.inspectedObject == nil)
+     }
+ 
++    @Test func contextActivatedClipOverridesRememberedBatchWithoutReplacingIt() {
++        let firstAsset = asset("first")
++        let secondAsset = asset("second")
++        let first = Fixtures.clip(id: "first-clip", mediaRef: firstAsset.id, start: 0, duration: 30)
++        let second = Fixtures.clip(id: "second-clip", mediaRef: secondAsset.id, start: 30, duration: 30)
++        let editor = editor(
++            assets: [firstAsset, secondAsset],
++            tracks: [Fixtures.videoTrack(clips: [first, second])]
++        )
++        editor.selectedClipIds = [first.id, second.id]
++
++        editor.activateTimelineSelection()
++        #expect(editor.isTimelineBatchSelection)
++        #expect(editor.inspectedObject == nil)
++        #expect(editor.selectionContextHint == "2 timeline clips are selected")
++
++        editor.activateTimelineClipContext(second.id)
++
++        #expect(editor.selectedClipIds == [first.id, second.id])
++        #expect(!editor.isTimelineBatchSelection)
++        #expect(editor.activeTimelineInspectionClipID == second.id)
++        #expect(editor.timelineInspectorClipIDs == [second.id])
++        #expect(editor.inspectedObject == .clip(second.id))
++        #expect(editor.selectionInspectedObject == .clip(second.id))
++        #expect(editor.selectionContextHint?.contains("second") == true)
++
++        editor.activateTimelineSelection()
++        #expect(editor.isTimelineBatchSelection)
++        #expect(editor.inspectedObject == nil)
++    }
++
++    @Test func linkedAVSelectionRemainsAnIntentionalBatch() {
++        let source = asset("source", hasAudio: true)
++        var video = Fixtures.clip(id: "video", mediaRef: source.id, start: 0, duration: 30)
++        video.linkGroupId = "pair"
++        var audio = Fixtures.clip(
++            id: "audio",
++            mediaRef: source.id,
++            mediaType: .audio,
++            start: 0,
++            duration: 30
++        )
++        audio.linkGroupId = "pair"
++        let editor = editor(
++            assets: [source],
++            tracks: [Fixtures.videoTrack(clips: [video]), Fixtures.audioTrack(clips: [audio])]
++        )
++        editor.selectedClipIds = editor.expandToLinkGroup([video.id])
++
++        editor.activateTimelineSelection()
++
++        #expect(editor.isTimelineBatchSelection)
++        #expect(editor.timelineInspectorClipIDs == [video.id, audio.id])
++        #expect(editor.inspectedObject == nil)
++    }
++
+     @Test func shiftSelectionCanDeselectActiveAndFinalSources() {
+         let first = asset("first")
+         let second = asset("second")
+@@ -154,7 +210,7 @@ struct SelectionContextTests {
+         let editor = editor(assets: [], tracks: [Fixtures.videoTrack(clips: [title])])
+ 
+         editor.selectedClipIds = [title.id]
+-        editor.activateTimelineSelection(inspectedClipID: title.id)
++        editor.activateTimelineSelection()
+ 
+         #expect(editor.isTimelinePreviewActive)
+         #expect(editor.inspectedObject == .clip(title.id))
+@@ -203,6 +259,215 @@ struct SelectionContextTests {
+         #expect(editor.activeSourceAsset?.id == source.id)
+     }
+ 
++    @Test func sourceOverwriteReplacesLinkedAudioOnItsExistingTrack() {
++        let oldSource = asset("old", hasAudio: true)
++        let newSource = asset("new", hasAudio: true)
++        var oldVideo = Fixtures.clip(id: "old-video", mediaRef: oldSource.id, start: 0, duration: 90)
++        oldVideo.linkGroupId = "old-pair"
++        var oldAudio = Fixtures.clip(
++            id: "old-audio",
++            mediaRef: oldSource.id,
++            mediaType: .audio,
++            start: 0,
++            duration: 90
++        )
++        oldAudio.linkGroupId = "old-pair"
++        let editor = editor(
++            assets: [oldSource, newSource],
++            tracks: [Fixtures.videoTrack(clips: [oldVideo]), Fixtures.audioTrack(clips: [oldAudio])]
++        )
++        editor.selectedClipIds = [oldVideo.id]
++        editor.currentFrame = 30
++        editor.selectMediaAsset(newSource)
++        editor.seekSourceToFrame(0)
++        editor.markSourceIn()
++        editor.seekSourceToFrame(30)
++        editor.markSourceOut()
++
++        let created = editor.overwriteActiveSource()
++
++        #expect(created.count == 2)
++        #expect(editor.timeline.tracks.count == 2)
++        let videos = editor.timeline.tracks[0].clips
++        let audios = editor.timeline.tracks[1].clips
++        #expect(videos.count == 3)
++        #expect(audios.count == 3)
++        #expect(videos.map(\.startFrame) == [0, 30, 60])
++        #expect(audios.map(\.startFrame) == [0, 30, 60])
++        #expect(videos.first { $0.startFrame == 30 }?.mediaRef == newSource.id)
++        #expect(audios.first { $0.startFrame == 30 }?.mediaRef == newSource.id)
++        #expect(!videos.contains { $0.id == oldVideo.id && $0.durationFrames == 90 })
++        #expect(!audios.contains { $0.id == oldAudio.id && $0.durationFrames == 90 })
++    }
++
++    @Test func timelineUndoAndRedoDoNotReplaceANewerSourceContext() {
++        let source = asset("source")
++        let clip = Fixtures.clip(id: "clip", mediaRef: source.id, start: 0, duration: 30)
++        let editor = editor(assets: [source], tracks: [Fixtures.videoTrack(clips: [clip])])
++        let undoManager = UndoManager()
++        editor.undoManager = undoManager
++        editor.selectedClipIds = [clip.id]
++        editor.activateTimelineSelection()
++        editor.moveClips([(clipId: clip.id, toTrack: 0, toFrame: 30)])
++        editor.selectMediaAsset(source)
++
++        undoManager.undo()
++        #expect(editor.clipFor(id: clip.id)?.startFrame == 0)
++        #expect(editor.activeSourceAsset?.id == source.id)
++        #expect(editor.inspectedObject == .mediaAsset(source.id))
++
++        undoManager.redo()
++        #expect(editor.clipFor(id: clip.id)?.startFrame == 30)
++        #expect(editor.activeSourceAsset?.id == source.id)
++        #expect(editor.inspectedObject == .mediaAsset(source.id))
++    }
++
++    @Test func sourceTransportCommandsNeverMoveTheRememberedTimelinePlayhead() {
++        let source = asset("source")
++        let editor = editor(assets: [source])
++        editor.currentFrame = 70
++        editor.selectMediaAsset(source)
++        editor.seekSourceToFrame(10)
++
++        editor.stepForward()
++        editor.skipForward()
++        editor.stepBackward()
++        editor.skipBackward(frames: 3)
++
++        #expect(editor.sourcePlayheadFrame == 12)
++        #expect(editor.currentFrame == 70)
++    }
++
++    @Test func reactivatingTheSameSourcePreservesPlaybackAndStillImagesCannotPlay() {
++        let video = asset("video")
++        let image = asset("image", type: .image)
++        let editor = editor(assets: [video, image])
++        editor.selectMediaAsset(video)
++        editor.isPlaying = true
++
++        editor.activateMediaAsset(video, preservingSelection: true)
++        #expect(editor.isPlaying)
++
++        editor.selectMediaAsset(image)
++        editor.isPlaying = true
++        editor.toggleSourcePlayback()
++        #expect(!editor.isPlaying)
++    }
++
++    @Test func rippleInsertMovesUnlockedDownstreamLinkedPartnersAndRefusesLockedOnes() {
++        let insertedSource = asset("inserted", duration: 1)
++        var downstreamVideo = Fixtures.clip(id: "downstream-video", start: 60, duration: 30)
++        downstreamVideo.linkGroupId = "downstream-pair"
++        var downstreamAudio = Fixtures.clip(
++            id: "downstream-audio",
++            mediaType: .audio,
++            start: 60,
++            duration: 30
++        )
++        downstreamAudio.linkGroupId = "downstream-pair"
++        let unlocked = editor(
++            assets: [insertedSource],
++            tracks: [
++                Fixtures.videoTrack(clips: [downstreamVideo]),
++                Fixtures.audioTrack(clips: [downstreamAudio]),
++            ]
++        )
++
++        #expect(!unlocked.rippleInsertClips(
++            assets: [insertedSource],
++            trackIndex: 0,
++            atFrame: 0
++        ).isEmpty)
++        #expect(unlocked.clipFor(id: downstreamVideo.id)?.startFrame == 90)
++        #expect(unlocked.clipFor(id: downstreamAudio.id)?.startFrame == 90)
++
++        let explicit = editor(
++            assets: [insertedSource],
++            tracks: [
++                Fixtures.videoTrack(clips: [downstreamVideo]),
++                Fixtures.audioTrack(clips: [downstreamAudio]),
++            ]
++        )
++        #expect(!explicit.rippleInsertClips(
++            specs: [.init(
++                asset: insertedSource,
++                durationFrames: 30,
++                trimStartFrame: 0,
++                trimEndFrame: 0
++            )],
++            trackIndex: 0,
++            atFrame: 0
++        ).isEmpty)
++        #expect(explicit.clipFor(id: downstreamVideo.id)?.startFrame == 90)
++        #expect(explicit.clipFor(id: downstreamAudio.id)?.startFrame == 90)
++
++        var lockedAudioTrack = Fixtures.audioTrack(clips: [downstreamAudio])
++        lockedAudioTrack.editLocked = true
++        let locked = editor(
++            assets: [insertedSource],
++            tracks: [Fixtures.videoTrack(clips: [downstreamVideo]), lockedAudioTrack]
++        )
++        let before = locked.timeline
++
++        #expect(locked.rippleInsertClips(
++            assets: [insertedSource],
++            trackIndex: 0,
++            atFrame: 0
++        ).isEmpty)
++        #expect(locked.timeline == before)
++
++        #expect(locked.rippleInsertClips(
++            specs: [.init(
++                asset: insertedSource,
++                durationFrames: 30,
++                trimStartFrame: 0,
++                trimEndFrame: 0
++            )],
++            trackIndex: 0,
++            atFrame: 0
++        ).isEmpty)
++        #expect(locked.timeline == before)
++    }
++
++    @Test func multiClipSplitAndTrimAreSingleUndoableCommands() {
++        var video = Fixtures.clip(id: "video", start: 0, duration: 60)
++        video.linkGroupId = "pair"
++        var audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 60)
++        audio.linkGroupId = "pair"
++        let editor = editor(
++            assets: [],
++            tracks: [Fixtures.videoTrack(clips: [video]), Fixtures.audioTrack(clips: [audio])]
++        )
++        let undoManager = UndoManager()
++        editor.undoManager = undoManager
++        editor.selectedClipIds = [video.id, audio.id]
++        editor.currentFrame = 30
++
++        editor.splitAtPlayhead()
++        #expect(editor.timeline.tracks.flatMap(\.clips).count == 4)
++        undoManager.undo()
++        #expect(editor.timeline.tracks.flatMap(\.clips) == [video, audio])
++        undoManager.redo()
++        #expect(editor.timeline.tracks.flatMap(\.clips).count == 4)
++
++        undoManager.removeAllActions()
++        editor.timeline = Fixtures.timeline(tracks: [
++            Fixtures.videoTrack(clips: [video]),
++            Fixtures.audioTrack(clips: [audio]),
++        ])
++        editor.selectedClipIds = [video.id, audio.id]
++        editor.currentFrame = 20
++        editor.trimStartToPlayhead()
++        #expect(editor.clipFor(id: video.id)?.startFrame == 20)
++        #expect(editor.clipFor(id: audio.id)?.startFrame == 20)
++        undoManager.undo()
++        #expect(editor.clipFor(id: video.id)?.startFrame == 0)
++        #expect(editor.clipFor(id: audio.id)?.startFrame == 0)
++        undoManager.redo()
++        #expect(editor.clipFor(id: video.id)?.startFrame == 20)
++        #expect(editor.clipFor(id: audio.id)?.startFrame == 20)
++    }
++
+     @Test func lockedLinkedAndRippleEditsAreAtomicWhileSourceRangeStaysEditable() {
+         let source = asset("source", hasAudio: true)
+         var video = Fixtures.clip(id: "video", mediaRef: source.id, start: 0, duration: 60)
+@@ -377,7 +642,7 @@ struct SelectionContextTests {
+         editor.undoManager = undoManager
+ 
+         editor.selectedClipIds = [clip.id]
+-        editor.activateTimelineSelection(inspectedClipID: clip.id)
++        editor.activateTimelineSelection()
+         editor.removeClips(ids: [clip.id])
+ 
+         #expect(editor.clipFor(id: clip.id) == nil)
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index a9fffc38..56b5e8cc 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -95,7 +95,10 @@ def run_scale(executable, output, scale):
+         and selection_source[0].get("insertUndoVerified") is True
+         and selection_source[0].get("overwriteUndoVerified") is True
+         and selection_source[0].get("nativeSourceCommands") is True
++        and selection_source[0].get("nativeSourceScrub") is True
++        and selection_source[0].get("nativeSourceStepAndArrow") is True
+         and selection_source[0].get("nativeMultiselectDeselect") is True
++        and selection_source[0].get("sameSourceReactivationPreservedPlayback") is True
+         and selection_source[0].get("nativeSearchPreservedPlayback") is True
+         and selection_source[0].get("sortAndFilterPreservedPlayback") is True
+         and selection_source[0].get("listModePreserved") is True
+@@ -114,6 +117,11 @@ def run_scale(executable, output, scale):
+         and selection_timeline[0].get("nativeTimelineTrim") is True
+         and selection_timeline[0].get("nativeTitleSelection") is True
+         and selection_timeline[0].get("nativeEmptySelection") is True
++        and selection_timeline[0].get("nativeLinkedAVSelection") is True
++        and selection_timeline[0].get("nativeContextTarget") is True
++        and selection_timeline[0].get("headerInspectorTargetMatched") is True
++        and selection_timeline[0].get("nativeTimelineUndoRedoAfterSourceSwitch") is True
++        and selection_timeline[0].get("nativeDisabledPaste") is True
+         and selection_timeline[0].get("sourceStatePreserved") is True
+         and len(invariants) == 1
+         and invariants[0].get("liveStateUnchanged") is True

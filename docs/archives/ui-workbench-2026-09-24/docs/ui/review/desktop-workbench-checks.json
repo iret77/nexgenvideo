@@ -1,0 +1,874 @@
+{
+  "passed": 217,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Full desktop height",
+      "pass": true
+    },
+    {
+      "name": "Default storyboard sketch assets",
+      "pass": true
+    },
+    {
+      "name": "Selection retains keyboard focus",
+      "pass": true
+    },
+    {
+      "name": "Arrow key selects next shot",
+      "pass": true
+    },
+    {
+      "name": "Ambiguous global focus and media switches removed",
+      "pass": true
+    },
+    {
+      "name": "Hiding left sidebar leaves inspector visible",
+      "pass": true
+    },
+    {
+      "name": "Both sides can independently be hidden",
+      "pass": true
+    },
+    {
+      "name": "Direct panel icons remain visible with both panes hidden",
+      "pass": true
+    },
+    {
+      "name": "Window commands occupy only the titlebar",
+      "pass": true
+    },
+    {
+      "name": "Showing sidebar does not reopen inspector",
+      "pass": true
+    },
+    {
+      "name": "Panel controls preserve content and DOM identity",
+      "pass": true
+    },
+    {
+      "name": "Panel controls identify side and current action",
+      "pass": true
+    },
+    {
+      "name": "Repeated media tab selection is idempotent",
+      "pass": true
+    },
+    {
+      "name": "Workflow tab changes only sidebar contents",
+      "pass": true
+    },
+    {
+      "name": "Resizable browser",
+      "pass": true
+    },
+    {
+      "name": "Empty project has no images or story",
+      "pass": true
+    },
+    {
+      "name": "Blank brief approval disabled",
+      "pass": true
+    },
+    {
+      "name": "Brief becomes approvable",
+      "pass": true
+    },
+    {
+      "name": "Production design preserved",
+      "pass": true
+    },
+    {
+      "name": "Design has no planned scenes",
+      "pass": true
+    },
+    {
+      "name": "Treatment follows brief and design",
+      "pass": true
+    },
+    {
+      "name": "Treatment prose without images",
+      "pass": true
+    },
+    {
+      "name": "Rejecting proposal leaves document unchanged",
+      "pass": true
+    },
+    {
+      "name": "Scoped proposal acceptance changes selected paragraph",
+      "pass": true
+    },
+    {
+      "name": "Undo restores document",
+      "pass": true
+    },
+    {
+      "name": "Script is scene action, no imagery",
+      "pass": true
+    },
+    {
+      "name": "Storyboard creates first images",
+      "pass": true
+    },
+    {
+      "name": "Multiple selection edits both shots",
+      "pass": true
+    },
+    {
+      "name": "Undo does not change chosen window layout",
+      "pass": true
+    },
+    {
+      "name": "Undo restores both durations",
+      "pass": true
+    },
+    {
+      "name": "Timing update persisted",
+      "pass": true
+    },
+    {
+      "name": "Animatic uses shared shot durations",
+      "pass": true
+    },
+    {
+      "name": "Animatic playback updates time",
+      "pass": true
+    },
+    {
+      "name": "Shotplan reuses storyboard timing and IDs",
+      "pass": true
+    },
+    {
+      "name": "Axis crossing blocks plan gate",
+      "pass": true
+    },
+    {
+      "name": "Axis correction restores readiness",
+      "pass": true
+    },
+    {
+      "name": "Missing imported source blocks plan",
+      "pass": true
+    },
+    {
+      "name": "Explicit source assignment restores gate",
+      "pass": true
+    },
+    {
+      "name": "Reference workspace starts without images",
+      "pass": true
+    },
+    {
+      "name": "Reference generation requires cost sheet",
+      "pass": true
+    },
+    {
+      "name": "Active job locks approval",
+      "pass": true
+    },
+    {
+      "name": "Identity studies are rendered images",
+      "pass": true
+    },
+    {
+      "name": "Anchor comparison separates sketches and renderings",
+      "pass": true
+    },
+    {
+      "name": "Unsighted anchors block approval",
+      "pass": true
+    },
+    {
+      "name": "All anchors accepted",
+      "pass": true
+    },
+    {
+      "name": "Review finding blocks generation",
+      "pass": true
+    },
+    {
+      "name": "Story chronology differs from film order",
+      "pass": true
+    },
+    {
+      "name": "Review predecessor follows story time",
+      "pass": true
+    },
+    {
+      "name": "Film view retains presentation order",
+      "pass": true
+    },
+    {
+      "name": "Correction explicitly rewinds plan",
+      "pass": true
+    },
+    {
+      "name": "Review bound to revised inputs",
+      "pass": true
+    },
+    {
+      "name": "Budget blocks over-limit job",
+      "pass": true
+    },
+    {
+      "name": "Cancellation preserves completed takes",
+      "pass": true
+    },
+    {
+      "name": "Resume only creates missing takes",
+      "pass": true
+    },
+    {
+      "name": "Take generation does not auto-select",
+      "pass": true
+    },
+    {
+      "name": "Explicit take selection enables edit",
+      "pass": true
+    },
+    {
+      "name": "Production route opens the editor immediately",
+      "pass": true
+    },
+    {
+      "name": "Edit trim does not overwrite planned duration or shot identities",
+      "pass": true
+    },
+    {
+      "name": "Edit approval enters the finish viewer without another setup screen",
+      "pass": true
+    },
+    {
+      "name": "Requiring current review gates the export",
+      "pass": true
+    },
+    {
+      "name": "Recorded review enables the reviewed output",
+      "pass": true
+    },
+    {
+      "name": "Export remains explicitly simulated",
+      "pass": true
+    },
+    {
+      "name": "Successful output is recorded with its exact settings",
+      "pass": true
+    },
+    {
+      "name": "Future briefing cannot bypass music intake",
+      "pass": true
+    },
+    {
+      "name": "Music pack inserts audio-first intake",
+      "pass": true
+    },
+    {
+      "name": "Track does not skip Lyrics choice",
+      "pass": true
+    },
+    {
+      "name": "Audio analysis has visual sections and beats",
+      "pass": true
+    },
+    {
+      "name": "Audio before all story imagery",
+      "pass": true
+    },
+    {
+      "name": "Optional story intake follows approved analysis",
+      "pass": true
+    },
+    {
+      "name": "No material is a supported answer",
+      "pass": true
+    },
+    {
+      "name": "FilmFlow script starts at board",
+      "pass": true
+    },
+    {
+      "name": "Import covers early phases without fabricating approvals",
+      "pass": true
+    },
+    {
+      "name": "Imported references are not fabricated",
+      "pass": true
+    },
+    {
+      "name": "FilmFlow board starts at plan",
+      "pass": true
+    },
+    {
+      "name": "Import covers early phases without fabricating approvals",
+      "pass": true
+    },
+    {
+      "name": "Imported references are not fabricated",
+      "pass": true
+    },
+    {
+      "name": "FilmFlow full starts at refs",
+      "pass": true
+    },
+    {
+      "name": "Import covers early phases without fabricating approvals",
+      "pass": true
+    },
+    {
+      "name": "Imported references are not fabricated",
+      "pass": true
+    },
+    {
+      "name": "Audio fixture itself has no later images",
+      "pass": true
+    },
+    {
+      "name": "Earlier approved phase is read only",
+      "pass": true
+    },
+    {
+      "name": "Rewind invalidates following gates",
+      "pass": true
+    },
+    {
+      "name": "Plan revision invalidates current takes and selections",
+      "pass": true
+    },
+    {
+      "name": "Old takes remain available as history",
+      "pass": true
+    },
+    {
+      "name": "Imported clips need no generated anchors",
+      "pass": true
+    },
+    {
+      "name": "Imported clips become source takes without a paid run",
+      "pass": true
+    },
+    {
+      "name": "Imported source takes need explicit selection",
+      "pass": true
+    },
+    {
+      "name": "Workspace switching exists only in titlebar",
+      "pass": true
+    },
+    {
+      "name": "One shot contains three distinct sketches",
+      "pass": true
+    },
+    {
+      "name": "Moment selection uses shot-local time",
+      "pass": true
+    },
+    {
+      "name": "Animatic advances images without inventing cuts",
+      "pass": true
+    },
+    {
+      "name": "Next shot starts at unchanged shot boundary",
+      "pass": true
+    },
+    {
+      "name": "Duration edit scales internal moments",
+      "pass": true
+    },
+    {
+      "name": "New moment stays inside one shot and blocks incomplete board",
+      "pass": true
+    },
+    {
+      "name": "Undo restores complete sketch sequence",
+      "pass": true
+    },
+    {
+      "name": "Sketch generation example preserves shot ID and duration",
+      "pass": true
+    },
+    {
+      "name": "Edit sidebar contains media and sequence, no production phases",
+      "pass": true
+    },
+    {
+      "name": "Finish has its own review and delivery sidebar",
+      "pass": true
+    },
+    {
+      "name": "Returning to production restores selected shot and local view",
+      "pass": true
+    },
+    {
+      "name": "Production pool leaves central work surface intact",
+      "pass": true
+    },
+    {
+      "name": "Media preview does not change workflow or revision",
+      "pass": true
+    },
+    {
+      "name": "Production workflow returns in same sidebar",
+      "pass": true
+    },
+    {
+      "name": "Import populates pool without assigning project track",
+      "pass": true
+    },
+    {
+      "name": "Track assignment is an explicit media action",
+      "pass": true
+    },
+    {
+      "name": "Imported source still requires assignment",
+      "pass": true
+    },
+    {
+      "name": "Source assignment affects selected shot only",
+      "pass": true
+    },
+    {
+      "name": "Edit starts with a usable populated media browser",
+      "pass": true
+    },
+    {
+      "name": "Video bin excludes sketches",
+      "pass": true
+    },
+    {
+      "name": "Source preview preserves editing timeline and chosen take",
+      "pass": true
+    },
+    {
+      "name": "Sequence returns after source preview",
+      "pass": true
+    },
+    {
+      "name": "Edit sidebar visibility leaves timeline and inspector unchanged",
+      "pass": true
+    },
+    {
+      "name": "Edit sidebar returns with media and sequence",
+      "pass": true
+    },
+    {
+      "name": "Editing timeline spans the whole window below all upper panels",
+      "pass": true
+    },
+    {
+      "name": "Editing has distinct overlay, video and audio lanes",
+      "pass": true
+    },
+    {
+      "name": "Split creates independent timeline clips and preserves shot plan",
+      "pass": true
+    },
+    {
+      "name": "Undo restores exact unsplit timeline",
+      "pass": true
+    },
+    {
+      "name": "Out trim leaves the next clip and audio in place",
+      "pass": true
+    },
+    {
+      "name": "A trim gap displays black",
+      "pass": true
+    },
+    {
+      "name": "In trim moves only the clip start",
+      "pass": true
+    },
+    {
+      "name": "Hide track affects timeline viewer",
+      "pass": true
+    },
+    {
+      "name": "Mute has visible audio-track state",
+      "pass": true
+    },
+    {
+      "name": "Source transport leaves timeline playhead and chosen take unchanged",
+      "pass": true
+    },
+    {
+      "name": "Transform updates viewer without changing source plan",
+      "pass": true
+    },
+    {
+      "name": "Editor playback advances and pauses",
+      "pass": true
+    },
+    {
+      "name": "Text clip appears on V2 and viewer",
+      "pass": true
+    },
+    {
+      "name": "Clip drag reorders editable sequence without changing shots",
+      "pass": true
+    },
+    {
+      "name": "Undo restores montage order after drag",
+      "pass": true
+    },
+    {
+      "name": "Text documents have an explicit media type",
+      "pass": true
+    },
+    {
+      "name": "Text folder contains current project documents",
+      "pass": true
+    },
+    {
+      "name": "Treatment preview is readable and carries no video controls or metadata",
+      "pass": true
+    },
+    {
+      "name": "Reading a document preserves the edit and approved story",
+      "pass": true
+    },
+    {
+      "name": "Document link opens its canonical approved phase",
+      "pass": true
+    },
+    {
+      "name": "Nested folder navigation shows its real descendants",
+      "pass": true
+    },
+    {
+      "name": "Incompatible folder and type show an explicit scoped empty state",
+      "pass": true
+    },
+    {
+      "name": "Search narrows the active folder without losing keyboard focus",
+      "pass": true
+    },
+    {
+      "name": "Search changes no viewer or timeline state",
+      "pass": true
+    },
+    {
+      "name": "Folder switches preserve the explicit search and type",
+      "pass": true
+    },
+    {
+      "name": "Empty folder names cannot be submitted",
+      "pass": true
+    },
+    {
+      "name": "New folder is nested under the selected folder",
+      "pass": true
+    },
+    {
+      "name": "Rename updates the folder path",
+      "pass": true
+    },
+    {
+      "name": "Import uses the current folder without assigning lyrics",
+      "pass": true
+    },
+    {
+      "name": "Imported text is previewed as text",
+      "pass": true
+    },
+    {
+      "name": "Moving a document retains its identity and workflow",
+      "pass": true
+    },
+    {
+      "name": "Moving media is undoable independently from project truth",
+      "pass": true
+    },
+    {
+      "name": "Lyrics import waits for an explicit assignment",
+      "pass": true
+    },
+    {
+      "name": "Explicit lyrics assignment binds the existing document",
+      "pass": true
+    },
+    {
+      "name": "Greenfield project has no invented project documents",
+      "pass": true
+    },
+    {
+      "name": "A 400-file library stays within its scrollable browser",
+      "pass": true
+    },
+    {
+      "name": "Selecting a document does not jump the list back to its beginning",
+      "pass": true
+    },
+    {
+      "name": "Search finds an individual item among hundreds",
+      "pass": true
+    },
+    {
+      "name": "Thumbnail view retains search and folder scope",
+      "pass": true
+    },
+    {
+      "name": "Media browser can be made substantially wider",
+      "pass": true
+    },
+    {
+      "name": "Compact picker contains no media organization commands",
+      "pass": true
+    },
+    {
+      "name": "Reveal opens the media workspace at the same asset",
+      "pass": true
+    },
+    {
+      "name": "Media workspace consumes the timeline area without a pipeline gate",
+      "pass": true
+    },
+    {
+      "name": "Return restores picker selection, source viewer and timeline exactly",
+      "pass": true
+    },
+    {
+      "name": "Library navigation is remembered independently from the picker",
+      "pass": true
+    },
+    {
+      "name": "Modifier selection selects a batch and exposes one batch action",
+      "pass": true
+    },
+    {
+      "name": "View, sort and folder disclosure retain the selected batch",
+      "pass": true
+    },
+    {
+      "name": "Search clears batch styling and action together without losing focus",
+      "pass": true
+    },
+    {
+      "name": "Batch move preserves asset IDs and the timeline",
+      "pass": true
+    },
+    {
+      "name": "Library drag moves selected assets into a folder without assigning them",
+      "pass": true
+    },
+    {
+      "name": "Generated filter excludes text documents and project audio",
+      "pass": true
+    },
+    {
+      "name": "Source drag inserts a new timeline instance without editing shot planning",
+      "pass": true
+    },
+    {
+      "name": "Undo source insertion restores the exact montage",
+      "pass": true
+    },
+    {
+      "name": "Media visit preserves storyboard selection, mode and timing",
+      "pass": true
+    },
+    {
+      "name": "Early Edit visit shows an empty editor and timeline without inventing footage or approvals",
+      "pass": true
+    },
+    {
+      "name": "Leaving an empty Edit workspace returns to the actual production phase",
+      "pass": true
+    },
+    {
+      "name": "Approving Takes opens a populated editor without a second hidden setup step",
+      "pass": true
+    },
+    {
+      "name": "Restored pre-editor state and stale workspace memory recover the correct populated Edit surface",
+      "pass": true
+    },
+    {
+      "name": "Recovered Edit sequence survives workspace roundtrip",
+      "pass": true
+    },
+    {
+      "name": "Manual generation has prompt and provider fields, with empty prompt blocked",
+      "pass": true
+    },
+    {
+      "name": "Provider change constrains models and preserves the prompt",
+      "pass": true
+    },
+    {
+      "name": "Generation review exposes the exact request and example cost before any asset exists",
+      "pass": true
+    },
+    {
+      "name": "Generation is one running job with approval unavailable",
+      "pass": true
+    },
+    {
+      "name": "Stopped generation produces no asset and charges no example cost",
+      "pass": true
+    },
+    {
+      "name": "Manual image lands in the shared library with request provenance and no pipeline assignment",
+      "pass": true
+    },
+    {
+      "name": "Generated assets retain compact list rows",
+      "pass": true
+    },
+    {
+      "name": "Consumed generation approval cannot submit twice",
+      "pass": true
+    },
+    {
+      "name": "Image-to-video model requires an explicit start image",
+      "pass": true
+    },
+    {
+      "name": "An existing generated image can satisfy the required start image",
+      "pass": true
+    },
+    {
+      "name": "Switching to text-to-video clears incompatible image inputs",
+      "pass": true
+    },
+    {
+      "name": "Manual video is a free library asset with duration and no invented shot binding",
+      "pass": true
+    },
+    {
+      "name": "Generated video source previews its honest placeholder while preserving the montage",
+      "pass": true
+    },
+    {
+      "name": "Audio generation presents sound models and duration instead of image format",
+      "pass": true
+    },
+    {
+      "name": "Manual audio is available as an independent generated source",
+      "pass": true
+    },
+    {
+      "name": "Manual generation cannot exceed the project budget",
+      "pass": true
+    },
+    {
+      "name": "Finish retains native optional sequence review and three video codecs",
+      "pass": true
+    },
+    {
+      "name": "Finish review returns to viewer",
+      "pass": true
+    },
+    {
+      "name": "Finish playback moves its own cursor without modifying the montage",
+      "pass": true
+    },
+    {
+      "name": "Finish scan offers a visual sample finding without claiming a real video audit",
+      "pass": true
+    },
+    {
+      "name": "Finding opens the matching outgoing and incoming shot pair",
+      "pass": true
+    },
+    {
+      "name": "Individual cut sighting records the exact clip pair",
+      "pass": true
+    },
+    {
+      "name": "Accepting a finding requires an explicit stored decision",
+      "pass": true
+    },
+    {
+      "name": "Delivery playback works after inspecting cuts",
+      "pass": true
+    },
+    {
+      "name": "Frame stepping pauses playback and resets its transport icon",
+      "pass": true
+    },
+    {
+      "name": "Export settings preserve sequence review and use the correct dimensions and extension",
+      "pass": true
+    },
+    {
+      "name": "Save rejects a mismatched file type",
+      "pass": true
+    },
+    {
+      "name": "An export captures a bounded job and blocks a second start",
+      "pass": true
+    },
+    {
+      "name": "Cancelling export records no successful output",
+      "pass": true
+    },
+    {
+      "name": "Repeated export succeeds without consuming a new production approval",
+      "pass": true
+    },
+    {
+      "name": "Timeline XML shows its real transfer limitations without video-only settings",
+      "pass": true
+    },
+    {
+      "name": "XML handoff records its own mode and extension",
+      "pass": true
+    },
+    {
+      "name": "Self-contained project export includes the media inventory",
+      "pass": true
+    },
+    {
+      "name": "Observation is optional prose with an empty-submit guard",
+      "pass": true
+    },
+    {
+      "name": "Repeat review preserves human observations and accepted decisions for the same cut",
+      "pass": true
+    },
+    {
+      "name": "Blocking observation invalidates a required current review",
+      "pass": true
+    },
+    {
+      "name": "User retains the native choice to export without requiring sequence review",
+      "pass": true
+    },
+    {
+      "name": "Repair explicitly reopens Edit and preserves clips",
+      "pass": true
+    },
+    {
+      "name": "Changed montage makes the previous review stale on re-entering Finish",
+      "pass": true
+    },
+    {
+      "name": "Older outputs remain visible and are identified as earlier cuts",
+      "pass": true
+    },
+    {
+      "name": "Finish reviews and output history survive restoring widget state",
+      "pass": true
+    },
+    {
+      "name": "Early Finish is a clear empty state without invented footage or export authority",
+      "pass": true
+    },
+    {
+      "name": "Legacy focus state cannot hide either panel",
+      "pass": true
+    },
+    {
+      "name": "Existing saved mockups gain sketch moments safely",
+      "pass": true
+    },
+    {
+      "name": "No free chat composer",
+      "pass": true
+    },
+    {
+      "name": "No page-level horizontal overflow",
+      "pass": true
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "suite": "workbench",
+    "exit": 0,
+    "passes": 35,
+    "failures": []
+  },
+  {
+    "suite": "polish",
+    "exit": 0,
+    "passes": 32,
+    "failures": []
+  },
+  {
+    "suite": "artwork",
+    "exit": 0,
+    "passes": 41,
+    "failures": []
+  },
+  {
+    "suite": "guards",
+    "exit": 0,
+    "passes": 32,
+    "failures": []
+  },
+  {
+    "suite": "background",
+    "exit": 0,
+    "passes": 25,
+    "failures": []
+  }
+]

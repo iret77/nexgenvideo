@@ -1,0 +1,484 @@
+[
+  {
+    "width": 960,
+    "scale": 100,
+    "pack": "Generic",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Medien",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Produktion",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Schnitt",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Postproduction",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Export",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Format",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Standard",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      }
+    ],
+    "buttonGap": 8,
+    "overflow": false,
+    "titleHeight": 44
+  },
+  {
+    "width": 1048,
+    "scale": 100,
+    "pack": "Music Video",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Medien",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Produktion",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Schnitt",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Postproduction",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Export",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Format",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "Music Video",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34,
+        "font": "13px",
+        "line": "18px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      }
+    ],
+    "buttonGap": 8,
+    "overflow": false,
+    "titleHeight": 44
+  },
+  {
+    "width": 1048,
+    "scale": 130,
+    "pack": "Generic",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "top": 24,
+        "height": 23.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Medien",
+        "top": 20,
+        "height": 31.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Produktion",
+        "top": 20,
+        "height": 31.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Schnitt",
+        "top": 20,
+        "height": 31.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Postproduction",
+        "top": 20,
+        "height": 31.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Export",
+        "top": 20,
+        "height": 31.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Format",
+        "top": 24,
+        "height": 23.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "Standard",
+        "top": 24,
+        "height": 23.40625,
+        "center": 35.703125,
+        "textCenter": 35.5,
+        "font": "16.9px",
+        "line": "23.4px"
+      },
+      {
+        "label": "icon",
+        "top": 27.703125,
+        "height": 16,
+        "center": 35.703125,
+        "textCenter": 35.703125,
+        "font": "13px",
+        "line": "16.25px"
+      },
+      {
+        "label": "icon",
+        "top": 27.703125,
+        "height": 16,
+        "center": 35.703125,
+        "textCenter": 35.703125,
+        "font": "13px",
+        "line": "16.25px"
+      }
+    ],
+    "buttonGap": 8,
+    "overflow": false,
+    "titleHeight": 46.40625
+  },
+  {
+    "width": 768,
+    "scale": 100,
+    "pack": "Generic",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Medien",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Produktion",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Schnitt",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Postproduction",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Export",
+        "top": 20.5,
+        "height": 28,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Standard",
+        "top": 25.5,
+        "height": 18,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      },
+      {
+        "label": "icon",
+        "top": 26.5,
+        "height": 16,
+        "center": 34.5,
+        "textCenter": 34.5,
+        "font": "13px",
+        "line": "16.25px"
+      }
+    ],
+    "buttonGap": 8,
+    "overflow": false,
+    "titleHeight": 44
+  },
+  {
+    "width": 390,
+    "scale": 100,
+    "pack": "Generic",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "top": 23,
+        "height": 18,
+        "center": 32,
+        "textCenter": 32,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Medien",
+        "top": 53,
+        "height": 28,
+        "center": 67,
+        "textCenter": 67,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Produktion",
+        "top": 53,
+        "height": 28,
+        "center": 67,
+        "textCenter": 67,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Schnitt",
+        "top": 53,
+        "height": 28,
+        "center": 67,
+        "textCenter": 67,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Postproduction",
+        "top": 53,
+        "height": 28,
+        "center": 67,
+        "textCenter": 67,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Export",
+        "top": 53,
+        "height": 28,
+        "center": 67,
+        "textCenter": 67,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "Standard",
+        "top": 23,
+        "height": 18,
+        "center": 32,
+        "textCenter": 32,
+        "font": "12px",
+        "line": "18px"
+      },
+      {
+        "label": "icon",
+        "top": 24,
+        "height": 16,
+        "center": 32,
+        "textCenter": 32,
+        "font": "13px",
+        "line": "16.25px"
+      },
+      {
+        "label": "icon",
+        "top": 24,
+        "height": 16,
+        "center": 32,
+        "textCenter": 32,
+        "font": "13px",
+        "line": "16.25px"
+      }
+    ],
+    "buttonGap": 8,
+    "overflow": true,
+    "titleHeight": 76
+  }
+]

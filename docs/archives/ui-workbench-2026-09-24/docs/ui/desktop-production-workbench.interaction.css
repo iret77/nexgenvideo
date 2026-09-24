@@ -1,0 +1,41 @@
+#ngv-desk .design-editor{max-width:640px;margin:0 auto;padding:28px}
+#ngv-desk .design-editor>.property{grid-template-columns:130px minmax(180px,1fr);gap:16px;margin:16px 0}
+#ngv-desk .design-editor select{height:32px;max-width:none;width:100%}
+#ngv-desk .design-palette{display:flex;height:38px;gap:0;margin:20px 0}
+#ngv-desk .design-palette i{flex:1;background:#c3a785}
+#ngv-desk .design-palette i:nth-child(2){background:#7f654b}#ngv-desk .design-palette i:nth-child(3){background:#ded0b6}#ngv-desk .design-palette i:nth-child(4){background:#675c50}#ngv-desk .design-palette i:nth-child(5){background:#af8356}
+#ngv-desk .design-palette[data-palette="Kühl / reduziert"]{filter:hue-rotate(165deg) saturate(.4)}
+#ngv-desk .design-palette[data-palette="Schwarzweiß"]{filter:grayscale(1)}
+#ngv-desk .design-palette[data-palette="Natürlich"]{filter:hue-rotate(35deg) saturate(.65)}
+#ngv-desk .take-screen{display:flex;flex-direction:column;gap:12px;min-height:0;padding-bottom:16px}
+#ngv-desk .take-screen-image{margin:0 16px;position:relative;flex-shrink:0}
+#ngv-desk .take-screen-image>.thumb-image{width:100%;aspect-ratio:16/9;max-height:350px}
+#ngv-desk .take-screen-image>small{display:block;padding:6px 0;color:var(--nd-muted)}
+#ngv-desk .take-screen-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px}
+#ngv-desk .take-screen-controls .wf-take-choices{margin:0}
+#ngv-desk .take-screen-decision{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--nd-panel);flex-wrap:wrap}
+#ngv-desk .take-screen-decision>span:first-child{display:grid;gap:4px}
+#ngv-desk .take-screen-decision small{color:var(--nd-muted)}
+#ngv-desk .take-note{display:grid;gap:8px;padding:0 16px}
+#ngv-desk .take-screen-strip{display:flex;gap:8px;overflow-x:auto;padding:4px 16px}
+#ngv-desk .take-screen-strip>button{width:90px;flex-shrink:0;padding:0;overflow:hidden;background:var(--nd-panel)}
+#ngv-desk .take-screen-strip .thumb-image{height:50px;width:90px}
+#ngv-desk .take-screen-strip span{display:block;padding:5px}
+#ngv-desk .take-screen-strip [aria-pressed=true]>span{background:var(--nd-accent);color:white}
+#ngv-desk .production-model{display:flex;align-items:center;gap:12px;padding:12px;flex-wrap:wrap;border-bottom:1px solid var(--nd-line)}
+#ngv-desk .production-model label{display:flex;align-items:center;gap:12px;flex:1;min-width:230px}
+#ngv-desk .production-model select{flex:1;min-width:0;max-width:360px;height:28px}
+#ngv-desk .production-model small{color:var(--nd-muted)}
+#ngv-desk .creative-source{padding:12px 0;margin:0 0 12px;border-bottom:1px solid var(--nd-line)}
+#ngv-desk .creative-goals{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+#ngv-desk .creative-note{display:grid;gap:8px;margin:12px 0 16px}
+#ngv-desk .creative-note textarea{width:100%;box-sizing:border-box;resize:vertical}
+#ngv-desk .creative-note select{height:32px;width:100%}
+#ngv-desk .creative-comparison{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:16px 0}
+#ngv-desk .creative-comparison p{line-height:1.6}
+#ngv-desk .correction-shot>span{font-weight:600}
+@media(max-width:650px){#ngv-desk .creative-comparison{grid-template-columns:1fr}#ngv-desk .design-editor>.property{grid-template-columns:1fr}}
+
+#ngv-desk .take-screen-strip>button{display:block}
+
+#ngv-desk .design-editor>.property{display:grid;text-transform:none;align-items:center}

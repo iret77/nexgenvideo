@@ -1,0 +1,88 @@
+PASS Ankerdialog abbrechen bewahrt Medien, Kosten und Sichtungen
+PASS Unveränderter Skip verlangt keine neuen Anker
+PASS Revision bewahrt alle zwölf Takes als Projektmedien
+PASS Passende frühere Takes können erneut gewählt werden
+PASS Geänderte Shotvorgabe schließt alte Takes dieses Shots aus
+PASS Befundauswahl synchronisiert Bildpaar und Inspector
+PASS Evidenz besteht aus Ergebnissen statt Checkboxen
+PASS Take ohne Befund lässt sich direkt auswählen
+PASS Take lässt sich ohne sechs Prüfbestätigungen ablehnen
+PASS Take-Befund braucht ausdrückliche Begründung zur Übernahme
+PASS Shot einfügen erzeugt stabile ID und leeren Sketch
+PASS Shot teilen bewahrt Gesamtdauer und Moments
+PASS Shot umordnen bewahrt ID und Motivzuordnung
+PASS Löschen ist abbrechbar und rückgängig machbar
+PASS Shared Location bewahrt unterschiedliche Figurenpositionen
+PASS Gemeinsames festes Objekt bleibt Location-Geometrie
+PASS Nur gezielt benötigte Shots bekommen standardmäßig Clay-Vorlagen
+PASS Location-Kopie hängt bestehenden Shot nicht still um
+PASS Draufsicht besitzt direkte Objekt- und Kamera-Griffe
+PASS Draufsicht-Griffe sind an die sichtbare Bühne gebunden
+PASS Ziehen eines Objekts verändert seine Shot-Position
+PASS Kamera und Sketch lassen sich im selben Raum vergleichen
+PASS References vergleicht Clay und Rendering
+PASS Anker-Kontaktbogen erlaubt Mehrfachsichtung
+PASS 96 Shots lassen die Blocking-Bühne sichtbar
+PASS Gestaltung ist als eigene Phase sichtbar
+PASS Animatic zeigt Songabschnitte und Ausschnittzuordnung
+PASS Storyboard-Übersicht hat keinen Animatic-Transport
+PASS Audioanalyse bietet Abhören, Seek und Abschnittsloop
+PASS Audio-Abhören startet und stoppt
+PASS Shot-Grid bietet tatsächliche Drag-Ziele
+PASS Alle Shots löschen bleibt ein bedienbarer Leerzustand
+PASS Gelöschte Shotbilder bleiben im Medienbestand
+PASS Umordnung erhält den Rückblendenhinweis am richtigen Shot
+PASS Audio stoppt beim Wechsel des Arbeitsraums
+PASS Draufsicht hält die Kamera im sichtbaren Bereich
+PASS Kameragriff ist tatsächlich sichtbar
+PASS Statische Kamera mit Figurenbewegung bietet Wiedergabe
+PASS Anfang und Ende enthalten unterschiedliche Inszenierungen
+PASS Erneute Planfreigabe behält Blocking-Skip ohne Rückfrage
+PASS Greenfield erstellt Anker und gelangt zum Render-Review
+PASS Shot-Umordnung bewahrt Medienordner und Timeline-Quellen
+PASS Neue Bildvariante macht frühere Takes dieses Shots unpassend
+PASS Videobatch legt Modelle, Dauer und Eingaben offen
+PASS Freigegebener Batch erzeugt sechs Takes
+PASS Ausgewählte Takes gehen in den bestehenden Schnitt über
+PASS Fable: Beim neuen Shot bleibt die vorhandene Clay-Szene erhalten
+PASS Fable: Shot teilen setzt Kamera und Figuren am Schnittpunkt fort
+PASS Fable: Daueränderung erfordert neue Takes, keine statischen Anker
+PASS Fable: Passende Takes bleiben bei teilweise gefüllter Auswahl erreichbar
+PASS Fable: Neugenerierung bekommt neue Take-Kennungen
+PASS Fable: Zweite Revision bewahrt beide Generierungsläufe
+PASS Fable: Wiederverwendung bleibt nach teilweiser Zuweisung erreichbar
+PASS Fable: Gelöschte Shots entfernen ihre Clay-Kameras
+PASS Fable: Neue Shots erben den Zustand ihres Story-Vorgängers
+PASS Fable: Nur der korrigierte Shot verliert seine Ankersichtung
+PASS Fable: Ein entfernter Befundshot erzeugt keinen Phantom-Befund
+PASS Fable: Zustandsänderung in der Planung wirkt im Review
+PASS Fable: Akzeptierte Abweichung bleibt als Befund sichtbar
+PASS Fable: Unbeteiligter Take 2 hat keinen erfundenen Handbefund
+PASS Fable: Abgebrochener Ankerlauf erfindet keine fehlenden Bilder
+PASS Fable: Generierte Anker und Kosten können nicht rückgängig verschwinden
+PASS Fable: Neuer Shot kann direkt einen Sketch erzeugen
+PASS Fable: Fehlende Handlung bekommt passende Gate-Erklärung
+PASS Fable: Animatic verwendet für Song und Shots dieselbe Zeitskala
+PASS Fable: Animatic streckt den Track bei langen Projekten nicht
+PASS Fable: Songversatz verschiebt das Beat-Raster
+PASS Fable: Abschnittsabhören hält am Abschnittsende an
+PASS Fable: Gespeicherter Zustand startet keine Phantom-Wiedergabe
+PASS Einzelner neuer Anker wird mit aktuellen Eingaben gebunden
+PASS Einzelgenerierung bewahrt den alten Anker und bezahlten Auftrag
+PASS Archivierte Takes behalten Ordner- und Namensänderungen
+PASS Entfernte Archivmedien werden nicht erneut vorgeschlagen
+PASS Frühere Take-Ansicht folgt der Shot-Umordnung
+PASS Fable-Nachprüfung: Einfügen zwischen geteilten Shots bewahrt Story-Zeit
+PASS Fable-Nachprüfung: Viele Einfügungen bleiben vor dem Story-Nachfolger
+PASS Fable-Nachprüfung: Loser Quellclip blendet archivierte Anker nicht aus
+PASS Fable-Nachprüfung: Importierte Shots bekommen keine Phantom-Anker
+PASS Fable-Nachprüfung: Gemischte Auswahl blockiert die Ankersichtung nicht
+PASS Fable-Nachprüfung: Quellwechsel archiviert vorherigen KI-Anker
+PASS Fable-Nachprüfung: Freigegebener Songversatz ist schreibgeschützt
+PASS Fable-Nachprüfung: Songversatz besitzt Revision und Undo
+PASS Fable-Nachprüfung: Alte Sichtung kann veralteten Anker nicht freigeben
+PASS Clay-Checkbox ändert die tatsächliche Shot-Zuordnung
+PASS Clay-Checkbox schaltet die Kamerafahrt tatsächlich um
+PASS Rewind bewahrt auflösbare Bildquellen der bestehenden Timeline
+PASS Wiederverwendung erhält dieselbe Medienidentität in der Timeline
+{"passed":88,"total":88}

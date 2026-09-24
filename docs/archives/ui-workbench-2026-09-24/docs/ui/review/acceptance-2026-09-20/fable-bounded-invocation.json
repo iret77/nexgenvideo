@@ -1,0 +1,9 @@
+{
+  "command": "claude-high5",
+  "model": "fable",
+  "effort": "high",
+  "tools": [],
+  "permission_mode": "plan",
+  "elapsed_seconds": 422,
+  "exit_code": 0
+}

@@ -1,0 +1,2303 @@
+diff --git a/.github/workflows/bpy-runtime-acceptance.yml b/.github/workflows/bpy-runtime-acceptance.yml
+index 8550e874..74d13d95 100644
+--- a/.github/workflows/bpy-runtime-acceptance.yml
++++ b/.github/workflows/bpy-runtime-acceptance.yml
+@@ -36,16 +36,9 @@ jobs:
+             scripts.test_bpy_runtime_workflow
+           OUTPUT="$RUNNER_TEMP/bpy-source-closure"
+           python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+-          python3 scripts/verify_bpy_source_closure.py \
++          python3 scripts/verify_bpy_distributable_source.py \
+             "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+-            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" \
+-            --require-distributable
+-          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" | awk '{print $1}')" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
+-          [ "$(stat -c %s "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar")" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
+-          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" | awk '{print $1}')" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
++            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+       - uses: actions/upload-artifact@v4
+         with:
+           name: managed-bpy-source-${{ inputs.source_sha }}
+@@ -266,8 +259,13 @@ jobs:
+             and .rlimitASAllocationDenied == true
+             and .outOfMemoryState == "resourceLimited"
+             and .structuralLimitState == "resourceLimited"
++            and .renderOnlyGeometryState == "resourceLimited"
++            and .secondarySceneGeometryState == "resourceLimited"
++            and .prefixedUserGeometryState == "resourceLimited"
+             and .storageLimitState == "resourceLimited"
+             and .aggregateByteLimitState == "resourceLimited"
++            and .unlinkedStorageLimitState == "resourceLimited"
++            and .healthyResourceChurnState == "awaitingConfirmation"
+             and .resourceScanErrorState == "crashed"
+             and .containerSiblingWriteDenied == true
+             and .supervisorSignalDenied == true
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 0570aa91..703039a2 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -22,7 +22,7 @@ jobs:
+   source_gate:
+     name: Source Gate
+     runs-on: ubuntu-24.04
+-    timeout-minutes: 5
++    timeout-minutes: 90
+     outputs:
+       build_required: ${{ steps.classify.outputs.build_required }}
+       bundle_required: ${{ steps.classify.outputs.bundle_required }}
+@@ -79,9 +79,16 @@ jobs:
+         id: bpy_distribution
+         run: |
+           python3 scripts/verify_bpy_runtime.py
+-          [ "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" = ready ] \
+-            && echo "ready=true" >> "$GITHUB_OUTPUT" \
+-            || echo "ready=false" >> "$GITHUB_OUTPUT"
++          if [ "$(jq -r .distributionStatus Runtime/bpy/runtime-lock.json)" = ready ]; then
++            OUTPUT="$RUNNER_TEMP/bpy-source-closure"
++            python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
++            python3 scripts/verify_bpy_distributable_source.py \
++              "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
++              "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
++            echo "ready=true" >> "$GITHUB_OUTPUT"
++          else
++            echo "ready=false" >> "$GITHUB_OUTPUT"
++          fi
+ 
+   ui_render:
+     name: Agent UI Evidence
+@@ -310,9 +317,36 @@ jobs:
+           retention-days: 7
+           compression-level: 0
+ 
++      - name: Assemble signed no-bpy CI boundary app
++        if: needs.source_gate.outputs.bundle_required == 'true'
++        env:
++          CI: true
++        run: |
++          set -euo pipefail
++          scripts/bundle.sh debug --bpy-boundary-probe-for-ci-transfer
++          APP=.build/NexGenVideo.app
++          test -f "$APP/Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
++          test ! -e "$APP/Contents/Helpers/BpyRuntime"
++          test ! -e "$APP/Contents/Helpers/BpyRuntime/python"
++          test -x "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
++          test -x "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService"
++          ! find "$APP" \( -name '__init__.so' -o -name 'bpy*.whl' \) -print | grep -q .
++          codesign --verify --strict --verbose=2 "$APP"
++          ditto -c -k --keepParent "$APP" .build/NexGenVideo-ci-boundary.zip
++
++      - name: Upload signed no-bpy CI boundary app
++        if: needs.source_gate.outputs.bundle_required == 'true'
++        uses: actions/upload-artifact@v4
++        with:
++          name: NexGenVideo-ci-boundary-app
++          path: .build/NexGenVideo-ci-boundary.zip
++          if-no-files-found: error
++          retention-days: 7
++          compression-level: 0
++
+   diagnostic-startup:
+     needs: [source_gate, build_test]
+-    if: needs.source_gate.outputs.bundle_required == 'true' && needs.source_gate.outputs.bpy_distribution_ready == 'true'
++    if: needs.source_gate.outputs.bundle_required == 'true'
+     runs-on: macos-26
+     timeout-minutes: 10
+     permissions:
+@@ -332,11 +366,11 @@ jobs:
+           python3 scripts/verify_hang_startup.py control/NexGenVideo.app --expect-missing-recorder --output evidence/control.json
+       - uses: actions/download-artifact@v4
+         with:
+-          name: NexGenVideo-app
++          name: NexGenVideo-ci-boundary-app
+           path: candidate
+       - name: Verify normal startup and disabled preference
+         run: |
+-          ditto -x -k candidate/NexGenVideo.zip candidate
++          ditto -x -k candidate/NexGenVideo-ci-boundary.zip candidate
+           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
+       - uses: actions/upload-artifact@v4
+         if: always()
+@@ -344,9 +378,77 @@ jobs:
+           name: diagnostic-normal-startup
+           path: evidence/*.json
+ 
++  bpy-boundary:
++    name: Signed bpy Boundary Probe
++    needs: [source_gate, build_test]
++    if: needs.source_gate.outputs.bundle_required == 'true'
++    runs-on: macos-26
++    timeout-minutes: 10
++    permissions:
++      contents: read
++      actions: read
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/download-artifact@v4
++        with:
++          name: NexGenVideo-ci-boundary-app
++          path: candidate
++      - name: Verify signed XPC, Supervisor, and fixed child boundary
++        run: |
++          set -euo pipefail
++          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
++          [ "$(uname -m)" = arm64 ]
++          ditto -x -k candidate/NexGenVideo-ci-boundary.zip candidate
++          APP="$PWD/candidate/NexGenVideo.app"
++          SUPERVISOR="$APP/Contents/Helpers/NexGenVideoBpySupervisor"
++          XPC="$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc"
++          test -f "$APP/Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
++          test ! -e "$APP/Contents/Helpers/BpyRuntime"
++          ! find "$APP" \( -name '__init__.so' -o -name 'bpy*.whl' \) -print | grep -q .
++          codesign --verify --strict --verbose=2 "$APP"
++          codesign --verify --strict --verbose=2 "$SUPERVISOR"
++          codesign --verify --strict --verbose=2 "$XPC"
++          codesign -d --entitlements :- "$SUPERVISOR" > "$RUNNER_TEMP/supervisor.plist"
++          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/supervisor.plist")" = true ]
++          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/supervisor.plist")" = true ]
++          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/supervisor.plist"
++          codesign -d --entitlements :- "$XPC" > "$RUNNER_TEMP/xpc.plist"
++          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/xpc.plist")" = true ]
++          ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/xpc.plist"
++          mkdir -p evidence
++          NGV_SELFTEST_BPY_BOUNDARY="$PWD/evidence/result.json" \
++            "$APP/Contents/MacOS/NexGenVideo" > evidence/runtime.log 2>&1
++          grep -q SELFTEST_BPY_BOUNDARY_OK evidence/runtime.log
++          jq -e '
++            .schema == "nexgenvideo/bpy-boundary-probe/1"
++            and .serviceProcessIdentifier > 1
++            and .supervisorProcessIdentifier > 1
++            and .childProcessIdentifier > 1
++            and .supervisorParentProcessIdentifier == .serviceProcessIdentifier
++            and .childParentProcessIdentifier == .supervisorProcessIdentifier
++            and .allowedWriteSucceeded == true
++            and (.outsideWriteDeniedErrno == 1 or .outsideWriteDeniedErrno == 13)
++            and (.forkDeniedErrno == 1 or .forkDeniedErrno == 35)
++            and (.networkDeniedErrno == 1 or .networkDeniedErrno == 13)
++            and (.signalDeniedErrnos | length) == 3
++            and all(.signalDeniedErrnos[]; . == 1 or . == 13)
++            and .unlinkedBytesObserved >= 1048576
++            and .unlinkedLimitReason == "disk"
++            and .cleanupSupervisorGone == true
++            and .cleanupChildGone == true
++            and .healthyFollowupSucceeded == true
++          ' evidence/result.json
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: signed-bpy-boundary-evidence
++          path: evidence
++          if-no-files-found: error
++          retention-days: 30
++
+   merge_gate:
+     name: Merge Gate
+-    needs: [source_gate, build_test, ui_render, diagnostic-startup]
++    needs: [source_gate, build_test, ui_render, diagnostic-startup, bpy-boundary]
+     if: always()
+     runs-on: ubuntu-24.04
+     timeout-minutes: 2
+@@ -367,14 +469,9 @@ jobs:
+               expected = "success" if plan[key] == "true" else "skipped"
+               if needs[job]["result"] != expected:
+                   raise SystemExit(f"{job}: expected {expected}, got {needs[job]['result']}")
+-          diagnostic_expected = "success" if (
+-              plan["bundle_required"] == "true"
+-              and plan["bpy_distribution_ready"] == "true"
+-          ) else "skipped"
+-          if needs["diagnostic-startup"]["result"] != diagnostic_expected:
+-              raise SystemExit(
+-                  f"diagnostic-startup: expected {diagnostic_expected}, "
+-                  f"got {needs['diagnostic-startup']['result']}"
+-              )
++          for job in ("diagnostic-startup", "bpy-boundary"):
++              expected = "success" if plan["bundle_required"] == "true" else "skipped"
++              if needs[job]["result"] != expected:
++                  raise SystemExit(f"{job}: expected {expected}, got {needs[job]['result']}")
+           print("All applicable CI checks succeeded.")
+           PYTHON
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 1bd89ddb..5ca11e30 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -345,14 +345,7 @@ jobs:
+           python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+           ARCHIVE="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar"
+           MANIFEST="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+-          python3 scripts/verify_bpy_source_closure.py \
+-            "$ARCHIVE" "$MANIFEST" --require-distributable
+-          [ "$(sha256sum "$ARCHIVE" | awk '{print $1}')" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
+-          [ "$(stat -c %s "$ARCHIVE")" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
+-          [ "$(sha256sum "$MANIFEST" | awk '{print $1}')" = \
+-            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
++          python3 scripts/verify_bpy_distributable_source.py "$ARCHIVE" "$MANIFEST"
+       - uses: actions/upload-artifact@v4
+         with:
+           name: bpy-corresponding-source-${{ github.sha }}
+diff --git a/Runtime/bpy/worker.py b/Runtime/bpy/worker.py
+index f6ef2265..80ded7e4 100755
+--- a/Runtime/bpy/worker.py
++++ b/Runtime/bpy/worker.py
+@@ -100,28 +100,112 @@ def execute_job(config):
+ 
+ 
+ def evaluated_geometry(bpy, limits):
+-    depsgraph = bpy.context.evaluated_depsgraph_get()
+-    objects = 0
+-    vertices = 0
+-    polygons = 0
+-    for instance in depsgraph.object_instances:
+-        objects += 1
+-        if objects > limits["objects"]:
+-            fail(f"evaluated object limit exceeded: {objects}")
+-        obj = instance.object
+-        if obj.type != "MESH":
+-            continue
+-        mesh = obj.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
+-        try:
+-            vertices += len(mesh.vertices)
+-            polygons += len(mesh.polygons)
+-        finally:
+-            obj.to_mesh_clear()
+-        if vertices > limits["vertices"] or polygons > limits["polygons"]:
+-            fail(
+-                f"evaluated geometry limit exceeded: vertices={vertices}, polygons={polygons}"
+-            )
+-    return objects, vertices, polygons
++    state = {"failure": None, "scenarios": []}
++    verifier_camera_prefix = "NGV_GEOMETRY_VERIFIER_CAMERA_"
++    verifier_camera_identities = set()
++
++    class NGVGeometryVerifier(bpy.types.RenderEngine):
++        bl_idname = "NGV_GEOMETRY_VERIFIER"
++        bl_label = "NexGenVideo Geometry Verifier"
++
++        def render(self, depsgraph):
++            counts = {"objects": 0, "vertices": 0, "polygons": 0}
++            try:
++                for instance in depsgraph.object_instances:
++                    obj = instance.object
++                    original = getattr(obj, "original", None)
++                    source_object = original if original is not None else obj
++                    if source_object.as_pointer() in verifier_camera_identities:
++                        continue
++                    counts["objects"] += 1
++                    if counts["objects"] > limits["objects"]:
++                        raise RuntimeError(
++                            f"evaluated object limit exceeded: {counts['objects']}"
++                        )
++                    if obj.type != "MESH":
++                        continue
++                    mesh = obj.to_mesh(
++                        preserve_all_data_layers=False,
++                        depsgraph=depsgraph,
++                    )
++                    try:
++                        counts["vertices"] += len(mesh.vertices)
++                        counts["polygons"] += len(mesh.polygons)
++                    finally:
++                        obj.to_mesh_clear()
++                    if (
++                        counts["vertices"] > limits["vertices"]
++                        or counts["polygons"] > limits["polygons"]
++                    ):
++                        raise RuntimeError(
++                            "evaluated geometry limit exceeded: "
++                            f"vertices={counts['vertices']}, "
++                            f"polygons={counts['polygons']}"
++                        )
++                state["scenarios"].append(counts)
++            except BaseException as error:
++                state["failure"] = str(error)
++            result = self.begin_result(0, 0, 1, 1)
++            self.end_result(result)
++
++    originals = []
++    temporary_cameras = []
++    bpy.utils.register_class(NGVGeometryVerifier)
++    try:
++        for scene in bpy.data.scenes:
++            originals.append((
++                scene,
++                scene.render.engine,
++                scene.render.use_compositing,
++                scene.render.use_sequencer,
++                scene.camera,
++            ))
++            if scene.camera is None:
++                camera_data = bpy.data.cameras.new(verifier_camera_prefix + scene.name)
++                camera = bpy.data.objects.new(verifier_camera_prefix + scene.name, camera_data)
++                scene.collection.objects.link(camera)
++                scene.camera = camera
++                verifier_camera_identities.add(camera.as_pointer())
++                temporary_cameras.append((scene, camera, camera_data))
++            scene.render.engine = NGVGeometryVerifier.bl_idname
++            scene.render.use_compositing = False
++            scene.render.use_sequencer = False
++            for view_layer in scene.view_layers:
++                if not getattr(view_layer, "use", True):
++                    continue
++                state["failure"] = None
++                result = bpy.ops.render.render(
++                    animation=False,
++                    write_still=False,
++                    use_viewport=False,
++                    scene=scene.name,
++                    layer=view_layer.name,
++                )
++                if state["failure"] is not None:
++                    fail(
++                        f"render geometry rejected for {scene.name}/{view_layer.name}: "
++                        f"{state['failure']}"
++                    )
++                if "FINISHED" not in result:
++                    fail(f"render geometry evaluation failed for {scene.name}/{view_layer.name}")
++    finally:
++        for scene, engine, compositing, sequencer, camera in originals:
++            scene.render.engine = engine
++            scene.render.use_compositing = compositing
++            scene.render.use_sequencer = sequencer
++            scene.camera = camera
++        for scene, camera, camera_data in temporary_cameras:
++            if camera.name in scene.collection.objects:
++                scene.collection.objects.unlink(camera)
++            bpy.data.objects.remove(camera)
++            bpy.data.cameras.remove(camera_data)
++        bpy.utils.unregister_class(NGVGeometryVerifier)
++    if not state["scenarios"]:
++        return 0, 0, 0
++    return tuple(
++        max(scenario[field] for scenario in state["scenarios"])
++        for field in ("objects", "vertices", "polygons")
++    )
+ 
+ 
+ def render_contract(bpy, limits):
+diff --git a/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+index 29a32ba0..94746366 100644
+--- a/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
++++ b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+@@ -6,6 +6,7 @@ public let bpyRuntimeServiceNames = [
+ ]
+ 
+ @objc public protocol BpyRuntimeServiceProtocol {
++    func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void)
+     func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
+     func restoreCheckpoint(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
+     func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
+@@ -19,6 +20,82 @@ public let bpyRuntimeServiceNames = [
+     func shutdown(_ request: Data, withReply reply: @escaping (Data) -> Void)
+ }
+ 
++public struct BpyBoundaryProbeRequest: Codable, Sendable, Equatable {
++    public let schema: String
++    public let nonce: UUID
++
++    public init(nonce: UUID) {
++        schema = "nexgenvideo/bpy-boundary-probe-request/1"
++        self.nonce = nonce
++    }
++}
++
++public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
++    public let schema: String
++    public let nonce: UUID
++    public let serviceProcessIdentifier: Int32
++    public let serviceStartAbsoluteTime: UInt64
++    public let supervisorProcessIdentifier: Int32
++    public let supervisorParentProcessIdentifier: Int32
++    public let supervisorStartAbsoluteTime: UInt64
++    public let childProcessIdentifier: Int32
++    public let childStartAbsoluteTime: UInt64
++    public let childParentProcessIdentifier: Int32
++    public let allowedWriteSucceeded: Bool
++    public let outsideWriteDeniedErrno: Int32
++    public let forkDeniedErrno: Int32
++    public let networkDeniedErrno: Int32
++    public let signalDeniedErrnos: [Int32]
++    public let unlinkedBytesObserved: UInt64
++    public let unlinkedLimitReason: String
++    public let cleanupSupervisorGone: Bool
++    public let cleanupChildGone: Bool
++    public let healthyFollowupSucceeded: Bool
++
++    public init(
++        nonce: UUID,
++        serviceProcessIdentifier: Int32,
++        serviceStartAbsoluteTime: UInt64,
++        supervisorProcessIdentifier: Int32,
++        supervisorParentProcessIdentifier: Int32,
++        supervisorStartAbsoluteTime: UInt64,
++        childProcessIdentifier: Int32,
++        childStartAbsoluteTime: UInt64,
++        childParentProcessIdentifier: Int32,
++        allowedWriteSucceeded: Bool,
++        outsideWriteDeniedErrno: Int32,
++        forkDeniedErrno: Int32,
++        networkDeniedErrno: Int32,
++        signalDeniedErrnos: [Int32],
++        unlinkedBytesObserved: UInt64,
++        unlinkedLimitReason: String,
++        cleanupSupervisorGone: Bool,
++        cleanupChildGone: Bool,
++        healthyFollowupSucceeded: Bool
++    ) {
++        schema = "nexgenvideo/bpy-boundary-probe/1"
++        self.nonce = nonce
++        self.serviceProcessIdentifier = serviceProcessIdentifier
++        self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
++        self.supervisorProcessIdentifier = supervisorProcessIdentifier
++        self.supervisorParentProcessIdentifier = supervisorParentProcessIdentifier
++        self.supervisorStartAbsoluteTime = supervisorStartAbsoluteTime
++        self.childProcessIdentifier = childProcessIdentifier
++        self.childStartAbsoluteTime = childStartAbsoluteTime
++        self.childParentProcessIdentifier = childParentProcessIdentifier
++        self.allowedWriteSucceeded = allowedWriteSucceeded
++        self.outsideWriteDeniedErrno = outsideWriteDeniedErrno
++        self.forkDeniedErrno = forkDeniedErrno
++        self.networkDeniedErrno = networkDeniedErrno
++        self.signalDeniedErrnos = signalDeniedErrnos
++        self.unlinkedBytesObserved = unlinkedBytesObserved
++        self.unlinkedLimitReason = unlinkedLimitReason
++        self.cleanupSupervisorGone = cleanupSupervisorGone
++        self.cleanupChildGone = cleanupChildGone
++        self.healthyFollowupSucceeded = healthyFollowupSucceeded
++    }
++}
++
+ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
+     public var timeoutSeconds: Int
+     public var memoryBytes: UInt64
+diff --git a/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+index 71e54fe4..f958bb06 100644
+--- a/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
++++ b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+@@ -20,6 +20,30 @@ private final class BpySelfTestBox: @unchecked Sendable {
+     }
+ }
+ 
++private final class BpyBoundaryReplyBox: @unchecked Sendable {
++    private let lock = NSLock()
++    private var response: Data?
++    private var error: Error?
++
++    func store(response: Data) {
++        lock.lock()
++        self.response = response
++        lock.unlock()
++    }
++
++    func store(error: Error) {
++        lock.lock()
++        self.error = error
++        lock.unlock()
++    }
++
++    func load() -> (Data?, Error?) {
++        lock.lock()
++        defer { lock.unlock() }
++        return (response, error)
++    }
++}
++
+ @MainActor
+ enum BpyRuntimeSelfTest {
+     private static var pendingResult: [String: Any]?
+@@ -27,6 +51,22 @@ enum BpyRuntimeSelfTest {
+     private static var retainedProjects: [VideoProject] = []
+ 
+     static func scheduleIfRequested() {
++        if let outputPath = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_BOUNDARY"],
++           !outputPath.isEmpty {
++            DispatchQueue.main.async {
++                do {
++                    try runBoundaryProbe(outputPath: outputPath)
++                    FileHandle.standardOutput.write(Data("SELFTEST_BPY_BOUNDARY_OK\n".utf8))
++                    Darwin.exit(0)
++                } catch {
++                    FileHandle.standardError.write(
++                        Data("SELFTEST_BPY_BOUNDARY_FAIL \(error.localizedDescription)\n".utf8)
++                    )
++                    Darwin.exit(1)
++                }
++            }
++            return
++        }
+         if let mode = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_HOST_CRASH"],
+            ["before-authorization", "after-authorization"].contains(mode) {
+             DispatchQueue.main.async {
+@@ -63,6 +103,67 @@ enum BpyRuntimeSelfTest {
+         }
+     }
+ 
++    private static func runBoundaryProbe(outputPath: String) throws {
++        let connection = NSXPCConnection(serviceName: bpyRuntimeServiceNames[0])
++        connection.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
++        let box = BpyBoundaryReplyBox()
++        let finished = DispatchSemaphore(value: 0)
++        connection.resume()
++        defer { connection.invalidate() }
++        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
++            box.store(error: error)
++            finished.signal()
++        }) as? BpyRuntimeServiceProtocol else {
++            throw BpyRuntimeError.unavailable("The boundary XPC service is unavailable.")
++        }
++        let nonce = UUID()
++        service.runBoundaryProbe(
++            try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce))
++        ) { response in
++            box.store(response: response)
++            finished.signal()
++        }
++        guard finished.wait(timeout: .now() + 20) == .success else {
++            throw BpyRuntimeError.timedOut
++        }
++        let value = box.load()
++        if let error = value.1 { throw error }
++        guard let data = value.0 else {
++            throw BpyRuntimeError.invalidOutput("The boundary probe returned no result.")
++        }
++        let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
++        let permissionErrors = [Int32(EPERM), Int32(EACCES)]
++        guard result.schema == "nexgenvideo/bpy-boundary-probe/1",
++              result.nonce == nonce,
++              result.serviceProcessIdentifier > 1,
++              result.supervisorProcessIdentifier > 1,
++              result.childProcessIdentifier > 1,
++              Set([
++                result.serviceProcessIdentifier,
++                result.supervisorProcessIdentifier,
++              result.childProcessIdentifier,
++              ]).count == 3,
++              result.serviceStartAbsoluteTime > 0,
++              result.supervisorParentProcessIdentifier == result.serviceProcessIdentifier,
++              result.supervisorStartAbsoluteTime > 0,
++              result.childStartAbsoluteTime > 0,
++              result.childParentProcessIdentifier == result.supervisorProcessIdentifier,
++              result.allowedWriteSucceeded,
++              permissionErrors.contains(result.outsideWriteDeniedErrno),
++              [Int32(EPERM), Int32(EAGAIN)].contains(result.forkDeniedErrno),
++              permissionErrors.contains(result.networkDeniedErrno),
++              result.signalDeniedErrnos.count == 3,
++              result.signalDeniedErrnos.allSatisfy({ permissionErrors.contains($0) }),
++              result.unlinkedBytesObserved >= 1_024 * 1_024,
++              result.unlinkedLimitReason == "disk",
++              result.cleanupSupervisorGone,
++              result.cleanupChildGone,
++              result.healthyFollowupSucceeded else {
++            throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
++        }
++        try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
++    }
++
+     private static func runHostCrashProbe(mode: String) throws {
+         let project = VideoProject()
+         retainedProjects = [project]
+@@ -682,6 +783,61 @@ enum BpyRuntimeSelfTest {
+         guard structuralLimit.response.state == .resourceLimited else {
+             throw BpyRuntimeError.invalidOutput("Evaluated geometry/render limits were not terminal.")
+         }
++        let renderOnlyGeometry = try constrained.runJob(
++            id: UUID(),
++            expectedRevision: nil,
++            source: """
++            bpy.ops.mesh.primitive_plane_add()
++            target = bpy.context.object
++            target.hide_viewport = True
++            modifier = target.modifiers.new('NGV_RENDER_ONLY_ARRAY', 'ARRAY')
++            modifier.count = 3
++            modifier.show_viewport = False
++            modifier.show_render = True
++            bpy.context.scene.render.resolution_x = 64
++            bpy.context.scene.render.resolution_y = 64
++            """
++        )
++        guard renderOnlyGeometry.response.state == .resourceLimited else {
++            throw BpyRuntimeError.invalidOutput("Render-only hidden geometry escaped verification.")
++        }
++        let secondarySceneGeometry = try constrained.runJob(
++            id: UUID(),
++            expectedRevision: nil,
++            source: """
++            scene = bpy.data.scenes.new('NGV_SECONDARY_RENDER_SCENE')
++            mesh = bpy.data.meshes.new('NGV_SECONDARY_RENDER_MESH')
++            mesh.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
++            target = bpy.data.objects.new('NGV_SECONDARY_RENDER_OBJECT', mesh)
++            scene.collection.objects.link(target)
++            modifier = target.modifiers.new('NGV_SECONDARY_ARRAY', 'ARRAY')
++            modifier.count = 3
++            scene.render.resolution_x = 64
++            scene.render.resolution_y = 64
++            """
++        )
++        guard secondarySceneGeometry.response.state == .resourceLimited else {
++            throw BpyRuntimeError.invalidOutput("Secondary-scene geometry escaped verification.")
++        }
++        let prefixedUserGeometry = try constrained.runJob(
++            id: UUID(),
++            expectedRevision: nil,
++            source: """
++            mesh = bpy.data.meshes.new('NGV_PREFIXED_USER_MESH')
++            mesh.from_pydata(
++                [(float(index), 0, 0) for index in range(9)],
++                [],
++                [(0, 1, 2), (3, 4, 5), (6, 7, 8)]
++            )
++            target = bpy.data.objects.new('NGV_GEOMETRY_VERIFIER_CAMERA_user_mesh', mesh)
++            bpy.context.scene.collection.objects.link(target)
++            bpy.context.scene.render.resolution_x = 64
++            bpy.context.scene.render.resolution_y = 64
++            """
++        )
++        guard prefixedUserGeometry.response.state == .resourceLimited else {
++            throw BpyRuntimeError.invalidOutput("A user mesh with the verifier-camera prefix escaped verification.")
++        }
+         let storageLimit = try constrained.runJob(
+             id: UUID(),
+             expectedRevision: nil,
+@@ -710,6 +866,58 @@ enum BpyRuntimeSelfTest {
+         guard aggregateBytes.response.state == .resourceLimited else {
+             throw BpyRuntimeError.invalidOutput("Aggregate bytes outside outputs were not terminal.")
+         }
++        let unlinkedStorage = try constrained.runJob(
++            id: UUID(),
++            expectedRevision: nil,
++            source: """
++            import os
++            handles = []
++            for index in range(2):
++                path = Path(os.environ['HOME']) / f'unlinked-{index}.bin'
++                handle = open(path, 'wb')
++                os.unlink(path)
++                handle.write(b'x' * 1400000)
++                handle.flush()
++                os.fsync(handle.fileno())
++                handles.append(handle)
++            while True:
++                pass
++            """,
++            timeoutSeconds: 5
++        )
++        guard unlinkedStorage.response.state == .resourceLimited else {
++            throw BpyRuntimeError.invalidOutput("Open unlinked vnodes escaped the disk limit.")
++        }
++        let healthyChurn = try constrained.runJob(
++            id: UUID(),
++            expectedRevision: nil,
++            source: """
++            import os
++            import threading
++            import time
++            home = Path(os.environ['HOME'])
++            def churn():
++                deadline = time.monotonic() + 0.5
++                index = 0
++                while time.monotonic() < deadline:
++                    source = home / f'churn-{index % 2}.part'
++                    destination = home / f'churn-{index % 2}.tmp'
++                    source.write_bytes(b'x' * 4096)
++                    os.replace(source, destination)
++                    destination.unlink()
++                    index += 1
++            thread = threading.Thread(target=churn)
++            thread.start()
++            thread.join()
++            bpy.context.scene.render.resolution_x = 64
++            bpy.context.scene.render.resolution_y = 64
++            """
++        )
++        guard healthyChurn.response.state == .awaitingConfirmation,
++              let healthyChurnID = healthyChurn.response.jobID else {
++            throw BpyRuntimeError.invalidOutput("Legitimate rename/delete churn failed the resource scan.")
++        }
++        _ = try constrained.cancel(jobID: healthyChurnID)
+         let scanError = try constrained.runJob(
+             id: UUID(),
+             expectedRevision: nil,
+@@ -782,8 +990,13 @@ enum BpyRuntimeSelfTest {
+             "rlimitASAllocationDenied": true,
+             "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
+             "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
++            "renderOnlyGeometryState": renderOnlyGeometry.response.state?.rawValue ?? "",
++            "secondarySceneGeometryState": secondarySceneGeometry.response.state?.rawValue ?? "",
++            "prefixedUserGeometryState": prefixedUserGeometry.response.state?.rawValue ?? "",
+             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
+             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
++            "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
++            "healthyResourceChurnState": healthyChurn.response.state?.rawValue ?? "",
+             "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
+             "containerSiblingWriteDenied": true,
+             "supervisorSignalDenied": true,
+diff --git a/Sources/NexGenVideoBpyService/main.swift b/Sources/NexGenVideoBpyService/main.swift
+index 001cede7..625700a1 100644
+--- a/Sources/NexGenVideoBpyService/main.swift
++++ b/Sources/NexGenVideoBpyService/main.swift
+@@ -17,6 +17,24 @@ private func procPIDRusage(
+     _ buffer: UnsafeMutableRawPointer
+ ) -> Int32
+ 
++@_silgen_name("proc_pidinfo")
++private func procPIDInfo(
++    _ processIdentifier: pid_t,
++    _ flavor: Int32,
++    _ argument: UInt64,
++    _ buffer: UnsafeMutableRawPointer?,
++    _ bufferSize: Int32
++) -> Int32
++
++@_silgen_name("proc_pidfdinfo")
++private func procPIDFDInfo(
++    _ processIdentifier: pid_t,
++    _ descriptor: Int32,
++    _ flavor: Int32,
++    _ buffer: UnsafeMutableRawPointer,
++    _ bufferSize: Int32
++) -> Int32
++
+ private let resultRetentionSeconds: TimeInterval = 15 * 60
+ 
+ private extension NSLock {
+@@ -101,15 +119,69 @@ private struct DirectoryUsage {
+     let bytes: UInt64
+     let files: Int
+     let limitReason: String?
++    let resources: [VnodeIdentity: UInt64]
+ }
+ 
+-private func directoryUsage(
+-    _ roots: [URL],
+-    byteLimit: UInt64,
+-    fileLimit: Int
+-) throws -> DirectoryUsage {
+-    var bytes: UInt64 = 0
+-    var files = 0
++private struct VnodeIdentity: Hashable {
++    let device: UInt64
++    let inode: UInt64
++}
++
++private struct DirectorySnapshot {
++    var resources: [VnodeIdentity: UInt64]
++    var files: Int
++    var transientChurn: Bool
++}
++
++private let procPIDListFDs: Int32 = 1
++private let procFDTypeVnode: UInt32 = 1
++private let procPIDFDVnodePathInfo: Int32 = 2
++private let procPIDRegionPathInfo: Int32 = 8
++private let procFDInfoSize = 8
++private let vnodeFDInfoWithPathSize = 1_200
++private let procRegionWithPathInfoSize = 1_272
++private let vnodePathLength = 1_024
++private let kernelFRead: UInt32 = 1
++private let kernelFWrite: UInt32 = 2
++private let maximumMappedRegionCount = 65_536
++
++private func vanished(_ error: Error) -> Bool {
++    let value = error as NSError
++    if value.domain == NSPOSIXErrorDomain && value.code == Int(ENOENT) { return true }
++    if value.domain == NSCocoaErrorDomain
++        && [CocoaError.fileNoSuchFile.rawValue, CocoaError.fileReadNoSuchFile.rawValue]
++            .contains(value.code) {
++        return true
++    }
++    if let underlying = value.userInfo[NSUnderlyingErrorKey] as? Error {
++        return vanished(underlying)
++    }
++    return false
++}
++
++private func vnodeIdentity(_ status: stat) -> VnodeIdentity {
++    .init(
++        device: UInt64(bitPattern: Int64(status.st_dev)),
++        inode: UInt64(status.st_ino)
++    )
++}
++
++private func vnodeBytes(logical: Int64, blocks: Int64) -> UInt64 {
++    max(
++        logical > 0 ? UInt64(logical) : 0,
++        blocks > 0 ? UInt64(blocks) * 512 : 0
++    )
++}
++
++private func directorySnapshot(_ roots: [URL]) throws -> DirectorySnapshot {
++    var snapshot = DirectorySnapshot(resources: [:], files: 0, transientChurn: false)
++    func record(_ status: stat, countFile: Bool) {
++        let identity = vnodeIdentity(status)
++        let logical = (status.st_mode & S_IFMT) == S_IFREG ? Int64(status.st_size) : 0
++        let bytes = vnodeBytes(logical: logical, blocks: Int64(status.st_blocks))
++        snapshot.resources[identity] = max(snapshot.resources[identity] ?? 0, bytes)
++        if countFile { snapshot.files += 1 }
++    }
+     for root in roots {
+         var rootStatus = stat()
+         guard lstat(root.path, &rootStatus) == 0 else {
+@@ -118,17 +190,17 @@ private func directoryUsage(
+         guard (rootStatus.st_mode & S_IFMT) == S_IFDIR else {
+             throw CocoaError(.fileReadCorruptFile)
+         }
+-        let rootBytes = rootStatus.st_blocks > 0 ? UInt64(rootStatus.st_blocks) * 512 : 0
+-        guard rootBytes <= byteLimit - min(bytes, byteLimit) else {
+-            return .init(bytes: byteLimit &+ 1, files: files, limitReason: "disk")
+-        }
+-        bytes += rootBytes
++        record(rootStatus, countFile: false)
+         var enumerationError: Error?
+         guard let values = FileManager.default.enumerator(
+             at: root,
+             includingPropertiesForKeys: nil,
+             options: [],
+             errorHandler: { _, error in
++                if vanished(error) {
++                    snapshot.transientChurn = true
++                    return true
++                }
+                 enumerationError = error
+                 return false
+             }
+@@ -138,28 +210,320 @@ private func directoryUsage(
+         while let url = values.nextObject() as? URL {
+             var status = stat()
+             guard lstat(url.path, &status) == 0 else {
++                if errno == ENOENT {
++                    snapshot.transientChurn = true
++                    continue
++                }
+                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
+             }
+-            files += 1
+-            if files > fileLimit {
+-                return .init(bytes: bytes, files: files, limitReason: "file-count")
++            record(status, countFile: true)
++        }
++        if let enumerationError { throw enumerationError }
++    }
++    return snapshot
++}
++
++private func usage(
++    resources: [VnodeIdentity: UInt64],
++    files: Int,
++    byteLimit: UInt64,
++    fileLimit: Int
++) -> DirectoryUsage {
++    if files > fileLimit {
++        return .init(
++            bytes: 0,
++            files: files,
++            limitReason: "file-count",
++            resources: resources
++        )
++    }
++    var bytes: UInt64 = 0
++    for size in resources.values {
++        guard size <= byteLimit - min(bytes, byteLimit) else {
++            return .init(
++                bytes: byteLimit &+ 1,
++                files: files,
++                limitReason: "disk",
++                resources: resources
++            )
++        }
++        bytes += size
++    }
++    return .init(bytes: bytes, files: files, limitReason: nil, resources: resources)
++}
++
++private func directoryUsage(
++    _ roots: [URL],
++    byteLimit: UInt64,
++    fileLimit: Int
++) throws -> DirectoryUsage {
++    var conservative: DirectoryUsage?
++    for _ in 0..<3 {
++        let snapshot = try directorySnapshot(roots)
++        let current = usage(
++            resources: snapshot.resources,
++            files: snapshot.files,
++            byteLimit: byteLimit,
++            fileLimit: fileLimit
++        )
++        if current.limitReason != nil { return current }
++        if let previous = conservative {
++            let resources = current.bytes > previous.bytes
++                ? current.resources
++                : previous.resources
++            conservative = usage(
++                resources: resources,
++                files: max(current.files, previous.files),
++                byteLimit: byteLimit,
++                fileLimit: fileLimit
++            )
++        } else {
++            conservative = current
++        }
++        if !snapshot.transientChurn { return current }
++    }
++    guard let conservative else { throw CocoaError(.fileReadUnknown) }
++    return conservative
++}
++
++private func processMatches(_ identity: SupervisorWorkerIdentity) -> Bool {
++    processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime
++}
++
++private func kernelPath(
++    _ buffer: UnsafeRawPointer,
++    offset: Int
++) throws -> String? {
++    let bytes = UnsafeBufferPointer(
++        start: buffer.advanced(by: offset).assumingMemoryBound(to: UInt8.self),
++        count: vnodePathLength
++    )
++    guard let end = bytes.firstIndex(of: 0) else {
++        throw CocoaError(.fileReadCorruptFile)
++    }
++    guard end > 0 else { return nil }
++    guard let path = String(bytes: bytes[..<end], encoding: .utf8), path.hasPrefix("/") else {
++        throw CocoaError(.fileReadCorruptFile)
++    }
++    return path
++}
++
++private func managedRootPaths(_ roots: [URL]) -> [String] {
++    roots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
++}
++
++private func isManagedPath(_ path: String?, roots: [String]) -> Bool {
++    guard let path else { return false }
++    let candidate = URL(fileURLWithPath: path).standardizedFileURL.path
++    return roots.contains { candidate == $0 || candidate.hasPrefix($0 + "/") }
++}
++
++private func mergeVnodes(
++    _ observations: [VnodeIdentity: UInt64],
++    into resources: inout [VnodeIdentity: UInt64]
++) {
++    for (identity, bytes) in observations {
++        resources[identity] = max(resources[identity] ?? 0, bytes)
++    }
++}
++
++private func ownedOpenVnodes(
++    _ identity: SupervisorWorkerIdentity,
++    roots: [URL]
++) throws -> [VnodeIdentity: UInt64] {
++    guard processMatches(identity) else {
++        return [:]
++    }
++    let rootPaths = managedRootPaths(roots)
++    let maximumBytes = procFDInfoSize * 4_096
++    errno = 0
++    let required = Int(procPIDInfo(
++        identity.processIdentifier,
++        procPIDListFDs,
++        0,
++        nil,
++        0
++    ))
++    if required <= 0 {
++        if !processMatches(identity) {
++            return [:]
++        }
++        throw POSIXError(.init(rawValue: errno) ?? .EIO)
++    }
++    guard required <= maximumBytes else { throw CocoaError(.fileReadTooLarge) }
++    let capacity = min(maximumBytes, max(required + procFDInfoSize * 64, procFDInfoSize * 128))
++    let descriptors = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 8)
++    defer { descriptors.deallocate() }
++    descriptors.initializeMemory(as: UInt8.self, repeating: 0, count: capacity)
++    let returned = Int(procPIDInfo(
++        identity.processIdentifier,
++        procPIDListFDs,
++        0,
++        descriptors,
++        Int32(capacity)
++    ))
++    if returned <= 0 {
++        if !processMatches(identity) {
++            return [:]
++        }
++        throw POSIXError(.init(rawValue: errno) ?? .EIO)
++    }
++    guard returned < capacity, returned % procFDInfoSize == 0 else {
++        throw CocoaError(.fileReadTooLarge)
++    }
++    var resources: [VnodeIdentity: UInt64] = [:]
++    for offset in stride(from: 0, to: returned, by: procFDInfoSize) {
++        let descriptor = descriptors.load(fromByteOffset: offset, as: Int32.self)
++        let type = descriptors.load(fromByteOffset: offset + 4, as: UInt32.self)
++        guard descriptor >= 0, type == procFDTypeVnode else { continue }
++        let vnode = UnsafeMutableRawPointer.allocate(byteCount: vnodeFDInfoWithPathSize, alignment: 8)
++        defer { vnode.deallocate() }
++        vnode.initializeMemory(as: UInt8.self, repeating: 0, count: vnodeFDInfoWithPathSize)
++        errno = 0
++        let result = procPIDFDInfo(
++            identity.processIdentifier,
++            descriptor,
++            procPIDFDVnodePathInfo,
++            vnode,
++            Int32(vnodeFDInfoWithPathSize)
++        )
++        guard Int(result) == vnodeFDInfoWithPathSize else {
++            if !processMatches(identity) {
++                return [:]
++            }
++            if result == 0 && [EBADF, ENOENT, EINVAL].contains(errno) { continue }
++            throw POSIXError(.init(rawValue: errno) ?? .EIO)
++        }
++        let openFlags = vnode.load(fromByteOffset: 0, as: UInt32.self)
++        let mode = vnode.load(fromByteOffset: 28, as: UInt16.self)
++        guard mode & UInt16(S_IFMT) == UInt16(S_IFREG) else { continue }
++        let device = vnode.load(fromByteOffset: 24, as: UInt32.self)
++        let linkCount = vnode.load(fromByteOffset: 30, as: UInt16.self)
++        let inode = vnode.load(fromByteOffset: 32, as: UInt64.self)
++        let logical = vnode.load(fromByteOffset: 112, as: Int64.self)
++        let blocks = vnode.load(fromByteOffset: 120, as: Int64.self)
++        let path = try kernelPath(vnode, offset: 176)
++        let belongsToJob = linkCount == 0 || isManagedPath(path, roots: rootPaths)
++        if !belongsToJob {
++            let accessFlags = openFlags & (kernelFRead | kernelFWrite)
++            guard accessFlags & kernelFWrite == 0 else {
++                throw CocoaError(.fileWriteNoPermission)
+             }
+-            let allocated = status.st_blocks > 0 ? UInt64(status.st_blocks) * 512 : 0
+-            let logical = (status.st_mode & S_IFMT) == S_IFREG && status.st_size > 0
+-                ? UInt64(status.st_size)
+-                : 0
+-            let size = max(allocated, logical)
+-            guard size <= byteLimit - min(bytes, byteLimit) else {
+-                return .init(bytes: byteLimit &+ 1, files: files, limitReason: "disk")
++            continue
++        }
++        let key = VnodeIdentity(
++            device: UInt64(device),
++            inode: inode
++        )
++        resources[key] = max(
++            resources[key] ?? 0,
++            vnodeBytes(logical: logical, blocks: blocks)
++        )
++    }
++    guard processMatches(identity) else {
++        return [:]
++    }
++    return resources
++}
++
++private func ownedMappedVnodes(
++    _ identity: SupervisorWorkerIdentity,
++    roots: [URL]
++) throws -> [VnodeIdentity: UInt64] {
++    guard processMatches(identity) else { return [:] }
++    let rootPaths = managedRootPaths(roots)
++    let region = UnsafeMutableRawPointer.allocate(
++        byteCount: procRegionWithPathInfoSize,
++        alignment: 8
++    )
++    defer { region.deallocate() }
++    var resources: [VnodeIdentity: UInt64] = [:]
++    var address: UInt64 = 0
++    var traversedRegions = 0
++    for _ in 0..<maximumMappedRegionCount {
++        region.initializeMemory(
++            as: UInt8.self,
++            repeating: 0,
++            count: procRegionWithPathInfoSize
++        )
++        errno = 0
++        let result = procPIDInfo(
++            identity.processIdentifier,
++            procPIDRegionPathInfo,
++            address,
++            region,
++            Int32(procRegionWithPathInfoSize)
++        )
++        guard Int(result) == procRegionWithPathInfoSize else {
++            if !processMatches(identity) { return [:] }
++            if result == 0 && errno == EINVAL && traversedRegions > 0 { return resources }
++            throw POSIXError(.init(rawValue: errno) ?? .EIO)
++        }
++        traversedRegions += 1
++        let regionAddress = region.load(fromByteOffset: 80, as: UInt64.self)
++        let regionSize = region.load(fromByteOffset: 88, as: UInt64.self)
++        guard regionAddress >= address,
++              regionSize > 0,
++              regionAddress <= UInt64.max - regionSize else {
++            throw CocoaError(.fileReadCorruptFile)
++        }
++        let nextAddress = regionAddress + regionSize
++        let mode = region.load(fromByteOffset: 100, as: UInt16.self)
++        if mode & UInt16(S_IFMT) == UInt16(S_IFREG) {
++            let linkCount = region.load(fromByteOffset: 102, as: UInt16.self)
++            let path = try kernelPath(region, offset: 248)
++            if linkCount == 0 || isManagedPath(path, roots: rootPaths) {
++                let device = region.load(fromByteOffset: 96, as: UInt32.self)
++                let inode = region.load(fromByteOffset: 104, as: UInt64.self)
++                let logical = region.load(fromByteOffset: 184, as: Int64.self)
++                let blocks = region.load(fromByteOffset: 192, as: Int64.self)
++                let key = VnodeIdentity(device: UInt64(device), inode: inode)
++                resources[key] = max(
++                    resources[key] ?? 0,
++                    vnodeBytes(logical: logical, blocks: blocks)
++                )
+             }
+-            bytes += size
+         }
+-        if let enumerationError { throw enumerationError }
+-        if bytes > byteLimit {
+-            return .init(bytes: bytes, files: files, limitReason: "disk")
++        if nextAddress == UInt64.max {
++            guard processMatches(identity) else { return [:] }
++            return resources
+         }
++        address = nextAddress
+     }
+-    return .init(bytes: bytes, files: files, limitReason: nil)
++    guard processMatches(identity) else { return [:] }
++    throw CocoaError(.fileReadTooLarge)
++}
++
++private func ownedRetainedVnodes(
++    _ identity: SupervisorWorkerIdentity,
++    roots: [URL]
++) throws -> [VnodeIdentity: UInt64] {
++    var resources = try ownedOpenVnodes(identity, roots: roots)
++    mergeVnodes(try ownedMappedVnodes(identity, roots: roots), into: &resources)
++    guard processMatches(identity) else { return [:] }
++    return resources
++}
++
++private func resourceUsage(
++    roots: [URL],
++    worker: SupervisorWorkerIdentity?,
++    byteLimit: UInt64,
++    fileLimit: Int
++) throws -> DirectoryUsage {
++    let named = try directoryUsage(roots, byteLimit: byteLimit, fileLimit: fileLimit)
++    guard named.limitReason == nil, let worker else { return named }
++    var resources = named.resources
++    var files = named.files
++    for (identity, bytes) in try ownedRetainedVnodes(worker, roots: roots) {
++        if resources[identity] == nil { files += 1 }
++        resources[identity] = max(resources[identity] ?? 0, bytes)
++    }
++    return usage(
++        resources: resources,
++        files: files,
++        byteLimit: byteLimit,
++        fileLimit: fileLimit
++    )
+ }
+ 
+ private func fingerprint(
+@@ -364,6 +728,208 @@ private struct ManagedProcessResult {
+     let log: String
+ }
+ 
++private struct BoundaryChildReport: Decodable {
++    let schema: String
++    let mode: String
++    let processIdentifier: Int32
++    let parentProcessIdentifier: Int32
++    let allowedWriteSucceeded: Bool
++    let outsideWriteDeniedErrno: Int32
++    let forkDeniedErrno: Int32
++    let networkDeniedErrno: Int32
++    let signalDeniedErrnos: [Int32]
++    let resourceBytes: UInt64
++}
++
++private let boundaryResourceModes: Set<String> = [
++    "open-unlinked-hold",
++    "readonly-unlinked-hold",
++    "mapped-unlinked-hold",
++    "external-readonly-hold",
++]
++private let boundaryProbeResourceBytes: UInt64 = 1_024 * 1_024
++
++private struct BoundarySupervisorIdentity: Decodable {
++    let supervisorProcessIdentifier: Int32
++    let supervisorParentProcessIdentifier: Int32
++    let supervisorStartAbsoluteTime: UInt64
++    let childProcessIdentifier: Int32
++    let childStartAbsoluteTime: UInt64
++}
++
++private struct BoundaryRun {
++    let supervisorProcessIdentifier: Int32
++    let supervisorParentProcessIdentifier: Int32
++    let supervisorStartAbsoluteTime: UInt64
++    let child: SupervisorWorkerIdentity
++    let report: BoundaryChildReport
++    let supervisorGone: Bool
++    let childGone: Bool
++    let observedRetainedBytes: UInt64
++    let limitReason: String?
++}
++
++private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
++    let deadline = ProcessInfo.processInfo.systemUptime + timeout
++    while process.isRunning {
++        if ProcessInfo.processInfo.systemUptime >= deadline { return false }
++        Thread.sleep(forTimeInterval: 0.005)
++    }
++    return true
++}
++
++private func terminateBoundaryProcess(
++    _ process: Process,
++    startAbsoluteTime: UInt64
++) -> Bool {
++    guard process.isRunning else { return true }
++    process.terminate()
++    if waitForExit(process, timeout: 3) { return true }
++    guard processUsage(process.processIdentifier)?.startAbsoluteTime == startAbsoluteTime else {
++        return true
++    }
++    _ = Darwin.kill(process.processIdentifier, SIGSTOP)
++    if processUsage(process.processIdentifier)?.startAbsoluteTime == startAbsoluteTime {
++        _ = Darwin.kill(process.processIdentifier, SIGKILL)
++    }
++    return waitForExit(process, timeout: 2)
++}
++
++private func runBoundarySupervisor(
++    supervisorURL: URL,
++    root: URL,
++    mode: String
++) throws -> BoundaryRun {
++    let writeRoot = root.appendingPathComponent("write", isDirectory: true)
++    let outsideRoot = root.appendingPathComponent("outside", isDirectory: true)
++    let outsidePath = outsideRoot.appendingPathComponent("denied-write")
++    let identityURL = root.appendingPathComponent("child.json")
++    let reportURL = writeRoot.appendingPathComponent("report.json")
++    try FileManager.default.createDirectory(at: writeRoot, withIntermediateDirectories: true)
++    try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
++    if mode == "external-readonly-hold" {
++        try Data(repeating: 0x4e, count: 1_024 * 1_024).write(to: outsidePath, options: .atomic)
++    }
++    guard let service = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
++
++    let process = Process()
++    process.executableURL = supervisorURL
++    process.arguments = [
++        "boundary-supervise",
++        String(getpid()),
++        String(service.startAbsoluteTime),
++        identityURL.path,
++        writeRoot.path,
++        outsidePath.path,
++        reportURL.path,
++        mode,
++    ]
++    process.currentDirectoryURL = writeRoot
++    process.standardInput = FileHandle.nullDevice
++    process.standardOutput = FileHandle.nullDevice
++    process.standardError = FileHandle.nullDevice
++    try process.run()
++    let supervisorPID = process.processIdentifier
++    var supervisorStart: UInt64?
++    for _ in 0..<40 where supervisorStart == nil && process.isRunning {
++        supervisorStart = processUsage(supervisorPID)?.startAbsoluteTime
++        if supervisorStart == nil { Thread.sleep(forTimeInterval: 0.005) }
++    }
++    guard let supervisorStart else {
++        process.terminate()
++        _ = waitForExit(process, timeout: 1)
++        throw CocoaError(.executableLoad)
++    }
++    defer {
++        if process.isRunning {
++            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
++        }
++    }
++    var boundaryIdentity: BoundarySupervisorIdentity?
++    var report: BoundaryChildReport?
++    let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
++    while ProcessInfo.processInfo.systemUptime < readyDeadline {
++        if boundaryIdentity == nil,
++           let data = try? Data(contentsOf: identityURL),
++           let value = try? JSONDecoder().decode(BoundarySupervisorIdentity.self, from: data),
++           processUsage(value.childProcessIdentifier)?.startAbsoluteTime
++                == value.childStartAbsoluteTime {
++            boundaryIdentity = value
++        }
++        if report == nil,
++           let data = try? Data(contentsOf: reportURL),
++           let value = try? JSONDecoder().decode(BoundaryChildReport.self, from: data) {
++            report = value
++        }
++        if boundaryIdentity != nil, report != nil { break }
++        if !process.isRunning && boundaryResourceModes.contains(mode) { break }
++        Thread.sleep(forTimeInterval: 0.01)
++    }
++    guard let boundaryIdentity, let report,
++          boundaryIdentity.supervisorProcessIdentifier == supervisorPID,
++          boundaryIdentity.supervisorParentProcessIdentifier == getpid(),
++          boundaryIdentity.supervisorStartAbsoluteTime == supervisorStart,
++          report.schema == "nexgenvideo/bpy-boundary-child/1",
++          report.mode == mode,
++          report.processIdentifier == boundaryIdentity.childProcessIdentifier,
++          report.parentProcessIdentifier == supervisorPID else {
++        _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
++        throw CocoaError(.executableLoad)
++    }
++    let child = SupervisorWorkerIdentity(
++        processIdentifier: boundaryIdentity.childProcessIdentifier,
++        startAbsoluteTime: boundaryIdentity.childStartAbsoluteTime
++    )
++
++    var observedRetainedBytes: UInt64 = 0
++    var limitReason: String?
++    if boundaryResourceModes.contains(mode) {
++        let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
++        observedRetainedBytes = retainedResources.values.reduce(0, +)
++        let quota = try resourceUsage(
++            roots: [writeRoot],
++            worker: child,
++            byteLimit: 512 * 1_024,
++            fileLimit: 64
++        )
++        limitReason = quota.limitReason
++        let validResourceResult = mode == "external-readonly-hold"
++            ? report.resourceBytes == boundaryProbeResourceBytes
++                && observedRetainedBytes < boundaryProbeResourceBytes
++                && limitReason == nil
++            : report.resourceBytes == boundaryProbeResourceBytes
++                && observedRetainedBytes >= boundaryProbeResourceBytes
++                && limitReason == "disk"
++        guard validResourceResult else {
++            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
++            throw CocoaError(.fileReadTooLarge)
++        }
++        guard terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart) else {
++            throw CocoaError(.executableLoad)
++        }
++    } else {
++        guard waitForExit(process, timeout: 5) else {
++            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
++            throw CocoaError(.executableLoad)
++        }
++        process.waitUntilExit()
++        guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad) }
++    }
++    let childGone = processUsage(child.processIdentifier)?.startAbsoluteTime != child.startAbsoluteTime
++    let supervisorGone = processUsage(supervisorPID)?.startAbsoluteTime != supervisorStart
++    return .init(
++        supervisorProcessIdentifier: supervisorPID,
++        supervisorParentProcessIdentifier: boundaryIdentity.supervisorParentProcessIdentifier,
++        supervisorStartAbsoluteTime: supervisorStart,
++        child: child,
++        report: report,
++        supervisorGone: supervisorGone,
++        childGone: childGone,
++        observedRetainedBytes: observedRetainedBytes,
++        limitReason: limitReason
++    )
++}
++
+ private final class ServiceSession: @unchecked Sendable {
+     let request: BpyOpenSessionRequest
+     private let root: URL
+@@ -1296,8 +1862,9 @@ private final class ServiceSession: @unchecked Sendable {
+                 servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint)
+             }
+             let resourceRoots = job.map { workerWritableRoots($0.id) } ?? [processRoot]
+-            let disk = try directoryUsage(
+-                resourceRoots,
++            let disk = try resourceUsage(
++                roots: resourceRoots,
++                worker: workerIdentity,
+                 byteLimit: request.limits.diskBytes,
+                 fileLimit: request.limits.files
+             )
+@@ -1626,6 +2193,116 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
+         super.init()
+     }
+ 
++    func runBoundaryProbe(_ data: Data, withReply reply: @escaping (Data) -> Void) {
++        do {
++            let request = try JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: data)
++            guard request.schema == "nexgenvideo/bpy-boundary-probe-request/1" else {
++                throw CocoaError(.fileReadCorruptFile)
++            }
++            let app = Bundle.main.bundleURL
++                .deletingLastPathComponent()
++                .deletingLastPathComponent()
++                .deletingLastPathComponent()
++            let marker = app.appendingPathComponent(
++                "Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
++            )
++            let supervisor = app.appendingPathComponent(
++                "Contents/Helpers/NexGenVideoBpySupervisor"
++            )
++            guard FileManager.default.fileExists(atPath: marker.path),
++                  FileManager.default.isExecutableFile(atPath: supervisor.path),
++                  let service = processUsage(getpid()) else {
++                throw CocoaError(.fileReadNoPermission)
++            }
++            capacity.wait()
++            defer { capacity.signal() }
++            let probeRoot = sessionsRoot.appendingPathComponent(
++                "boundary-\(request.nonce.uuidString)",
++                isDirectory: true
++            )
++            try? FileManager.default.removeItem(at: probeRoot)
++            try FileManager.default.createDirectory(at: probeRoot, withIntermediateDirectories: true)
++            defer { try? FileManager.default.removeItem(at: probeRoot) }
++            let first = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("denials", isDirectory: true),
++                mode: "denials"
++            )
++            let openUnlinked = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("open-unlinked", isDirectory: true),
++                mode: "open-unlinked-hold"
++            )
++            let readOnlyUnlinked = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("readonly-unlinked", isDirectory: true),
++                mode: "readonly-unlinked-hold"
++            )
++            let mappedUnlinked = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("mapped-unlinked", isDirectory: true),
++                mode: "mapped-unlinked-hold"
++            )
++            let externalReadOnly = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("external-readonly", isDirectory: true),
++                mode: "external-readonly-hold"
++            )
++            let followup = try runBoundarySupervisor(
++                supervisorURL: supervisor,
++                root: probeRoot.appendingPathComponent("followup", isDirectory: true),
++                mode: "denials"
++            )
++            guard first.supervisorGone,
++                  first.childGone,
++                  openUnlinked.supervisorGone,
++                  openUnlinked.childGone,
++                  readOnlyUnlinked.supervisorGone,
++                  readOnlyUnlinked.childGone,
++                  mappedUnlinked.supervisorGone,
++                  mappedUnlinked.childGone,
++                  externalReadOnly.supervisorGone,
++                  externalReadOnly.childGone,
++                  followup.supervisorGone,
++                  followup.childGone else {
++                throw CocoaError(.executableLoad)
++            }
++            let retainedRuns = [openUnlinked, readOnlyUnlinked, mappedUnlinked]
++            let result = BpyBoundaryProbeResult(
++                nonce: request.nonce,
++                serviceProcessIdentifier: getpid(),
++                serviceStartAbsoluteTime: service.startAbsoluteTime,
++                supervisorProcessIdentifier: first.supervisorProcessIdentifier,
++                supervisorParentProcessIdentifier: first.supervisorParentProcessIdentifier,
++                supervisorStartAbsoluteTime: first.supervisorStartAbsoluteTime,
++                childProcessIdentifier: first.child.processIdentifier,
++                childStartAbsoluteTime: first.child.startAbsoluteTime,
++                childParentProcessIdentifier: first.report.parentProcessIdentifier,
++                allowedWriteSucceeded: first.report.allowedWriteSucceeded,
++                outsideWriteDeniedErrno: first.report.outsideWriteDeniedErrno,
++                forkDeniedErrno: first.report.forkDeniedErrno,
++                networkDeniedErrno: first.report.networkDeniedErrno,
++                signalDeniedErrnos: first.report.signalDeniedErrnos,
++                unlinkedBytesObserved: retainedRuns
++                    .map(\.observedRetainedBytes)
++                    .min() ?? 0,
++                unlinkedLimitReason: retainedRuns.allSatisfy({ $0.limitReason == "disk" })
++                    ? "disk"
++                    : "",
++                cleanupSupervisorGone: retainedRuns.allSatisfy(\.supervisorGone),
++                cleanupChildGone: retainedRuns.allSatisfy(\.childGone),
++                healthyFollowupSucceeded: externalReadOnly.limitReason == nil
++                    && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
++                    && followup.supervisorGone
++                    && followup.childGone
++                    && followup.report.allowedWriteSucceeded
++            )
++            reply(try JSONEncoder().encode(result))
++        } catch {
++            reply(failure("boundary probe failed: \(error.localizedDescription)"))
++        }
++    }
++
+     func openSession(_ data: Data, withReply reply: @escaping (Data) -> Void) {
+         do {
+             let request = try JSONDecoder().decode(BpyOpenSessionRequest.self, from: data)
+@@ -1822,6 +2499,14 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
+         self.service = service
+     }
+ 
++    func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void) {
++        guard lock.access({ !invalidated }) else {
++            reply(failure("XPC connection is unavailable"))
++            return
++        }
++        service.runBoundaryProbe(request, withReply: reply)
++    }
++
+     private func owns<T: Decodable>(
+         _ type: T.Type,
+         request: Data,
+diff --git a/Sources/NexGenVideoBpySupervisor/main.swift b/Sources/NexGenVideoBpySupervisor/main.swift
+index 83baa23f..7f9c2ed4 100644
+--- a/Sources/NexGenVideoBpySupervisor/main.swift
++++ b/Sources/NexGenVideoBpySupervisor/main.swift
+@@ -21,6 +21,35 @@ private struct WorkerIdentity: Codable {
+     let startAbsoluteTime: UInt64
+ }
+ 
++private struct BoundaryChildReport: Codable {
++    let schema: String
++    let mode: String
++    let processIdentifier: Int32
++    let parentProcessIdentifier: Int32
++    let allowedWriteSucceeded: Bool
++    let outsideWriteDeniedErrno: Int32
++    let forkDeniedErrno: Int32
++    let networkDeniedErrno: Int32
++    let signalDeniedErrnos: [Int32]
++    let resourceBytes: UInt64
++}
++
++private let boundaryResourceBytes = 1_024 * 1_024
++private let boundaryResourceModes: Set<String> = [
++    "open-unlinked-hold",
++    "readonly-unlinked-hold",
++    "mapped-unlinked-hold",
++    "external-readonly-hold",
++]
++
++private struct BoundaryIdentity: Codable {
++    let supervisorProcessIdentifier: Int32
++    let supervisorParentProcessIdentifier: Int32
++    let supervisorStartAbsoluteTime: UInt64
++    let childProcessIdentifier: Int32
++    let childStartAbsoluteTime: UInt64
++}
++
+ nonisolated(unsafe) private var terminationRequested: sig_atomic_t = 0
+ 
+ private func requestTermination(_ signal: Int32) {
+@@ -143,6 +172,211 @@ private func execPython(arguments: [String]) throws -> Never {
+     throw POSIXError(.init(rawValue: errno) ?? .EIO)
+ }
+ 
++private func writeAll(_ descriptor: Int32, data: Data) throws {
++    try data.withUnsafeBytes { bytes in
++        var offset = 0
++        while offset < bytes.count {
++            let written = Darwin.write(
++                descriptor,
++                bytes.baseAddress!.advanced(by: offset),
++                bytes.count - offset
++            )
++            guard written > 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
++            offset += written
++        }
++    }
++}
++
++private func writeBoundaryResource(_ descriptor: Int32) throws {
++    let chunk = Data(repeating: 0x5a, count: 64 * 1_024)
++    for _ in 0..<(boundaryResourceBytes / chunk.count) {
++        try writeAll(descriptor, data: chunk)
++    }
++    guard Darwin.fsync(descriptor) == 0 else {
++        throw POSIXError(.init(rawValue: errno) ?? .EIO)
++    }
++}
++
++private func boundaryChild(arguments: [String]) throws -> Never {
++    guard arguments.count == 4,
++          arguments[3] == "denials" || boundaryResourceModes.contains(arguments[3]) else {
++        throw SupervisorError.invalidArguments
++    }
++    let writeRoot = URL(fileURLWithPath: arguments[0], isDirectory: true).standardizedFileURL
++    let outsidePath = URL(fileURLWithPath: arguments[1]).standardizedFileURL
++    let reportURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
++    let mode = arguments[3]
++    guard reportURL.deletingLastPathComponent() == writeRoot,
++          outsidePath.deletingLastPathComponent() != writeRoot else {
++        throw SupervisorError.invalidArguments
++    }
++    if boundaryResourceModes.contains(mode) {
++        _ = Darwin.signal(SIGTERM, SIG_IGN)
++    }
++    try applyWorkerSandbox(writeRoot: writeRoot)
++    usleep(100_000)
++
++    if boundaryResourceModes.contains(mode) {
++        let path = mode == "external-readonly-hold"
++            ? outsidePath.path
++            : writeRoot.appendingPathComponent("retained-resource.bin").path
++        var retainedDescriptor: Int32 = -1
++        if mode == "open-unlinked-hold" {
++            retainedDescriptor = Darwin.open(
++                path,
++                O_CREAT | O_TRUNC | O_RDWR,
++                S_IRUSR | S_IWUSR
++            )
++            guard retainedDescriptor >= 0 else {
++                throw POSIXError(.init(rawValue: errno) ?? .EIO)
++            }
++            guard Darwin.unlink(path) == 0 else {
++                Darwin.close(retainedDescriptor)
++                throw POSIXError(.init(rawValue: errno) ?? .EIO)
++            }
++            try writeBoundaryResource(retainedDescriptor)
++        } else if mode == "readonly-unlinked-hold" || mode == "mapped-unlinked-hold" {
++            let writer = Darwin.open(
++                path,
++                O_CREAT | O_TRUNC | O_RDWR,
++                S_IRUSR | S_IWUSR
++            )
++            guard writer >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
++            do {
++                try writeBoundaryResource(writer)
++                Darwin.close(writer)
++            } catch {
++                Darwin.close(writer)
++                throw error
++            }
++            retainedDescriptor = Darwin.open(path, O_RDONLY)
++            guard retainedDescriptor >= 0 else {
++                throw POSIXError(.init(rawValue: errno) ?? .EIO)
++            }
++            if mode == "mapped-unlinked-hold" {
++                let mapping = Darwin.mmap(
++                    nil,
++                    boundaryResourceBytes,
++                    PROT_READ,
++                    MAP_PRIVATE,
++                    retainedDescriptor,
++                    0
++                )
++                guard let mapping,
++                      mapping != UnsafeMutableRawPointer(bitPattern: -1) else {
++                    Darwin.close(retainedDescriptor)
++                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
++                }
++                guard mapping.load(as: UInt8.self) == 0x5a else {
++                    Darwin.close(retainedDescriptor)
++                    throw CocoaError(.fileReadCorruptFile)
++                }
++                Darwin.close(retainedDescriptor)
++                retainedDescriptor = -1
++            }
++            guard Darwin.unlink(path) == 0 else {
++                if retainedDescriptor >= 0 { Darwin.close(retainedDescriptor) }
++                throw POSIXError(.init(rawValue: errno) ?? .EIO)
++            }
++        } else {
++            retainedDescriptor = Darwin.open(path, O_RDONLY)
++            guard retainedDescriptor >= 0 else {
++                throw POSIXError(.init(rawValue: errno) ?? .EIO)
++            }
++            var status = stat()
++            guard Darwin.fstat(retainedDescriptor, &status) == 0,
++                  status.st_size >= Int64(boundaryResourceBytes) else {
++                Darwin.close(retainedDescriptor)
++                throw CocoaError(.fileReadCorruptFile)
++            }
++        }
++        let report = BoundaryChildReport(
++            schema: "nexgenvideo/bpy-boundary-child/1",
++            mode: mode,
++            processIdentifier: getpid(),
++            parentProcessIdentifier: getppid(),
++            allowedWriteSucceeded: true,
++            outsideWriteDeniedErrno: 0,
++            forkDeniedErrno: 0,
++            networkDeniedErrno: 0,
++            signalDeniedErrnos: [],
++            resourceBytes: UInt64(boundaryResourceBytes)
++        )
++        try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
++        while true { pause() }
++    }
++
++    let allowedWriteSucceeded = (try? Data("allowed".utf8).write(
++        to: writeRoot.appendingPathComponent("allowed-write"),
++        options: .atomic
++    )) != nil
++    errno = 0
++    let outsideDescriptor = Darwin.open(
++        outsidePath.path,
++        O_CREAT | O_TRUNC | O_WRONLY,
++        S_IRUSR | S_IWUSR
++    )
++    let outsideErrno: Int32
++    if outsideDescriptor >= 0 {
++        outsideErrno = 0
++        Darwin.close(outsideDescriptor)
++    } else {
++        outsideErrno = errno
++    }
++
++    errno = 0
++    let forked = Darwin.fork()
++    let forkErrno: Int32
++    if forked == 0 {
++        Darwin._exit(0)
++    } else if forked > 0 {
++        var status: Int32 = 0
++        _ = Darwin.waitpid(forked, &status, 0)
++        forkErrno = 0
++    } else {
++        forkErrno = errno
++    }
++
++    errno = 0
++    let socketDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
++    let networkErrno: Int32
++    if socketDescriptor >= 0 {
++        networkErrno = 0
++        Darwin.close(socketDescriptor)
++    } else {
++        networkErrno = errno
++    }
++
++    var signalErrnos: [Int32] = []
++    for value in [Int32(0), SIGSTOP, SIGKILL] {
++        errno = 0
++        signalErrnos.append(Darwin.kill(getppid(), value) == 0 ? 0 : errno)
++    }
++    let report = BoundaryChildReport(
++        schema: "nexgenvideo/bpy-boundary-child/1",
++        mode: mode,
++        processIdentifier: getpid(),
++        parentProcessIdentifier: getppid(),
++        allowedWriteSucceeded: allowedWriteSucceeded,
++        outsideWriteDeniedErrno: outsideErrno,
++        forkDeniedErrno: forkErrno,
++        networkDeniedErrno: networkErrno,
++        signalDeniedErrnos: signalErrnos,
++        resourceBytes: 0
++    )
++    try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
++    let denied = [EPERM, EACCES]
++    guard allowedWriteSucceeded,
++          denied.contains(outsideErrno),
++          [EPERM, EAGAIN].contains(forkErrno),
++          denied.contains(networkErrno),
++          signalErrnos.count == 3,
++          signalErrnos.allSatisfy({ denied.contains($0) }) else {
++        Darwin.exit(70)
++    }
++    Darwin.exit(0)
++}
++
+ private func waitForOwnedChildExit(_ process: Process, timeoutNanoseconds: UInt64) -> Bool {
+     let deadline = DispatchTime.now().uptimeNanoseconds &+ timeoutNanoseconds
+     while process.isRunning {
+@@ -275,6 +509,72 @@ private func supervise(arguments: [String]) throws -> Int32 {
+     return process.terminationStatus
+ }
+ 
++private func superviseBoundary(arguments: [String]) throws -> Int32 {
++    guard arguments.count == 7,
++          let servicePID = Int32(arguments[0]),
++          let serviceStart = UInt64(arguments[1]),
++          servicePID > 1,
++          parentIsAlive(servicePID, startAbsoluteTime: serviceStart),
++          arguments[6] == "denials" || boundaryResourceModes.contains(arguments[6]) else {
++        throw SupervisorError.invalidParent
++    }
++    let identityURL = URL(fileURLWithPath: arguments[2]).standardizedFileURL
++    let writeRoot = URL(fileURLWithPath: arguments[3], isDirectory: true).standardizedFileURL
++    let outsidePath = URL(fileURLWithPath: arguments[4]).standardizedFileURL
++    let reportURL = URL(fileURLWithPath: arguments[5]).standardizedFileURL
++    let mode = arguments[6]
++    _ = Darwin.signal(SIGTERM, requestTermination)
++    _ = Darwin.signal(SIGINT, requestTermination)
++
++    let process = Process()
++    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
++    process.arguments = [
++        "boundary-child",
++        writeRoot.path,
++        outsidePath.path,
++        reportURL.path,
++        mode,
++    ]
++    process.currentDirectoryURL = writeRoot
++    process.standardInput = FileHandle.nullDevice
++    process.standardOutput = FileHandle.nullDevice
++    process.standardError = FileHandle.standardError
++    try process.run()
++    var childReaped = false
++    var childStart: UInt64?
++    defer {
++        if !childReaped {
++            terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
++        }
++    }
++    for _ in 0..<40 where childStart == nil && process.isRunning {
++        childStart = processStartAbsoluteTime(process.processIdentifier)
++        if childStart == nil { usleep(5_000) }
++    }
++    guard let childStart else { throw SupervisorError.processLaunch }
++    guard let supervisorStart = processStartAbsoluteTime(getpid()) else {
++        throw SupervisorError.processLaunch
++    }
++    try JSONEncoder().encode(BoundaryIdentity(
++        supervisorProcessIdentifier: getpid(),
++        supervisorParentProcessIdentifier: getppid(),
++        supervisorStartAbsoluteTime: supervisorStart,
++        childProcessIdentifier: process.processIdentifier,
++        childStartAbsoluteTime: childStart
++    )).write(to: identityURL, options: .atomic)
++
++    while process.isRunning {
++        if terminationRequested != 0
++            || !parentIsAlive(servicePID, startAbsoluteTime: serviceStart) {
++            return terminationRequested != 0 ? 0 : 70
++        }
++        usleep(10_000)
++    }
++    process.waitUntilExit()
++    childReaped = true
++    return process.terminationStatus
++}
++
+ @main
+ private enum BpySupervisorMain {
+     static func main() {
+@@ -286,6 +586,10 @@ private enum BpySupervisorMain {
+                 Darwin.exit(try supervise(arguments: arguments))
+             case "launch":
+                 try execPython(arguments: arguments)
++            case "boundary-supervise":
++                Darwin.exit(try superviseBoundary(arguments: arguments))
++            case "boundary-child":
++                try boundaryChild(arguments: arguments)
+             default:
+                 throw SupervisorError.invalidArguments
+             }
+diff --git a/docs/BPY_RUNTIME.md b/docs/BPY_RUNTIME.md
+index 27a17b34..bfe18a10 100644
+--- a/docs/BPY_RUNTIME.md
++++ b/docs/BPY_RUNTIME.md
+@@ -28,16 +28,36 @@ separate isolated `use_scripts=true` process proves the fixture can trigger it.
+ The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, and
+ `RLIMIT_NPROC=0` limits before importing bpy. The service additionally monitors worker physical
+ footprint, its own physical footprint, total bytes and files across every worker-writable root, wall
+-deadline, and the live descendant tree. Recursive accounting includes package descendants, fails
+-closed on traversal errors, counts the greater of logical size and allocated blocks plus directory
+-storage, and stops as soon as a byte or file bound is crossed. A violation asks
++deadline, and the live descendant tree. Recursive accounting includes package descendants and counts
++the greater of logical size and allocated blocks plus directory storage. It joins that scan with the
++exact owned worker's regular-vnode descriptors from XNU `proc_pidinfo(PROC_PIDLISTFDS)` plus
++`proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)`, and its file-backed mappings from
++`proc_pidinfo(PROC_PIDREGIONPATHINFO)`. Device/inode identity deduplicates all three views and the
++largest observed vnode size wins. Unlinked vnodes remain charged whether the retained descriptor is
++writable, read-only, or already closed while a mapping survives. Linked files outside the managed
++roots are excluded only when their kernel `FWRITE` bit is clear, so normal external read sources do
++not become job storage and an unexpected external writable descriptor fails closed. This does not
++trust a worker report, scan unrelated PIDs, or attribute a host-volume delta. PID reuse is excluded
++by rechecking the worker's XNU start identity around each bounded traversal; `EINVAL` from the still-
++identical process ends the address-space walk only after at least one region. Process end returns no
++stale ownership, and visibility or malformed-kernel-view errors fail closed. A bounded three-pass
++directory rescan tolerates only `ENOENT` caused by concurrent rename/delete churn; permission
++failures and every other invisible subtree remain fatal.
++The service deliberately does not treat cumulative process write-I/O as disk occupancy: overwrites
++and healthy temp-file churn can increase it without increasing retained storage. A violation asks
+ the exact native supervisor to terminate its directly owned worker and does not yield a candidate.
+-The verifier rejects excessive evaluated objects/vertices/polygons and
+-render dimensions/pixels; PNG dimensions and total outputs are checked again in native code.
+-
+-These are layered, bounded controls rather than a claim of a race-free general-purpose Python
+-sandbox. `RLIMIT_AS` remains enabled because current XNU carries an address-space size limit in the
+-VM map; acceptance records the configured limit and an over-allocation outcome so the shipped macOS
++The verifier rejects excessive evaluated objects/vertices/polygons and render dimensions/pixels;
++PNG dimensions and total outputs are checked again in native code. Geometry validation registers a
++temporary Blender render engine and invokes `bpy.ops.render.render` for every scene and enabled view
++layer. Its `render(self, depsgraph)` callback measures the public render-evaluated dependency graph,
++so render-only modifiers, viewport-hidden renderable objects, and non-active scenes do not escape the
++bound. The verifier restores scene settings and produces no image.
++
++These are layered, sampled controls rather than a claim of a race-free, instantaneous quota or a
++general-purpose Python sandbox. The service polls at fixed intervals and terminates on an observed
++violation; it does not claim that no transient overage can exist between samples. `RLIMIT_AS` remains
++enabled because current XNU carries an address-space size limit in the VM map; acceptance records the
++configured limit and an over-allocation outcome so the shipped macOS
+ behavior is measured. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
+ identity. Process-tree polling is cleanup and evidence around that barrier, not a replacement for
+ it. The service launches a native supervisor while Python is still gated. The host
+@@ -64,6 +84,12 @@ Primary platform references:
+ - <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c>
+ - <https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_map_xnu.h>
+ - <https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h>
++- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c>
++- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h>
++- <https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/fcntl.h>
++- <https://docs.blender.org/api/5.2/bpy.types.RenderEngine.html>
++- <https://docs.blender.org/api/5.2/bpy.ops.render.html>
++- <https://docs.blender.org/api/5.2/bpy.types.Context.html>
+ - <https://chromium.googlesource.com/chromium/src/+/refs/heads/main/sandbox/policy/mac/common.sb>
+ - <https://github.com/anthropics/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts>
+ 
+@@ -145,11 +171,23 @@ special upstream per-wheel attestation or a bit-identical rebuilt-binary hash.
+ The stable release tag itself targets the exact build commit and supplies NexGenVideo's GPL source;
+ the managed-runtime archive supplies the third-party closure not contained in that repository snapshot.
+ 
++One shared validator proves the ready state and revalidates the actual assembled archive, archive
++manifest, required notices, and binary/source correspondence before release, full-runtime acceptance,
++or a public CI binary upload. Hash-only lock readiness is insufficient. This does not impose blanket
++legal approval, a special attestation, or bit-identical rebuild evidence.
++
+ The distribution gate runs before release builds, including dry runs, and before the managed-runtime
+ acceptance build/transfer ZIP. Regular public CI does not upload the app or transfer it to the runtime
+-runner while blocked. Other CI workflows that must transfer a diagnostic app use an explicit
+-CI-only bundle mode that omits the runtime and embeds an omission marker. Normal dev, acceptance,
+-and release bundles continue to require the runtime; readiness is never synthesized.
++runner while blocked. Bundle CI still produces a separately signed private diagnostic app containing
++the XPC services and supervisor but no Python or bpy payload. The existing diagnostic-startup check
++always consumes that app. A separate `macos-26` boundary job uses the same artifact to exercise the
++real signed XPC → supervisor → fixed native child ancestry, App Sandbox plus Seatbelt write/fork/
++network/signal denials, writable-FD/read-only-FD/mapping-retained unlinked-vnode quota detection,
++a healthy linked external read-only control, exact cleanup, and a healthy following job. A marker
++compiled into only this CI bundle gates the fixed child path; normal app bundles cannot
++request it. Normal dev, acceptance, and release bundles continue to require the runtime; readiness is
++never synthesized. The native boundary probe is not a substitute for full bpy acceptance after source
++closure.
+ 
+ ## Prepared Actions acceptance
+ 
+@@ -182,6 +220,10 @@ thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, memory over-all
+ cancellation, worker crash, service and host kill/reopen cleanup, denied-file host positive controls,
+ network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
+ geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
++open-unlinked writes with a healthy following job, native no-bpy writable/read-only/mapping-retained
++unlinked resources plus a linked external read-only control, healthy concurrent rename/delete temp churn,
++render-only modifier geometry, viewport-hidden renderable geometry, a second scene, and legitimate
++user mesh geometry carrying the verifier-camera name prefix,
+ the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
+ after child start but before identity write followed by a healthy job, an unavailable child identity
+ with a TERM-ignoring owned child followed by a healthy job, and a perspective Cycles render.
+diff --git a/scripts/bundle.sh b/scripts/bundle.sh
+index 2695adc9..d2dfd7ae 100755
+--- a/scripts/bundle.sh
++++ b/scripts/bundle.sh
+@@ -10,7 +10,7 @@ set -euo pipefail
+ 
+ CONFIG="release"
+ MODE="dev"
+-INCLUDE_BPY_RUNTIME=true
++BPY_BUNDLE_MODE="full"
+ for arg in "$@"; do
+   case "$arg" in
+     release|debug) CONFIG="$arg" ;;
+@@ -18,7 +18,8 @@ for arg in "$@"; do
+     --sign)        MODE="sign" ;;
+     --dist)        MODE="dist" ;;
+     --package)     MODE="package" ;;
+-    --without-bpy-runtime-for-ci-transfer) INCLUDE_BPY_RUNTIME=false ;;
++    --without-bpy-runtime-for-ci-transfer) BPY_BUNDLE_MODE="omitted" ;;
++    --bpy-boundary-probe-for-ci-transfer) BPY_BUNDLE_MODE="boundary" ;;
+     *) echo "unknown arg: $arg" >&2; exit 1 ;;
+   esac
+ done
+@@ -130,8 +131,8 @@ if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$M
+   [ -n "$SIGN_IDENTITY" ] || { echo "!! no 'Developer ID Application' identity in the keychain (set SIGN_IDENTITY or import the cert)" >&2; exit 1; }
+ fi
+ 
+-if [ "$INCLUDE_BPY_RUNTIME" = false ] && [ "$MODE" != "dev" ]; then
+-  echo "!! runtime omission is only valid for unsigned CI test harnesses" >&2
++if [ "$BPY_BUNDLE_MODE" != "full" ] && [ "$MODE" != "dev" ]; then
++  echo "!! alternate bpy bundle modes are valid only for CI dev bundles" >&2
+   exit 1
+ fi
+ 
+@@ -187,12 +188,20 @@ fi
+ 
+ cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+ 
+-if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
++if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+   BPY_RUNTIME_ROOT="${NGV_BPY_RUNTIME_ROOT:-$ROOT/.build/bpy-runtime}"
+   "$ROOT/scripts/bundle_bpy_runtime.sh" \
+     "$BPY_RUNTIME_ROOT" \
+     "$BIN_DIRECTORY/NexGenVideoBpyService" \
+     "$APP"
++elif [ "$BPY_BUNDLE_MODE" = "boundary" ]; then
++  [ "${CI:-}" = true ] || {
++    echo "!! --bpy-boundary-probe-for-ci-transfer is restricted to CI test harnesses" >&2
++    exit 1
++  }
++  "$ROOT/scripts/bundle_bpy_boundary_probe.sh" \
++    "$BIN_DIRECTORY/NexGenVideoBpyService" \
++    "$APP"
+ else
+   [ "${CI:-}" = true ] || {
+     echo "!! --without-bpy-runtime-for-ci-transfer is restricted to CI test harnesses" >&2
+@@ -242,7 +251,7 @@ touch "$APP"
+ if [ "$MODE" = "fast" ]; then
+   echo "==> Codesigning fast app"
+   codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+-  if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
++  if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+     BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+     codesign --force --sign "$SIGN_IDENTITY" \
+       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+@@ -273,11 +282,13 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
+ if [ "$MODE" = "dev" ]; then
+   echo "==> Ad-hoc signing dev app"
+   codesign --force --deep --sign - "$APP"
+-  if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
+-    BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+-    codesign --force --sign - \
+-      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+-      "$BPY_RUNTIME/python/bin/python3.13"
++  if [ "$BPY_BUNDLE_MODE" != "omitted" ]; then
++    if [ "$BPY_BUNDLE_MODE" = "full" ]; then
++      BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
++      codesign --force --sign - \
++        --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
++        "$BPY_RUNTIME/python/bin/python3.13"
++    fi
+     codesign --force --sign - \
+       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+       "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+@@ -297,7 +308,7 @@ if [ "$MODE" = "dev" ]; then
+   exit 0
+ fi
+ 
+-if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
++if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+   BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+   echo "==> Codesigning managed bpy runtime"
+   while IFS= read -r -d '' binary; do
+diff --git a/scripts/bundle_bpy_boundary_probe.sh b/scripts/bundle_bpy_boundary_probe.sh
+new file mode 100755
+index 00000000..5b6b725b
+--- /dev/null
++++ b/scripts/bundle_bpy_boundary_probe.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++SERVICE_BINARY="${1:?bpy XPC service binary required}"
++APP="${2:?NexGenVideo app destination required}"
++SUPERVISOR_BINARY="$(dirname "$SERVICE_BINARY")/NexGenVideoBpySupervisor"
++
++test -x "$SERVICE_BINARY"
++test -x "$SUPERVISOR_BINARY"
++case "$APP" in
++  *.app) ;;
++  *) echo "invalid boundary-probe app destination: $APP" >&2; exit 1 ;;
++esac
++
++cp "$SUPERVISOR_BINARY" "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
++chmod 755 "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
++
++for slot in 0 1; do
++  XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
++  rm -rf "$XPC"
++  mkdir -p "$XPC/Contents/MacOS"
++  cp "$SERVICE_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpyService"
++  cp "$ROOT/Runtime/bpy/NexGenVideoBpyService-Info.plist" "$XPC/Contents/Info.plist"
++  /usr/libexec/PlistBuddy -c \
++    "Set :CFBundleIdentifier de.h5ventures.nexgenvideo.bpy-service-$slot" \
++    "$XPC/Contents/Info.plist"
++  chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpyService"
++done
++
++printf '%s\n' \
++  'Fixed-input signed boundary probe only; no bpy or Python payload is present.' \
++  > "$APP/Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
+diff --git a/scripts/test_bpy_runtime_workflow.py b/scripts/test_bpy_runtime_workflow.py
+index 70b589fc..d588d544 100644
+--- a/scripts/test_bpy_runtime_workflow.py
++++ b/scripts/test_bpy_runtime_workflow.py
+@@ -27,8 +27,13 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         self.assertIn(".rlimitASAllocationDenied == true", text)
+         self.assertIn('.outOfMemoryState == "resourceLimited"', text)
+         self.assertIn('.structuralLimitState == "resourceLimited"', text)
++        self.assertIn('.renderOnlyGeometryState == "resourceLimited"', text)
++        self.assertIn('.secondarySceneGeometryState == "resourceLimited"', text)
++        self.assertIn('.prefixedUserGeometryState == "resourceLimited"', text)
+         self.assertIn('.storageLimitState == "resourceLimited"', text)
+         self.assertIn('.aggregateByteLimitState == "resourceLimited"', text)
++        self.assertIn('.unlinkedStorageLimitState == "resourceLimited"', text)
++        self.assertIn('.healthyResourceChurnState == "awaitingConfirmation"', text)
+         self.assertIn('.resourceScanErrorState == "crashed"', text)
+         self.assertIn(".supervisorSignalDenied == true", text)
+         self.assertIn(".supervisorSignalRecovered == true", text)
+@@ -37,7 +42,7 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         self.assertIn('.trustedVerification.blenderBuildHash == "d13f752e3b9c"', text)
+         self.assertIn(".trustedVerification.libraryVersions.openvdb.version", text)
+         self.assertIn("NGV_SELFTEST_BPY_HOST_CRASH", text)
+-        self.assertIn("verify_bpy_source_closure.py", text)
++        self.assertIn("verify_bpy_distributable_source.py", text)
+         self.assertIn(".appDelegateShutdown == true", text)
+         self.assertIn(".jobMetrics.worker_process_identifier != .jobMetrics.verifier_process_identifier", text)
+ 
+@@ -55,6 +60,17 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         ci = (ROOT / ".github/workflows/ci.yml").read_text()
+         self.assertIn("id: bpy_distribution", ci)
+         self.assertIn("needs.source_gate.outputs.bpy_distribution_ready == 'true'", ci)
++        self.assertIn("verify_bpy_distributable_source.py", ci)
++        self.assertIn("--bpy-boundary-probe-for-ci-transfer", ci)
++        self.assertIn("name: NexGenVideo-ci-boundary-app", ci)
++        self.assertIn("NGV_SELFTEST_BPY_BOUNDARY", ci)
++        self.assertLess(
++            ci.index("verify_bpy_distributable_source.py"),
++            ci.index("name: Upload .app artifact"),
++        )
++        diagnostic = ci.split("  diagnostic-startup:", 1)[1].split("  bpy-boundary:", 1)[0]
++        self.assertIn("if: needs.source_gate.outputs.bundle_required == 'true'", diagnostic)
++        self.assertNotIn("bpy_distribution_ready", diagnostic)
+         for workflow in (
+             "chat-hang-replay.yml",
+             "private-example-analysis.yml",
+@@ -74,9 +90,10 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+             self.assertNotIn("com.apple.security.files", text)
+ 
+     def test_bundle_creates_two_distinct_xpc_containers(self):
+-        text = (ROOT / "scripts/bundle_bpy_runtime.sh").read_text()
+-        self.assertIn("for slot in 0 1", text)
+-        self.assertIn("bpy-service-$slot", text)
++        for filename in ("bundle_bpy_runtime.sh", "bundle_bpy_boundary_probe.sh"):
++            text = (ROOT / "scripts" / filename).read_text()
++            self.assertIn("for slot in 0 1", text)
++            self.assertIn("bpy-service-$slot", text)
+ 
+     def test_exact_wheel_entrypoint_and_inventory_are_locked(self):
+         lock = (ROOT / "Runtime/bpy/runtime-lock.json").read_text()
+@@ -98,6 +115,9 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         self.assertIn("raise SystemExit(71)", worker)
+         self.assertIn('load_scene(bpy, config["scenePath"], False)', worker)
+         self.assertIn('elif mode == "verify":', worker)
++        self.assertIn("class NGVGeometryVerifier", worker)
++        self.assertIn("bpy.ops.render.render(", worker)
++        self.assertNotIn("DAG_EVAL_RENDER", worker)
+         self.assertIn("jobFingerprint", service)
+         self.assertIn("resultExpired", service)
+         self.assertIn("connection.interruptionHandler", service)
+@@ -116,6 +136,23 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         self.assertIn("NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE", supervisor)
+         self.assertIn("NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM", supervisor)
+         self.assertIn("waitForOwnedChildExit", supervisor)
++        self.assertIn("procPIDFDInfo", service)
++        self.assertIn("procPIDRegionPathInfo", service)
++        self.assertIn("ownedRetainedVnodes", service)
++        self.assertIn("kernelFRead: UInt32 = 1", service)
++        self.assertIn("kernelFWrite: UInt32 = 2", service)
++        self.assertIn("traversedRegions > 0", service)
++        self.assertIn("resources[identity] = max(resources[identity] ?? 0, bytes)", service)
++        self.assertNotIn("O_ACCMODE", service)
++        self.assertNotIn("PROC_PIDFDVNODEINFO", service)
++        self.assertIn('"readonly-unlinked-hold"', supervisor)
++        self.assertIn('"mapped-unlinked-hold"', supervisor)
++        self.assertIn('"external-readonly-hold"', supervisor)
++        self.assertIn("Darwin.mmap(", supervisor)
++        self.assertIn("verifier_camera_identities", worker)
++        self.assertIn("source_object.as_pointer() in verifier_camera_identities", worker)
++        self.assertNotIn(".name.startswith(verifier_camera_prefix)", worker)
++        self.assertIn("boundary-supervise", supervisor)
+ 
+     def test_source_candidate_workflow_is_manual_source_only_and_fail_closed(self):
+         text = (ROOT / ".github/workflows/bpy-source-closure-candidate.yml").read_text()
+@@ -185,6 +222,11 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
+         self.assertIn('lock.get("distributionClosure", {})', verifier)
+         self.assertIn("distributionClosure.sourceArchives", stage)
+         self.assertIn("distributionClosure.sourceArchives", bundle_verifier)
++        common = (ROOT / "scripts/verify_bpy_distributable_source.py").read_text()
++        self.assertIn("require_distributable=True", common)
++        for workflow in ("ci.yml", "release.yml", "bpy-runtime-acceptance.yml"):
++            text = (ROOT / ".github/workflows" / workflow).read_text()
++            self.assertIn("verify_bpy_distributable_source.py", text)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/test_ci_workflow.py b/scripts/test_ci_workflow.py
+index fc750744..88769b05 100644
+--- a/scripts/test_ci_workflow.py
++++ b/scripts/test_ci_workflow.py
+@@ -21,7 +21,7 @@ class CIWorkflowTests(unittest.TestCase):
+                     key: str(required).lower() for key in ("build_required", "bundle_required", "ui_required")
+                 }},
+                 **{job: {"result": "success" if required else "skipped"}
+-                   for job in ("build_test", "ui_render", "diagnostic-startup")},
++                   for job in ("build_test", "ui_render", "diagnostic-startup", "bpy-boundary")},
+             }
+             def check():
+                 return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": json.dumps(needs)}, capture_output=True)
+diff --git a/scripts/verify_bpy_distributable_source.py b/scripts/verify_bpy_distributable_source.py
+new file mode 100755
+index 00000000..04a138ff
+--- /dev/null
++++ b/scripts/verify_bpy_distributable_source.py
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python3
++import argparse
++import hashlib
++import json
++from pathlib import Path
++
++from verify_bpy_runtime import validate as validate_runtime
++from verify_bpy_source_closure import validate as validate_closure
++
++
++ROOT = Path(__file__).resolve().parents[1]
++LOCK_PATH = ROOT / "Runtime/bpy/runtime-lock.json"
++
++
++def digest(path):
++    value = hashlib.sha256()
++    with path.open("rb") as handle:
++        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
++            value.update(chunk)
++    return value.hexdigest()
++
++
++def validate(archive, manifest):
++    lock = json.loads(LOCK_PATH.read_text())
++    validate_runtime(lock)
++    if lock.get("distributionStatus") != "ready":
++        raise ValueError("runtime lock remains fail-closed for public distribution")
++    closure = validate_closure(archive, manifest, require_distributable=True)
++    public = lock["distributionClosure"]["publicSourceAsset"]
++    if digest(archive) != public["sha256"] or archive.stat().st_size != public["size"]:
++        raise ValueError("public corresponding-source archive pin mismatch")
++    if digest(manifest) != public["manifestSHA256"]:
++        raise ValueError("public corresponding-source manifest pin mismatch")
++    return {
++        "schema": "nexgenvideo/bpy-distributable-source-validation/1",
++        "sources": len(closure["sources"]),
++        "notices": len(closure["notices"]),
++        "correspondenceComplete": closure["correspondenceComplete"],
++        "noticeComplete": closure["noticeComplete"],
++        "archiveSHA256": public["sha256"],
++        "manifestSHA256": public["manifestSHA256"],
++    }
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("archive", type=Path)
++    parser.add_argument("manifest", type=Path)
++    args = parser.parse_args()
++    print(json.dumps(validate(args.archive, args.manifest), sort_keys=True))
++
++
++if __name__ == "__main__":
++    try:
++        main()
++    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
++        raise SystemExit(f"invalid distributable bpy source closure: {error}")

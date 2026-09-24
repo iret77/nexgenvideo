@@ -1,0 +1,1313 @@
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 7551210b..57645a6a 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -1259,6 +1259,34 @@ final class AgentService {
+         checkpointCurrentSession()
+     }
+ 
++    func recordHostState(
++        _ record: AgentHostStateRecord,
++        origin: ToolCallOrigin
++    ) {
++        guard let sessionID = origin.chatSessionID else { return }
++        let message = AgentMessage(
++            role: .user,
++            blocks: [],
++            userPresentation: AgentUserPresentation(
++                choiceRecord: nil,
++                typedText: nil,
++                hostStateRecord: record
++            )
++        )
++        if sessionID == currentSessionId {
++            messages.append(message)
++            syncMessagesIntoCurrentSession()
++            onSessionsChanged?()
++            return
++        }
++        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
++            return
++        }
++        sessions[index].messages.append(message)
++        sessions[index].updatedAt = Date()
++        onSessionsChanged?()
++    }
++
+     /// The compact intent line for a generation dialog — picked chip labels then the free-text
+     /// direction, comma-joined (matches the music tab's original composition).
+     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
+@@ -2080,9 +2108,10 @@ final class AgentService {
+                 return .error("The approval is already being applied.")
+             }
+             guard let toolExecutor else {
+-                let message = "The gate writer is unavailable. The approval request remains open."
+-                gateApprovalError = message
+-                return .error(message)
++                return recordGateApprovalFailure(
++                    "The gate writer is unavailable. The approval request remains open.",
++                    approval: approval
++                )
+             }
+             gateApprovalIsWriting = true
+             defer { gateApprovalIsWriting = false }
+@@ -2092,6 +2121,19 @@ final class AgentService {
+                 pendingGateOrigin = nil
+                 gateApprovalError = nil
+                 if approval.sessionId != nil {
++                    recordHostState(
++                        AgentHostStateRecord(
++                            state: .approved,
++                            phase: approval.phase,
++                            toolName: approval.sourceToolName,
++                            action: .none,
++                            artifactPath: nil,
++                            byteComparison: nil,
++                            previousSHA256: nil,
++                            currentSHA256: nil
++                        ),
++                        origin: origin
++                    )
+                     enqueueGateFollowUp(
+                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                             + "Continue from the updated project state; do not request this approval again.",
+@@ -2113,6 +2155,25 @@ final class AgentService {
+     private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
+         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
+         gateApprovalError = message
++        let normalizedReason = reason.lowercased()
++        let action: AgentHostStateRecord.Action = [
++            "reopen the project", "working copy is unavailable", "trusted format-pack declaration",
++        ].contains(where: { normalizedReason.contains($0) })
++            ? .reopenProject
++            : .retryAfterHostRecovery
++        recordHostState(
++            AgentHostStateRecord(
++                state: .approvalFailed,
++                phase: approval.phase,
++                toolName: approval.sourceToolName,
++                action: action,
++                artifactPath: nil,
++                byteComparison: nil,
++                previousSHA256: nil,
++                currentSHA256: nil
++            ),
++            origin: pendingGateOrigin ?? .direct
++        )
+         enqueueGateFollowUp(
+             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
+                 + "The approval card remains open. Address the stated cause without claiming approval, "
+diff --git a/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift b/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
+index a568d9a3..de80d064 100644
+--- a/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
++++ b/Sources/NexGenVideo/Agent/Dialogs/AgentDialog.swift
+@@ -81,22 +81,61 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
+     }
+ }
+ 
++struct AgentHostStateRecord: Codable, Equatable, Sendable {
++    enum State: String, Codable, Equatable, Sendable {
++        case draft
++        case writeRejected
++        case persisted
++        case checked
++        case approved
++        case approvalFailed
++    }
++
++    enum Action: String, Codable, Equatable, Sendable {
++        case none
++        case agentCorrection
++        case reviewChangedSource
++        case reviewForApproval
++        case reopenProject
++        case retryAfterHostRecovery
++    }
++
++    enum ByteComparison: String, Codable, Equatable, Sendable {
++        case created
++        case unchanged
++        case changed
++        case unavailable
++    }
++
++    let state: State
++    let phase: String
++    let toolName: String
++    let action: Action
++    let artifactPath: String?
++    let byteComparison: ByteComparison?
++    let previousSHA256: String?
++    let currentSHA256: String?
++}
++
+ struct AgentUserPresentation: Codable, Equatable, Sendable {
+     let choiceRecord: AgentChoiceRecord?
+     let typedText: String?
+     let notice: String?
+     let workflowRecord: AgentWorkflowRecord?
++    let hostStateRecord: AgentHostStateRecord?
+ 
+     init(
+         choiceRecord: AgentChoiceRecord?,
+         typedText: String?,
+         notice: String? = nil,
+-        workflowRecord: AgentWorkflowRecord? = nil
++        workflowRecord: AgentWorkflowRecord? = nil,
++        hostStateRecord: AgentHostStateRecord? = nil
+     ) {
+         self.choiceRecord = choiceRecord
+         self.typedText = typedText
+         self.notice = notice
+         self.workflowRecord = workflowRecord
++        self.hostStateRecord = hostStateRecord
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/Agent/GateApproval.swift b/Sources/NexGenVideo/Agent/GateApproval.swift
+index d7416524..2b6f9c27 100644
+--- a/Sources/NexGenVideo/Agent/GateApproval.swift
++++ b/Sources/NexGenVideo/Agent/GateApproval.swift
+@@ -30,6 +30,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+     let action: Action
+     let declaredPack: String?
+     let declaredBinding: ProjectPackBinding?
++    let sourceToolName: String
+     /// Set only for an in-app turn that can be resumed automatically.
+     let sessionId: UUID?
+ 
+@@ -40,6 +41,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         action: Action = .approve,
+         declaredPack: String? = nil,
+         declaredBinding: ProjectPackBinding? = nil,
++        sourceToolName: String = ToolName.approveGate.rawValue,
+         sessionId: UUID? = nil,
+         id: String = UUID().uuidString
+     ) {
+@@ -51,6 +53,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         self.action = action
+         self.declaredPack = declaredPack
+         self.declaredBinding = declaredBinding
++        self.sourceToolName = sourceToolName
+         self.sessionId = sessionId
+     }
+ 
+@@ -62,6 +65,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+             action: action,
+             declaredPack: declaredPack,
+             declaredBinding: declaredBinding,
++            sourceToolName: sourceToolName,
+             sessionId: sessionId,
+             id: id
+         )
+@@ -74,6 +78,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+             && action == other.action
+             && declaredPack == other.declaredPack
+             && declaredBinding == other.declaredBinding
++            && sourceToolName == other.sourceToolName
+             && sessionId == other.sessionId
+     }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift b/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+index 4323773f..b940c0da 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+@@ -16,6 +16,8 @@ struct AgentTranscriptTurnView: View {
+                     AgentMessageView(message: message, toolResults: toolResults)
+                 case .activity(let activity):
+                     AgentActivityView(activity: activity, toolResults: toolResults)
++                case .hostState(let state):
++                    AgentHostStateView(state: state)
+                 case .receipts(let group):
+                     AgentReceiptGroupView(group: group)
+                 case .notice(let notice):
+@@ -29,6 +31,175 @@ struct AgentTranscriptTurnView: View {
+     }
+ }
+ 
++private struct AgentHostStateView: View {
++    let state: AgentHostState
++    @Environment(EditorViewModel.self) private var editor
++    @State private var showsDiagnostics = false
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
++                Image(systemName: symbol)
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(color)
++                    .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text(title)
++                        .interfaceFont(
++                            size: AppTheme.Typography.ui,
++                            weight: AppTheme.FontWeight.semibold
++                        )
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                    Text(detail)
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.secondaryColor)
++                        .fixedSize(horizontal: false, vertical: true)
++                }
++            }
++            if state.record.action == .reviewChangedSource
++                || state.record.action == .reviewForApproval {
++                Button("Review \(PhaseDisplay.label(state.record.phase))") {
++                    editor.revealCockpit(cockpitTab(for: state.record.phase))
++                }
++                .buttonStyle(.capsule(.secondary, size: .regular))
++                .controlSize(.small)
++            }
++            if hasDiagnostics {
++                DisclosureGroup(isExpanded: $showsDiagnostics) {
++                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                        diagnosticRow("Tool", state.record.toolName)
++                        if let path = state.record.artifactPath {
++                            diagnosticRow("Artifact", path)
++                        }
++                        if let comparison = state.record.byteComparison {
++                            diagnosticRow("Byte comparison", comparison.rawValue)
++                        }
++                        if let previous = state.record.previousSHA256 {
++                            diagnosticRow("Previous fingerprint", previous)
++                        }
++                        if let current = state.record.currentSHA256 {
++                            diagnosticRow("Current fingerprint", current)
++                        }
++                    }
++                    .padding(.top, AppTheme.Spacing.xxs)
++                } label: {
++                    Text("Diagnostics")
++                        .interfaceFont(size: AppTheme.Typography.metadata)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
++            }
++        }
++        .padding(AppTheme.Spacing.md)
++        .background(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
++                .fill(AppTheme.Background.raisedColor)
++        )
++        .overlay(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
++                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
++        )
++        .accessibilityElement(children: .contain)
++        .accessibilityLabel("\(title). \(detail)")
++    }
++
++    private var title: String {
++        let phase = PhaseDisplay.label(state.record.phase)
++        return switch state.record.state {
++        case .draft: String(localized: "\(phase) draft")
++        case .writeRejected: String(localized: "\(phase) not saved")
++        case .persisted: String(localized: "\(phase) saved")
++        case .checked: String(localized: "\(phase) saved and checked")
++        case .approved: String(localized: "\(phase) approved")
++        case .approvalFailed: String(localized: "\(phase) not approved")
++        }
++    }
++
++    private var detail: String {
++        switch state.record.state {
++        case .draft:
++            String(localized: "The draft has not been written to the project.")
++        case .writeRejected:
++            switch state.record.action {
++            case .reviewChangedSource:
++                String(localized: "Review the changed project source before continuing.")
++            case .reopenProject:
++                String(localized: "Reopen the project, then try again.")
++            case .retryAfterHostRecovery:
++                String(localized: "Wait for the current project operation to finish, then try again.")
++            default:
++                String(localized: "The draft needs correction. The agent can submit it again.")
++            }
++        case .persisted:
++            switch state.record.byteComparison {
++            case .unchanged:
++                String(localized: "The host compared the exact bytes. The artifact is unchanged; checks are still pending.")
++            case .changed:
++                String(localized: "The artifact changed. Review it before approval.")
++            default:
++                String(localized: "The artifact is stored. Host checks are still pending.")
++            }
++        case .checked:
++            String(localized: "Host checks passed. Review the artifact before approval.")
++        case .approved:
++            String(localized: "The host recorded the user approval.")
++        case .approvalFailed:
++            switch state.record.action {
++            case .reopenProject:
++                String(localized: "The host could not record approval. Reopen the project, then try again.")
++            default:
++                String(localized: "The host could not record approval. Wait, then try again.")
++            }
++        }
++    }
++
++    private var symbol: String {
++        switch state.record.state {
++        case .writeRejected, .approvalFailed: "exclamationmark.triangle.fill"
++        case .approved: "checkmark.seal.fill"
++        case .checked: "checkmark.circle.fill"
++        case .draft, .persisted: "doc.badge.clock"
++        }
++    }
++
++    private var color: Color {
++        switch state.record.state {
++        case .writeRejected, .approvalFailed: AppTheme.Status.warningColor
++        case .approved, .checked: AppTheme.Status.successColor
++        case .draft, .persisted: AppTheme.Text.tertiaryColor
++        }
++    }
++
++    private var hasDiagnostics: Bool {
++        !state.record.toolName.isEmpty
++            || state.record.artifactPath != nil
++            || state.record.byteComparison != nil
++            || state.record.previousSHA256 != nil
++            || state.record.currentSHA256 != nil
++    }
++
++    private func cockpitTab(for phase: String) -> CockpitTab {
++        switch phase {
++        case "brief", "production_design", "treatment", "storyboard": .story
++        case "bible": .bible
++        case "shotlist": .shotlist
++        case "frames", "sanity", "render", "finish": .review
++        default: .pipeline
++        }
++    }
++
++    private func diagnosticRow(_ label: String, _ value: String) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
++            Text(label)
++                .interfaceFont(size: AppTheme.Typography.metadata)
++                .foregroundStyle(AppTheme.Text.mutedColor)
++            Text(value)
++                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++                .textSelection(.enabled)
++        }
++    }
++}
++
+ private struct AgentUserIntentView: View {
+     let text: String
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+index 7be9cd62..2132831b 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+@@ -45,10 +45,16 @@ struct AgentNoticeReceipt: Identifiable {
+     let text: String
+ }
+ 
++struct AgentHostState: Identifiable {
++    let id: UUID
++    let record: AgentHostStateRecord
++}
++
+ enum AgentTranscriptItem: Identifiable {
+     case userIntent(AgentUserIntent)
+     case assistantResult(AgentMessage)
+     case activity(AgentActivity)
++    case hostState(AgentHostState)
+     case receipts(AgentReceiptGroup)
+     case notice(AgentNoticeReceipt)
+ 
+@@ -57,6 +63,7 @@ enum AgentTranscriptItem: Identifiable {
+         case .userIntent(let intent): "intent-\(intent.id.uuidString)"
+         case .assistantResult(let message): "result-\(message.id.uuidString)"
+         case .activity(let activity): "activity-\(activity.id.uuidString)"
++        case .hostState(let state): "host-state-\(state.id.uuidString)"
+         case .receipts(let group): "receipts-\(group.id.uuidString)"
+         case .notice(let notice): "notice-\(notice.id.uuidString)"
+         }
+@@ -102,6 +109,7 @@ enum AgentTranscriptProjection {
+         let activity = makeActivity(messages, isRunning: isRunning)
+         var intents: [AgentTranscriptItem] = []
+         var resultMessage: AgentMessage?
++        var hostStates: [AgentHostState] = []
+         var receipts: [AgentTranscriptItem] = []
+         var notices: [AgentTranscriptItem] = []
+ 
+@@ -112,6 +120,12 @@ enum AgentTranscriptProjection {
+                     intents.append(.userIntent(.init(id: message.id, text: text)))
+                 }
+                 if let presentation = message.userPresentation {
++                    if let hostState = presentation.hostStateRecord {
++                        appendHostState(
++                            .init(id: message.id, record: hostState),
++                            to: &hostStates
++                        )
++                    }
+                     if let workflow = presentation.workflowRecord {
+                         appendReceipt(
+                             .init(id: message.id, content: .workflow(workflow)),
+@@ -151,12 +165,28 @@ enum AgentTranscriptProjection {
+         }
+ 
+         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
+-        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
+-        let output = intents + results + activityItems + receipts + notices
++        let results = hostStates.isEmpty
++            ? resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
++            : []
++        let stateItems = hostStates.map(AgentTranscriptItem.hostState)
++        let output = intents + stateItems + results + activityItems + receipts + notices
+         guard !output.isEmpty else { return nil }
+         return AgentTranscriptTurn(id: first.id, items: output)
+     }
+ 
++    private static func appendHostState(
++        _ state: AgentHostState,
++        to output: inout [AgentHostState]
++    ) {
++        if let index = output.firstIndex(where: {
++            $0.record.phase == state.record.phase
++        }) {
++            output[index] = state
++        } else {
++            output.append(state)
++        }
++    }
++
+     private static func appendReceipt(
+         _ receipt: AgentTranscriptReceipt,
+         phase: String?,
+diff --git a/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift b/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
+index 958d0bf8..8e9c1974 100644
+--- a/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
++++ b/Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift
+@@ -13,6 +13,7 @@ struct GateApprovalCard: View {
+     @Environment(EditorViewModel.self) private var editor
+     @State private var review = GateReviewModel()
+     @State private var showsStoryboard = false
++    @State private var showsDiagnostics = false
+ 
+     private var reviewHint: String? {
+         if approval.phase == "analysis" {
+@@ -42,6 +43,12 @@ struct GateApprovalCard: View {
+                 }
+                 .buttonStyle(.capsule(.secondary, size: .regular))
+                 .disabled(isWorking || isBlocked)
++            } else {
++                Button("Review \(approval.phaseLabel)") {
++                    editor.revealCockpit(reviewDestination)
++                }
++                .buttonStyle(.capsule(.secondary, size: .regular))
++                .disabled(isWorking || isBlocked)
+             }
+             if let blocker = review.blocker, !isBlocked {
+                 Text(blocker)
+@@ -112,15 +119,22 @@ struct GateApprovalCard: View {
+ 
+     private var summary: some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+-            Text("The agent is asking you to approve \(approval.phaseLabel).")
++            Text("\(approval.phaseLabel) passed host checks. Review it before approval.")
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                 .fixedSize(horizontal: false, vertical: true)
+             if let notes = approval.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+-                Text(notes)
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+-                    .fixedSize(horizontal: false, vertical: true)
++                DisclosureGroup(isExpanded: $showsDiagnostics) {
++                    Text(notes)
++                        .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                        .fixedSize(horizontal: false, vertical: true)
++                        .textSelection(.enabled)
++                } label: {
++                    Text("Approval notes")
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
+             }
+             if let reviewHint {
+                 Text(reviewHint)
+@@ -142,6 +156,16 @@ struct GateApprovalCard: View {
+         }
+     }
+ 
++    private var reviewDestination: CockpitTab {
++        switch approval.phase {
++        case "brief", "production_design", "treatment", "storyboard": .story
++        case "bible": .bible
++        case "shotlist": .shotlist
++        case "frames", "sanity", "render", "finish": .review
++        default: .pipeline
++        }
++    }
++
+     private var footerRow: some View {
+         ViewThatFits(in: .horizontal) {
+             approvalActions(horizontal: true)
+diff --git a/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift b/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
+index 849603d1..0986b5a3 100644
+--- a/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
++++ b/Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift
+@@ -7,7 +7,10 @@ struct GenerationBatchCard: View {
+         let coordinator = editor.generationBatchCoordinator
+         if let batch = coordinator.pending {
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+-                Text("Review \(batch.payload.items.count) generations").fontWeight(AppTheme.FontWeight.semibold)
++                Text(batch.totalEUR == nil
++                    ? String(localized: "Prepare \(batch.payload.items.count) generations")
++                    : String(localized: "Review \(batch.payload.items.count) generations"))
++                    .fontWeight(AppTheme.FontWeight.semibold)
+                 ScrollView {
+                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                         ForEach(Array(batch.payload.items.enumerated()), id: \.element.id) { index, item in
+@@ -26,7 +29,7 @@ struct GenerationBatchCard: View {
+                 if let total = batch.totalEUR {
+                     Text("Estimated total: €\(total, specifier: "%.2f")")
+                 } else {
+-                    Text("Every generation needs a monetary estimate before this batch can run unattended.")
++                    Text("Cost estimates are missing. Approval is unavailable until every generation is priced.")
+                         .foregroundStyle(AppTheme.Status.warningColor)
+                 }
+                 if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
+@@ -34,7 +37,9 @@ struct GenerationBatchCard: View {
+                     Button("Decline") { coordinator.decline(editor: editor) }
+                         .buttonStyle(.capsule(.secondary, size: .regular)).disabled(coordinator.approving)
+                     Spacer()
+-                    Button("Approve \(batch.payload.items.count) generations") {
++                    Button(batch.totalEUR == nil
++                        ? String(localized: "Waiting for cost estimates")
++                        : String(localized: "Approve \(batch.payload.items.count) generations")) {
+                         Task { await coordinator.approve(editor: editor) }
+                     }.buttonStyle(.capsule(.prominent, size: .regular))
+                         .disabled(coordinator.approving || batch.totalEUR == nil)
+diff --git a/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift b/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
+index 99b96d87..6a2d4b06 100644
+--- a/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
++++ b/Sources/NexGenVideo/Agent/Panel/ToolRunPresentation.swift
+@@ -78,6 +78,14 @@ enum ToolRunPresentation {
+         "list_phases": "Reading the phase plan",
+         "get_ui_contract": "Reading the phase's interaction plan",
+         "run_phase": "Running a pipeline phase",
++        "write_analysis_interpretation": "Saving analysis interpretation",
++        "write_brief": "Saving the brief",
++        "write_production_design": "Saving production design",
++        "write_treatment": "Saving the treatment",
++        "write_storyboard": "Saving the storyboard",
++        "write_bible": "Saving the Bible",
++        "write_shotlist": "Saving the shot list",
++        "write_phase_extension": "Saving phase work",
+         "approve_gate": "Requesting phase-gate approval",
+         "set_gate_state": "Updating the phase gate",
+         "rewind": "Rewinding the pipeline",
+@@ -95,6 +103,9 @@ enum ToolRunPresentation {
+         "lock_ledger_attribute": "Locking creative intent",
+         "remove_ledger_attribute": "Removing a ledger entry",
+         "send_feedback": "Recording feedback",
++        "copy_project_file": "Checking a project reference",
++        "prepare_generation_batch": "Preparing a generation batch",
++        "get_generation_batches": "Reading generation batches",
+         // Claude Code runtime built-ins
+         "ToolSearch": "Loading tools",
+         "Task": "Delegating a subtask",
+diff --git a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+index 86638fcf..6a36976f 100644
+--- a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+@@ -315,6 +315,11 @@ enum AgentInstructions {
+           (needs_revision / pending don't ask — they aren't approvals.)
+         - The planning phases are agent-driven but their artifacts are host-written: use the matching \
+           write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
++          A draft is not saved until its writer returns success. A rejected writer means the artifact \
++          was not persisted; correct the cause and retry without narrating each mechanical recovery \
++          step. Never describe a phase as saved, checked, ready, or approved from your own prose: the \
++          host writer result, gate readiness, and recorded user decision own those states. Missing batch \
++          prices mean preparation is incomplete, not that approval is waiting. \
+           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
+           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
+           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 1e182b9c..d72ed63a 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -149,6 +149,17 @@ enum ToolName: String, CaseIterable, Sendable {
+         }
+     }
+ 
++    var isCanonicalArtifactWriter: Bool {
++        switch self {
++        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
++             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
++             .writePhaseExtension:
++            true
++        default:
++            false
++        }
++    }
++
+     func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
+         guard isDurableWrite else { return false }
+         switch self {
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+index e0c95fe6..58f369e2 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+@@ -933,7 +933,8 @@ extension ToolExecutor {
+                     dataRoot: root,
+                     action: .setState(state),
+                     declaredPack: declaredPack,
+-                    declaredBinding: declaredBinding
++                    declaredBinding: declaredBinding,
++                    sourceToolName: ToolName.setGateState.rawValue
+                 ),
+                 origin: origin
+             )
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+index dbd7ccf5..3fa563c2 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+@@ -192,7 +192,11 @@ final class ToolExecutor {
+         var guardedPhase: String?
+         var guardedRoot: URL?
+         var guardedDeclaration: ProjectPackGate.MutationDeclaration?
++        var hostStatePhase: String?
++        var hostStateRoot: URL?
+         var mutationLease: (root: URL, id: UUID)?
++        var artifactBefore: HostArtifactSnapshot?
++        var canonicalWriterPersisted = false
+         defer {
+             if let mutationLease {
+                 editor.pipelinePhaseRunCoordinator.endMutation(
+@@ -220,6 +224,16 @@ final class ToolExecutor {
+             }
+             try validateToolInput(in: args, against: schema, path: tool.rawValue)
+             let resolved = try expandingIdPrefixes(in: args, editor: editor)
++            if tool.isCanonicalArtifactWriter {
++                hostStatePhase = tool.advancingPhase(args: resolved)
++                hostStateRoot = try? resolveDataRoot(resolved, editor: editor)
++                if let hostStatePhase, let hostStateRoot {
++                    artifactBefore = hostArtifactSnapshot(
++                        phase: hostStatePhase,
++                        dataRoot: hostStateRoot
++                    )
++                }
++            }
+             if enforceHardGates {
+                 if let phase = tool.advancingPhase(args: resolved) {
+                     let root = try resolveDataRoot(resolved, editor: editor)
+@@ -227,6 +241,9 @@ final class ToolExecutor {
+                         editor,
+                         dataRoot: root
+                     )
++                    guardedPhase = phase
++                    guardedRoot = root
++                    guardedDeclaration = declaration
+                     try editor.pipelineAgentHarness.guardPhaseWork(
+                         tool: tool,
+                         phase: phase,
+@@ -234,9 +251,6 @@ final class ToolExecutor {
+                         declaredPack: declaration.packName,
+                         declaredBinding: declaration.binding
+                     )
+-                    guardedPhase = phase
+-                    guardedRoot = root
+-                    guardedDeclaration = declaration
+                 } else if tool.usesCurrentPipelinePhase {
+                     let root = try resolveDataRoot(resolved, editor: editor)
+                     let declaration = try mutationPackDeclaration(
+@@ -294,7 +308,35 @@ final class ToolExecutor {
+                 }
+                 try ProjectWorkingCopy.markDirty(key: key)
+             }
++            if tool.isCanonicalArtifactWriter,
++               artifactBefore == nil,
++               let hostStateRoot {
++                artifactBefore = hostArtifactSnapshot(
++                    phase: hostStatePhase,
++                    dataRoot: hostStateRoot
++                )
++            }
++            if tool.isCanonicalArtifactWriter, let phase = hostStatePhase {
++                editor.agentService.recordHostState(
++                    AgentHostStateRecord(
++                        state: .draft,
++                        phase: phase,
++                        toolName: tool.rawValue,
++                        action: .none,
++                        artifactPath: artifactBefore?.path,
++                        byteComparison: nil,
++                        previousSHA256: artifactBefore?.bytes.map {
++                            FileDigest.sha256(of: $0)
++                        },
++                        currentSHA256: nil
++                    ),
++                    origin: origin
++                )
++            }
+             result = try await run(tool, editor, resolved, origin: origin)
++            canonicalWriterPersisted = tool.isCanonicalArtifactWriter
++                && !result.isError
++                && result.turnDisposition == .continueTurn
+             if tool != .runPhase,
+                tool != .writeShotlist,
+                !result.isError,
+@@ -336,9 +378,20 @@ final class ToolExecutor {
+         } catch {
+             result = .error(error.localizedDescription)
+         }
++        if let state = hostStateRecord(
++            tool: tool,
++            args: args,
++            result: result,
++            phase: hostStatePhase ?? guardedPhase,
++            dataRoot: hostStateRoot ?? guardedRoot,
++            artifactBefore: artifactBefore,
++            writerPersisted: canonicalWriterPersisted
++        ) {
++            editor.agentService.recordHostState(state, origin: origin)
++        }
+         // A successful pipeline write diverges the working copy from the saved package — mark the
+         // document edited so ⌘S persists it and the user is warned before closing without saving.
+-        if !result.isError,
++        if (!result.isError || canonicalWriterPersisted),
+            result.turnDisposition == .continueTurn,
+            tool.isDurableWrite {
+             editor.onPipelineChanged?()
+@@ -368,6 +421,152 @@ final class ToolExecutor {
+         return shorteningIds(in: result, editor: editor)
+     }
+ 
++    private struct HostArtifactSnapshot {
++        let path: String
++        let exists: Bool
++        let bytes: Data?
++    }
++
++    private func hostStateRecord(
++        tool: ToolName,
++        args: [String: Any],
++        result: ToolResult,
++        phase guardedPhase: String?,
++        dataRoot: URL?,
++        artifactBefore: HostArtifactSnapshot?,
++        writerPersisted: Bool
++    ) -> AgentHostStateRecord? {
++        let phase = guardedPhase ?? tool.advancingPhase(args: args)
++        if tool.isCanonicalArtifactWriter, let phase {
++            guard writerPersisted else {
++                let reason = result.content.compactMap { block -> String? in
++                    guard case .text(let text) = block else { return nil }
++                    return text
++                }.joined(separator: " ").lowercased()
++                return AgentHostStateRecord(
++                    state: .writeRejected,
++                    phase: phase,
++                    toolName: tool.rawValue,
++                    action: rejectionAction(reason: reason),
++                    artifactPath: artifactBefore?.path,
++                    byteComparison: nil,
++                    previousSHA256: artifactBefore?.bytes.map {
++                        FileDigest.sha256(of: $0)
++                    },
++                    currentSHA256: nil
++                )
++            }
++            let artifactAfter = dataRoot.flatMap {
++                hostArtifactSnapshot(phase: phase, dataRoot: $0)
++            }
++            let comparison = compare(before: artifactBefore, after: artifactAfter)
++            return AgentHostStateRecord(
++                state: .persisted,
++                phase: phase,
++                toolName: tool.rawValue,
++                action: .reviewForApproval,
++                artifactPath: artifactAfter?.path ?? artifactBefore?.path,
++                byteComparison: comparison,
++                previousSHA256: artifactBefore?.bytes.map {
++                    FileDigest.sha256(of: $0)
++                },
++                currentSHA256: artifactAfter?.bytes.map {
++                    FileDigest.sha256(of: $0)
++                }
++            )
++        }
++
++        let requestsApproval = tool == .approveGate || (
++            tool == .setGateState
++                && (args["state"] as? String).flatMap(GateState.init(rawValue:))
++                    .map(GateApproval.isApproval) == true
++        )
++        guard requestsApproval,
++              !result.isError,
++              result.turnDisposition == .suspendTurn,
++              let phase = (args["phase"] as? String)?.trimmingCharacters(
++                  in: .whitespacesAndNewlines
++              ),
++              !phase.isEmpty else { return nil }
++        return AgentHostStateRecord(
++            state: .checked,
++            phase: phase,
++            toolName: tool.rawValue,
++            action: .reviewForApproval,
++            artifactPath: nil,
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        )
++    }
++
++    private func rejectionAction(reason: String) -> AgentHostStateRecord.Action {
++        if [
++            "approved source", "source material", "lineage", "fingerprint", "changed",
++        ].contains(where: { reason.contains($0) }) {
++            return .reviewChangedSource
++        }
++        if [
++            "reopen the project", "working copy is unavailable", "trusted format-pack declaration",
++        ].contains(where: { reason.contains($0) }) {
++            return .reopenProject
++        }
++        if [
++            "already running", "already in progress", "wait for it to finish",
++        ].contains(where: { reason.contains($0) }) {
++            return .retryAfterHostRecovery
++        }
++        return .agentCorrection
++    }
++
++    private func hostArtifactSnapshot(
++        phase: String?,
++        dataRoot: URL
++    ) -> HostArtifactSnapshot? {
++        guard let phase, let url = currentArtifactURL(phase: phase, dataRoot: dataRoot) else {
++            return nil
++        }
++        let root = dataRoot.standardizedFileURL
++        let target = url.standardizedFileURL
++        let prefix = root.path + "/"
++        guard target.path.hasPrefix(prefix) else { return nil }
++        let exists = FileManager.default.fileExists(atPath: target.path)
++        return HostArtifactSnapshot(
++            path: String(target.path.dropFirst(prefix.count)),
++            exists: exists,
++            bytes: exists ? try? Data(contentsOf: target) : nil
++        )
++    }
++
++    private func currentArtifactURL(phase: String, dataRoot: URL) -> URL? {
++        let relative: String?
++        switch phase {
++        case "analysis":
++            return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
++        case "brief": relative = PipelineLayout.briefFile
++        case "production_design": relative = PipelineLayout.productionDesignFile
++        case "treatment": relative = PipelineLayout.treatmentCurrentFile
++        case "storyboard": relative = PipelineLayout.storyboardCurrentFile
++        case "bible": relative = PipelineLayout.bibleFile
++        case "shotlist":
++            guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
++            relative = PipelineLayout.shotlistVersionFile(version)
++        default: relative = nil
++        }
++        return relative.map { PipelineLayout.url($0, in: dataRoot) }
++    }
++
++    private func compare(
++        before: HostArtifactSnapshot?,
++        after: HostArtifactSnapshot?
++    ) -> AgentHostStateRecord.ByteComparison {
++        guard let after, after.exists, let current = after.bytes else { return .unavailable }
++        guard let before else { return .created }
++        if !before.exists { return .created }
++        guard let previous = before.bytes else { return .unavailable }
++        return previous == current ? .unchanged : .changed
++    }
++
+     private func normalizedToolCallOrigin(
+         _ origin: ToolCallOrigin,
+         editor: EditorViewModel
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+index 869ca491..1631618f 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+@@ -333,6 +333,28 @@ struct AgentTranscriptLayoutPolicyTests {
+         #expect(!summary.contains("AppTheme.Text.mutedColor"))
+     }
+ 
++    @Test func hostStateOwnsWriteTruthAndKeepsDiagnosticsExpandable() throws {
++        let message = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
++        )
++        let projection = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift"
++        )
++        let batch = try sourceFile(
++            "Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift"
++        )
++
++        #expect(message.contains("private struct AgentHostStateView"))
++        #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
++        #expect(message.contains("Previous fingerprint"))
++        #expect(message.contains("editor.revealCockpit"))
++        #expect(projection.contains("let results = hostStates.isEmpty"))
++        #expect(projection.contains("$0.record.phase == state.record.phase"))
++        #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
++        #expect(batch.contains("Waiting for cost estimates"))
++        #expect(batch.contains("batch.totalEUR == nil"))
++    }
++
+     @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
+         let card = try sourceFile(
+             "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+index 580dfec8..428d6af2 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+@@ -339,6 +339,177 @@ struct AgentTranscriptProjectionTests {
+         #expect(result.id == rich.id)
+         #expect(result.blocks.count == 2)
+     }
++
++    @Test("resume recovery projects only the latest host artifact state")
++    func resumeRecoveryUsesLatestHostState() throws {
++        let resume = AgentMessage(
++            role: .user,
++            blocks: [.text("Resume the storyboard phase.")],
++            hidden: true
++        )
++        let copiedReference = AgentMessage(role: .assistant, blocks: [
++            .text("Checking the resumed reference."),
++            .toolUse(id: "copy", name: "copy_project_file", inputJSON: "{}"),
++        ])
++        let copiedReferenceResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "copy",
++                content: [.text("reference copied")],
++                isError: false
++            ),
++        ])
++        let rejectedWrite = AgentMessage(role: .assistant, blocks: [
++            .text("The storyboard is written and ready."),
++            .toolUse(id: "rejected", name: "write_storyboard", inputJSON: "{}"),
++        ])
++        let draftState = hostStateMessage(.init(
++            state: .draft,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .none,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: nil
++        ))
++        let rejectedState = hostStateMessage(.init(
++            state: .writeRejected,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewChangedSource,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: nil
++        ))
++        let rejectedResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "rejected",
++                content: [.text("Approved source lineage changed.")],
++                isError: true
++            ),
++        ])
++        let zoneRepair = AgentMessage(role: .assistant, blocks: [
++            .text("Repairing visible zones."),
++            .toolUse(id: "zone", name: "write_storyboard", inputJSON: "{}"),
++        ])
++        let zoneState = hostStateMessage(.init(
++            state: .writeRejected,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .agentCorrection,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        ))
++        let zoneResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "zone",
++                content: [.text("visible_zones needs a blocking anchor.")],
++                isError: true
++            ),
++        ])
++        let successfulWrite = AgentMessage(role: .assistant, blocks: [
++            .text("The recovery is complete."),
++            .toolUse(id: "written", name: "write_storyboard", inputJSON: "{}"),
++            .toolUse(id: "checked", name: "approve_gate", inputJSON: #"{"phase":"storyboard"}"#),
++        ])
++        let persistedState = hostStateMessage(.init(
++            state: .persisted,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewForApproval,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        ))
++        let checkedState = hostStateMessage(.init(
++            state: .checked,
++            phase: "storyboard",
++            toolName: "approve_gate",
++            action: .reviewForApproval,
++            artifactPath: nil,
++            byteComparison: nil,
++            previousSHA256: nil,
++            currentSHA256: nil
++        ))
++        let unpricedBatch = AgentMessage(role: .assistant, blocks: [
++            .text("Preparing the next generation batch."),
++            .toolUse(id: "batch", name: "prepare_generation_batch", inputJSON: "{}"),
++        ])
++        let unpricedBatchResult = AgentMessage(role: .user, blocks: [
++            .toolResult(
++                toolUseId: "batch",
++                content: [.text("Generation batch review is open.")],
++                isError: false
++            ),
++        ])
++
++        let turns = AgentTranscriptProjection.turns(
++            messages: [
++                resume, copiedReference, copiedReferenceResult,
++                rejectedWrite, draftState, rejectedState, rejectedResult,
++                zoneRepair, zoneState, zoneResult, successfulWrite,
++                persistedState, checkedState, unpricedBatch, unpricedBatchResult,
++            ],
++            isStreaming: false
++        )
++
++        #expect(turns.count == 1)
++        let items = turns[0].items
++        let states = items.compactMap { item -> AgentHostStateRecord? in
++            guard case .hostState(let state) = item else { return nil }
++            return state.record
++        }
++        #expect(states.count == 1)
++        #expect(states.first?.state == .checked)
++        #expect(!items.contains {
++            if case .assistantResult = $0 { return true }
++            return false
++        })
++        let activity = try #require(items.compactMap(\.activity).first)
++        #expect(activity.steps.map(\.id) == [
++            "copy", "rejected", "zone", "written", "checked", "batch",
++        ])
++    }
++
++    @Test("host state records never become authored user turns")
++    func hostStateIsNotAUserIntent() {
++        let message = hostStateMessage(.init(
++            state: .persisted,
++            phase: "brief",
++            toolName: "write_brief",
++            action: .reviewForApproval,
++            artifactPath: "brief.yaml",
++            byteComparison: .unchanged,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "a", count: 64)
++        ))
++
++        let turns = AgentTranscriptProjection.turns(messages: [message], isStreaming: false)
++
++        #expect(turns.count == 1)
++        #expect(turns[0].items.count == 1)
++        guard case .hostState(let state) = turns[0].items[0] else {
++            Issue.record("host state must use its own projection")
++            return
++        }
++        #expect(state.record.byteComparison == .unchanged)
++    }
++
++    private func hostStateMessage(_ record: AgentHostStateRecord) -> AgentMessage {
++        AgentMessage(
++            role: .user,
++            blocks: [],
++            userPresentation: .init(
++                choiceRecord: nil,
++                typedText: nil,
++                hostStateRecord: record
++            )
++        )
++    }
+ }
+ 
+ private extension AgentTranscriptItem {
+diff --git a/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift b/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
+index 05596b51..b034dca1 100644
+--- a/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/BriefWriteContractTests.swift
+@@ -124,6 +124,29 @@ struct BriefWriteContractTests {
+         #expect(project.budgetEur == brief.budgetEur)
+     }
+ 
++    @Test("a successful writer records draft then exact persisted host state")
++    func successfulWriterRecordsHostState() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++
++        let result = await h.executor.execute(
++            name: "write_brief",
++            args: validArgs(dataRoot: dataRoot),
++            origin: .inAppChat(sessionID: sessionID)
++        )
++
++        #expect(!result.isError)
++        let states = h.editor.agentService.messages.compactMap {
++            $0.userPresentation?.hostStateRecord
++        }
++        #expect(states.map(\.state) == [.draft, .persisted])
++        #expect(states.last?.artifactPath == PipelineLayout.briefFile)
++        #expect(states.last?.byteComparison == .created)
++        #expect(states.last?.currentSHA256?.count == 64)
++    }
++
+     @Test("an invalid enum value is rejected and names the field")
+     func invalidEnumRejected() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+diff --git a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+index ef057dc5..a5a8c5b3 100644
+--- a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+@@ -86,6 +86,38 @@ struct ChatSessionStoreTests {
+         #expect(back.messages.first?.userPresentation?.workflowRecord == record)
+     }
+ 
++    @Test("host artifact state round-trips without becoming model prose")
++    func hostStateRoundTrips() throws {
++        let record = AgentHostStateRecord(
++            state: .persisted,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: .reviewForApproval,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: "b", count: 64)
++        )
++        let session = ChatSession(
++            title: "t",
++            messages: [AgentMessage(
++                role: .user,
++                blocks: [],
++                userPresentation: .init(
++                    choiceRecord: nil,
++                    typedText: nil,
++                    hostStateRecord: record
++                )
++            )]
++        )
++
++        let data = try #require(ChatSessionStore.encodeSession(session))
++        let back = try decoder.decode(ChatSession.self, from: data)
++
++        #expect(back.messages.first?.blocks.isEmpty == true)
++        #expect(back.messages.first?.userPresentation?.hostStateRecord == record)
++    }
++
+     @Test("conversation titles preserve distinguishing text at both ends")
+     func conversationTitleUsesMiddleCompaction() {
+         let source = String(repeating: "opening detail ", count: 8)
+diff --git a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+index 2cf684ef..9cd43746 100644
+--- a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
++++ b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+@@ -17,11 +17,23 @@ struct GateApprovalTests {
+         #expect(approval.phaseLabel == PhaseDisplay.label("brief"))
+         #expect(approval.phaseLabel == "Brief")
+         #expect(approval.notes == "looks good")
++        #expect(approval.sourceToolName == ToolName.approveGate.rawValue)
+ 
+         // A snake_case id resolves to its curated title, never leaking the raw key to the card.
+         #expect(GateApproval(phase: "production_design").phaseLabel == "Production Design")
+     }
+ 
++    @Test("gate approvals preserve the requesting tool for diagnostics")
++    func preservesSourceTool() {
++        let approval = GateApproval(
++            phase: "brief",
++            sourceToolName: ToolName.setGateState.rawValue
++        )
++
++        #expect(approval.scoped(to: UUID()).sourceToolName == ToolName.setGateState.rawValue)
++        #expect(!approval.matchesRequest(GateApproval(phase: "brief")))
++    }
++
+     @Test("Only the approving states surface a user confirmation")
+     func onlyApprovingStatesNeedConfirmation() {
+         #expect(GateApproval.isApproval(.approved))
+@@ -280,6 +292,29 @@ struct GateApprovalTests {
+         #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
+     }
+ 
++    @Test("a pending gate records checked without recording approval")
++    func pendingGateRecordsCheckedState() async throws {
++        let (h, dataRoot, cleanup) = try scaffold()
++        defer { try? FileManager.default.removeItem(at: cleanup) }
++        h.editor.agentService.newChat()
++        let sessionID = try #require(h.editor.agentService.currentSessionId)
++
++        let result = await h.executor.execute(
++            name: "approve_gate",
++            args: ["project_dir": dataRoot.path, "phase": "project_init"],
++            origin: .inAppChat(sessionID: sessionID)
++        )
++
++        #expect(!result.isError)
++        #expect(result.turnDisposition == .suspendTurn)
++        let state = h.editor.agentService.messages.compactMap {
++            $0.userPresentation?.hostStateRecord
++        }.last
++        #expect(state?.state == .checked)
++        #expect(state?.state != .approved)
++        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
++    }
++
+     @Test("set_gate_state approval request does not mark the project edited")
+     func setStateApprovalRequestDoesNotDirty() async throws {
+         let (h, dataRoot, cleanup) = try scaffold()
+diff --git a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+index d20b014c..1240bdb6 100644
+--- a/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ToolExecutorTests.swift
+@@ -97,6 +97,27 @@ final class ToolHarness {
+ @MainActor
+ struct ToolExecutorSmokeTests {
+ 
++    @Test("a rejected canonical writer records host-owned not-saved state")
++    func rejectedWriterRecordsHostState() async throws {
++        let harness = ToolHarness()
++        harness.editor.agentService.newChat()
++        let sessionID = try #require(harness.editor.agentService.currentSessionId)
++
++        let result = await harness.executor.execute(
++            name: "write_storyboard",
++            args: [:],
++            origin: .inAppChat(sessionID: sessionID)
++        )
++
++        #expect(result.isError)
++        let state = harness.editor.agentService.messages.compactMap {
++            $0.userPresentation?.hostStateRecord
++        }.last
++        #expect(state?.state == .writeRejected)
++        #expect(state?.phase == "storyboard")
++        #expect(state?.action == .agentCorrection)
++    }
++
+     @Test func unknownToolReturnsError() async {
+         let h = ToolHarness()
+         let result = await h.runRaw("nonexistent_tool")

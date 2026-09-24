@@ -1,0 +1,243 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 4ae0a386..5a7f3fb3 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -420,7 +420,7 @@ jobs:
+             "$APP/Contents/MacOS/NexGenVideo" > evidence/runtime.log 2>&1
+           grep -q SELFTEST_BPY_BOUNDARY_OK evidence/runtime.log
+           jq -e '
+-            .schema == "nexgenvideo/bpy-boundary-probe/2"
++            .schema == "nexgenvideo/bpy-boundary-probe/3"
+             and .serviceProcessIdentifier > 1
+             and .supervisorProcessIdentifier > 1
+             and .childProcessIdentifier > 1
+@@ -437,7 +437,8 @@ jobs:
+             and .cleanupSupervisorGone == true
+             and .cleanupChildGone == true
+             and .internalLinkedWritableDeduplicated == true
+-            and .fileportRetentionDeniedOrAccounted == true
++            and (.fileportRetentionDeniedErrno == 1 or .fileportRetentionDeniedErrno == 13)
++            and .fileportRetentionDenied == true
+             and .healthyFollowupSucceeded == true
+           ' evidence/result.json
+       - uses: actions/upload-artifact@v4
+diff --git a/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+index eb32eeed..34ac185f 100644
+--- a/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
++++ b/Sources/BpyRuntimeProtocol/BpyRuntimeProtocol.swift
+@@ -52,7 +52,7 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
+     public let cleanupChildGone: Bool
+     public let internalLinkedWritableDeduplicated: Bool
+     public let fileportRetentionDeniedErrno: Int32
+-    public let fileportRetentionDeniedOrAccounted: Bool
++    public let fileportRetentionDenied: Bool
+     public let healthyFollowupSucceeded: Bool
+ 
+     public init(
+@@ -76,10 +76,10 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
+         cleanupChildGone: Bool,
+         internalLinkedWritableDeduplicated: Bool,
+         fileportRetentionDeniedErrno: Int32,
+-        fileportRetentionDeniedOrAccounted: Bool,
++        fileportRetentionDenied: Bool,
+         healthyFollowupSucceeded: Bool
+     ) {
+-        schema = "nexgenvideo/bpy-boundary-probe/2"
++        schema = "nexgenvideo/bpy-boundary-probe/3"
+         self.nonce = nonce
+         self.serviceProcessIdentifier = serviceProcessIdentifier
+         self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
+@@ -100,7 +100,7 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
+         self.cleanupChildGone = cleanupChildGone
+         self.internalLinkedWritableDeduplicated = internalLinkedWritableDeduplicated
+         self.fileportRetentionDeniedErrno = fileportRetentionDeniedErrno
+-        self.fileportRetentionDeniedOrAccounted = fileportRetentionDeniedOrAccounted
++        self.fileportRetentionDenied = fileportRetentionDenied
+         self.healthyFollowupSucceeded = healthyFollowupSucceeded
+     }
+ }
+diff --git a/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+index bbc4c900..493db516 100644
+--- a/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
++++ b/Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift
+@@ -133,7 +133,7 @@ enum BpyRuntimeSelfTest {
+         }
+         let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
+         let permissionErrors = [Int32(EPERM), Int32(EACCES)]
+-        guard result.schema == "nexgenvideo/bpy-boundary-probe/2",
++        guard result.schema == "nexgenvideo/bpy-boundary-probe/3",
+               result.nonce == nonce,
+               result.serviceProcessIdentifier > 1,
+               result.supervisorProcessIdentifier > 1,
+@@ -159,7 +159,8 @@ enum BpyRuntimeSelfTest {
+               result.cleanupSupervisorGone,
+               result.cleanupChildGone,
+               result.internalLinkedWritableDeduplicated,
+-              result.fileportRetentionDeniedOrAccounted,
++              permissionErrors.contains(result.fileportRetentionDeniedErrno),
++              result.fileportRetentionDenied,
+               result.healthyFollowupSucceeded else {
+             throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
+         }
+@@ -949,8 +950,9 @@ enum BpyRuntimeSelfTest {
+             id: UUID(),
+             expectedRevision: nil,
+             source: """
++            from concurrent.futures import ThreadPoolExecutor
+             import os
+-            import threading
++            import shutil
+             import time
+             home = Path(os.environ['HOME'])
+             def churn():
+@@ -962,17 +964,23 @@ enum BpyRuntimeSelfTest {
+                     source.write_bytes(b'x' * 4096)
+                     os.replace(source, destination)
+                     destination.unlink()
++                    tree = home / f'churn-tree-{index % 2}.part'
++                    nested = tree / 'nested'
++                    nested.mkdir(parents=True)
++                    (nested / 'payload').write_bytes(b'x' * 4096)
++                    relocated = home / f'churn-tree-{index % 2}.tmp'
++                    os.rename(tree, relocated)
++                    shutil.rmtree(relocated)
+                     index += 1
+-            thread = threading.Thread(target=churn)
+-            thread.start()
+-            thread.join()
++            with ThreadPoolExecutor(max_workers=1) as executor:
++                executor.submit(churn).result()
+             bpy.context.scene.render.resolution_x = 64
+             bpy.context.scene.render.resolution_y = 64
+             """
+         )
+         guard healthyChurn.response.state == .awaitingConfirmation,
+               let healthyChurnID = healthyChurn.response.jobID else {
+-            throw BpyRuntimeError.invalidOutput("Legitimate rename/delete churn failed the resource scan.")
++            throw BpyRuntimeError.invalidOutput("Legitimate nested rename/delete churn failed the resource scan.")
+         }
+         _ = try constrained.cancel(jobID: healthyChurnID)
+         let scanError = try constrained.runJob(
+diff --git a/Sources/NexGenVideoBpyService/main.swift b/Sources/NexGenVideoBpyService/main.swift
+index dfab5f27..6219fafa 100644
+--- a/Sources/NexGenVideoBpyService/main.swift
++++ b/Sources/NexGenVideoBpyService/main.swift
+@@ -223,7 +223,7 @@ private func vnodeBytes(logical: Int64, blocks: Int64) -> UInt64 {
+ private func directoryDescriptor(
+     _ reference: DirectoryReference,
+     managedRoots: [String]
+-) throws -> Int32 {
++) throws -> Int32? {
+     for _ in 0..<4 {
+         let path: String
+         if let directPath = reference.path {
+@@ -240,7 +240,7 @@ private func directoryDescriptor(
+                 )
+             }
+             if length < 0 {
+-                if errno == ENOENT { continue }
++                if errno == ENOENT { return nil }
+                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
+             }
+             guard length > 0, length < pathBytes.count else {
+@@ -339,7 +339,10 @@ private func directorySnapshot(
+     }
+ 
+     while let reference = pending.popLast() {
+-        let descriptor = try directoryDescriptor(reference, managedRoots: managedRoots)
++        guard let descriptor = try directoryDescriptor(
++            reference,
++            managedRoots: managedRoots
++        ) else { continue }
+         do {
+             var directoryStatus = stat()
+             guard Darwin.fstat(descriptor, &directoryStatus) == 0 else {
+@@ -1052,7 +1055,7 @@ private struct BoundaryRun {
+     let observedRetainedBytes: UInt64
+     let limitReason: String?
+     let internalLinkedWritableDeduplicated: Bool
+-    let retentionDeniedOrAccounted: Bool
++    let retentionDenied: Bool
+ }
+ 
+ private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
+@@ -1170,7 +1173,7 @@ private func runBoundarySupervisor(
+     var observedRetainedBytes: UInt64 = 0
+     var limitReason: String?
+     var internalLinkedWritableDeduplicated = false
+-    var retentionDeniedOrAccounted = false
++    var retentionDenied = false
+     if boundaryResourceModes.contains(mode) {
+         let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
+         observedRetainedBytes = retainedResources.values.reduce(0, +)
+@@ -1202,12 +1205,8 @@ private func runBoundarySupervisor(
+                 && limitReason == nil
+             validResourceResult = internalLinkedWritableDeduplicated
+         } else if mode == "fileport-unlinked-hold" {
+-            let denied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
+-            let accounted = report.retentionDeniedErrno == 0
+-                && observedRetainedBytes >= boundaryProbeResourceBytes
+-                && limitReason == "disk"
+-            retentionDeniedOrAccounted = denied || accounted
+-            validResourceResult = true
++            retentionDenied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
++            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+         } else {
+             validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+                 && observedRetainedBytes >= boundaryProbeResourceBytes
+@@ -1241,7 +1240,7 @@ private func runBoundarySupervisor(
+         observedRetainedBytes: observedRetainedBytes,
+         limitReason: limitReason,
+         internalLinkedWritableDeduplicated: internalLinkedWritableDeduplicated,
+-        retentionDeniedOrAccounted: retentionDeniedOrAccounted
++        retentionDenied: retentionDenied
+     )
+ }
+ 
+@@ -2623,8 +2622,7 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
+                 internalLinkedWritableDeduplicated: internalLinkedWritable
+                     .internalLinkedWritableDeduplicated,
+                 fileportRetentionDeniedErrno: fileportRetention.report.retentionDeniedErrno,
+-                fileportRetentionDeniedOrAccounted: fileportRetention
+-                    .retentionDeniedOrAccounted,
++                fileportRetentionDenied: fileportRetention.retentionDenied,
+                 healthyFollowupSucceeded: externalReadOnly.limitReason == nil
+                     && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
+                     && followup.supervisorGone
+diff --git a/docs/BPY_RUNTIME.md b/docs/BPY_RUNTIME.md
+index caa56853..a6b14d78 100644
+--- a/docs/BPY_RUNTIME.md
++++ b/docs/BPY_RUNTIME.md
+@@ -63,9 +63,11 @@ bound. The verifier restores scene settings and produces no image.
+ These are layered, sampled controls rather than a claim of a race-free, instantaneous quota or a
+ general-purpose Python sandbox. FD and mapping inspection does not establish coverage for every kernel
+ object that can retain an unlinked vnode. In particular, SCM_RIGHTS in-flight messages and Mach memory
+-entries remain unproven; the signed native no-bpy acceptance must prove that a fileport-retained
+-unlinked vnode is denied or charged before runtime delivery. Until those retention channels have
+-authorized macOS 26 evidence or an implemented accounting/denial boundary, disk-quota completeness is
++entries remain unproven. The current FD and mapping scan cannot account for a fileport after its
++descriptor closes. The signed native no-bpy acceptance therefore requires fileport creation to
++be denied with EPERM or EACCES and checks the probe's exact resource size. An allowed fileport
++blocks runtime delivery until an accounting or denial boundary is implemented and independently
++proven. Until the other retention channels have authorized macOS 26 evidence, disk-quota completeness is
+ an explicit runtime and distribution blocker. The service polls at fixed intervals and terminates on
+ an observed violation; it does not claim that no transient overage can exist between samples. `RLIMIT_AS` remains
+ enabled because current XNU carries an address-space size limit in the VM map; acceptance records the
+@@ -199,7 +201,7 @@ always consumes that app. A separate `macos-26` boundary job uses the same artif
+ real signed XPC → supervisor → fixed native child ancestry, App Sandbox plus Seatbelt write/fork/
+ network/signal denials, writable-FD/read-only-FD/mapping-retained unlinked-vnode quota detection,
+ a linked internal writable-under-quota FD deduplicated against the directory view, a healthy linked
+-external read-only control, and a native fileport-retention probe that must be denied or accounted,
++external read-only control, and a native fileport-retention probe that must be denied,
+ plus exact cleanup and a healthy following job. A marker
+ compiled into only this CI bundle gates the fixed child path; normal app bundles cannot
+ request it. Normal dev, acceptance, and release bundles continue to require the runtime; readiness is
+@@ -239,7 +241,7 @@ network and cross-container denials, disabled autorun plus isolated positive con
+ geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
+ open-unlinked writes with a healthy following job, native no-bpy writable/read-only/mapping-retained
+ unlinked resources, linked internal writable deduplication, a linked external read-only control, and
+-fileport-retention denial-or-accounting, healthy concurrent rename/delete temp churn, adversarial
++fileport-retention denial, healthy concurrent nested-directory rename/delete temp churn, adversarial
+ closed-file rename churn above quota,
+ render-only modifier geometry, viewport-hidden renderable geometry, a second scene, and legitimate
+ user mesh geometry carrying the verifier-camera name prefix, zero effective resolution, and a scene

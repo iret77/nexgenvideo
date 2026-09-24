@@ -1,0 +1,1361 @@
+{
+  "checks": [
+    {
+      "name": "Supplied panel icons render",
+      "pass": true
+    },
+    {
+      "name": "Enter toggles only left panel",
+      "pass": true
+    },
+    {
+      "name": "Space toggles Inspector without starting Animatic",
+      "pass": true
+    },
+    {
+      "name": "Hidden sidebar restores through same control",
+      "pass": true
+    },
+    {
+      "name": "Hidden Inspector restores through same control",
+      "pass": true
+    }
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "mode": "Storyboard",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 1414,
+        "h": 43,
+        "right": 1427,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 604.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 696.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 698.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 768.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 770.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 835.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 1391,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1419,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 1440,
+      "mode": "Schnitt",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 1414,
+        "h": 43,
+        "right": 1427,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 604.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 696.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 698.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 768.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 770.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 835.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 1391,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1419,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 1440,
+      "mode": "Finish",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 1414,
+        "h": 43,
+        "right": 1427,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 604.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 696.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 698.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 768.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 770.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 835.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 1391,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1419,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 1024,
+      "mode": "Storyboard",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 998,
+        "h": 43,
+        "right": 1011,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 396.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 488.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 490.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 560.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 562.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 627.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 975,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1003,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 1024,
+      "mode": "Schnitt",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 998,
+        "h": 43,
+        "right": 1011,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 396.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 488.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 490.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 560.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 562.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 627.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 975,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1003,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 1024,
+      "mode": "Finish",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 998,
+        "h": 43,
+        "right": 1011,
+        "bottom": 56
+      },
+      "project": {
+        "x": 103,
+        "y": 20,
+        "w": 220,
+        "h": 28,
+        "right": 323,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 68,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 96,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 103,
+          "y": 20,
+          "w": 220,
+          "h": 28,
+          "right": 323,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 330,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 358,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 396.703125,
+          "y": 20,
+          "w": 92.15625,
+          "h": 28,
+          "right": 488.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 490.859375,
+          "y": 20,
+          "w": 69.75,
+          "h": 28,
+          "right": 560.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 562.609375,
+          "y": 20,
+          "w": 64.6875,
+          "h": 28,
+          "right": 627.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 975,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 1003,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 736,
+      "mode": "Storyboard",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 710,
+        "h": 43,
+        "right": 723,
+        "bottom": 56
+      },
+      "project": {
+        "x": 53,
+        "y": 20,
+        "w": 171.703125,
+        "h": 28,
+        "right": 224.703125,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 20,
+          "w": 171.703125,
+          "h": 28,
+          "right": 224.703125,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 228.703125,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 256.703125,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 264.703125,
+          "y": 20,
+          "w": 84.15625,
+          "h": 28,
+          "right": 348.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 350.859375,
+          "y": 20,
+          "w": 61.75,
+          "h": 28,
+          "right": 412.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 414.609375,
+          "y": 20,
+          "w": 56.6875,
+          "h": 28,
+          "right": 471.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 687,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 715,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 736,
+      "mode": "Schnitt",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 710,
+        "h": 43,
+        "right": 723,
+        "bottom": 56
+      },
+      "project": {
+        "x": 53,
+        "y": 20,
+        "w": 171.703125,
+        "h": 28,
+        "right": 224.703125,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 20,
+          "w": 171.703125,
+          "h": 28,
+          "right": 224.703125,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 228.703125,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 256.703125,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 264.703125,
+          "y": 20,
+          "w": 84.15625,
+          "h": 28,
+          "right": 348.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 350.859375,
+          "y": 20,
+          "w": 61.75,
+          "h": 28,
+          "right": 412.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 414.609375,
+          "y": 20,
+          "w": 56.6875,
+          "h": 28,
+          "right": 471.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 687,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 715,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 736,
+      "mode": "Finish",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 710,
+        "h": 43,
+        "right": 723,
+        "bottom": 56
+      },
+      "project": {
+        "x": 53,
+        "y": 20,
+        "w": 171.703125,
+        "h": 28,
+        "right": 224.703125,
+        "bottom": 48
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 48,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 20,
+          "w": 171.703125,
+          "h": 28,
+          "right": 224.703125,
+          "bottom": 48,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 228.703125,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 256.703125,
+          "bottom": 48,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 264.703125,
+          "y": 20,
+          "w": 84.15625,
+          "h": 28,
+          "right": 348.859375,
+          "bottom": 48,
+          "label": "Produktion"
+        },
+        {
+          "x": 350.859375,
+          "y": 20,
+          "w": 61.75,
+          "h": 28,
+          "right": 412.609375,
+          "bottom": 48,
+          "label": "Schnitt"
+        },
+        {
+          "x": 414.609375,
+          "y": 20,
+          "w": 56.6875,
+          "h": 28,
+          "right": 471.296875,
+          "bottom": 48,
+          "label": "Finish"
+        },
+        {
+          "x": 687,
+          "y": 20,
+          "w": 28,
+          "h": 28,
+          "right": 715,
+          "bottom": 48,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 500,
+      "mode": "Storyboard",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 474,
+        "h": 76,
+        "right": 487,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 200,
+        "h": 28,
+        "right": 253,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 200,
+          "h": 28,
+          "right": 253,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 257,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 285,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 146.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 230.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 232.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 294.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 296.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 353.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 451,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 479,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 500,
+      "mode": "Schnitt",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 474,
+        "h": 76,
+        "right": 487,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 200,
+        "h": 28,
+        "right": 253,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 200,
+          "h": 28,
+          "right": 253,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 257,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 285,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 146.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 230.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 232.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 294.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 296.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 353.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 451,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 479,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 500,
+      "mode": "Finish",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 474,
+        "h": 76,
+        "right": 487,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 200,
+        "h": 28,
+        "right": 253,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 200,
+          "h": 28,
+          "right": 253,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 257,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 285,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 146.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 230.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 232.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 294.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 296.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 353.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 451,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 479,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 320,
+      "mode": "Storyboard",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 294,
+        "h": 76,
+        "right": 307,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 95.015625,
+        "h": 28,
+        "right": 148.015625,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 95.015625,
+          "h": 28,
+          "right": 148.015625,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 152.015625,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 180.015625,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 56.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 140.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 142.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 204.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 206.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 263.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 271,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 299,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 320,
+      "mode": "Schnitt",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 294,
+        "h": 76,
+        "right": 307,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 95.015625,
+        "h": 28,
+        "right": 148.015625,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 95.015625,
+          "h": 28,
+          "right": 148.015625,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 152.015625,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 180.015625,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 56.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 140.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 142.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 204.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 206.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 263.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 271,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 299,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    },
+    {
+      "width": 320,
+      "mode": "Finish",
+      "header": {
+        "x": 13,
+        "y": 13,
+        "w": 294,
+        "h": 76,
+        "right": 307,
+        "bottom": 89
+      },
+      "project": {
+        "x": 53,
+        "y": 18,
+        "w": 95.015625,
+        "h": 28,
+        "right": 148.015625,
+        "bottom": 46
+      },
+      "buttons": [
+        {
+          "x": 21,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 49,
+          "bottom": 46,
+          "label": "Linke Seitenleiste ausblenden"
+        },
+        {
+          "x": 53,
+          "y": 18,
+          "w": 95.015625,
+          "h": 28,
+          "right": 148.015625,
+          "bottom": 46,
+          "label": "Projektmenü: Claude Mouse · The very long production title for a multi scene animated music video"
+        },
+        {
+          "x": 152.015625,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 180.015625,
+          "bottom": 46,
+          "label": "Rückgängig"
+        },
+        {
+          "x": 56.703125,
+          "y": 53,
+          "w": 84.15625,
+          "h": 28,
+          "right": 140.859375,
+          "bottom": 81,
+          "label": "Produktion"
+        },
+        {
+          "x": 142.859375,
+          "y": 53,
+          "w": 61.75,
+          "h": 28,
+          "right": 204.609375,
+          "bottom": 81,
+          "label": "Schnitt"
+        },
+        {
+          "x": 206.609375,
+          "y": 53,
+          "w": 56.6875,
+          "h": 28,
+          "right": 263.296875,
+          "bottom": 81,
+          "label": "Finish"
+        },
+        {
+          "x": 271,
+          "y": 18,
+          "w": 28,
+          "h": 28,
+          "right": 299,
+          "bottom": 46,
+          "label": "Inspector ausblenden"
+        }
+      ],
+      "icons": 2,
+      "overlap": false,
+      "outside": false,
+      "overflow": 0
+    }
+  ]
+}

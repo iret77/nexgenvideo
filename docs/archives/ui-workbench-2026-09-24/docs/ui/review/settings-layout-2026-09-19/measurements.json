@@ -1,0 +1,370 @@
+{
+  "measurements": [
+    {
+      "tab": "general",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 293.671875,
+        "width": 600,
+        "height": 286.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [
+        8,
+        8
+      ],
+      "controlAxes": [
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "agent",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 281.671875,
+        "width": 600,
+        "height": 310.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [],
+      "controlAxes": [
+        409,
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "providers",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 257.671875,
+        "width": 600,
+        "height": 358.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [
+        8,
+        8,
+        8
+      ],
+      "controlAxes": [
+        409,
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "models",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 209.671875,
+        "width": 600,
+        "height": 454.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "controlAxes": [
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "packs",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 245.671875,
+        "width": 600,
+        "height": 382.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [],
+      "controlAxes": [
+        409,
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "storage",
+      "width": 1048,
+      "dialog": {
+        "x": 224,
+        "y": 227.671875,
+        "width": 600,
+        "height": 418.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 25,
+      "checkboxGaps": [
+        8
+      ],
+      "controlAxes": [
+        409,
+        409,
+        409,
+        409
+      ]
+    },
+    {
+      "tab": "general",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 271.671875,
+        "width": 324,
+        "height": 330.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [
+        8,
+        8
+      ],
+      "controlAxes": [
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "agent",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 238.578125,
+        "width": 324,
+        "height": 396.828125
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [],
+      "controlAxes": [
+        52,
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "providers",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 225.078125,
+        "width": 324,
+        "height": 423.828125
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [
+        8,
+        8,
+        8
+      ],
+      "controlAxes": [
+        52,
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "models",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 187.671875,
+        "width": 324,
+        "height": 498.640625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "controlAxes": [
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "packs",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 220.484375,
+        "width": 324,
+        "height": 433.015625
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [],
+      "controlAxes": [
+        52,
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "storage",
+      "width": 390,
+      "dialog": {
+        "x": 33,
+        "y": 194.390625,
+        "width": 324,
+        "height": 485.203125
+      },
+      "overflow": false,
+      "bodyOverflow": false,
+      "footerGap": 22,
+      "rightInset": 19,
+      "checkboxGaps": [
+        8
+      ],
+      "controlAxes": [
+        52,
+        52,
+        52,
+        52
+      ]
+    },
+    {
+      "tab": "general",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        364.28125,
+        364.28125,
+        364.28125,
+        364.28125,
+        364.28125,
+        364.28125
+      ]
+    },
+    {
+      "tab": "agent",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        352.765625,
+        352.765625,
+        352.765625,
+        352.765625,
+        352.765625,
+        352.765625
+      ]
+    },
+    {
+      "tab": "providers",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        322.828125,
+        322.828125,
+        322.828125,
+        322.828125,
+        322.828125,
+        322.828125
+      ]
+    },
+    {
+      "tab": "models",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        282.265625,
+        282.265625,
+        282.265625,
+        282.265625,
+        282.265625,
+        282.265625
+      ]
+    },
+    {
+      "tab": "packs",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        318.265625,
+        318.265625,
+        318.265625,
+        318.265625,
+        318.265625,
+        318.265625
+      ]
+    },
+    {
+      "tab": "storage",
+      "scale": 130,
+      "overflow": false,
+      "tabRows": [
+        300.265625,
+        300.265625,
+        300.265625,
+        300.265625,
+        300.265625,
+        300.265625
+      ]
+    }
+  ],
+  "interactions": [
+    {
+      "name": "Checkbox label toggles state",
+      "pass": true
+    },
+    {
+      "name": "UI scale stored",
+      "pass": true
+    },
+    {
+      "name": "Close dismisses dialog",
+      "pass": true
+    }
+  ]
+}

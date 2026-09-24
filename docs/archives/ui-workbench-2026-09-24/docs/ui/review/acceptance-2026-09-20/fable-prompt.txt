@@ -1,0 +1,28 @@
+MULTIMODEL_REVIEW_LEAF_V1
+Du bist ein Leaf-Reviewer. Starte keine Agents. Delegiere nicht. Rufe keine weiteren AI-CLIs auf. Modifiziere nichts. Antworte ausschließlich als JSON nach dem übergebenen Schema.
+
+Prüfe kritisch den überarbeiteten NexGenVideo-Clickdummy auf Abnahmefähigkeit, keine gefällige Freigabe. Repository: <local NexGenVideo checkout>. Nur Read/Glob/Grep im freigegebenen Repository; keine Secrets, .env, Tokens, Home-Daten, fremde Projekte oder Betriebsbefehle. Kein Build, kein Server.
+
+Kontext: Der Owner verlangt eine native macOS-Kreativanwendung, inspiriert von Final Cut Pro, Resolve und LTX. Kein Web-Dashboard, kein Chatbot. KI prüft/vorbereitet, Nutzer bestimmt. Deterministische Freigaben, genaue Quellen, Kostenkontrolle. Gegenstand nur Mockup, keine native Implementierung. Letzter Review: docs/ui/review/final-ux-2026-09-19/review.md. Die 13 dort priorisierten Befunde sollen jetzt geschlossen werden.
+
+Delta primär in:
+- docs/ui/desktop-production-workbench.workflow.js (neu: Zustandsbewahrung, Wiederverwendung, Shotoperationen, Reviews, Quellenvergleich, Songbezug, Tonvorschau)
+- docs/ui/desktop-production-workbench.workflow.css (neu)
+- docs/ui/desktop-production-workbench.clay.js und .clay.css
+- docs/ui/desktop-production-workbench.js (Navigation, Shot-IDs, Formular-/Review-Zuordnung)
+- docs/ui/desktop-production-workbench.studio.js (bestehende Tasks und Dialoge, Integration beachten)
+- docs/ui/desktop-production-workbench.media.js (bestehende Medienableitung)
+- docs/ui/build-desktop-production-workbench.py (statischer Packager)
+Weitere relevante Module im selben docs/ui-Präfix darfst du lesen. NICHT das große generierte .html einlesen; nutze die editierbaren Module. Nicht verwandte native Arbeit nicht reviewen.
+
+Screenshots zum visuellen Review: docs/ui/review/acceptance-2026-09-20/{blocking,audio,animatic,takes,storyboard,review,export}.png. Beachte: die gerade korrigierten lokalen Icon-Caches und die neu angepasste Kameraframing-Draufsicht werden noch einmal fotografiert. Fehlende Symbole in den ersten Screenshots nicht vorschnell als noch offenen Codefehler melden.
+
+Wichtige Prüffragen:
+1. Dialogabbruch und Stop erhalten Medien; nur richtige geänderte Shots benötigen neue Anker. Rewind entfernt Freigaben, nicht Projektmedien. Frühere Takes nur bei passenden Eingaben wiederverwenden. Keine Behauptung, das Dummy-Signaturmodell erfülle native exakte Lineage.
+2. Shot einfügen/teilen/löschen/umordnen: stabile IDs, korrekte Medien- und Clip-Zuordnung, Undo, leere Zustände. Nicht nur 6-Shot-Fixture testen/denken.
+3. Shared Clay-Location vs Shot-Inszenierung: Figurenbewegung pro Shot; Geometrie gemeinsam; Start/End-Snapshots stimmen. Keine neuen Look-Varianten als Geometriekopien. Optionales Blocking bleibt optional. Direkte Manipulation darf nicht nur behauptet sein.
+4. Review: Befund, Bildpaar, Inspector, Korrektur identisch zugeordnet, Story-Chronologie bleibt unabhängig von Filmreihenfolge. Keine User-Checkbox als Maschinenbeweis. Take-Ablehnung ohne Pflichtcheckboxen, kreative Ausnahme bewusst.
+5. Medien/Storyboard/References klar getrennt. Audio und Animatic sinnvoll verbunden, kein Transport im Storyboard-Grid. Tonvorschau ist ausdrücklich synthetisch; kein echtes Track-Audio liegt bei. Echtzeit-Rendering/Provider/MCP sind bewusst simuliert.
+6. 96 Shots, schmale Desktop-Fläche, Symbolbuttons und Labelachsen. Keine neue unübersichtliche Textwand. Vorhandene Schnitt-/Postproduction-/Exportflächen erhalten.
+
+Die bisherigen 30 Browserchecks sind Evidenz, kein zirkulärer Abnahmebeweis. Finde auch Lücken jenseits der Tests. Trenne reproduzierbare Defekte von einer anderen Designpräferenz. Liefere nur actionable Findings mit konkretem Pfad/Zeile, Reproduktion/Beleg, Auswirkung und begrenzter Korrektur. Priorisiere High/Medium vor bloßem Polishing. Gib an, was trotz der Änderungen noch die Abnahme blockiert. Leere Findings sind nur bei tatsächlich fehlenden Problemen zulässig.

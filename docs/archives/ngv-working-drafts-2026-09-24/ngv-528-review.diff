@@ -1,0 +1,4477 @@
+diff --git a/Engine/Sources/NexGenEngine/Artifacts/DeliveryV1.swift b/Engine/Sources/NexGenEngine/Artifacts/DeliveryV1.swift
+index b49338c9..5addf6ff 100644
+--- a/Engine/Sources/NexGenEngine/Artifacts/DeliveryV1.swift
++++ b/Engine/Sources/NexGenEngine/Artifacts/DeliveryV1.swift
+@@ -464,7 +464,7 @@ public enum DeliveryValidatorV1 {
+         }
+         switch attempt.status {
+         case .queued, .running:
+-            guard attempt.outputPath == nil,
++            guard attempt.outputPath.map(text) ?? true,
+                   attempt.outputSHA256 == nil,
+                   attempt.outputByteCount == nil,
+                   attempt.probeQC == nil,
+diff --git a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+index 011a5c7c..d58717b1 100644
+--- a/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/AgentInstructions.swift
+@@ -175,9 +175,11 @@ enum AgentInstructions {
+           for a self-contained .nexgen package. For FCPXML, pass the requested version and target; \
+           report every returned warning and the output hash. If the user did \
+           not name a destination, omit outputPath; the export writes a unique project-named file \
+-          to ~/Downloads. Provide outputPath only when the user named a destination. \
+-          video renders in the background, tell the user it is rendering and that they'll get \
+-          a notification when it finishes. xml, fcpxml, and nexgen finish inline, so report their result directly.
++          to ~/Downloads. Provide outputPath only when the user named a destination. Use one stable \
++          UUID requestID for reconnect retries of the same request; changed inputs require a new ID. \
++          video joins the host export queue and renders in the background, so report its jobID and \
++          that a notification will report completion. xml, fcpxml, and nexgen also use that queue \
++          but finish before the tool returns, so report their result directly.
+ 
+         # Generation
+         - Costs real money and is not undoable. Propose the prompt, model, duration, and \
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 1f3d66cd..852740eb 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -730,7 +730,7 @@ enum ToolDefinitions {
+         ),
+         AgentTool(
+             name: .exportProject,
+-            description: "Exports from the current project using the same modes as the Export dialog. mode defaults to video. video renders H.264, H.265, or ProRes; xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use xml for Premiere Pro and fcpxml for Final Cut Pro or DaVinci Resolve. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten by default; pass overwrite=false to refuse. video renders in the background and returns status=started. xml, fcpxml, and nexgen finish before returning.",
++            description: "Queues an export from the current project using the same host queue as the Export dialog. mode defaults to video. video renders H.264, H.265, or ProRes and records delivery/QC provenance; xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use one stable UUID requestID when retrying the same tool call after a reconnect; the host joins that exact job and rejects changed inputs under the same ID. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten only if they remain unchanged from enqueue; pass overwrite=false to refuse immediately. video returns after enqueue. xml, fcpxml, and nexgen wait for their queued job.",
+             inputSchema: objectSchema(
+                 properties: [
+                     "mode": ["type": "string", "enum": ["video", "xml", "fcpxml", "nexgen"], "description": "Optional. Default video."],
+@@ -740,6 +740,7 @@ enum ToolDefinitions {
+                     "target": ["type": "string", "enum": ["final-cut-pro", "resolve"], "description": "FCPXML mode only. Optional. Default final-cut-pro."],
+                     "outputPath": ["type": "string", "description": "Optional. Absolute destination path. If omitted, a unique project-named file is written to ~/Downloads. If no extension is provided, the mode's extension is appended."],
+                     "overwrite": ["type": "boolean", "description": "Optional. Default true, matching the UI save flow. false refuses when outputPath already exists."],
++                    "requestID": ["type": "string", "format": "uuid", "description": "Optional stable job UUID. Reuse only to join the exact same export after reconnect."],
+                 ]
+             )
+         ),
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+index d6b88674..46f9a42b 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Export.swift
+@@ -37,18 +37,29 @@ extension ToolExecutor {
+             guard editor.timeline.totalFrames > 0 else {
+                 throw ToolError("export_project: timeline is empty")
+             }
+-            return try exportVideo(editor, format: format, resolution: resolution, outputURL: outputURL)
++            return try await exportVideo(
++                editor,
++                format: format,
++                resolution: resolution,
++                outputURL: outputURL,
++                requestID: input.requestID
++            )
+         case .xml:
+-            return try await exportXML(editor, outputURL: outputURL)
++            return try await exportXML(editor, outputURL: outputURL, requestID: input.requestID)
+         case .fcpxml:
+             return try await exportFCPXML(
+                 editor,
+                 outputURL: outputURL,
+                 version: try FCPXMLVersion(named: input.version),
+-                target: try FCPXMLTarget(named: input.target)
++                target: try FCPXMLTarget(named: input.target),
++                requestID: input.requestID
+             )
+         case .nexgen:
+-            return try await exportProjectPackage(editor, outputURL: outputURL)
++            return try await exportProjectPackage(
++                editor,
++                outputURL: outputURL,
++                requestID: input.requestID
++            )
+         }
+     }
+ 
+@@ -56,77 +67,86 @@ extension ToolExecutor {
+         _ editor: EditorViewModel,
+         format: ExportFormat,
+         resolution: ExportResolution,
+-        outputURL: URL
+-    ) throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
+-            throw ToolError("export_project: Another export is already in progress.")
+-        }
+-
++        outputURL: URL,
++        requestID: String?
++    ) async throws -> ToolResult {
++        let specID = "agent.\(format.displayName).\(resolution.id)"
++        let spec = try PipelineDeliveryStore.defaultSpec(
++            id: specID,
++            targetKind: .derivative,
++            timeline: editor.timeline,
++            format: format,
++            resolution: resolution,
++            requireSequenceReview: false
++        )
+         let timeline = editor.timeline
+-        let resolver = editor.mediaResolver
+-        let name = outputURL.lastPathComponent
+-
+-        Task { @MainActor in
+-            defer { ExportCoordinator.endExport() }
+-            let service = ExportService()
+-            await service.export(
+-                timeline: timeline,
+-                resolver: resolver,
++        let job: ExportJob
++        if let joined = try ExportQueue.shared.joinedDeliveryJob(
++            editor: editor,
++            specID: specID,
++            format: format,
++            resolution: resolution,
++            outputURL: outputURL,
++            requestID: requestID
++        ) {
++            job = joined
++        } else {
++            _ = try PipelineDeliveryStore.adoptCurrentTimeline(
++                editor: editor,
++                requireSequenceReview: false
++            )
++            job = try ExportQueue.shared.enqueueDelivery(
++                editor: editor,
++                spec: spec,
+                 format: format,
+                 resolution: resolution,
+                 outputURL: outputURL,
+-                acquireSlot: false
++                requestID: requestID
+             )
+-            if let error = service.error {
+-                AppNotifications.exportFailed(name: name, reason: error)
+-            } else {
+-                let report = service.lastReport
+-                let warningCount = (report?.offlineMediaRefs.count ?? 0) + (report?.unprocessableMediaRefs.count ?? 0)
+-                AppNotifications.exportComplete(
+-                    name: name,
+-                    outputURL: outputURL,
+-                    size: report?.outputSize,
+-                    warningCount: warningCount
+-                )
+-            }
+         }
+ 
+         return try jsonResult([
+             "status": "started",
++            "jobID": job.id,
+             "mode": ExportProjectMode.video.rawValue,
+             "path": outputURL.path,
+             "codec": format.displayName,
+             "resolution": resolution.rawValue,
+-            "durationFrames": editor.timeline.totalFrames,
+-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
+-            "fps": editor.timeline.fps,
++            "durationFrames": job.durationFrames ?? timeline.totalFrames,
++            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
++                / Double(max(1, job.fps ?? timeline.fps)),
++            "fps": job.fps ?? timeline.fps,
+             "note": "Rendering in the background. A system notification will report completion or failure.",
+         ])
+     }
+ 
+-    private func exportXML(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
+-            throw ToolError("export_project: Another export is already in progress.")
+-        }
+-        defer { ExportCoordinator.endExport() }
+-        do {
+-            try XMLExporter.export(
+-                timeline: editor.timeline,
+-                resolver: editor.mediaResolver,
+-                outputURL: outputURL
+-            )
+-        } catch {
+-            throw ToolError("export_project: \(error.localizedDescription)")
+-        }
++    private func exportXML(
++        _ editor: EditorViewModel,
++        outputURL: URL,
++        requestID: String?
++    ) async throws -> ToolResult {
++        let timeline = editor.timeline
++        let job = try ExportQueue.shared.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: outputURL,
++            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
++            requestID: requestID
++        )
++        try await requireCompleted(job)
+         return try jsonResult([
+             "status": "exported",
++            "jobID": job.id,
+             "mode": ExportProjectMode.xml.rawValue,
+             "path": outputURL.path,
+-            "width": editor.timeline.width,
+-            "height": editor.timeline.height,
+-            "durationFrames": editor.timeline.totalFrames,
+-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
+-            "fps": editor.timeline.fps,
++            "width": job.width ?? timeline.width,
++            "height": job.height ?? timeline.height,
++            "durationFrames": job.durationFrames ?? timeline.totalFrames,
++            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
++                / Double(max(1, job.fps ?? timeline.fps)),
++            "fps": job.fps ?? timeline.fps,
++            "outputSha256": job.outputSHA256 ?? "",
++            "outputByteCount": job.outputByteCount ?? 0,
+             "warnings": [],
+         ])
+     }
+@@ -135,24 +155,22 @@ extension ToolExecutor {
+         _ editor: EditorViewModel,
+         outputURL: URL,
+         version: FCPXMLVersion,
+-        target: FCPXMLTarget
++        target: FCPXMLTarget,
++        requestID: String?
+     ) async throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
+-            throw ToolError("export_project: Another export is already in progress.")
+-        }
+-        defer { ExportCoordinator.endExport() }
+-        let report: FCPXMLExportReport
+-        do {
+-            report = try await FCPXMLExporter.export(
+-                timeline: editor.timeline,
+-                resolver: editor.mediaResolver.snapshot(),
+-                projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+-                version: version,
+-                target: target,
+-                outputURL: outputURL
+-            )
+-        } catch {
+-            throw ToolError("export_project: \(error.localizedDescription)")
++        let timeline = editor.timeline
++        let job = try ExportQueue.shared.enqueueInterchange(
++            editor: editor,
++            format: .fcpxml,
++            outputURL: outputURL,
++            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
++            fcpxmlVersion: version,
++            fcpxmlTarget: target,
++            requestID: requestID
++        )
++        try await requireCompleted(job)
++        guard let report = job.fcpxmlReport else {
++            throw ToolError("export_project: FCPXML evidence is unavailable")
+         }
+         let warnings = report.warnings.map { warning -> [String: Any] in
+             var value: [String: Any] = ["code": warning.code, "message": warning.message]
+@@ -186,15 +204,17 @@ extension ToolExecutor {
+         }
+         return try jsonResult([
+             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
++            "jobID": job.id,
+             "mode": ExportProjectMode.fcpxml.rawValue,
+             "path": outputURL.path,
+             "version": report.version.rawValue,
+             "target": report.target.rawValue,
+-            "width": editor.timeline.width,
+-            "height": editor.timeline.height,
+-            "durationFrames": editor.timeline.totalFrames,
+-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
+-            "fps": editor.timeline.fps,
++            "width": job.width ?? timeline.width,
++            "height": job.height ?? timeline.height,
++            "durationFrames": job.durationFrames ?? timeline.totalFrames,
++            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
++                / Double(max(1, job.fps ?? timeline.fps)),
++            "fps": job.fps ?? timeline.fps,
+             "schemaProfile": report.validation.schemaProfile,
+             "assetCount": report.validation.assetCount,
+             "storyElementCount": report.validation.storyElementCount,
+@@ -208,22 +228,19 @@ extension ToolExecutor {
+         ])
+     }
+ 
+-    private func exportProjectPackage(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
+-        guard ExportCoordinator.beginExportIfIdle() else {
+-            throw ToolError("export_project: Another export is already in progress.")
+-        }
+-        defer { ExportCoordinator.endExport() }
+-
+-        let service = ExportService()
+-        guard let report = await service.exportProjectPackage(
+-            timeline: editor.timeline,
+-            manifest: editor.mediaManifest,
+-            generationLog: editor.generationLog,
+-            sourceProjectURL: editor.workingRoot,
++    private func exportProjectPackage(
++        _ editor: EditorViewModel,
++        outputURL: URL,
++        requestID: String?
++    ) async throws -> ToolResult {
++        let job = try ExportQueue.shared.enqueueProjectPackage(
++            editor: editor,
+             outputURL: outputURL,
+-            acquireSlot: false
+-        ) else {
+-            throw ToolError("export_project: \(service.error ?? "NexGenVideo project export failed")")
++            requestID: requestID
++        )
++        try await requireCompleted(job)
++        guard let report = job.projectReport else {
++            throw ToolError("export_project: NexGenVideo project export evidence is unavailable")
+         }
+ 
+         let missing = report.missing.map { ["id": $0.id, "name": $0.name] }
+@@ -233,6 +250,7 @@ extension ToolExecutor {
+ 
+         return try jsonResult([
+             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
++            "jobID": job.id,
+             "mode": ExportProjectMode.nexgen.rawValue,
+             "path": outputURL.path,
+             "collectedMediaRefs": report.collected,
+@@ -243,6 +261,17 @@ extension ToolExecutor {
+         ])
+     }
+ 
++    private func requireCompleted(_ job: ExportJob) async throws {
++        let completed = await withTaskCancellationHandler {
++            await ExportQueue.shared.waitForCompletion(jobID: job.id)
++        } onCancel: {
++            Task { @MainActor in ExportQueue.shared.cancel(jobID: job.id) }
++        }
++        guard let completed, completed.status == .completed else {
++            throw ToolError("export_project: \(completed?.failure ?? "export did not complete")")
++        }
++    }
++
+     private func exportDestination(
+         outputPath: String?,
+         mode: ExportProjectMode,
+@@ -331,7 +360,7 @@ extension ToolExecutor {
+ 
+ private struct ExportProjectArgs: DecodableToolArgs {
+     static let allowedKeys: Set<String> = [
+-        "mode", "codec", "resolution", "version", "target", "outputPath", "overwrite",
++        "mode", "codec", "resolution", "version", "target", "outputPath", "overwrite", "requestID",
+     ]
+ 
+     var mode: String?
+@@ -341,6 +370,7 @@ private struct ExportProjectArgs: DecodableToolArgs {
+     var target: String?
+     var outputPath: String?
+     var overwrite: Bool?
++    var requestID: String?
+ }
+ 
+ private enum ExportProjectMode: String {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index baf10c09..96a8b89b 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -436,10 +436,16 @@ final class EditorViewModel {
+         let phaseIsRunning = dataRoot.map {
+             phaseCoordinator.runningPhase(projectRoot: $0) != nil
+         } ?? false
++        let exportIsRunning = ExportQueue.shared.jobs(ownerKey: key).contains {
++            !$0.status.isTerminal
++        }
++        if exportIsRunning {
++            ExportQueue.shared.cancelAll(ownerKey: key)
++        }
+         workingCopyHome = nil
+         activeWorkingCopyKey = nil
+         activeWorkingCopyGeneration = nil
+-        if importTail != nil || phaseIsRunning {
++        if importTail != nil || phaseIsRunning || exportIsRunning {
+             Task { @MainActor [phaseCoordinator] in
+                 _ = await importTail?.value
+                 if let dataRoot, phaseIsRunning {
+@@ -447,6 +453,9 @@ final class EditorViewModel {
+                         projectRoot: dataRoot
+                     )
+                 }
++                if exportIsRunning {
++                    await ExportQueue.shared.waitUntilIdle(ownerKey: key)
++                }
+                 ProjectWorkingCopy.discard(
+                     key: key,
+                     ifGeneration: generation
+diff --git a/Sources/NexGenVideo/Export/ExportCoordinator.swift b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+index fecadc5b..e6b8466f 100644
+--- a/Sources/NexGenVideo/Export/ExportCoordinator.swift
++++ b/Sources/NexGenVideo/Export/ExportCoordinator.swift
+@@ -19,6 +19,17 @@ enum ExportCoordinator {
+         exportActive = true
+     }
+ 
++    static func acquireExport(
++        isCancelled: @Sendable () -> Bool
++    ) async throws {
++        while exportActive {
++            if isCancelled() { throw CancellationError() }
++            try await Task.sleep(for: .milliseconds(50))
++        }
++        if isCancelled() { throw CancellationError() }
++        exportActive = true
++    }
++
+     static func endExport() {
+         exportActive = false
+     }
+diff --git a/Sources/NexGenVideo/Export/ExportQueue.swift b/Sources/NexGenVideo/Export/ExportQueue.swift
+new file mode 100644
+index 00000000..2427d461
+--- /dev/null
++++ b/Sources/NexGenVideo/Export/ExportQueue.swift
+@@ -0,0 +1,1598 @@
++import AppKit
++import CryptoKit
++import Foundation
++import NexGenEngine
++
++enum ExportJobStatus: String, Sendable, Equatable {
++    case pending
++    case preparing
++    case exporting
++    case cancelling
++    case completed
++    case failed
++    case cancelled
++    case interrupted
++
++    var isTerminal: Bool {
++        switch self {
++        case .completed, .failed, .cancelled, .interrupted: true
++        case .pending, .preparing, .exporting, .cancelling: false
++        }
++    }
++}
++
++enum ExportJobKind: String, Sendable, Equatable {
++    case video
++    case xml
++    case fcpxml
++    case project
++}
++
++@Observable
++@MainActor
++final class ExportJob: Identifiable {
++    let id: String
++    let ownerKey: String
++    let projectID: String
++    let kind: ExportJobKind
++    let destinationURL: URL?
++    let title: String
++    let createdAt: Date
++    let durationFrames: Int?
++    let fps: Int?
++    let width: Int?
++    let height: Int?
++
++    fileprivate(set) var status: ExportJobStatus
++    fileprivate(set) var progress: Double
++    fileprivate(set) var detail: String
++    fileprivate(set) var failure: String?
++    fileprivate(set) var warnings: [String]
++    fileprivate(set) var outputSHA256: String?
++    fileprivate(set) var outputByteCount: Int64?
++    fileprivate(set) var fcpxmlReport: FCPXMLExportReport?
++    fileprivate(set) var projectReport: ProjectPackageExporter.Report?
++
++    init(
++        id: String,
++        ownerKey: String,
++        projectID: String,
++        kind: ExportJobKind,
++        destinationURL: URL?,
++        title: String,
++        createdAt: Date = Date(),
++        durationFrames: Int? = nil,
++        fps: Int? = nil,
++        width: Int? = nil,
++        height: Int? = nil,
++        status: ExportJobStatus = .pending,
++        progress: Double = 0,
++        detail: String = "Waiting",
++        failure: String? = nil,
++        warnings: [String] = [],
++        outputSHA256: String? = nil,
++        outputByteCount: Int64? = nil,
++        fcpxmlReport: FCPXMLExportReport? = nil,
++        projectReport: ProjectPackageExporter.Report? = nil
++    ) {
++        self.id = id
++        self.ownerKey = ownerKey
++        self.projectID = projectID
++        self.kind = kind
++        self.destinationURL = destinationURL
++        self.title = title
++        self.createdAt = createdAt
++        self.durationFrames = durationFrames
++        self.fps = fps
++        self.width = width
++        self.height = height
++        self.status = status
++        self.progress = progress
++        self.detail = detail
++        self.failure = failure
++        self.warnings = warnings
++        self.outputSHA256 = outputSHA256
++        self.outputByteCount = outputByteCount
++        self.fcpxmlReport = fcpxmlReport
++        self.projectReport = projectReport
++    }
++
++    var canCancel: Bool {
++        [.pending, .preparing, .exporting].contains(status)
++    }
++
++    var canReveal: Bool {
++        status == .completed && destinationURL.map {
++            FileManager.default.fileExists(atPath: $0.path)
++        } == true
++    }
++}
++
++@Observable
++@MainActor
++final class ExportQueue {
++    static let shared = ExportQueue()
++
++    private(set) var jobs: [ExportJob] = []
++
++    @ObservationIgnored private var jobsByID: [String: ExportJob] = [:]
++    @ObservationIgnored private var requests: [String: Request] = [:]
++    @ObservationIgnored private var pendingIDs: [String] = []
++    @ObservationIgnored private var currentID: String?
++    @ObservationIgnored private var activeService: ExportService?
++    @ObservationIgnored private var cancellationRequests: Set<String> = []
++    @ObservationIgnored private var drainTask: Task<Void, Never>?
++    @ObservationIgnored private var cancellationFlags: [String: ExportCancellationFlag] = [:]
++
++    func jobs(ownerKey: String?) -> [ExportJob] {
++        guard let ownerKey else { return [] }
++        return jobs.filter { $0.ownerKey == ownerKey }
++            .sorted { $0.createdAt > $1.createdAt }
++    }
++
++    func activeJob(ownerKey: String?) -> ExportJob? {
++        guard let ownerKey else { return nil }
++        if let currentID,
++           let current = jobsByID[currentID],
++           current.ownerKey == ownerKey,
++           !current.status.isTerminal {
++            return current
++        }
++        return jobs.first { $0.ownerKey == ownerKey && $0.status == .pending }
++    }
++
++    func joinedDeliveryJob(
++        editor: EditorViewModel,
++        specID: String,
++        format: ExportFormat,
++        resolution: ExportResolution,
++        outputURL: URL,
++        requestID: String?
++    ) throws -> ExportJob? {
++        guard let requestID, let ownerKey = editor.openWorkingCopyKey else { return nil }
++        let id = try jobID(requestID)
++        return try joinedJob(
++            id: id,
++            fingerprint: fingerprint(
++                ownerKey, specID, String(describing: format), resolution.rawValue,
++                outputURL.standardizedFileURL.path
++            )
++        )
++    }
++
++    func enqueueDelivery(
++        editor: EditorViewModel,
++        spec: DeliverySpecV1,
++        format: ExportFormat,
++        resolution: ExportResolution,
++        outputURL: URL,
++        requestID: String? = nil
++    ) throws -> ExportJob {
++        guard let root = editor.workingRoot,
++              let dataRoot = DataRootResolver.dataRoot(of: root),
++              let ownerKey = editor.openWorkingCopyKey else {
++            throw ToolError("Open a project before exporting a delivery.")
++        }
++        let id = try jobID(requestID)
++        let fingerprint = fingerprint(
++            ownerKey, spec.id, String(describing: format), resolution.rawValue,
++            outputURL.standardizedFileURL.path
++        )
++        if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
++            return existing
++        }
++        try PipelineDeliveryStore.recoverInterruptedJobs(
++            dataRoot: dataRoot,
++            excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
++            willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
++            didRecover: { cleanupTemporaryState(for: $0) }
++        )
++        let timeline = editor.timeline
++        let resolver = editor.mediaResolver.snapshot()
++        let finished = try PipelineDeliveryStore.requireCurrentFinished(
++            dataRoot: dataRoot,
++            timeline: timeline
++        )
++        try PipelineDeliveryStore.requireBoundFinished(
++            dataRoot: dataRoot,
++            finished: finished,
++            timeline: timeline,
++            resolver: resolver
++        )
++        let extensionFiles = try PipelineDeliveryStore.extensionFiles(
++            for: spec,
++            dataRoot: dataRoot
++        )
++        let source = try SourceBinding.video(
++            timeline: timeline,
++            resolver: resolver,
++            additionalFiles: extensionFiles
++        )
++        let destination = try DestinationBinding(
++            url: outputURL,
++            jobID: id,
++            expectsDirectory: false
++        )
++        try source.rejectDestination(destination.url)
++        try ProjectWorkingCopy.markDirty(key: ownerKey)
++        let attempt = try PipelineDeliveryStore.enqueueAttempt(
++            id: id,
++            dataRoot: dataRoot,
++            finished: finished,
++            spec: spec,
++            format: format,
++            resolution: resolution,
++            outputURL: destination.url,
++            timeline: timeline,
++            resolver: resolver
++        )
++        let changeHandler = projectChangeHandler(
++            editor: editor,
++            ownerKey: ownerKey,
++            root: root
++        )
++        let currentHandler = projectCurrentHandler(
++            editor: editor,
++            ownerKey: ownerKey,
++            root: root,
++            timelineSHA256: finished.manifest.timelineSHA256
++        )
++        let payload = DeliveryPayload(
++            dataRoot: dataRoot,
++            timeline: timeline,
++            resolver: resolver,
++            finished: finished,
++            spec: spec,
++            format: format,
++            resolution: resolution,
++            attempt: attempt
++        )
++        return register(Request(
++            id: id,
++            ownerKey: ownerKey,
++            projectID: finished.plan.projectID,
++            kind: .video,
++            title: destination.url.lastPathComponent,
++            durationFrames: timeline.totalFrames,
++            fps: timeline.fps,
++            width: timeline.width,
++            height: timeline.height,
++            fingerprint: fingerprint,
++            source: source,
++            destination: destination,
++            companionDestination: nil,
++            payload: .delivery(payload),
++            changeHandler: changeHandler,
++            currentHandler: currentHandler
++        ))
++    }
++
++    func enqueueInterchange(
++        editor: EditorViewModel,
++        format: ExportFormat,
++        outputURL: URL,
++        projectName: String,
++        fcpxmlVersion: FCPXMLVersion = .default,
++        fcpxmlTarget: FCPXMLTarget = .default,
++        requestID: String? = nil
++    ) throws -> ExportJob {
++        guard format == .xml || format == .fcpxml else {
++            throw ToolError("Interchange jobs require XML or FCPXML.")
++        }
++        guard let root = editor.workingRoot,
++              let ownerKey = editor.openWorkingCopyKey else {
++            throw ToolError("Open a project before exporting interchange.")
++        }
++        let id = try jobID(requestID)
++        let fingerprint = fingerprint(
++            ownerKey, String(describing: format), fcpxmlVersion.rawValue,
++            fcpxmlTarget.rawValue, projectName, outputURL.standardizedFileURL.path
++        )
++        if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
++            return existing
++        }
++        let timeline = editor.timeline
++        let resolver = editor.mediaResolver.snapshot()
++        let source = try SourceBinding.interchange(timeline: timeline, resolver: resolver)
++        let destination = try DestinationBinding(
++            url: outputURL,
++            jobID: id,
++            expectsDirectory: false
++        )
++        try source.rejectDestination(destination.url)
++        let payload = InterchangePayload(
++            timeline: timeline,
++            resolver: resolver,
++            format: format,
++            projectName: projectName,
++            fcpxmlVersion: fcpxmlVersion,
++            fcpxmlTarget: fcpxmlTarget
++        )
++        let companionDestination: DestinationBinding?
++        if format == .fcpxml {
++            companionDestination = try DestinationBinding(
++                url: FCPXMLExporter.mediaDirectory(for: outputURL),
++                jobID: id,
++                expectsDirectory: true
++            )
++        } else {
++            companionDestination = nil
++        }
++        if let companionDestination {
++            try source.rejectDestination(companionDestination.url)
++        }
++        return register(Request(
++            id: id,
++            ownerKey: ownerKey,
++            projectID: editor.projectId ?? ownerKey,
++            kind: format == .xml ? .xml : .fcpxml,
++            title: destination.url.lastPathComponent,
++            durationFrames: timeline.totalFrames,
++            fps: timeline.fps,
++            width: timeline.width,
++            height: timeline.height,
++            fingerprint: fingerprint,
++            source: source,
++            destination: destination,
++            companionDestination: companionDestination,
++            payload: .interchange(payload),
++            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
++            currentHandler: { false }
++        ))
++    }
++
++    func enqueueProjectPackage(
++        editor: EditorViewModel,
++        outputURL: URL,
++        requestID: String? = nil
++    ) throws -> ExportJob {
++        guard let root = editor.workingRoot,
++              let ownerKey = editor.openWorkingCopyKey else {
++            throw ToolError("Open a project before exporting a NexGenVideo project.")
++        }
++        let id = try jobID(requestID)
++        let fingerprint = fingerprint(
++            ownerKey, ExportJobKind.project.rawValue, outputURL.standardizedFileURL.path
++        )
++        if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
++            return existing
++        }
++        let timeline = editor.timeline
++        let manifest = editor.mediaManifest
++        let generationLog = editor.generationLog
++        let source = try SourceBinding.projectPackage(
++            timeline: timeline,
++            manifest: manifest,
++            sourceRoot: root
++        )
++        let destination = try DestinationBinding(
++            url: outputURL,
++            jobID: id,
++            expectsDirectory: true
++        )
++        try source.rejectDestination(destination.url)
++        let sourcePath = root.standardizedFileURL.path
++        guard destination.url.path != sourcePath,
++              !destination.url.path.hasPrefix(sourcePath + "/") else {
++            throw ToolError("Export the project package outside its source working copy.")
++        }
++        let payload = ProjectPayload(
++            timeline: timeline,
++            manifest: manifest,
++            generationLog: generationLog,
++            sourceRoot: root
++        )
++        return register(Request(
++            id: id,
++            ownerKey: ownerKey,
++            projectID: editor.projectId ?? ownerKey,
++            kind: .project,
++            title: destination.url.lastPathComponent,
++            durationFrames: timeline.totalFrames,
++            fps: timeline.fps,
++            width: timeline.width,
++            height: timeline.height,
++            fingerprint: fingerprint,
++            source: source,
++            destination: destination,
++            companionDestination: nil,
++            payload: .project(payload),
++            changeHandler: projectChangeHandler(editor: editor, ownerKey: ownerKey, root: root),
++            currentHandler: { false }
++        ))
++    }
++
++    func cancel(jobID: String) {
++        guard let job = jobsByID[jobID], job.canCancel else { return }
++        cancellationRequests.insert(jobID)
++        cancellationFlags[jobID]?.cancel()
++        if job.status == .pending, currentID != jobID {
++            do {
++                try recordCancellation(for: jobID, reason: "Export cancelled before preparation.")
++                job.status = .cancelled
++                job.detail = "Cancelled"
++                job.failure = "Export cancelled"
++            } catch {
++                job.status = .failed
++                job.detail = "Failed"
++                job.failure = error.localizedDescription
++            }
++            requests[jobID]?.changeHandler()
++            cancellationFlags.removeValue(forKey: jobID)
++            cancellationRequests.remove(jobID)
++        } else {
++            job.status = .cancelling
++            job.detail = "Cancelling"
++            activeService?.cancel()
++        }
++    }
++
++    func cancelAll(ownerKey: String) {
++        for job in jobs where job.ownerKey == ownerKey && job.canCancel {
++            cancel(jobID: job.id)
++        }
++    }
++
++    func canRetry(jobID: String) -> Bool {
++        guard let job = jobsByID[jobID] else { return false }
++        return [.failed, .cancelled].contains(job.status) && requests[jobID] != nil
++    }
++
++    func retry(jobID: String) throws -> ExportJob {
++        guard let job = jobsByID[jobID],
++              [.failed, .cancelled].contains(job.status),
++              let request = requests[jobID] else {
++            throw ToolError("This export cannot be retried from its bound source.")
++        }
++        let newID = UUID().uuidString.lowercased()
++        var retried = request.withID(newID)
++        if case .delivery(let payload) = retried.payload {
++            try ProjectWorkingCopy.markDirty(key: retried.ownerKey)
++            let attempt = try PipelineDeliveryStore.enqueueAttempt(
++                id: newID,
++                dataRoot: payload.dataRoot,
++                finished: payload.finished,
++                spec: payload.spec,
++                format: payload.format,
++                resolution: payload.resolution,
++                outputURL: retried.destination.url,
++                timeline: payload.timeline,
++                resolver: payload.resolver
++            )
++            retried.payload = .delivery(payload.withAttempt(attempt))
++        }
++        return register(retried)
++    }
++
++    func waitForCompletion(jobID: String) async -> ExportJob? {
++        while let job = jobsByID[jobID], !job.status.isTerminal {
++            try? await Task.sleep(for: .milliseconds(50))
++        }
++        return jobsByID[jobID]
++    }
++
++    func waitUntilIdle(ownerKey: String) async {
++        while jobs.contains(where: { $0.ownerKey == ownerKey && !$0.status.isTerminal }) {
++            try? await Task.sleep(for: .milliseconds(50))
++        }
++    }
++
++    @discardableResult
++    func loadPersistedDeliveryJobs(ownerKey: String?, dataRoot: URL?) -> Bool {
++        guard let ownerKey, let dataRoot else { return false }
++        var recovered = false
++        do {
++            recovered = try PipelineDeliveryStore.recoverInterruptedJobs(
++                dataRoot: dataRoot,
++                excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
++                willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
++                didRecover: { cleanupTemporaryState(for: $0) }
++            )
++            for attempt in try PipelineDeliveryStore.listAttempts(dataRoot: dataRoot) {
++                guard jobsByID[attempt.id] == nil else { continue }
++                let status: ExportJobStatus = switch attempt.status {
++                case .succeeded: .completed
++                case .failed: .failed
++                case .cancelled: .cancelled
++                case .interrupted: .interrupted
++                case .queued, .running: .interrupted
++                }
++                let destination = attempt.outputPath.map { URL(fileURLWithPath: $0) }
++                let job = ExportJob(
++                    id: attempt.id,
++                    ownerKey: ownerKey,
++                    projectID: ownerKey,
++                    kind: .video,
++                    destinationURL: destination,
++                    title: destination?.lastPathComponent ?? "Interrupted export",
++                    status: status,
++                    progress: status == .completed ? 1 : 0,
++                    detail: status == .completed ? "Completed" : status.rawValue.capitalized,
++                    failure: attempt.failures.first,
++                    warnings: attempt.warnings,
++                    outputSHA256: attempt.outputSHA256,
++                    outputByteCount: attempt.outputByteCount
++                )
++                jobs.append(job)
++                jobsByID[job.id] = job
++                if attempt.status == .interrupted {
++                    cleanupTemporaryState(for: attempt)
++                }
++            }
++            return recovered
++        } catch {
++            Log.export.error("delivery history load failed: \(error.localizedDescription)")
++            return recovered
++        }
++    }
++
++    private func register(_ request: Request) -> ExportJob {
++        let job = ExportJob(
++            id: request.id,
++            ownerKey: request.ownerKey,
++            projectID: request.projectID,
++            kind: request.kind,
++            destinationURL: request.destination.url,
++            title: request.title,
++            durationFrames: request.durationFrames,
++            fps: request.fps,
++            width: request.width,
++            height: request.height
++        )
++        jobs.append(job)
++        jobsByID[job.id] = job
++        requests[job.id] = request
++        cancellationFlags[job.id] = ExportCancellationFlag()
++        pendingIDs.append(job.id)
++        startDrainIfNeeded()
++        return job
++    }
++
++    private func startDrainIfNeeded() {
++        guard drainTask == nil else { return }
++        drainTask = Task { @MainActor [weak self] in
++            await self?.drain()
++        }
++    }
++
++    private func drain() async {
++        while !pendingIDs.isEmpty {
++            let id = pendingIDs.removeFirst()
++            guard let job = jobsByID[id], !job.status.isTerminal,
++                  let request = requests[id] else { continue }
++            currentID = id
++            await run(request, job: job)
++            currentID = nil
++            activeService = nil
++        }
++        drainTask = nil
++    }
++
++    private func run(_ request: Request, job: ExportJob) async {
++        let temporaryURL = request.destination.temporaryURL
++        let companionTemporaryURL = request.companionDestination.map { _ in
++            FCPXMLExporter.mediaDirectory(for: temporaryURL)
++        }
++        var deliveryAttempt: DeliveryAttemptV1?
++        var published = false
++        var frozenSources: FrozenSources?
++        defer { frozenSources?.remove() }
++        do {
++            try throwIfCancelled(job.id)
++            let cancellationFlag = cancellationFlags[job.id] ?? ExportCancellationFlag()
++            try await ExportCoordinator.acquireExport(
++                isCancelled: { cancellationFlag.isCancelled }
++            )
++            defer { ExportCoordinator.endExport() }
++            try throwIfCancelled(job.id)
++
++            job.status = .preparing
++            job.detail = "Preparing"
++            await Task.yield()
++            try throwIfCancelled(job.id)
++            if case .delivery(let payload) = request.payload {
++                try ProjectWorkingCopy.markDirty(key: request.ownerKey)
++                deliveryAttempt = try PipelineDeliveryStore.markRunning(
++                    payload.attempt,
++                    dataRoot: payload.dataRoot
++                )
++                request.changeHandler()
++                let dataRoot = payload.dataRoot
++                let finished = payload.finished
++                let timeline = payload.timeline
++                let resolver = payload.resolver
++                try await Task.detached(priority: .userInitiated) {
++                    try PipelineDeliveryStore.requireBoundFinished(
++                        dataRoot: dataRoot,
++                        finished: finished,
++                        timeline: timeline,
++                        resolver: resolver,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                }.value
++            }
++            let source = request.source
++            let jobID = job.id
++            try await Task.detached(priority: .userInitiated) {
++                try source.verify(isCancelled: { cancellationFlag.isCancelled })
++            }.value
++            let frozen = try await Task.detached(priority: .userInitiated) {
++                try source.freeze(
++                    jobID: jobID,
++                    isCancelled: { cancellationFlag.isCancelled }
++                )
++            }.value
++            frozenSources = frozen
++            try throwIfCancelled(job.id)
++            try await Task.detached(priority: .userInitiated) {
++                try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++            }.value
++
++            let service = ExportService()
++            activeService = service
++            let event: @MainActor @Sendable (ExportService.Event) -> Void = { [weak job] event in
++                guard let job, job.status != .cancelling else { return }
++                switch event {
++                case .preparing:
++                    job.status = .preparing
++                    job.detail = "Preparing"
++                case .exporting:
++                    job.status = .exporting
++                    job.detail = "Exporting"
++                case .progress(let value):
++                    job.progress = min(1, max(0, value))
++                }
++            }
++
++            var fcpxmlReport: FCPXMLExportReport?
++            var projectReport: ProjectPackageExporter.Report?
++            switch request.payload {
++            case .delivery(let payload):
++                await service.export(
++                    timeline: payload.timeline,
++                    resolver: frozen.resolver(basedOn: payload.resolver),
++                    format: payload.format,
++                    resolution: payload.resolution,
++                    outputURL: temporaryURL,
++                    acquireSlot: false,
++                    event: event
++                )
++            case .interchange(let payload):
++                await service.export(
++                    timeline: payload.timeline,
++                    resolver: frozen.resolver(basedOn: payload.resolver),
++                    format: payload.format,
++                    resolution: .matchTimeline,
++                    outputURL: temporaryURL,
++                    projectName: payload.projectName,
++                    fcpxmlVersion: payload.fcpxmlVersion,
++                    fcpxmlTarget: payload.fcpxmlTarget,
++                    referenceOutputURL: request.destination.url,
++                    acquireSlot: false,
++                    event: event
++                )
++                fcpxmlReport = service.lastFCPXMLReport
++            case .project(let payload):
++                projectReport = await service.exportProjectPackage(
++                    timeline: payload.timeline,
++                    manifest: frozen.manifest(basedOn: payload.manifest),
++                    generationLog: payload.generationLog,
++                    sourceProjectURL: frozen.projectRoot ?? payload.sourceRoot,
++                    outputURL: temporaryURL,
++                    acquireSlot: false,
++                    event: event
++                )
++            }
++
++            if let error = service.error {
++                if cancellationRequests.contains(job.id) || error == "Export was cancelled" {
++                    throw CancellationError()
++                }
++                throw ToolError(error)
++            }
++            try throwIfCancelled(job.id)
++            try await Task.detached(priority: .userInitiated) {
++                try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++            }.value
++            if case .delivery(let payload) = request.payload {
++                let dataRoot = payload.dataRoot
++                let finished = payload.finished
++                let timeline = payload.timeline
++                let resolver = payload.resolver
++                try await Task.detached(priority: .userInitiated) {
++                    try PipelineDeliveryStore.requireBoundFinished(
++                        dataRoot: dataRoot,
++                        finished: finished,
++                        timeline: timeline,
++                        resolver: resolver,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                }.value
++            }
++
++            let deliveryEvidence: PipelineDeliveryStore.OutputEvidence?
++            if case .delivery(let payload) = request.payload {
++                deliveryEvidence = try await PipelineDeliveryStore.inspectSuccessfulOutput(
++                    outputURL: temporaryURL,
++                    spec: payload.spec,
++                    expectedDurationFrames: payload.timeline.totalFrames,
++                    isCancelled: { cancellationFlag.isCancelled }
++                )
++            } else {
++                deliveryEvidence = nil
++            }
++            try throwIfCancelled(job.id)
++            try await Task.detached(priority: .userInitiated) {
++                try source.verify(isCancelled: { cancellationFlag.isCancelled })
++                try frozen.verify(isCancelled: { cancellationFlag.isCancelled })
++            }.value
++            if case .delivery(let payload) = request.payload {
++                let dataRoot = payload.dataRoot
++                let finished = payload.finished
++                let timeline = payload.timeline
++                let resolver = payload.resolver
++                try await Task.detached(priority: .userInitiated) {
++                    try PipelineDeliveryStore.requireBoundFinished(
++                        dataRoot: dataRoot,
++                        finished: finished,
++                        timeline: timeline,
++                        resolver: resolver,
++                        isCancelled: { cancellationFlag.isCancelled }
++                    )
++                }.value
++                try ProjectWorkingCopy.markDirty(key: request.ownerKey)
++            }
++            var publications = [DestinationBinding.Publication(
++                binding: request.destination,
++                temporaryURL: temporaryURL
++            )]
++            if let companionDestination = request.companionDestination,
++               let companionTemporaryURL,
++               FileManager.default.fileExists(atPath: companionTemporaryURL.path) {
++                publications.append(.init(
++                    binding: companionDestination,
++                    temporaryURL: companionTemporaryURL
++                ))
++            }
++            try DestinationBinding.publish(publications)
++            published = true
++
++            switch request.payload {
++            case .delivery(let payload):
++                guard let running = deliveryAttempt, let deliveryEvidence else {
++                    throw ToolError("The delivery job lost its bound receipt state.")
++                }
++                let result = try PipelineDeliveryStore.finishSuccessful(
++                    running,
++                    dataRoot: payload.dataRoot,
++                    finished: payload.finished,
++                    outputURL: request.destination.url,
++                    evidence: deliveryEvidence,
++                    selectIfCurrent: request.currentHandler()
++                )
++                job.outputSHA256 = result.attempt.outputSHA256
++                job.outputByteCount = result.attempt.outputByteCount
++                if let selectionWarning = result.selectionWarning {
++                    job.warnings.append(selectionWarning)
++                }
++                request.changeHandler()
++            case .interchange:
++                let values = try request.destination.url.resourceValues(
++                    forKeys: [.fileSizeKey, .isRegularFileKey]
++                )
++                guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
++                    throw ToolError("The exported interchange file is missing or empty.")
++                }
++                job.outputSHA256 = try FileDigest.sha256(of: request.destination.url)
++                job.outputByteCount = Int64(size)
++                job.fcpxmlReport = fcpxmlReport
++                job.warnings = fcpxmlReport?.warnings.map(\.message) ?? []
++            case .project:
++                let state = try PathState.capture(request.destination.url)
++                job.outputSHA256 = state.digest
++                job.outputByteCount = projectReport?.totalBytes
++                job.projectReport = projectReport
++                if let projectReport, !projectReport.missing.isEmpty {
++                    job.warnings = [
++                        "\(projectReport.missing.count) media file\(projectReport.missing.count == 1 ? "" : "s") could not be included."
++                    ]
++                }
++            }
++
++            job.progress = 1
++            job.status = .completed
++            job.detail = "Completed"
++            AppNotifications.exportComplete(
++                name: job.title,
++                outputURL: request.destination.url,
++                size: nil,
++                warningCount: job.warnings.count
++            )
++        } catch {
++            if !published {
++                try? FileManager.default.removeItem(at: temporaryURL)
++                if let companionTemporaryURL {
++                    try? FileManager.default.removeItem(at: companionTemporaryURL)
++                }
++            }
++            let cancelled = cancellationRequests.contains(job.id) || error is CancellationError
++            let reason = cancelled ? "Export cancelled" : error.localizedDescription
++            if case .delivery(let payload) = request.payload,
++               let attempt = deliveryAttempt ?? Optional(payload.attempt),
++               attempt.status != .succeeded {
++                do {
++                    try ProjectWorkingCopy.markDirty(key: request.ownerKey)
++                    _ = try PipelineDeliveryStore.finishUnsuccessful(
++                        attempt,
++                        status: cancelled ? .cancelled : .failed,
++                        reason: reason,
++                        dataRoot: payload.dataRoot
++                    )
++                    request.changeHandler()
++                } catch {
++                    job.failure = "\(reason) Receipt error: \(error.localizedDescription)"
++                }
++            }
++            job.status = cancelled ? .cancelled : .failed
++            job.detail = cancelled ? "Cancelled" : "Failed"
++            if job.failure == nil { job.failure = reason }
++            if !cancelled {
++                AppNotifications.exportFailed(name: job.title, reason: reason)
++            }
++        }
++        cancellationRequests.remove(job.id)
++        cancellationFlags.removeValue(forKey: job.id)
++    }
++
++    private func recordCancellation(for id: String, reason: String) throws {
++        guard let request = requests[id], case .delivery(let payload) = request.payload else { return }
++        try ProjectWorkingCopy.markDirty(key: request.ownerKey)
++        _ = try PipelineDeliveryStore.finishUnsuccessful(
++            payload.attempt,
++            status: .cancelled,
++            reason: reason,
++            dataRoot: payload.dataRoot
++        )
++    }
++
++    private func throwIfCancelled(_ id: String) throws {
++        if cancellationRequests.contains(id) || Task.isCancelled {
++            throw CancellationError()
++        }
++    }
++
++    private func joinedJob(id: String, fingerprint: String) throws -> ExportJob? {
++        guard let existing = jobsByID[id] else { return nil }
++        guard requests[id]?.fingerprint == fingerprint else {
++            throw ToolError("An export job with this ID is already bound to different inputs.")
++        }
++        return existing
++    }
++
++    private func jobID(_ supplied: String?) throws -> String {
++        guard let supplied else { return UUID().uuidString.lowercased() }
++        guard let uuid = UUID(uuidString: supplied) else {
++            throw ToolError("Export requestID must be a UUID.")
++        }
++        return uuid.uuidString.lowercased()
++    }
++
++    private func fingerprint(_ parts: String...) -> String {
++        FileDigest.sha256(of: Data(parts.joined(separator: "\u{0}").utf8))
++    }
++
++    private func activeDeliveryIDs(dataRoot: URL) -> Set<String> {
++        Set(requests.compactMap { id, request in
++            guard let job = jobsByID[id], !job.status.isTerminal,
++                  case .delivery(let payload) = request.payload,
++                  payload.dataRoot.standardizedFileURL == dataRoot.standardizedFileURL else {
++                return nil
++            }
++            return id
++        })
++    }
++
++    private func cleanupTemporaryState(for attempt: DeliveryAttemptV1) {
++        if let outputPath = attempt.outputPath {
++            let outputURL = URL(fileURLWithPath: outputPath)
++            let temporaryURL = DestinationBinding.makeTemporaryURL(
++                url: outputURL,
++                jobID: attempt.id
++            )
++            try? FileManager.default.removeItem(at: temporaryURL)
++        }
++        try? FileManager.default.removeItem(
++            at: SourceBinding.snapshotRoot(jobID: attempt.id)
++        )
++    }
++
++    private func projectChangeHandler(
++        editor: EditorViewModel,
++        ownerKey: String,
++        root: URL
++    ) -> @MainActor () -> Void {
++        { [weak editor] in
++            guard let editor,
++                  editor.openWorkingCopyKey == ownerKey,
++                  editor.workingRoot?.standardizedFileURL == root.standardizedFileURL else {
++                return
++            }
++            editor.onPipelineChanged?()
++        }
++    }
++
++    private func projectCurrentHandler(
++        editor: EditorViewModel,
++        ownerKey: String,
++        root: URL,
++        timelineSHA256: String
++    ) -> @MainActor () -> Bool {
++        { [weak editor] in
++            guard let editor,
++                  editor.openWorkingCopyKey == ownerKey,
++                  editor.workingRoot?.standardizedFileURL == root.standardizedFileURL,
++                  let timelineData = try? PipelineAssemblyStore.canonical(editor.timeline) else {
++                return false
++            }
++            return FileDigest.sha256(of: timelineData) == timelineSHA256
++        }
++    }
++}
++
++private extension ExportQueue {
++    struct Request {
++        var id: String
++        let ownerKey: String
++        let projectID: String
++        let kind: ExportJobKind
++        let title: String
++        let durationFrames: Int
++        let fps: Int
++        let width: Int
++        let height: Int
++        let fingerprint: String
++        let source: SourceBinding
++        var destination: DestinationBinding
++        var companionDestination: DestinationBinding?
++        var payload: Payload
++        let changeHandler: @MainActor () -> Void
++        let currentHandler: @MainActor () -> Bool
++
++        func withID(_ id: String) -> Request {
++            var copy = self
++            copy.id = id
++            copy.destination = destination.withJobID(id)
++            copy.companionDestination = companionDestination?.withJobID(id)
++            return copy
++        }
++    }
++
++    enum Payload {
++        case delivery(DeliveryPayload)
++        case interchange(InterchangePayload)
++        case project(ProjectPayload)
++    }
++
++    struct DeliveryPayload {
++        let dataRoot: URL
++        let timeline: Timeline
++        let resolver: MediaResolver
++        let finished: PipelineDeliveryStore.FinishedState
++        let spec: DeliverySpecV1
++        let format: ExportFormat
++        let resolution: ExportResolution
++        let attempt: DeliveryAttemptV1
++
++        func withAttempt(_ attempt: DeliveryAttemptV1) -> DeliveryPayload {
++            .init(
++                dataRoot: dataRoot,
++                timeline: timeline,
++                resolver: resolver,
++                finished: finished,
++                spec: spec,
++                format: format,
++                resolution: resolution,
++                attempt: attempt
++            )
++        }
++    }
++
++    struct InterchangePayload {
++        let timeline: Timeline
++        let resolver: MediaResolver
++        let format: ExportFormat
++        let projectName: String
++        let fcpxmlVersion: FCPXMLVersion
++        let fcpxmlTarget: FCPXMLTarget
++    }
++
++    struct ProjectPayload {
++        let timeline: Timeline
++        let manifest: MediaManifest
++        let generationLog: GenerationLog
++        let sourceRoot: URL
++    }
++
++    struct SourceBinding: Sendable {
++        struct Media: Equatable, Sendable {
++            let ref: String
++            let url: URL
++            let state: PathState
++            let entry: MediaManifestEntry?
++        }
++
++        let timelineSHA256: String
++        let media: [Media]
++        let rootURL: URL?
++        let rootState: PathState?
++
++        static func video(
++            timeline: Timeline,
++            resolver: MediaResolver,
++            additionalFiles: [(path: String, url: URL)]
++        ) throws -> SourceBinding {
++            let tracks = timeline.tracks.filter {
++                !$0.hidden && ($0.type != .audio || !$0.muted)
++            }
++            return try make(
++                timeline: timeline,
++                refs: mediaRefs(timeline.tracks),
++                requiredRefs: mediaRefs(tracks),
++                resolver: resolver,
++                additionalFiles: additionalFiles
++            )
++        }
++
++        static func interchange(timeline: Timeline, resolver: MediaResolver) throws -> SourceBinding {
++            try make(
++                timeline: timeline,
++                refs: mediaRefs(timeline.tracks),
++                requiredRefs: [],
++                resolver: resolver,
++                additionalFiles: []
++            )
++        }
++
++        static func projectPackage(
++            timeline: Timeline,
++            manifest: MediaManifest,
++            sourceRoot: URL
++        ) throws -> SourceBinding {
++            let resolver = MediaResolver(manifest: { manifest }, projectURL: { sourceRoot })
++            let refs = Set(manifest.entries.compactMap { entry in
++                if case .external = entry.source { return entry.id }
++                return nil
++            })
++            let binding = try make(
++                timeline: timeline,
++                refs: refs,
++                requiredRefs: [],
++                resolver: resolver,
++                additionalFiles: []
++            )
++            return .init(
++                timelineSHA256: binding.timelineSHA256,
++                media: binding.media,
++                rootURL: sourceRoot,
++                rootState: try PathState.capture(sourceRoot)
++            )
++        }
++
++        func verify(isCancelled: @Sendable () -> Bool = { false }) throws {
++            for item in media {
++                if isCancelled() { throw CancellationError() }
++                guard try PathState.capture(item.url, isCancelled: isCancelled) == item.state else {
++                    throw ToolError("Export source changed or is offline: \(item.ref)")
++                }
++            }
++            if let rootURL, let rootState,
++               try PathState.capture(rootURL, isCancelled: isCancelled) != rootState {
++                throw ToolError("The project source changed after this export was queued.")
++            }
++        }
++
++        func rejectDestination(_ destination: URL) throws {
++            let resolved = destination.standardizedFileURL.resolvingSymlinksInPath()
++            guard !media.contains(where: {
++                $0.url == resolved || $0.url.path.hasPrefix(resolved.path + "/")
++            }) else {
++                throw ToolError("The export destination cannot replace a bound source file.")
++            }
++        }
++
++        private static func make(
++            timeline: Timeline,
++            refs: Set<String>,
++            requiredRefs: Set<String>,
++            resolver: MediaResolver,
++            additionalFiles: [(path: String, url: URL)]
++        ) throws -> SourceBinding {
++            let timelineData = try PipelineAssemblyStore.canonical(timeline)
++            var media = try refs.sorted().compactMap { ref in
++                guard let url = resolver.expectedURL(for: ref) else {
++                    if !requiredRefs.contains(ref) { return nil }
++                    throw ToolError("Export source is unresolved: \(resolver.displayName(for: ref))")
++                }
++                let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
++                let state = try PathState.capture(resolved)
++                if state == .absent, requiredRefs.contains(ref) {
++                    throw ToolError("Export source is offline: \(resolver.displayName(for: ref))")
++                }
++                if case .directory = state {
++                    throw ToolError("Export source is unreadable: \(resolver.displayName(for: ref))")
++                }
++                return Media(
++                    ref: ref,
++                    url: resolved,
++                    state: state,
++                    entry: resolver.entry(for: ref)
++                )
++            }
++            media += try additionalFiles.map { item in
++                let resolved = item.url.standardizedFileURL.resolvingSymlinksInPath()
++                let state = try PathState.capture(resolved)
++                guard case .file = state else {
++                    throw ToolError("A required delivery extension is missing: \(item.path)")
++                }
++                return Media(
++                    ref: "delivery extension \(item.path)",
++                    url: resolved,
++                    state: state,
++                    entry: nil
++                )
++            }
++            return .init(
++                timelineSHA256: FileDigest.sha256(of: timelineData),
++                media: media,
++                rootURL: nil,
++                rootState: nil
++            )
++        }
++
++        func freeze(
++            jobID: String,
++            isCancelled: @Sendable () -> Bool
++        ) throws -> FrozenSources {
++            let fm = FileManager.default
++            let root = Self.snapshotRoot(jobID: jobID)
++            do {
++                guard !fm.fileExists(atPath: root.path) else {
++                    throw ToolError("A temporary source snapshot already exists for this export job.")
++                }
++                try fm.createDirectory(at: root, withIntermediateDirectories: true)
++                let filesRoot = root.appendingPathComponent("sources", isDirectory: true)
++                try fm.createDirectory(at: filesRoot, withIntermediateDirectories: true)
++                var frozenFiles: [FrozenSources.File] = []
++                for (index, item) in media.enumerated() {
++                    if isCancelled() { throw CancellationError() }
++                    let ext = item.url.pathExtension
++                    let base = "\(index)-\(FileDigest.sha256(of: Data(item.ref.utf8)).prefix(16))"
++                    let name = ext.isEmpty ? base : "\(base).\(ext)"
++                    let destination = filesRoot.appendingPathComponent(name)
++                    switch item.state {
++                    case .absent:
++                        break
++                    case .file:
++                        try Self.copyFile(
++                            from: item.url,
++                            to: destination,
++                            isCancelled: isCancelled
++                        )
++                    case .directory:
++                        throw ToolError("Export sources must be regular files.")
++                    }
++                    guard try PathState.capture(
++                        destination,
++                        isCancelled: isCancelled
++                    ) == item.state else {
++                        throw ToolError("Export source could not be frozen: \(item.ref)")
++                    }
++                    frozenFiles.append(.init(
++                        ref: item.ref,
++                        url: destination,
++                        state: item.state,
++                        entry: item.entry
++                    ))
++                }
++
++                let frozenProjectRoot: URL?
++                if let rootURL, let rootState {
++                    let destination = root.appendingPathComponent("project", isDirectory: true)
++                    try Self.copyDirectory(
++                        from: rootURL,
++                        to: destination,
++                        isCancelled: isCancelled
++                    )
++                    guard try PathState.capture(
++                        destination,
++                        isCancelled: isCancelled
++                    ) == rootState else {
++                        throw ToolError("The project source changed while it was being frozen.")
++                    }
++                    frozenProjectRoot = destination
++                } else {
++                    frozenProjectRoot = nil
++                }
++                return FrozenSources(
++                    root: root,
++                    files: frozenFiles,
++                    projectRoot: frozenProjectRoot,
++                    projectState: rootState
++                )
++            } catch {
++                try? fm.removeItem(at: root)
++                throw error
++            }
++        }
++
++        static func snapshotRoot(jobID: String) -> URL {
++            FileManager.default.temporaryDirectory
++                .appendingPathComponent("NexGenVideoExportQueue", isDirectory: true)
++                .appendingPathComponent(jobID, isDirectory: true)
++        }
++
++        private static func copyFile(
++            from source: URL,
++            to destination: URL,
++            isCancelled: @Sendable () -> Bool
++        ) throws {
++            let fm = FileManager.default
++            guard fm.createFile(atPath: destination.path, contents: nil) else {
++                throw ToolError("The export source snapshot could not be created.")
++            }
++            let reader = try FileHandle(forReadingFrom: source)
++            defer { try? reader.close() }
++            let writer = try FileHandle(forWritingTo: destination)
++            defer { try? writer.close() }
++            while true {
++                if isCancelled() { throw CancellationError() }
++                guard let data = try reader.read(upToCount: 1_048_576), !data.isEmpty else {
++                    break
++                }
++                try writer.write(contentsOf: data)
++            }
++        }
++
++        private static func copyDirectory(
++            from source: URL,
++            to destination: URL,
++            isCancelled: @Sendable () -> Bool
++        ) throws {
++            let fm = FileManager.default
++            try fm.createDirectory(at: destination, withIntermediateDirectories: true)
++            guard let enumerator = fm.enumerator(
++                at: source,
++                includingPropertiesForKeys: [
++                    .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
++                ],
++                options: []
++            ) else {
++                throw ToolError("The project source snapshot could not be created.")
++            }
++            for case let item as URL in enumerator {
++                if isCancelled() { throw CancellationError() }
++                let relative = String(item.path.dropFirst(source.path.count + 1))
++                let target = destination.appendingPathComponent(relative)
++                let values = try item.resourceValues(
++                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
++                )
++                guard values.isSymbolicLink != true else {
++                    throw ToolError("Export directories cannot contain symbolic links.")
++                }
++                if values.isDirectory == true {
++                    try fm.createDirectory(at: target, withIntermediateDirectories: true)
++                } else if values.isRegularFile == true {
++                    try fm.createDirectory(
++                        at: target.deletingLastPathComponent(),
++                        withIntermediateDirectories: true
++                    )
++                    try copyFile(from: item, to: target, isCancelled: isCancelled)
++                } else {
++                    throw ToolError("The project source contains an unsupported item: \(relative)")
++                }
++            }
++        }
++
++        private static func mediaRefs(_ tracks: [Track]) -> Set<String> {
++            Set(tracks.flatMap { track in
++                track.clips.compactMap { clip in
++                    clip.sourceClipType == .text ? nil : clip.mediaRef
++                }
++            })
++        }
++    }
++
++    struct DestinationBinding {
++        struct Publication {
++            let binding: DestinationBinding
++            let temporaryURL: URL
++        }
++
++        let url: URL
++        let initialState: PathState
++        let jobID: String
++        let temporaryURL: URL
++        let expectsDirectory: Bool
++
++        init(url: URL, jobID: String, expectsDirectory: Bool) throws {
++            let standardized = url.standardizedFileURL
++            let parent = standardized.deletingLastPathComponent()
++            let values = try parent.resourceValues(forKeys: [.isDirectoryKey])
++            guard values.isDirectory == true else {
++                throw ToolError("The export destination directory does not exist.")
++            }
++            let initialState = try PathState.capture(standardized)
++            guard !initialState.exists
++                    || initialState.isDirectory == expectsDirectory else {
++                throw ToolError("The export destination has the wrong file type.")
++            }
++            self.url = standardized
++            self.initialState = initialState
++            self.jobID = jobID
++            self.temporaryURL = Self.makeTemporaryURL(url: standardized, jobID: jobID)
++            self.expectsDirectory = expectsDirectory
++            guard !FileManager.default.fileExists(atPath: temporaryURL.path) else {
++                throw ToolError("A partial export already exists for this job and destination.")
++            }
++        }
++
++        static func makeTemporaryURL(url: URL, jobID: String) -> URL {
++            let parent = url.deletingLastPathComponent()
++            let ext = url.pathExtension
++            let base = url.deletingPathExtension().lastPathComponent
++            let name = ext.isEmpty
++                ? ".\(base).\(jobID).partial"
++                : ".\(base).\(jobID).partial.\(ext)"
++            return parent.appendingPathComponent(name)
++        }
++
++        func withJobID(_ jobID: String) -> DestinationBinding {
++            .init(
++                url: url,
++                initialState: initialState,
++                jobID: jobID,
++                expectsDirectory: expectsDirectory
++            )
++        }
++
++        func publish(temporaryURL: URL) throws {
++            try Self.publish([.init(binding: self, temporaryURL: temporaryURL)])
++        }
++
++        static func publish(_ publications: [Publication]) throws {
++            guard Set(publications.map { $0.binding.url }).count == publications.count else {
++                throw ToolError("An export cannot publish two results to the same destination.")
++            }
++            for publication in publications {
++                let binding = publication.binding
++                guard try PathState.capture(binding.url) == binding.initialState else {
++                    throw ToolError("The export destination changed after this job was queued.")
++                }
++                let temporaryValues = try publication.temporaryURL.resourceValues(
++                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
++                )
++                let typeMatches = binding.expectsDirectory
++                    ? temporaryValues.isDirectory == true
++                    : temporaryValues.isRegularFile == true
++                guard temporaryValues.isSymbolicLink != true,
++                      typeMatches else {
++                    throw ToolError("The export produced no temporary result.")
++                }
++            }
++
++            let fm = FileManager.default
++            if let publication = publications.first, publications.count == 1 {
++                let binding = publication.binding
++                if binding.initialState.exists {
++                    _ = try fm.replaceItemAt(
++                        binding.url,
++                        withItemAt: publication.temporaryURL
++                    )
++                } else {
++                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
++                }
++                return
++            }
++            var backups: [(target: URL, backup: URL)] = []
++            var installed: [URL] = []
++            do {
++                for publication in publications {
++                    let binding = publication.binding
++                    if binding.initialState.exists {
++                        let backup = binding.url.deletingLastPathComponent()
++                            .appendingPathComponent(
++                                ".\(binding.url.lastPathComponent).\(binding.jobID).backup"
++                            )
++                        guard !fm.fileExists(atPath: backup.path) else {
++                            throw ToolError("An export backup already exists for this job and destination.")
++                        }
++                        try fm.moveItem(at: binding.url, to: backup)
++                        backups.append((binding.url, backup))
++                    }
++                    try fm.moveItem(at: publication.temporaryURL, to: binding.url)
++                    installed.append(binding.url)
++                }
++            } catch {
++                let failure = error
++                var rollbackFailures: [String] = []
++                for target in installed.reversed() where fm.fileExists(atPath: target.path) {
++                    do { try fm.removeItem(at: target) }
++                    catch { rollbackFailures.append(target.lastPathComponent) }
++                }
++                for item in backups.reversed() where fm.fileExists(atPath: item.backup.path) {
++                    do { try fm.moveItem(at: item.backup, to: item.target) }
++                    catch { rollbackFailures.append(item.target.lastPathComponent) }
++                }
++                guard rollbackFailures.isEmpty else {
++                    throw ToolError(
++                        "Export publish failed and rollback could not restore: "
++                            + rollbackFailures.joined(separator: ", ")
++                    )
++                }
++                throw failure
++            }
++            for item in backups where fm.fileExists(atPath: item.backup.path) {
++                try? fm.removeItem(at: item.backup)
++            }
++        }
++
++        private init(
++            url: URL,
++            initialState: PathState,
++            jobID: String,
++            expectsDirectory: Bool
++        ) {
++            self.url = url
++            self.initialState = initialState
++            self.jobID = jobID
++            self.temporaryURL = Self.makeTemporaryURL(url: url, jobID: jobID)
++            self.expectsDirectory = expectsDirectory
++        }
++    }
++
++    struct FrozenSources: Sendable {
++        struct File: Sendable {
++            let ref: String
++            let url: URL
++            let state: PathState
++            let entry: MediaManifestEntry?
++        }
++
++        let root: URL
++        let files: [File]
++        let projectRoot: URL?
++        let projectState: PathState?
++
++        func verify(isCancelled: @Sendable () -> Bool = { false }) throws {
++            for file in files {
++                if isCancelled() { throw CancellationError() }
++                guard try PathState.capture(file.url, isCancelled: isCancelled) == file.state else {
++                    throw ToolError("A frozen export source changed: \(file.ref)")
++                }
++            }
++            if let projectRoot, let projectState,
++               try PathState.capture(projectRoot, isCancelled: isCancelled) != projectState {
++                throw ToolError("The frozen project source changed during export.")
++            }
++        }
++
++        func resolver(basedOn original: MediaResolver) -> MediaResolver {
++            let urls = Dictionary(uniqueKeysWithValues: files.compactMap { file in
++                file.entry.map { ($0.id, file.url) }
++            })
++            return original.snapshot(overriding: urls)
++        }
++
++        func manifest(basedOn original: MediaManifest) -> MediaManifest {
++            let urls = Dictionary(uniqueKeysWithValues: files.compactMap { file in
++                guard case .file = file.state else { return nil }
++                return file.entry.map { ($0.id, file.url) }
++            })
++            var manifest = original
++            manifest.entries = original.entries.map { entry in
++                guard case .external = entry.source,
++                      let url = urls[entry.id] else { return entry }
++                var frozen = entry
++                frozen.source = .external(absolutePath: url.path)
++                return frozen
++            }
++            return manifest
++        }
++
++        func remove() {
++            try? FileManager.default.removeItem(at: root)
++        }
++    }
++
++    enum PathState: Equatable, Sendable {
++        case absent
++        case file(sha256: String, byteCount: Int)
++        case directory(sha256: String)
++
++        var exists: Bool { self != .absent }
++        var isDirectory: Bool {
++            if case .directory = self { return true }
++            return false
++        }
++        var digest: String? {
++            switch self {
++            case .absent: nil
++            case .file(let sha256, _), .directory(let sha256): sha256
++            }
++        }
++        static func capture(
++            _ url: URL,
++            isCancelled: @Sendable () -> Bool = { false }
++        ) throws -> PathState {
++            if isCancelled() { throw CancellationError() }
++            let fm = FileManager.default
++            guard fm.fileExists(atPath: url.path) else { return .absent }
++            let values = try url.resourceValues(
++                forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
++            )
++            guard values.isSymbolicLink != true else {
++                throw ToolError("Export paths cannot be symbolic links.")
++            }
++            if values.isRegularFile == true {
++                return .file(
++                    sha256: try sha256(of: url, isCancelled: isCancelled),
++                    byteCount: values.fileSize ?? 0
++                )
++            }
++            guard values.isDirectory == true else {
++                throw ToolError("The export path is not a regular file or directory.")
++            }
++            guard let enumerator = fm.enumerator(
++                at: url,
++                includingPropertiesForKeys: [
++                    .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
++                ],
++                options: []
++            ) else {
++                throw ToolError("The export directory cannot be inspected.")
++            }
++            var entries: [String] = []
++            for case let child as URL in enumerator {
++                if isCancelled() { throw CancellationError() }
++                let childValues = try child.resourceValues(
++                    forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
++                )
++                let relative = String(child.path.dropFirst(url.path.count + 1))
++                if childValues.isSymbolicLink == true {
++                    throw ToolError("Export directories cannot contain symbolic links.")
++                } else if childValues.isDirectory == true {
++                    entries.append("d:\(relative)")
++                } else if childValues.isRegularFile == true {
++                    entries.append(
++                        "f:\(relative):\(childValues.fileSize ?? 0):\(try sha256(of: child, isCancelled: isCancelled))"
++                    )
++                } else {
++                    throw ToolError("The export directory contains an unsupported item: \(relative)")
++                }
++            }
++            return .directory(
++                sha256: FileDigest.sha256(of: Data(entries.sorted().joined(separator: "\n").utf8))
++            )
++        }
++
++        private static func sha256(
++            of url: URL,
++            isCancelled: @Sendable () -> Bool
++        ) throws -> String {
++            let handle = try FileHandle(forReadingFrom: url)
++            defer { try? handle.close() }
++            var hasher = SHA256()
++            while true {
++                if isCancelled() { throw CancellationError() }
++                guard let data = try handle.read(upToCount: 1_048_576), !data.isEmpty else {
++                    break
++                }
++                hasher.update(data: data)
++            }
++            if isCancelled() { throw CancellationError() }
++            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
++        }
++    }
++}
+diff --git a/Sources/NexGenVideo/Export/ExportService.swift b/Sources/NexGenVideo/Export/ExportService.swift
+index cd4c5ce2..96d5f10e 100644
+--- a/Sources/NexGenVideo/Export/ExportService.swift
++++ b/Sources/NexGenVideo/Export/ExportService.swift
+@@ -50,9 +50,32 @@ struct ExportRunReport {
+     let unprocessableMediaRefs: Set<String>
+ }
+ 
++final class ExportCancellationFlag: @unchecked Sendable {
++    private let lock = NSLock()
++    private var value = false
++
++    func reset() {
++        lock.withLock { value = false }
++    }
++
++    func cancel() {
++        lock.withLock { value = true }
++    }
++
++    var isCancelled: Bool {
++        lock.withLock { value }
++    }
++}
++
+ @Observable
+ @MainActor
+ final class ExportService {
++    enum Event: Sendable, Equatable {
++        case preparing
++        case exporting
++        case progress(Double)
++    }
++
+     var progress: Double = 0
+     var isExporting = false
+     var error: String?
+@@ -61,6 +84,7 @@ final class ExportService {
+ 
+     func cancel() {
+         cancelRequested = true
++        cancellationFlag.cancel()
+         activeExportSession?.cancelExport()
+     }
+ 
+@@ -73,14 +97,18 @@ final class ExportService {
+         projectName: String = "Timeline Export",
+         fcpxmlVersion: FCPXMLVersion = .default,
+         fcpxmlTarget: FCPXMLTarget = .default,
+-        acquireSlot: Bool = true
++        referenceOutputURL: URL? = nil,
++        acquireSlot: Bool = true,
++        event: (@MainActor @Sendable (Event) -> Void)? = nil
+     ) async {
+         error = nil
+         lastReport = nil
+         lastFCPXMLReport = nil
+         cancelRequested = false
++        cancellationFlag.reset()
+         isExporting = true
+         progress = 0
++        event?(.preparing)
+         defer { isExporting = false }
+         let resolver = liveResolver.snapshot()
+         if acquireSlot {
+@@ -109,8 +137,17 @@ final class ExportService {
+                 ]
+             )
+             do {
++                event?(.exporting)
+                 if format == .xml {
+-                    try XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
++                    let cancellationFlag = cancellationFlag
++                    try await Task.detached(priority: .userInitiated) {
++                        try XMLExporter.export(
++                            timeline: timeline,
++                            resolver: resolver,
++                            outputURL: outputURL,
++                            isCancelled: { cancellationFlag.isCancelled }
++                        )
++                    }.value
+                 } else {
+                     lastFCPXMLReport = try await FCPXMLExporter.export(
+                         timeline: timeline,
+@@ -119,11 +156,16 @@ final class ExportService {
+                         version: fcpxmlVersion,
+                         target: fcpxmlTarget,
+                         outputURL: outputURL,
++                        publishedOutputURL: referenceOutputURL,
+                         isCancelled: { [weak self] in self?.cancelRequested ?? true },
+-                        progress: { [weak self] value in self?.progress = value }
++                        progress: { [weak self] value in
++                            self?.progress = value
++                            event?(.progress(value))
++                        }
+                     )
+                 }
+                 progress = 1.0
++                event?(.progress(1.0))
+                 var evidence: [String: Any] = ["format": formatName]
+                 if let report = lastFCPXMLReport {
+                     evidence["version"] = report.version.rawValue
+@@ -168,11 +210,14 @@ final class ExportService {
+         )
+ 
+         do {
++            if cancelRequested { throw CancellationError() }
+             try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
++            if cancelRequested { throw CancellationError() }
+             let prepared = try await makeExportSession(
+                 timeline: timeline, resolver: resolver,
+                 format: format, resolution: resolution
+             )
++            if cancelRequested { throw CancellationError() }
+             if styleReview != nil {
+                 guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
+                     throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
+@@ -188,11 +233,15 @@ final class ExportService {
+             try? FileManager.default.removeItem(at: outputURL)
+ 
+             nonisolated(unsafe) let unsafeSession = session
++            event?(.exporting)
+             let progressTask = Task { @MainActor in
+                 while !Task.isCancelled {
+                     try? await Task.sleep(for: .milliseconds(200))
+                     let p = Double(unsafeSession.progress)
+-                    if p != self.progress { self.progress = p }
++                    if p != self.progress {
++                        self.progress = p
++                        event?(.progress(p))
++                    }
+                 }
+             }
+ 
+@@ -206,6 +255,7 @@ final class ExportService {
+                     unprocessableMediaRefs: prepared.result.unprocessableMediaRefs
+                 )
+                 progress = 1.0
++                event?(.progress(1.0))
+                 Log.export.notice(
+                     "export ok",
+                     telemetry: "Export finished",
+@@ -260,12 +310,16 @@ final class ExportService {
+         generationLog: GenerationLog,
+         sourceProjectURL: URL?,
+         outputURL: URL,
+-        acquireSlot: Bool = true
++        acquireSlot: Bool = true,
++        event: (@MainActor @Sendable (Event) -> Void)? = nil
+     ) async -> ProjectPackageExporter.Report? {
+         isExporting = true
+         progress = 0
+         error = nil
+         lastReport = nil
++        cancelRequested = false
++        cancellationFlag.reset()
++        event?(.preparing)
+         defer { isExporting = false }
+ 
+         if acquireSlot {
+@@ -274,6 +328,8 @@ final class ExportService {
+         defer { if acquireSlot { ExportCoordinator.endExport() } }
+ 
+         do {
++            event?(.exporting)
++            let cancellationFlag = cancellationFlag
+             Log.export.notice(
+                 "ngv export start url=\(outputURL.lastPathComponent)",
+                 telemetry: "NexGenVideo project export started",
+@@ -288,10 +344,17 @@ final class ExportService {
+                 try ProjectPackageExporter.export(
+                     timeline: timeline, manifest: manifest, generationLog: generationLog,
+                     sourceProjectURL: sourceProjectURL, to: outputURL,
+-                    progress: { p in Task { @MainActor in self.progress = p } }
++                    isCancelled: { cancellationFlag.isCancelled },
++                    progress: { p in
++                        Task { @MainActor in
++                            self.progress = p
++                            event?(.progress(p))
++                        }
++                    }
+                 )
+             }.value
+             progress = 1.0
++            event?(.progress(1.0))
+             Log.export.notice(
+                 "ngv export ok collected=\(report.collected.count) missing=\(report.missing.count)",
+                 telemetry: "NexGenVideo project export finished",
+@@ -386,4 +449,5 @@ final class ExportService {
+ 
+     private var activeExportSession: AVAssetExportSession?
+     private var cancelRequested = false
++    private let cancellationFlag = ExportCancellationFlag()
+ }
+diff --git a/Sources/NexGenVideo/Export/ExportView.swift b/Sources/NexGenVideo/Export/ExportView.swift
+index 3cf9d073..3378424f 100644
+--- a/Sources/NexGenVideo/Export/ExportView.swift
++++ b/Sources/NexGenVideo/Export/ExportView.swift
+@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
+ 
+ struct ExportView: View {
+     @Environment(EditorViewModel.self) var editor
+-    @State private var service = ExportService()
++    @State private var queue = ExportQueue.shared
+     @State private var mode: ExportMode = .video
+     @State private var codec: VideoCodec = .h264
+     @State private var resolution: ExportResolution = .matchTimeline
+@@ -15,6 +15,8 @@ struct ExportView: View {
+     @State private var requireSequenceReview = false
+     @State private var preparingDelivery = false
+     @State private var preview: NSImage?
++    @State private var selectedJobID: String?
++    @State private var exportError: String?
+     @State private var ngvResult: String?
+     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
+ 
+@@ -38,6 +40,11 @@ struct ExportView: View {
+         .task {
+             loadPreview()
+             ngvSummary = computeNGVSummary()
++            let recovered = queue.loadPersistedDeliveryJobs(
++                ownerKey: editor.openWorkingCopyKey,
++                dataRoot: editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
++            )
++            if recovered { editor.onPipelineChanged?() }
+         }
+     }
+ 
+@@ -77,7 +84,8 @@ struct ExportView: View {
+         VStack(spacing: AppTheme.Spacing.none) {
+             panelHeader("Export")
+ 
+-            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
++            ScrollView {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+             // Settings rows
+             VStack(spacing: AppTheme.Spacing.none) {
+                 settingRow(label: "Format") {
+@@ -209,12 +217,23 @@ struct ExportView: View {
+                 }
+             }
+ 
+-            // Progress
+-            if service.isExporting {
++            if !projectJobs.isEmpty {
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++                    Text("Queue")
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
++                        .foregroundStyle(AppTheme.Text.secondaryColor)
++                    ForEach(projectJobs) { job in
++                        exportJobRow(job)
++                    }
++                }
++                .padding(.top, AppTheme.Spacing.md)
++            }
++
++            if let job = activeJob {
+                 VStack(spacing: AppTheme.Spacing.xs) {
+-                    ProgressView(value: service.progress)
++                    ProgressView(value: job.progress)
+                         .progressViewStyle(.linear)
+-                    Text("\(Int(service.progress * 100))%")
++                    Text("\(job.detail) · \(Int(job.progress * 100))%")
+                         .interfaceFont(size: AppTheme.Typography.ui)
+                         .monospacedDigit()
+                         .foregroundStyle(AppTheme.Text.secondaryColor)
+@@ -222,7 +241,7 @@ struct ExportView: View {
+                 .padding(.top, AppTheme.Spacing.md)
+             }
+ 
+-            if let error = service.error {
++            if let error = exportError ?? selectedJob?.failure {
+                 Text(error)
+                     .interfaceFont(size: AppTheme.Typography.ui)
+                     .foregroundStyle(AppTheme.Status.errorColor)
+@@ -236,7 +255,16 @@ struct ExportView: View {
+                     .padding(.top, AppTheme.Spacing.sm)
+             }
+ 
+-            if let report = service.lastFCPXMLReport {
++            if selectedJob?.fcpxmlReport == nil {
++                ForEach(Array((selectedJob?.warnings ?? []).enumerated()), id: \.offset) { _, warning in
++                    Text(warning)
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Status.warningColor)
++                        .padding(.top, AppTheme.Spacing.sm)
++                }
++            }
++
++            if let report = selectedJob?.fcpxmlReport {
+                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                     Text("Validated Apple DTD · FCPXML \(report.version.rawValue) · \(ByteCountFormatter.string(fromByteCount: report.outputByteCount, countStyle: .file))")
+                         .interfaceFont(size: AppTheme.Typography.ui)
+@@ -261,9 +289,10 @@ struct ExportView: View {
+                 .padding(.top, AppTheme.Spacing.sm)
+             }
+ 
+-            Spacer()
++                Spacer()
++                }
++                .padding(AppTheme.Spacing.xl)
+             }
+-            .padding(AppTheme.Spacing.xl)
+         }
+     }
+ 
+@@ -299,24 +328,123 @@ struct ExportView: View {
+ 
+             Spacer()
+ 
+-            Button(service.isExporting ? "Cancel Export" : "Cancel") {
+-                if service.isExporting {
+-                    service.cancel()
++            Button(activeJob?.status == .cancelling ? "Cancelling" : (activeJob != nil ? "Cancel Export" : "Cancel")) {
++                if let activeJob {
++                    queue.cancel(jobID: activeJob.id)
+                 } else {
+                     editor.showExportDialog = false
+                 }
+             }
+-                .keyboardShortcut(.cancelAction)
++            .buttonStyle(.capsule(.secondary, size: .regular))
++            .disabled(activeJob?.status == .cancelling)
++            .keyboardShortcut(.cancelAction)
+             Button("Export") { startExport() }
+                 .buttonStyle(.glassProminent)
+                 .buttonBorderShape(.capsule)
+-                .disabled(service.isExporting || preparingDelivery)
++                .disabled(preparingDelivery)
+                 .keyboardShortcut(.defaultAction)
+         }
+         .padding(.horizontal, AppTheme.Spacing.xl)
+         .padding(.vertical, AppTheme.Spacing.lg)
+     }
+ 
++    private var projectJobs: [ExportJob] {
++        let jobs = queue.jobs(ownerKey: editor.openWorkingCopyKey)
++        guard let activeJob = queue.activeJob(ownerKey: editor.openWorkingCopyKey),
++              !jobs.prefix(4).contains(where: { $0.id == activeJob.id }) else {
++            return Array(jobs.prefix(4))
++        }
++        return [activeJob] + Array(jobs.filter { $0.id != activeJob.id }.prefix(3))
++    }
++
++    private var selectedJob: ExportJob? {
++        if let selectedJobID,
++           let selected = projectJobs.first(where: { $0.id == selectedJobID }) {
++            return selected
++        }
++        return projectJobs.first
++    }
++
++    private var activeJob: ExportJob? {
++        queue.activeJob(ownerKey: editor.openWorkingCopyKey)
++    }
++
++    private func exportJobRow(_ job: ExportJob) -> some View {
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Image(systemName: statusSymbol(job.status))
++                    .foregroundStyle(statusColor(job.status))
++                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
++                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
++                    Text(job.title)
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                        .lineLimit(1)
++                    Text("\(job.detail) · \(job.id.prefix(8))")
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(AppTheme.Text.tertiaryColor)
++                }
++                Spacer()
++            }
++
++            HStack(spacing: AppTheme.Spacing.sm) {
++                Button("Cancel") { queue.cancel(jobID: job.id) }
++                    .disabled(!job.canCancel)
++                Button("Retry") {
++                    do {
++                        let retry = try queue.retry(jobID: job.id)
++                        selectedJobID = retry.id
++                        exportError = nil
++                    } catch {
++                        exportError = error.localizedDescription
++                    }
++                }
++                .disabled(!queue.canRetry(jobID: job.id))
++                Button("Reveal") {
++                    if let url = job.destinationURL {
++                        NSWorkspace.shared.activateFileViewerSelecting([url])
++                    }
++                }
++                .disabled(!job.canReveal)
++                Spacer()
++            }
++            .buttonStyle(.capsule(.secondary, size: .small))
++        }
++        .padding(AppTheme.Spacing.sm)
++        .background(
++            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
++                .fill(
++                    selectedJob?.id == job.id
++                        ? AppTheme.Background.prominentColor
++                        : AppTheme.Background.raisedColor
++                )
++        )
++        .contentShape(Rectangle())
++        .onTapGesture { selectedJobID = job.id }
++    }
++
++    private func statusSymbol(_ status: ExportJobStatus) -> String {
++        switch status {
++        case .pending: "clock"
++        case .preparing: "gearshape"
++        case .exporting: "arrow.up.circle"
++        case .cancelling: "xmark.circle"
++        case .completed: "checkmark.circle.fill"
++        case .failed: "exclamationmark.triangle.fill"
++        case .cancelled: "xmark.circle.fill"
++        case .interrupted: "pause.circle.fill"
++        }
++    }
++
++    private func statusColor(_ status: ExportJobStatus) -> Color {
++        switch status {
++        case .completed: AppTheme.Status.successColor
++        case .failed: AppTheme.Status.errorColor
++        case .cancelled, .interrupted: AppTheme.Status.warningColor
++        case .pending, .preparing, .exporting, .cancelling: AppTheme.Text.secondaryColor
++        }
++    }
++
+     // MARK: - Helpers
+ 
+     private func settingRow<Control: View>(label: String, @ViewBuilder control: () -> Control) -> some View {
+@@ -406,24 +534,24 @@ struct ExportView: View {
+         panel.begin { response in
+             guard response == .OK, let url = panel.url else { return }
+             Task {
+-                if mode == .xml || mode == .fcpxml {
+-                    await service.export(
+-                        timeline: editor.timeline,
+-                        resolver: editor.mediaResolver,
+-                        format: format,
+-                        resolution: resolution,
+-                        outputURL: url,
+-                        projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+-                        fcpxmlVersion: fcpxmlVersion,
+-                        fcpxmlTarget: fcpxmlTarget
+-                    )
+-                    if mode == .xml, service.error == nil { editor.showExportDialog = false }
+-                    return
+-                }
+                 preparingDelivery = true
+-                service.error = nil
++                exportError = nil
+                 ngvResult = nil
++                defer { preparingDelivery = false }
+                 do {
++                    if mode == .xml || mode == .fcpxml {
++                        let job = try queue.enqueueInterchange(
++                            editor: editor,
++                            format: format,
++                            outputURL: url,
++                            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
++                            fcpxmlVersion: fcpxmlVersion,
++                            fcpxmlTarget: fcpxmlTarget
++                        )
++                        selectedJobID = job.id
++                        ngvResult = "Queued · \(job.id.prefix(8))"
++                        return
++                    }
+                     _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+                         editor: editor,
+                         requireSequenceReview: requireSequenceReview
+@@ -437,22 +565,17 @@ struct ExportView: View {
+                         resolution: resolution,
+                         requireSequenceReview: requireSequenceReview
+                     )
+-                    preparingDelivery = false
+-                    let attempt = try await PipelineDeliveryStore.export(
++                    let job = try queue.enqueueDelivery(
+                         editor: editor,
+                         spec: spec,
+                         format: format,
+                         resolution: resolution,
+-                        outputURL: url,
+-                        service: service
++                        outputURL: url
+                     )
+-                    let outputSize = attempt.outputByteCount.map {
+-                        ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+-                    } ?? "exported"
+-                    ngvResult = "QC passed · \(outputSize) · \(attempt.id.prefix(8))"
++                    selectedJobID = job.id
++                    ngvResult = "Queued · \(job.id.prefix(8))"
+                 } catch {
+-                    preparingDelivery = false
+-                    service.error = error.localizedDescription
++                    exportError = error.localizedDescription
+                 }
+             }
+         }
+@@ -460,6 +583,7 @@ struct ExportView: View {
+ 
+     private func startNGVExport() {
+         ngvResult = nil
++        exportError = nil
+         let panel = NSSavePanel()
+         panel.allowedContentTypes = [UTType(Project.typeIdentifier) ?? .package]
+         let base = editor.projectURL?.deletingPathExtension().lastPathComponent ?? Project.defaultProjectName
+@@ -468,20 +592,17 @@ struct ExportView: View {
+         panel.begin { response in
+             guard response == .OK, let url = panel.url else { return }
+             Task {
+-                let report = await service.exportProjectPackage(
+-                    timeline: editor.timeline,
+-                    manifest: editor.mediaManifest,
+-                    generationLog: editor.generationLog,
+-                    sourceProjectURL: editor.workingRoot,
+-                    outputURL: url
+-                )
+-                guard let report, service.error == nil else { return }
+-                if report.missing.isEmpty {
+-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+-                    editor.showExportDialog = false
+-                } else {
+-                    // Keep the dialog open so the user sees what couldn't be included.
+-                    ngvResult = "Exported, but \(report.missing.count) media file\(report.missing.count == 1 ? "" : "s") were missing and couldn't be included."
++                preparingDelivery = true
++                defer { preparingDelivery = false }
++                do {
++                    let job = try queue.enqueueProjectPackage(
++                        editor: editor,
++                        outputURL: url
++                    )
++                    selectedJobID = job.id
++                    ngvResult = "Queued · \(job.id.prefix(8))"
++                } catch {
++                    exportError = error.localizedDescription
+                 }
+             }
+         }
+diff --git a/Sources/NexGenVideo/Export/FCPXMLExporter.swift b/Sources/NexGenVideo/Export/FCPXMLExporter.swift
+index 496a9415..944598ed 100644
+--- a/Sources/NexGenVideo/Export/FCPXMLExporter.swift
++++ b/Sources/NexGenVideo/Export/FCPXMLExporter.swift
+@@ -91,6 +91,7 @@ enum FCPXMLExporter {
+         version: FCPXMLVersion = .default,
+         target: FCPXMLTarget = .default,
+         outputURL: URL,
++        publishedOutputURL: URL? = nil,
+         isCancelled: @escaping @MainActor @Sendable () -> Bool = { Task.isCancelled },
+         progress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }
+     ) async throws -> FCPXMLExportReport {
+@@ -121,6 +122,12 @@ enum FCPXMLExporter {
+                 isCancelled: isCancelled,
+                 progress: { value in progress(0.45 + value * 0.35) }
+             )
++            let publishedMediaDirectory = mediaDirectory(
++                for: publishedOutputURL ?? outputURL
++            )
++            let emittedRelinkURLs = staged.urls.mapValues {
++                publishedMediaDirectory.appendingPathComponent($0.lastPathComponent)
++            }
+             let document = try render(
+                 timeline: timeline,
+                 resolver: resolver,
+@@ -130,6 +137,7 @@ enum FCPXMLExporter {
+                 sourceTimecodes: timing.compactMapValues(\.timecode),
+                 sourceDurations: timing.compactMapValues(\.duration),
+                 relinkURLs: staged.urls,
++                emittedRelinkURLs: emittedRelinkURLs,
+                 mediaSHA256: evidence.sha256,
+                 mediaByteCounts: evidence.byteCounts
+             )
+@@ -299,10 +307,7 @@ enum FCPXMLExporter {
+             )
+         }
+ 
+-        let directory = outputURL.deletingLastPathComponent().appendingPathComponent(
+-            "\(outputURL.deletingPathExtension().lastPathComponent) Media",
+-            isDirectory: true
+-        )
++        let directory = mediaDirectory(for: outputURL)
+         let directoryExisted = FileManager.default.fileExists(atPath: directory.path)
+         do {
+             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+@@ -409,7 +414,11 @@ enum FCPXMLExporter {
+ 
+                 let temporary = directory.appendingPathComponent(".fcpxml-\(UUID().uuidString).tmp")
+                 defer { try? FileManager.default.removeItem(at: temporary) }
+-                try FileManager.default.copyItem(at: source, to: temporary)
++                try await copyFile(
++                    from: source,
++                    to: temporary,
++                    isCancelled: isCancelled
++                )
+                 try await checkCancellation(isCancelled)
+                 if FileManager.default.fileExists(atPath: destination.path) {
+                     _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+@@ -539,6 +548,32 @@ enum FCPXMLExporter {
+         return .init(sha256: digests, byteCounts: byteCounts)
+     }
+ 
++    private static func copyFile(
++        from source: URL,
++        to destination: URL,
++        isCancelled: @escaping @MainActor @Sendable () -> Bool
++    ) async throws {
++        guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
++            throw ExportError.xmlWriteFailed(
++                destination: destination,
++                reason: "The staged media file could not be created."
++            )
++        }
++        let reader = try FileHandle(forReadingFrom: source)
++        defer { try? reader.close() }
++        let writer = try FileHandle(forWritingTo: destination)
++        defer { try? writer.close() }
++        while true {
++            try await checkCancellation(isCancelled)
++            guard let data = try reader.read(upToCount: 1_048_576), !data.isEmpty else {
++                break
++            }
++            try writer.write(contentsOf: data)
++            await Task.yield()
++        }
++        try await checkCancellation(isCancelled)
++    }
++
+     private static func cleanup(_ staged: StagedMedia) {
+         for url in staged.createdFiles { try? FileManager.default.removeItem(at: url) }
+         if let directory = staged.createdDirectory,
+@@ -547,6 +582,13 @@ enum FCPXMLExporter {
+         }
+     }
+ 
++    static func mediaDirectory(for outputURL: URL) -> URL {
++        outputURL.deletingLastPathComponent().appendingPathComponent(
++            "\(outputURL.deletingPathExtension().lastPathComponent) Media",
++            isDirectory: true
++        )
++    }
++
+     static func render(
+         timeline: Timeline,
+         resolver: MediaResolver,
+@@ -556,9 +598,13 @@ enum FCPXMLExporter {
+         sourceTimecodes: [String: SourceTimecode] = [:],
+         sourceDurations: [String: RationalSeconds] = [:],
+         relinkURLs: [String: URL] = [:],
++        emittedRelinkURLs: [String: URL] = [:],
+         mediaSHA256: [String: String] = [:],
+         mediaByteCounts: [String: Int64] = [:]
+     ) throws -> RenderedDocument {
++        let outputRelinkURLs = emittedRelinkURLs.isEmpty
++            ? relinkURLs
++            : emittedRelinkURLs
+         let built = try Builder(
+             timeline: timeline,
+             resolver: resolver,
+@@ -568,6 +614,7 @@ enum FCPXMLExporter {
+             sourceTimecodes: sourceTimecodes,
+             sourceDurations: sourceDurations,
+             relinkURLs: relinkURLs,
++            emittedRelinkURLs: outputRelinkURLs,
+             mediaSHA256: mediaSHA256,
+             mediaByteCounts: mediaByteCounts
+         ).build()
+@@ -592,6 +639,7 @@ enum FCPXMLExporter {
+         private let sourceTimecodes: [String: SourceTimecode]
+         private let sourceDurations: [String: RationalSeconds]
+         private let relinkURLs: [String: URL]
++        private let emittedRelinkURLs: [String: URL]
+         private let mediaSHA256: [String: String]
+         private let mediaByteCounts: [String: Int64]
+         private let fps: Int
+@@ -644,6 +692,7 @@ enum FCPXMLExporter {
+             sourceTimecodes: [String: SourceTimecode],
+             sourceDurations: [String: RationalSeconds],
+             relinkURLs: [String: URL],
++            emittedRelinkURLs: [String: URL],
+             mediaSHA256: [String: String],
+             mediaByteCounts: [String: Int64]
+         ) {
+@@ -655,6 +704,7 @@ enum FCPXMLExporter {
+             self.sourceTimecodes = sourceTimecodes
+             self.sourceDurations = sourceDurations
+             self.relinkURLs = relinkURLs
++            self.emittedRelinkURLs = emittedRelinkURLs
+             self.mediaSHA256 = mediaSHA256
+             self.mediaByteCounts = mediaByteCounts
+             fps = max(1, timeline.fps)
+@@ -1299,19 +1349,22 @@ enum FCPXMLExporter {
+                         reason: "Media \"\(originalFilename)\" has no finite, representable duration."
+                     )
+                 }
+-                let mediaURL = relinkURLs[identity] ?? resolvedURL
++                let evidenceURL = relinkURLs[identity] ?? resolvedURL
++                let mediaURL = emittedRelinkURLs[identity]
++                    ?? resolver.interchangeURL(for: preferredRef)
++                    ?? resolvedURL
+                 let values: URLResourceValues
+                 let mediaDigest: String
+                 do {
+-                    values = try mediaURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
++                    values = try evidenceURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                     guard values.isRegularFile == true, values.fileSize != nil else {
+-                        throw ExportError.xmlMediaReadFailed(source: mediaURL, reason: "The media is not a regular file.")
++                        throw ExportError.xmlMediaReadFailed(source: evidenceURL, reason: "The media is not a regular file.")
+                     }
+-                    mediaDigest = try mediaSHA256[identity] ?? FileDigest.sha256(of: mediaURL)
++                    mediaDigest = try mediaSHA256[identity] ?? FileDigest.sha256(of: evidenceURL)
+                 } catch let error as ExportError {
+                     throw error
+                 } catch {
+-                    throw ExportError.xmlMediaReadFailed(source: mediaURL, reason: error.localizedDescription)
++                    throw ExportError.xmlMediaReadFailed(source: evidenceURL, reason: error.localizedDescription)
+                 }
+                 let resource = MediaResource(
+                     mediaRefs: mediaRefs,
+diff --git a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+index 1c12bf91..4f07d830 100644
+--- a/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
++++ b/Sources/NexGenVideo/Export/PipelineDeliveryStore.swift
+@@ -1,16 +1,28 @@
+ import AVFoundation
+ import CoreMedia
++import CryptoKit
+ import Foundation
+ import NexGenEngine
+ 
+ enum PipelineDeliveryStore {
+-    struct FinishedState {
++    struct FinishedState: Sendable {
+         let plan: FinishPlanV1
+         let planData: Data
+         let manifest: FinishedTimelineManifestV1
+         let manifestData: Data
+     }
+ 
++    struct OutputEvidence {
++        let sha256: String
++        let byteCount: Int64
++        let probeQC: DeliveryProbeQCV1
++    }
++
++    struct FinishResult {
++        let attempt: DeliveryAttemptV1
++        let selectionWarning: String?
++    }
++
+     static let selectionPath = "delivery/selection.v1.json"
+     private static let attemptsDirectory = "delivery/attempts"
+     private static let jobsDirectory = "delivery/jobs"
+@@ -266,34 +278,132 @@ enum PipelineDeliveryStore {
+         return spec
+     }
+ 
+-    @MainActor
+-    static func export(
+-        editor: EditorViewModel,
++    static func requireBoundFinished(
++        dataRoot: URL,
++        finished: FinishedState,
++        timeline: Timeline,
++        resolver: MediaResolver,
++        isCancelled: @Sendable () -> Bool = { false }
++    ) throws {
++        if isCancelled() { throw CancellationError() }
++        let timelineData = try PipelineAssemblyStore.canonical(timeline)
++        let timelineSHA256 = FileDigest.sha256(of: timelineData)
++        try DeliveryValidatorV1.validate(
++            manifest: finished.manifest,
++            plan: finished.plan,
++            planSHA256: FileDigest.sha256(of: finished.planData),
++            currentTimelineSHA256: timelineSHA256
++        )
++        guard finished.manifestData == (try PipelineAssemblyStore.canonical(finished.manifest)),
++              finished.planData == (try PipelineAssemblyStore.canonical(finished.plan)) else {
++            throw ToolError("The bound delivery evidence is not canonical.")
++        }
++        let frozenTimeline = try ProjectLocalFile.requireHash(
++            finished.manifest.timelineSHA256,
++            at: finished.manifest.timelinePath,
++            dataRoot: dataRoot
++        )
++        guard try Data(contentsOf: frozenTimeline) == timelineData else {
++            throw ToolError("The bound finished timeline snapshot changed.")
++        }
++        let mediaProofs = try currentMediaProofs(
++            timeline: timeline,
++            resolver: resolver,
++            isCancelled: isCancelled
++        )
++        guard mediaProofs == finished.manifest.media else {
++            throw ToolError("The bound delivery media changed or was substituted.")
++        }
++        for operation in finished.plan.operations {
++            if isCancelled() { throw CancellationError() }
++            _ = try ProjectLocalFile.requireHash(
++                operation.settingsSHA256,
++                at: operation.settingsPath,
++                dataRoot: dataRoot
++            )
++            _ = try ProjectLocalFile.requireHash(
++                operation.outputSHA256,
++                at: operation.outputPath,
++                dataRoot: dataRoot
++            )
++        }
++        if let assemblySHA256 = finished.plan.assemblyManifestSHA256 {
++            if isCancelled() { throw CancellationError() }
++            _ = try ProjectLocalFile.requireHash(
++                assemblySHA256,
++                at: AssemblyManifestV1.relativePath,
++                dataRoot: dataRoot
++            )
++        }
++        if let sequenceReviewSHA256 = finished.plan.sequenceReviewSHA256 {
++            if isCancelled() { throw CancellationError() }
++            _ = try ProjectLocalFile.requireHash(
++                sequenceReviewSHA256,
++                at: SequenceReviewV1.relativePath,
++                dataRoot: dataRoot
++            )
++        }
++    }
++
++    static func extensionFiles(
++        for spec: DeliverySpecV1,
++        dataRoot: URL
++    ) throws -> [(path: String, url: URL)] {
++        try validateSupportedSpec(spec)
++        return try spec.extensionRefs.map { path in
++            let url = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
++            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
++            guard values.isRegularFile == true else {
++                throw ToolError("A required delivery extension is missing: \(path)")
++            }
++            return (path, url)
++        }
++    }
++
++    static func enqueueAttempt(
++        id: String,
++        dataRoot: URL,
++        finished: FinishedState,
+         spec: DeliverySpecV1,
+         format: ExportFormat,
+         resolution: ExportResolution,
+         outputURL: URL,
+-        service: ExportService
+-    ) async throws -> DeliveryAttemptV1 {
+-        guard let home = editor.workingRoot,
+-              let dataRoot = DataRootResolver.dataRoot(of: home) else {
+-            throw ToolError("Open a project before exporting a delivery.")
++        timeline: Timeline,
++        resolver: MediaResolver
++    ) throws -> DeliveryAttemptV1 {
++        try safeID(id)
++        let currentURL = dataRoot.appendingPathComponent(
++            "\(jobsDirectory)/\(id)/current.v1.json"
++        )
++        let attemptURL = dataRoot.appendingPathComponent(
++            "\(attemptsDirectory)/\(id).v1.json"
++        )
++        guard !FileManager.default.fileExists(atPath: currentURL.path),
++              !FileManager.default.fileExists(atPath: attemptURL.path) else {
++            throw ToolError("A delivery job with this ID already exists in project history.")
+         }
+-        try recoverInterruptedJobs(dataRoot: dataRoot)
+         try validateSupportedSpec(spec)
+         guard outputURL.pathExtension.lowercased() == spec.container else {
+             throw ToolError("The delivery filename extension does not match the delivery container.")
+         }
+-        for path in spec.extensionRefs {
+-            let extensionURL = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+-            let values = try extensionURL.resourceValues(forKeys: [.isRegularFileKey])
+-            guard values.isRegularFile == true else {
+-                throw ToolError("A required delivery extension is missing: \(path)")
+-            }
++        _ = try extensionFiles(for: spec, dataRoot: dataRoot)
++        let outputSize = resolution.renderSize(for: CGSize(
++            width: timeline.width,
++            height: timeline.height
++        ))
++        guard spec.videoCodec == codecID(format),
++              spec.container == (format == .prores ? "mov" : "mp4"),
++              spec.width == Int(outputSize.width),
++              spec.height == Int(outputSize.height),
++              spec.fpsNumerator == timeline.fps,
++              spec.fpsDenominator == 1 else {
++            throw ToolError("The delivery spec does not match the bound timeline.")
+         }
+-        let finished = try requireCurrentFinished(
++        try requireBoundFinished(
+             dataRoot: dataRoot,
+-            timeline: editor.timeline
++            finished: finished,
++            timeline: timeline,
++            resolver: resolver
+         )
+         let requiresReview = spec.requirements.contains {
+             $0.id == "core.sequence-review" && $0.required
+@@ -301,124 +411,179 @@ enum PipelineDeliveryStore {
+         guard !requiresReview || finished.plan.sequenceReviewSHA256 != nil else {
+             throw ToolError("This delivery spec requires a current sequence review.")
+         }
+-        guard spec.videoCodec == codecID(format),
+-              spec.container == (format == .prores ? "mov" : "mp4"),
+-              spec.width == Int(resolution.renderSize(for: CGSize(
+-                  width: editor.timeline.width,
+-                  height: editor.timeline.height
+-              )).width),
+-              spec.height == Int(resolution.renderSize(for: CGSize(
+-                  width: editor.timeline.width,
+-                  height: editor.timeline.height
+-              )).height),
+-              spec.fpsNumerator == editor.timeline.fps,
+-              spec.fpsDenominator == 1 else {
+-            throw ToolError("The delivery spec does not match the selected export settings.")
+-        }
+-        let id = UUID().uuidString.lowercased()
+-        let createdAt = currentTimestamp()
+-        let base = DeliveryAttemptV1(
++        let attempt = DeliveryAttemptV1(
+             id: id,
+             spec: spec,
+             finishedTimelineSHA256: finished.manifest.timelineSHA256,
+             sequenceReviewSHA256: finished.plan.sequenceReviewSHA256,
+             status: .queued,
+-            createdAt: createdAt
++            outputPath: outputURL.path,
++            createdAt: currentTimestamp()
+         )
+-        try record(base, dataRoot: dataRoot, terminal: false)
+-        let running = copy(base, status: .running)
++        try record(attempt, dataRoot: dataRoot, terminal: false)
++        return attempt
++    }
++
++    static func markRunning(
++        _ attempt: DeliveryAttemptV1,
++        dataRoot: URL
++    ) throws -> DeliveryAttemptV1 {
++        let running = copy(attempt, status: .running)
+         try record(running, dataRoot: dataRoot, terminal: false)
++        return running
++    }
+ 
+-        await withTaskCancellationHandler {
+-            await service.export(
+-                timeline: editor.timeline,
+-                resolver: editor.mediaResolver,
+-                format: format,
+-                resolution: resolution,
+-                outputURL: outputURL
+-            )
+-        } onCancel: {
+-            Task { @MainActor in service.cancel() }
++    static func finishUnsuccessful(
++        _ attempt: DeliveryAttemptV1,
++        status: DeliveryJobStatusV1,
++        reason: String,
++        dataRoot: URL
++    ) throws -> DeliveryAttemptV1 {
++        guard [.failed, .cancelled, .interrupted].contains(status) else {
++            throw ToolError("Invalid unsuccessful delivery status.")
++        }
++        let terminal = copy(
++            attempt,
++            status: status,
++            failures: [reason],
++            completedAt: currentTimestamp()
++        )
++        try record(terminal, dataRoot: dataRoot, terminal: true)
++        return terminal
++    }
++
++    static func finishSuccessful(
++        _ attempt: DeliveryAttemptV1,
++        dataRoot: URL,
++        finished: FinishedState,
++        outputURL: URL,
++        evidence: OutputEvidence,
++        selectIfCurrent: Bool
++    ) throws -> FinishResult {
++        guard try FileDigest.sha256(of: outputURL) == evidence.sha256 else {
++            throw ToolError("The published delivery bytes do not match the verified export.")
++        }
++        let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
++        guard values.isRegularFile == true,
++              values.fileSize == Int(evidence.byteCount) else {
++            throw ToolError("The published delivery size changed before its receipt was recorded.")
++        }
++        let succeeded = copy(
++            attempt,
++            status: .succeeded,
++            outputPath: outputURL.path,
++            outputSHA256: evidence.sha256,
++            outputByteCount: evidence.byteCount,
++            probeQC: evidence.probeQC,
++            completedAt: currentTimestamp()
++        )
++        try DeliveryValidatorV1.validateSuccessfulAttempt(
++            succeeded,
++            finishedTimelineSHA256: finished.manifest.timelineSHA256,
++            requiredSequenceReviewSHA256: finished.plan.sequenceReviewSHA256
++        )
++        try record(succeeded, dataRoot: dataRoot, terminal: true)
++        var selectionWarning: String?
++        if selectIfCurrent && isCurrent(finished, dataRoot: dataRoot) {
++            do {
++                try select(succeeded, dataRoot: dataRoot)
++            } catch {
++                selectionWarning = "Delivery completed, but its current selection could not be updated: \(error.localizedDescription)"
++            }
+         }
++        return .init(attempt: succeeded, selectionWarning: selectionWarning)
++    }
+ 
+-        if let error = service.error {
+-            let status: DeliveryJobStatusV1 = error == "Export was cancelled"
+-                ? .cancelled : .failed
+-            let failed = copy(
+-                base,
+-                status: status,
+-                outputPath: outputURL.path,
+-                failures: [error],
+-                completedAt: currentTimestamp()
+-            )
+-            try record(failed, dataRoot: dataRoot, terminal: true)
+-            editor.onPipelineChanged?()
+-            throw ToolError(error)
+-        }
+-        guard let report = service.lastReport,
+-              report.offlineMediaRefs.isEmpty,
+-              report.unprocessableMediaRefs.isEmpty else {
+-            let reason = "Delivery export did not consume every required media source."
+-            let failed = copy(
+-                base,
+-                status: .failed,
+-                outputPath: outputURL.path,
+-                failures: [reason],
+-                completedAt: currentTimestamp()
+-            )
+-            try record(failed, dataRoot: dataRoot, terminal: true)
+-            editor.onPipelineChanged?()
+-            throw ToolError(reason)
++    static func inspectSuccessfulOutput(
++        outputURL: URL,
++        spec: DeliverySpecV1,
++        expectedDurationFrames: Int,
++        isCancelled: @Sendable () -> Bool = { false }
++    ) async throws -> OutputEvidence {
++        let qc = try await probeOutput(
++            outputURL: outputURL,
++            spec: spec,
++            expectedDurationFrames: expectedDurationFrames,
++            isCancelled: isCancelled
++        )
++        if isCancelled() { throw CancellationError() }
++        guard qc.passed else {
++            throw ToolError("The exported bytes do not match the delivery spec.")
++        }
++        let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
++        guard values.isRegularFile == true,
++              let size = values.fileSize,
++              size > 0 else {
++            throw ToolError("The exported delivery is missing or empty.")
++        }
++        return OutputEvidence(
++            sha256: try cancellableSHA256(of: outputURL, isCancelled: isCancelled),
++            byteCount: Int64(size),
++            probeQC: qc
++        )
++    }
++
++    static func listAttempts(dataRoot: URL) throws -> [DeliveryAttemptV1] {
++        let root = dataRoot.appendingPathComponent(attemptsDirectory)
++        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
++        guard root.resolvingSymlinksInPath()
++                == dataRoot.resolvingSymlinksInPath().appendingPathComponent(attemptsDirectory) else {
++            throw ToolError("Delivery attempts cannot traverse symbolic links.")
+         }
+-        let succeeded: DeliveryAttemptV1
+-        do {
+-            let qc = try await probeOutput(
+-                outputURL: outputURL,
+-                spec: spec,
+-                expectedDurationFrames: editor.timeline.totalFrames
+-            )
+-            guard qc.passed else { throw ToolError("The exported bytes do not match the delivery spec.") }
+-            let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+-            guard values.isRegularFile == true,
+-                  let size = values.fileSize,
+-                  size > 0 else {
+-                throw ToolError("The exported delivery is missing or empty.")
+-            }
+-            succeeded = copy(
+-                base,
+-                status: .succeeded,
+-                outputPath: outputURL.path,
+-                outputSHA256: try FileDigest.sha256(of: outputURL),
+-                outputByteCount: Int64(size),
+-                probeQC: qc,
+-                completedAt: currentTimestamp()
+-            )
+-            try DeliveryValidatorV1.validateSuccessfulAttempt(
+-                succeeded,
+-                finishedTimelineSHA256: finished.manifest.timelineSHA256,
+-                requiredSequenceReviewSHA256: finished.plan.sequenceReviewSHA256
+-            )
+-        } catch {
+-            let reason = error.localizedDescription
+-            let failed = copy(
+-                base,
+-                status: .failed,
+-                outputPath: outputURL.path,
+-                failures: [reason],
+-                completedAt: currentTimestamp()
++        return try FileManager.default.contentsOfDirectory(
++            at: root,
++            includingPropertiesForKeys: [.isRegularFileKey]
++        ).filter { $0.pathExtension == "json" }.map { url in
++            let value = try JSONDecoder().decode(
++                DeliveryAttemptV1.self,
++                from: Data(contentsOf: url)
+             )
+-            try record(failed, dataRoot: dataRoot, terminal: true)
+-            editor.onPipelineChanged?()
+-            throw error
++            try DeliveryValidatorV1.validate(attempt: value)
++            return value
++        }.sorted { $0.createdAt > $1.createdAt }
++    }
++
++    @MainActor
++    static func export(
++        editor: EditorViewModel,
++        spec: DeliverySpecV1,
++        format: ExportFormat,
++        resolution: ExportResolution,
++        outputURL: URL,
++        service: ExportService
++    ) async throws -> DeliveryAttemptV1 {
++        guard let home = editor.workingRoot,
++              let dataRoot = DataRootResolver.dataRoot(of: home) else {
++            throw ToolError("Open a project before exporting a delivery.")
+         }
+-        try record(succeeded, dataRoot: dataRoot, terminal: true)
+-        try select(succeeded, dataRoot: dataRoot)
+-        editor.onPipelineChanged?()
+-        return succeeded
++        let job = try ExportQueue.shared.enqueueDelivery(
++            editor: editor,
++            spec: spec,
++            format: format,
++            resolution: resolution,
++            outputURL: outputURL
++        )
++        let completed = await withTaskCancellationHandler {
++            await ExportQueue.shared.waitForCompletion(jobID: job.id)
++        } onCancel: {
++            Task { @MainActor in ExportQueue.shared.cancel(jobID: job.id) }
++        }
++        guard let completed, completed.status == .completed else {
++            let reason = completed?.failure ?? "Export did not complete."
++            service.error = reason
++            throw ToolError(reason)
++        }
++        service.progress = 1
++        return try loadAttempt(id: job.id, dataRoot: dataRoot)
+     }
+ 
+     @discardableResult
+-    static func recoverInterruptedJobs(dataRoot: URL) throws -> Bool {
++    static func recoverInterruptedJobs(
++        dataRoot: URL,
++        excludingIDs: Set<String> = [],
++        willMutate: (() throws -> Void)? = nil,
++        didRecover: ((DeliveryAttemptV1) -> Void)? = nil
++    ) throws -> Bool {
+         let root = dataRoot.appendingPathComponent(jobsDirectory)
+         guard FileManager.default.fileExists(atPath: root.path) else { return false }
+         guard root.resolvingSymlinksInPath()
+@@ -436,7 +601,9 @@ enum PipelineDeliveryStore {
+                 DeliveryAttemptV1.self,
+                 from: Data(contentsOf: currentURL)
+             )
++            guard !excludingIDs.contains(value.id) else { continue }
+             guard [.queued, .running].contains(value.status) else { continue }
++            if !recovered { try willMutate?() }
+             let interrupted = copy(
+                 value,
+                 status: .interrupted,
+@@ -444,6 +611,7 @@ enum PipelineDeliveryStore {
+                 completedAt: currentTimestamp()
+             )
+             try record(interrupted, dataRoot: dataRoot, terminal: true)
++            didRecover?(interrupted)
+             recovered = true
+         }
+         return recovered
+@@ -470,7 +638,8 @@ enum PipelineDeliveryStore {
+ 
+     private static func currentMediaProofs(
+         timeline: Timeline,
+-        resolver: MediaResolver
++        resolver: MediaResolver,
++        isCancelled: @Sendable () -> Bool = { false }
+     ) throws -> [RenderPublishedArtifactV1] {
+         let refs = Set(timeline.tracks.filter { track in
+             !track.hidden && (track.type != .audio || !track.muted)
+@@ -480,6 +649,7 @@ enum PipelineDeliveryStore {
+             }
+         }).sorted()
+         return try refs.map { ref in
++            if isCancelled() { throw CancellationError() }
+             guard let url = resolver.resolveURL(for: ref) else {
+                 throw ToolError("Delivery media is offline: \(resolver.displayName(for: ref))")
+             }
+@@ -490,7 +660,10 @@ enum PipelineDeliveryStore {
+             let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
+             return .init(
+                 path: resolvedURL.path,
+-                sha256: try FileDigest.sha256(of: resolvedURL)
++                sha256: try cancellableSHA256(
++                    of: resolvedURL,
++                    isCancelled: isCancelled
++                )
+             )
+         }
+     }
+@@ -517,21 +690,26 @@ enum PipelineDeliveryStore {
+     static func probeOutput(
+         outputURL: URL,
+         spec: DeliverySpecV1,
+-        expectedDurationFrames: Int
++        expectedDurationFrames: Int,
++        isCancelled: @Sendable () -> Bool = { false }
+     ) async throws -> DeliveryProbeQCV1 {
++        if isCancelled() { throw CancellationError() }
+         let asset = AVURLAsset(url: outputURL)
+         let duration = try await asset.load(.duration)
++        if isCancelled() { throw CancellationError() }
+         guard duration.isNumeric,
+               let videoTrack = try await asset.loadTracks(withMediaType: .video).first,
+               let videoDescription = try await videoTrack.load(.formatDescriptions).first else {
+             throw ToolError("The exported delivery has no playable video track.")
+         }
++        if isCancelled() { throw CancellationError() }
+         let naturalSize = try await videoTrack.load(.naturalSize)
+         let transform = try await videoTrack.load(.preferredTransform)
+         let encodedSize = naturalSize.applying(transform)
+         let nominalFPS = try await videoTrack.load(.nominalFrameRate)
+         let actualCodec = fourCC(CMFormatDescriptionGetMediaSubType(videoDescription))
+         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
++        if isCancelled() { throw CancellationError() }
+         var audioCodec: String?
+         var audioChannels = 0
+         if let audioTrack = audioTracks.first,
+@@ -541,6 +719,7 @@ enum PipelineDeliveryStore {
+                 audioChannels = Int(basic.pointee.mChannelsPerFrame)
+             }
+         }
++        if isCancelled() { throw CancellationError() }
+         let expectedDuration = Double(expectedDurationFrames)
+             / Double(spec.fpsNumerator) * Double(spec.fpsDenominator)
+         let frameTolerance = Double(spec.fpsDenominator) / Double(spec.fpsNumerator)
+@@ -649,6 +828,22 @@ enum PipelineDeliveryStore {
+         try PipelineAssemblyStore.canonical(next).write(to: url, options: .atomic)
+     }
+ 
++    private static func isCurrent(_ finished: FinishedState, dataRoot: URL) -> Bool {
++        guard let planURL = try? ProjectLocalFile.resolve(
++            FinishPlanV1.relativePath,
++            dataRoot: dataRoot
++        ),
++        let manifestURL = try? ProjectLocalFile.resolve(
++            FinishedTimelineManifestV1.relativePath,
++            dataRoot: dataRoot
++        ),
++        let planData = try? Data(contentsOf: planURL),
++        let manifestData = try? Data(contentsOf: manifestURL) else {
++            return false
++        }
++        return planData == finished.planData && manifestData == finished.manifestData
++    }
++
+     private static func copy(
+         _ attempt: DeliveryAttemptV1,
+         status: DeliveryJobStatusV1,
+@@ -695,6 +890,24 @@ enum PipelineDeliveryStore {
+         return String(bytes: bytes, encoding: .ascii) ?? String(value)
+     }
+ 
++    private static func cancellableSHA256(
++        of url: URL,
++        isCancelled: @Sendable () -> Bool
++    ) throws -> String {
++        let handle = try FileHandle(forReadingFrom: url)
++        defer { try? handle.close() }
++        var hasher = SHA256()
++        while true {
++            if isCancelled() { throw CancellationError() }
++            guard let data = try handle.read(upToCount: 1_048_576), !data.isEmpty else {
++                break
++            }
++            hasher.update(data: data)
++        }
++        if isCancelled() { throw CancellationError() }
++        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
++    }
++
+     private static func boundURL(_ path: String, dataRoot: URL) throws -> URL {
+         if path.hasPrefix("/") {
+             let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+diff --git a/Sources/NexGenVideo/Export/ProjectPackageExporter.swift b/Sources/NexGenVideo/Export/ProjectPackageExporter.swift
+index 9ff71784..8c476cd8 100644
+--- a/Sources/NexGenVideo/Export/ProjectPackageExporter.swift
++++ b/Sources/NexGenVideo/Export/ProjectPackageExporter.swift
+@@ -24,8 +24,10 @@ enum ProjectPackageExporter {
+         generationLog: GenerationLog,
+         sourceProjectURL: URL?,
+         to destURL: URL,
++        isCancelled: (@Sendable () -> Bool)? = nil,
+         progress: (@Sendable (Double) -> Void)? = nil
+     ) throws -> Report {
++        if isCancelled?() == true { throw CancellationError() }
+         let fm = FileManager.default
+         let parent = destURL.deletingLastPathComponent()
+         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+@@ -35,7 +37,12 @@ enum ProjectPackageExporter {
+         )
+         defer { try? fm.removeItem(at: staging) }
+         if let sourceProjectURL {
+-            try fm.copyItem(at: sourceProjectURL, to: staging)
++            try copyDirectory(
++                from: sourceProjectURL,
++                to: staging,
++                isCancelled: isCancelled
++            )
++            if isCancelled?() == true { throw CancellationError() }
+             try ProjectWorkingCopy.sanitizePackageStaging(staging, fm: fm)
+         } else {
+             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+@@ -50,6 +57,7 @@ enum ProjectPackageExporter {
+         let total = max(1, manifest.entries.count)
+ 
+         for (index, entry) in manifest.entries.enumerated() {
++            if isCancelled?() == true { throw CancellationError() }
+             defer { progress?(Double(index + 1) / Double(total)) }
+ 
+             guard let srcURL = sourceURL(for: entry.source, projectURL: sourceProjectURL),
+@@ -65,7 +73,7 @@ enum ProjectPackageExporter {
+                 relativePath = existing
+             } else {
+                 let dest = uniqueURL(in: mediaDir, preferredName: filename(for: entry, sourceURL: srcURL), fm: fm)
+-                try fm.copyItem(at: srcURL, to: dest)
++                try copyFile(from: srcURL, to: dest, isCancelled: isCancelled)
+                 relativePath = "\(Project.mediaDirectoryName)/\(dest.lastPathComponent)"
+                 relativePathBySource[key] = relativePath
+                 report.totalBytes += fileSize(dest, fm: fm)
+@@ -86,6 +94,7 @@ enum ProjectPackageExporter {
+         try encoder.encode(newManifest).write(to: staging.appendingPathComponent(Project.manifestFilename))
+         try encoder.encode(generationLog).write(to: staging.appendingPathComponent(Project.generationLogFilename))
+ 
++        if isCancelled?() == true { throw CancellationError() }
+         let sourceKey = ProjectIdentity.existingKey(for: staging)
+         try ProjectIdentity.regenerate(at: staging)
+         guard let exportedKey = ProjectIdentity.existingKey(for: staging),
+@@ -93,12 +102,75 @@ enum ProjectPackageExporter {
+             throw ProjectWorkingCopy.PersistError.identityNotRegenerated
+         }
+ 
++        if isCancelled?() == true { throw CancellationError() }
+         try ProjectWorkingCopy.commitStagedPackage(staging, to: destURL, fm: fm)
+         return report
+     }
+ 
+     // MARK: - Helpers
+ 
++    private static func copyFile(
++        from source: URL,
++        to destination: URL,
++        isCancelled: (@Sendable () -> Bool)?
++    ) throws {
++        let fm = FileManager.default
++        guard fm.createFile(atPath: destination.path, contents: nil) else {
++            throw ToolError("The project export couldn't create a media copy.")
++        }
++        let reader = try FileHandle(forReadingFrom: source)
++        defer { try? reader.close() }
++        let writer = try FileHandle(forWritingTo: destination)
++        defer { try? writer.close() }
++        while true {
++            if isCancelled?() == true { throw CancellationError() }
++            guard let data = try reader.read(upToCount: 1_048_576), !data.isEmpty else {
++                break
++            }
++            try writer.write(contentsOf: data)
++        }
++    }
++
++    private static func copyDirectory(
++        from source: URL,
++        to destination: URL,
++        isCancelled: (@Sendable () -> Bool)?
++    ) throws {
++        let fm = FileManager.default
++        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
++        guard let enumerator = fm.enumerator(
++            at: source,
++            includingPropertiesForKeys: [
++                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
++            ],
++            options: []
++        ) else {
++            throw ToolError("The project source couldn't be enumerated for export.")
++        }
++        for case let item as URL in enumerator {
++            if isCancelled?() == true { throw CancellationError() }
++            let relative = String(item.path.dropFirst(source.path.count + 1))
++            let target = destination.appendingPathComponent(relative)
++            let values = try item.resourceValues(
++                forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
++            )
++            guard values.isSymbolicLink != true else {
++                throw ToolError("The project source contains a symbolic link.")
++            }
++            if values.isDirectory == true {
++                try fm.createDirectory(at: target, withIntermediateDirectories: true)
++            } else if values.isRegularFile == true {
++                try fm.createDirectory(
++                    at: target.deletingLastPathComponent(),
++                    withIntermediateDirectories: true
++                )
++                try copyFile(from: item, to: target, isCancelled: isCancelled)
++            } else {
++                throw ToolError("The project source contains an unsupported file.")
++            }
++        }
++    }
++
+     private static func sourceURL(for source: MediaSource, projectURL: URL?) -> URL? {
+         switch source {
+         case .external(let path):
+diff --git a/Sources/NexGenVideo/Export/XMLExporter.swift b/Sources/NexGenVideo/Export/XMLExporter.swift
+index 80f9a2de..570a54c8 100644
+--- a/Sources/NexGenVideo/Export/XMLExporter.swift
++++ b/Sources/NexGenVideo/Export/XMLExporter.swift
+@@ -52,11 +52,20 @@ enum XMLExporter {
+         }
+     }
+ 
+-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) throws {
++    static func export(
++        timeline: Timeline,
++        resolver: MediaResolver,
++        outputURL: URL,
++        isCancelled: @Sendable () -> Bool = { false }
++    ) throws {
++        if isCancelled() { throw CancellationError() }
+         let xml = Builder(timeline: timeline, resolver: resolver).build()
++        if isCancelled() { throw CancellationError() }
+         let data = try serializedData(xml, target: outputURL)
++        if isCancelled() { throw CancellationError() }
+         do {
+             try data.write(to: outputURL, options: .atomic)
++            if isCancelled() { throw CancellationError() }
+             guard try Data(contentsOf: outputURL) == data else {
+                 throw ExportError.writeFailed(target: outputURL)
+             }
+@@ -256,7 +265,7 @@ enum XMLExporter {
+             emittedFiles.insert(key)
+ 
+             let entry = resolver.entry(for: mediaRef)
+-            let url = resolver.resolveURL(for: mediaRef)
++            let url = resolver.interchangeURL(for: mediaRef)
+             // Resolve matches media by exact filename + extension.
+             let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
+             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.
+diff --git a/Sources/NexGenVideo/Models/MediaResolver.swift b/Sources/NexGenVideo/Models/MediaResolver.swift
+index ddcb29f9..9d1fb9cf 100644
+--- a/Sources/NexGenVideo/Models/MediaResolver.swift
++++ b/Sources/NexGenVideo/Models/MediaResolver.swift
+@@ -4,10 +4,16 @@ import Foundation
+ final class MediaResolver: @unchecked Sendable {
+     private let manifest: () -> MediaManifest
+     private let projectURL: () -> URL?
++    private let urlOverrides: [String: URL]
+ 
+-    init(manifest: @escaping () -> MediaManifest, projectURL: @escaping () -> URL?) {
++    init(
++        manifest: @escaping () -> MediaManifest,
++        projectURL: @escaping () -> URL?,
++        urlOverrides: [String: URL] = [:]
++    ) {
+         self.manifest = manifest
+         self.projectURL = projectURL
++        self.urlOverrides = urlOverrides
+     }
+ 
+     var projectHome: URL? { projectURL() }
+@@ -15,7 +21,21 @@ final class MediaResolver: @unchecked Sendable {
+     func snapshot() -> MediaResolver {
+         let entries = manifest()
+         let home = projectURL()
+-        return MediaResolver(manifest: { entries }, projectURL: { home })
++        return MediaResolver(
++            manifest: { entries },
++            projectURL: { home },
++            urlOverrides: urlOverrides
++        )
++    }
++
++    func snapshot(overriding urls: [String: URL]) -> MediaResolver {
++        let entries = manifest()
++        let home = projectURL()
++        return MediaResolver(
++            manifest: { entries },
++            projectURL: { home },
++            urlOverrides: urls
++        )
+     }
+ 
+     func resolveURL(for assetId: String) -> URL? {
+@@ -24,6 +44,11 @@ final class MediaResolver: @unchecked Sendable {
+     }
+ 
+     func expectedURL(for assetId: String) -> URL? {
++        if let override = urlOverrides[assetId] { return override }
++        return interchangeURL(for: assetId)
++    }
++
++    func interchangeURL(for assetId: String) -> URL? {
+         guard let entry = entry(for: assetId) else { return nil }
+         switch entry.source {
+         case .external(let absolutePath):
+@@ -80,7 +105,7 @@ final class MediaResolver: @unchecked Sendable {
+ 
+     func interchangeFilename(for assetId: String) -> String {
+         guard let entry = entry(for: assetId),
+-              let url = expectedURL(for: assetId) else {
++              let url = interchangeURL(for: assetId) else {
+             return "Offline media"
+         }
+         return MediaFilename.display(
+diff --git a/Tests/NexGenEngineTests/DeliveryV1Tests.swift b/Tests/NexGenEngineTests/DeliveryV1Tests.swift
+index 9be7cf33..49393def 100644
+--- a/Tests/NexGenEngineTests/DeliveryV1Tests.swift
++++ b/Tests/NexGenEngineTests/DeliveryV1Tests.swift
+@@ -52,6 +52,7 @@ struct DeliveryV1Tests {
+             audioLayout: "none", captionMode: "none", disclosureMode: "project-record")
+         let running = DeliveryAttemptV1(id: "attempt-1", spec: spec,
+             finishedTimelineSHA256: hash("finish"), status: .running,
++            outputPath: "/tmp/master.mp4",
+             createdAt: "2026-09-09T00:00:00Z")
+         try DeliveryValidatorV1.validate(attempt: running)
+ 
+diff --git a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+index f5a79f13..bd5964df 100644
+--- a/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ExportProjectToolTests.swift
+@@ -5,6 +5,15 @@ import Testing
+ @Suite("export_project tool", .serialized)
+ @MainActor
+ struct ExportProjectToolTests {
++    private func openProject(_ harness: ToolHarness, name: String = "Project") throws -> URL {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-tool-project-\(UUID().uuidString)", isDirectory: true)
++        let package = root.appendingPathComponent("\(name).ngv", isDirectory: true)
++        try Fixtures.prepareProjectPackage(at: package, timeline: harness.editor.timeline)
++        harness.editor.projectURL = package
++        return root
++    }
++
+     @Test func rejectsInvalidArguments() async {
+         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
+@@ -33,10 +42,16 @@ struct ExportProjectToolTests {
+         #expect(ToolHarness.textOf(emptyTimeline).contains("timeline is empty"))
+     }
+ 
+-    @Test func handlesDestinationsAndExportGate() async throws {
++    @Test func handlesDestinations() async throws {
+         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
+         ]))
++        let base = "export-tool-\(UUID().uuidString)"
++        let projectRoot = try openProject(h, name: base)
++        defer {
++            h.editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: projectRoot)
++        }
+ 
+         let existingVideo = FileManager.default.temporaryDirectory
+             .appendingPathComponent("export-tool-existing-\(UUID().uuidString).mp4")
+@@ -51,8 +66,6 @@ struct ExportProjectToolTests {
+         #expect(ToolHarness.textOf(overwriteFalse).contains("already exists"))
+ 
+         let downloads = try #require(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+-        let base = "export-tool-\(UUID().uuidString)"
+-        h.editor.projectURL = URL(fileURLWithPath: "/tmp/\(base).\(Project.fileExtension)")
+         let existingXML = downloads.appendingPathComponent("\(base).xml")
+         try Data("existing".utf8).write(to: existingXML)
+         defer { try? FileManager.default.removeItem(at: existingXML) }
+@@ -64,60 +77,50 @@ struct ExportProjectToolTests {
+         #expect(uniqueURL.deletingLastPathComponent().standardizedFileURL == downloads.standardizedFileURL)
+         #expect(uniqueURL.lastPathComponent == "\(base) 2.xml")
+ 
+-        await ExportCoordinator.acquireExport()
+-        defer { ExportCoordinator.endExport() }
+-
+-        let uiActiveXML = FileManager.default.temporaryDirectory
+-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).xml")
+-        defer { try? FileManager.default.removeItem(at: uiActiveXML) }
+-        let uiActiveXMLResult = await h.runRaw("export_project", args: [
+-            "mode": "xml",
+-            "outputPath": uiActiveXML.path,
+-        ])
+-        #expect(uiActiveXMLResult.isError)
+-        #expect(ToolHarness.textOf(uiActiveXMLResult).contains("Another export"))
+-        #expect(!FileManager.default.fileExists(atPath: uiActiveXML.path))
+-
+-        let uiActiveFCPXML = FileManager.default.temporaryDirectory
+-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).fcpxml")
+-        defer { try? FileManager.default.removeItem(at: uiActiveFCPXML) }
+-        let uiActiveFCPXMLResult = await h.runRaw("export_project", args: [
+-            "mode": "fcpxml",
+-            "outputPath": uiActiveFCPXML.path,
+-        ])
+-        #expect(uiActiveFCPXMLResult.isError)
+-        #expect(ToolHarness.textOf(uiActiveFCPXMLResult).contains("Another export"))
+-        #expect(!FileManager.default.fileExists(atPath: uiActiveFCPXML.path))
+-
+-        let uiActiveVideo = FileManager.default.temporaryDirectory
+-            .appendingPathComponent("export-tool-ui-active-\(UUID().uuidString).mp4")
+-        let uiActiveResult = await h.runRaw("export_project", args: [
+-            "mode": "video",
+-            "outputPath": uiActiveVideo.path,
+-        ])
+-        #expect(uiActiveResult.isError)
+-        #expect(ToolHarness.textOf(uiActiveResult).contains("Another export"))
+-        #expect(!FileManager.default.fileExists(atPath: uiActiveVideo.path))
+     }
+ 
+     @Test func exportsXML() async throws {
+         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
+         ]))
++        let projectRoot = try openProject(h)
++        defer {
++            h.editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: projectRoot)
++        }
+         let xmlURL = FileManager.default.temporaryDirectory
+             .appendingPathComponent("export-tool-\(UUID().uuidString).xml")
+         defer { try? FileManager.default.removeItem(at: xmlURL) }
++        let requestID = UUID().uuidString
+         let xml = try await h.runOK("export_project", args: [
+             "mode": "xml",
+             "outputPath": xmlURL.path,
++            "requestID": requestID,
++        ]) as? [String: Any]
++        var changed = h.editor.timeline
++        changed.width += 100
++        changed.tracks[0].clips[0].durationFrames = 90
++        h.editor.timeline = changed
++        let joined = try await h.runOK("export_project", args: [
++            "mode": "xml",
++            "outputPath": xmlURL.path,
++            "requestID": requestID,
+         ]) as? [String: Any]
+         #expect(xml?["status"] as? String == "exported")
+         #expect(xml?["mode"] as? String == "xml")
++        #expect((xml?["jobID"] as? String) == (joined?["jobID"] as? String))
++        #expect((xml?["width"] as? Int) == (joined?["width"] as? Int))
++        #expect((joined?["durationFrames"] as? Int) == 30)
+         #expect(try String(contentsOf: xmlURL, encoding: .utf8).contains("<xmeml version=\"4\">"))
+     }
+ 
+     @Test func exportsVersionedFCPXMLWithEvidence() async throws {
+         let h = ToolHarness(timeline: Fixtures.timeline())
++        let projectRoot = try openProject(h)
++        defer {
++            h.editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: projectRoot)
++        }
+         let outputURL = FileManager.default.temporaryDirectory
+             .appendingPathComponent("export-tool-\(UUID().uuidString).fcpxml")
+         defer { try? FileManager.default.removeItem(at: outputURL) }
+diff --git a/Tests/NexGenVideoTests/Export/ExportQueueTests.swift b/Tests/NexGenVideoTests/Export/ExportQueueTests.swift
+new file mode 100644
+index 00000000..955a7b39
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Export/ExportQueueTests.swift
+@@ -0,0 +1,547 @@
++import Foundation
++import NexGenEngine
++import Testing
++@testable import NexGenVideo
++
++@Suite("Export queue", .serialized)
++@MainActor
++struct ExportQueueTests {
++    @Test("serial jobs join by stable ID, cancel pending work, and reject target collisions")
++    func serializationJoinCancellationAndCollision() async throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-queue-\(UUID().uuidString)", isDirectory: true)
++        let package = root.appendingPathComponent("Queue.ngv", isDirectory: true)
++        let firstURL = root.appendingPathComponent("first.xml")
++        let cancelledURL = root.appendingPathComponent("cancelled.xml")
++        let collisionURL = root.appendingPathComponent("collision.xml")
++        let changedTargetURL = root.appendingPathComponent("changed.xml")
++        let removedDirectory = root.appendingPathComponent("removed", isDirectory: true)
++        let writerFailureURL = removedDirectory.appendingPathComponent("writer.xml")
++        defer { try? FileManager.default.removeItem(at: root) }
++
++        let timeline = Fixtures.timeline(tracks: [
++            Fixtures.videoTrack(clips: [
++                Fixtures.clip(mediaRef: "offline", start: 0, duration: 30),
++            ]),
++        ])
++        try Fixtures.prepareProjectPackage(at: package, timeline: timeline)
++        let editor = EditorViewModel()
++        editor.timeline = timeline
++        editor.projectURL = package
++        defer { editor.releaseWorkingCopy() }
++        _ = try #require(editor.workingRoot)
++
++        let queue = ExportQueue()
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++
++        let requestID = UUID().uuidString
++        let first = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: firstURL,
++            projectName: "Queue",
++            requestID: requestID
++        )
++        let joined = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: firstURL,
++            projectName: "Queue",
++            requestID: requestID
++        )
++        #expect(first === joined)
++        #expect(throws: (any Error).self) {
++            _ = try queue.enqueueInterchange(
++                editor: editor,
++                format: .xml,
++                outputURL: root.appendingPathComponent("different.xml"),
++                projectName: "Queue",
++                requestID: requestID
++            )
++        }
++
++        let cancelled = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: cancelledURL,
++            projectName: "Queue"
++        )
++        queue.cancel(jobID: cancelled.id)
++        #expect(cancelled.status == .cancelled)
++
++        let collisionWinner = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: collisionURL,
++            projectName: "Queue"
++        )
++        let collisionLoser = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: collisionURL,
++            projectName: "Queue"
++        )
++        try Data("original target".utf8).write(to: changedTargetURL)
++        let changedTarget = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: changedTargetURL,
++            projectName: "Queue"
++        )
++        try Data("new owner bytes".utf8).write(to: changedTargetURL)
++        try FileManager.default.createDirectory(
++            at: removedDirectory,
++            withIntermediateDirectories: true
++        )
++        let writerFailure = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: writerFailureURL,
++            projectName: "Queue"
++        )
++        try FileManager.default.removeItem(at: removedDirectory)
++
++        var changed = timeline
++        changed.tracks[0].clips[0].durationFrames = 90
++        editor.timeline = changed
++
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await queue.waitForCompletion(jobID: first.id)
++        _ = await queue.waitForCompletion(jobID: collisionWinner.id)
++        _ = await queue.waitForCompletion(jobID: collisionLoser.id)
++        _ = await queue.waitForCompletion(jobID: changedTarget.id)
++        _ = await queue.waitForCompletion(jobID: writerFailure.id)
++
++        #expect(first.status == .completed)
++        #expect(collisionWinner.status == .completed)
++        #expect(collisionLoser.status == .failed)
++        #expect(collisionLoser.failure?.contains("destination changed") == true)
++        #expect(changedTarget.status == .failed)
++        #expect(writerFailure.status == .failed)
++        #expect(!FileManager.default.fileExists(atPath: writerFailureURL.path))
++        #expect(try Data(contentsOf: changedTargetURL) == Data("new owner bytes".utf8))
++        #expect(!FileManager.default.fileExists(atPath: cancelledURL.path))
++        let xml = try String(contentsOf: firstURL, encoding: .utf8)
++        #expect(xml.contains("<duration>30</duration>"))
++
++        try Data("original target".utf8).write(to: changedTargetURL)
++        let retry = try queue.retry(jobID: changedTarget.id)
++        _ = await queue.waitForCompletion(jobID: retry.id)
++        #expect(retry.status == .completed)
++        #expect(try String(contentsOf: changedTargetURL, encoding: .utf8)
++            .contains("<duration>30</duration>"))
++    }
++
++    @Test("a changed offline binding fails closed instead of silently substituting media")
++    func sourceAppearanceAfterEnqueueFailsClosed() async throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-source-drift-\(UUID().uuidString)", isDirectory: true)
++        let package = root.appendingPathComponent("Drift.ngv", isDirectory: true)
++        let source = root.appendingPathComponent("late.mov")
++        let output = root.appendingPathComponent("drift.xml")
++        defer { try? FileManager.default.removeItem(at: root) }
++
++        let timeline = Fixtures.timeline(tracks: [
++            Fixtures.videoTrack(clips: [
++                Fixtures.clip(mediaRef: "late", start: 0, duration: 30),
++            ]),
++        ])
++        try Fixtures.prepareProjectPackage(at: package, timeline: timeline)
++        let editor = EditorViewModel()
++        editor.timeline = timeline
++        editor.mediaManifest.entries = [MediaManifestEntry(
++            id: "late",
++            name: "Late source",
++            type: .video,
++            source: .external(absolutePath: source.path),
++            duration: 1
++        )]
++        editor.projectURL = package
++        defer { editor.releaseWorkingCopy() }
++        _ = try #require(editor.workingRoot)
++
++        let queue = ExportQueue()
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let job = try queue.enqueueInterchange(
++            editor: editor,
++            format: .xml,
++            outputURL: output,
++            projectName: "Drift"
++        )
++        try Data("new source".utf8).write(to: source)
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await queue.waitForCompletion(jobID: job.id)
++
++        #expect(job.status == .failed)
++        #expect(job.failure?.contains("source changed") == true)
++        #expect(!FileManager.default.fileExists(atPath: output.path))
++    }
++
++    @Test("closing a project cancels its queued work without changing another document")
++    func closeCancelsOnlyOwningProject() async throws {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-close-\(UUID().uuidString)", isDirectory: true)
++        let firstPackage = root.appendingPathComponent("First.ngv", isDirectory: true)
++        let secondPackage = root.appendingPathComponent("Second.ngv", isDirectory: true)
++        defer { try? FileManager.default.removeItem(at: root) }
++        try Fixtures.prepareProjectPackage(at: firstPackage)
++        try Fixtures.prepareProjectPackage(at: secondPackage)
++
++        let firstEditor = EditorViewModel()
++        firstEditor.projectURL = firstPackage
++        let secondEditor = EditorViewModel()
++        secondEditor.projectURL = secondPackage
++        defer { secondEditor.releaseWorkingCopy() }
++        let firstKey = try #require(firstEditor.openWorkingCopyKey)
++        let secondKey = try #require(secondEditor.openWorkingCopyKey)
++
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let firstJob = try ExportQueue.shared.enqueueInterchange(
++            editor: firstEditor,
++            format: .xml,
++            outputURL: root.appendingPathComponent("first.xml"),
++            projectName: "First"
++        )
++        let secondJob = try ExportQueue.shared.enqueueInterchange(
++            editor: secondEditor,
++            format: .xml,
++            outputURL: root.appendingPathComponent("second.xml"),
++            projectName: "Second"
++        )
++
++        firstEditor.releaseWorkingCopy()
++        #expect(firstJob.status == .cancelled)
++        #expect(secondJob.status == .pending)
++        #expect(ExportQueue.shared.jobs(ownerKey: firstKey).contains { $0.id == firstJob.id })
++        #expect(ExportQueue.shared.jobs(ownerKey: secondKey).contains { $0.id == secondJob.id })
++
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await ExportQueue.shared.waitForCompletion(jobID: secondJob.id)
++        #expect(secondJob.status == .completed)
++    }
++
++    @Test("cancelling preparation stops before rendering and records no success")
++    func cancelPreparing() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "CancelPreparing",
++            durationFrames: 150,
++            extensionBytes: 32 * 1_048_576
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue()
++        let output = fixture.root.appendingPathComponent("cancel-preparing.mp4")
++        let job = try queue.enqueueDelivery(
++            editor: fixture.editor,
++            spec: fixture.spec,
++            format: .h264,
++            resolution: .r720p,
++            outputURL: output
++        )
++
++        let reachedPreparing = await wait(job, for: .preparing)
++        #expect(reachedPreparing)
++        queue.cancel(jobID: job.id)
++        _ = await queue.waitForCompletion(jobID: job.id)
++
++        #expect(job.status == .cancelled)
++        #expect(!FileManager.default.fileExists(atPath: output.path))
++        let attempt = try PipelineDeliveryStore.loadAttempt(
++            id: job.id,
++            dataRoot: fixture.dataRoot
++        )
++        #expect(attempt.status == .cancelled)
++        #expect(attempt.outputSHA256 == nil)
++    }
++
++    @Test("cancelling an active renderer leaves no output or success receipt")
++    func cancelExporting() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "CancelExporting",
++            durationFrames: 150
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue()
++        let output = fixture.root.appendingPathComponent("cancel-exporting.mp4")
++        let job = try queue.enqueueDelivery(
++            editor: fixture.editor,
++            spec: fixture.spec,
++            format: .h264,
++            resolution: .r720p,
++            outputURL: output
++        )
++
++        let reachedExporting = await wait(job, for: .exporting)
++        #expect(reachedExporting)
++        queue.cancel(jobID: job.id)
++        _ = await queue.waitForCompletion(jobID: job.id)
++
++        #expect(job.status == .cancelled)
++        #expect(!FileManager.default.fileExists(atPath: output.path))
++        let attempt = try PipelineDeliveryStore.loadAttempt(
++            id: job.id,
++            dataRoot: fixture.dataRoot
++        )
++        #expect(attempt.status == .cancelled)
++        #expect(attempt.probeQC == nil)
++    }
++
++    @Test("a successful job receipts its queued cut without selecting it over a newer edit")
++    func successfulReceiptKeepsQueuedTimelineIdentity() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "ExactReceipt",
++            durationFrames: 30
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue()
++        let output = fixture.root.appendingPathComponent("exact.mp4")
++
++        await ExportCoordinator.acquireExport()
++        var gateHeld = true
++        defer {
++            if gateHeld { ExportCoordinator.endExport() }
++        }
++        let job = try queue.enqueueDelivery(
++            editor: fixture.editor,
++            spec: fixture.spec,
++            format: .h264,
++            resolution: .r720p,
++            outputURL: output
++        )
++        var changed = fixture.timeline
++        changed.tracks[0].clips[0].durationFrames = 60
++        fixture.editor.timeline = changed
++        ExportCoordinator.endExport()
++        gateHeld = false
++        _ = await queue.waitForCompletion(jobID: job.id)
++
++        #expect(job.status == .completed)
++        let attempt = try PipelineDeliveryStore.loadAttempt(
++            id: job.id,
++            dataRoot: fixture.dataRoot
++        )
++        let outputSHA256 = try FileDigest.sha256(of: output)
++        #expect(attempt.status == .succeeded)
++        #expect(attempt.outputSHA256 == outputSHA256)
++        #expect(attempt.probeQC?.passed == true)
++        #expect(!FileManager.default.fileExists(
++            atPath: fixture.dataRoot.appendingPathComponent(
++                PipelineDeliveryStore.selectionPath
++            ).path
++        ))
++    }
++
++    @Test("FCPXML publishes its relink media beside the final document")
++    func fcpxmlPublishesBoundRelinkMedia() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "FCPXMLRelink",
++            durationFrames: 30,
++            projectMedia: true
++        )
++        defer { fixture.remove() }
++        let queue = ExportQueue()
++        let output = fixture.root.appendingPathComponent("timeline.fcpxml")
++        let job = try queue.enqueueInterchange(
++            editor: fixture.editor,
++            format: .fcpxml,
++            outputURL: output,
++            projectName: "Relink"
++        )
++        _ = await queue.waitForCompletion(jobID: job.id)
++
++        let mediaDirectory = FCPXMLExporter.mediaDirectory(for: output)
++        let document = try String(contentsOf: output, encoding: .utf8)
++        #expect(job.status == .completed)
++        #expect(FileManager.default.fileExists(atPath: mediaDirectory.path))
++        #expect(document.contains("timeline%20Media"))
++        #expect(!document.contains("NexGenVideoExportQueue"))
++        #expect(!document.contains(".partial"))
++        #expect(job.fcpxmlReport?.mediaBindings.allSatisfy {
++            !$0.sourceURL.contains("NexGenVideoExportQueue")
++                && !$0.sourceURL.contains(".partial")
++        } == true)
++    }
++
++    @Test("restart marks active delivery interrupted, cleans its partials, and does not auto-retry")
++    func interruptedRestartIsHonest() async throws {
++        let fixture = try await makeDeliveryFixture(
++            name: "InterruptedRestart",
++            durationFrames: 30
++        )
++        defer { fixture.remove() }
++        let id = UUID().uuidString.lowercased()
++        let output = fixture.root.appendingPathComponent("restart.mp4")
++        try Data("existing finished export".utf8).write(to: output)
++        let attempt = DeliveryAttemptV1(
++            id: id,
++            spec: fixture.spec,
++            finishedTimelineSHA256: FileDigest.sha256(
++                of: try PipelineAssemblyStore.canonical(fixture.timeline)
++            ),
++            status: .running,
++            outputPath: output.path,
++            createdAt: "2026-09-24T00:00:00Z"
++        )
++        let current = fixture.dataRoot.appendingPathComponent(
++            "delivery/jobs/\(id)/current.v1.json"
++        )
++        try FileManager.default.createDirectory(
++            at: current.deletingLastPathComponent(),
++            withIntermediateDirectories: true
++        )
++        try PipelineAssemblyStore.canonical(attempt).write(to: current)
++        let partial = fixture.root.appendingPathComponent(".restart.\(id).partial.mp4")
++        try Data("partial".utf8).write(to: partial)
++        let snapshot = FileManager.default.temporaryDirectory
++            .appendingPathComponent("NexGenVideoExportQueue/\(id)", isDirectory: true)
++        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
++        try Data("snapshot".utf8).write(to: snapshot.appendingPathComponent("source"))
++
++        let queue = ExportQueue()
++        let ownerKey = try #require(fixture.editor.openWorkingCopyKey)
++        queue.loadPersistedDeliveryJobs(ownerKey: ownerKey, dataRoot: fixture.dataRoot)
++
++        let job = try #require(queue.jobs(ownerKey: ownerKey).first { $0.id == id })
++        #expect(job.status == .interrupted)
++        #expect(!queue.canRetry(jobID: id))
++        #expect(!FileManager.default.fileExists(atPath: partial.path))
++        #expect(!FileManager.default.fileExists(atPath: snapshot.path))
++        #expect(try Data(contentsOf: output) == Data("existing finished export".utf8))
++        #expect(try PipelineDeliveryStore.loadAttempt(
++            id: id,
++            dataRoot: fixture.dataRoot
++        ).status == .interrupted)
++    }
++
++    private struct DeliveryFixture {
++        let root: URL
++        let editor: EditorViewModel
++        let dataRoot: URL
++        let timeline: Timeline
++        let spec: DeliverySpecV1
++
++        func remove() {
++            editor.releaseWorkingCopy()
++            try? FileManager.default.removeItem(at: root)
++        }
++    }
++
++    private func makeDeliveryFixture(
++        name: String,
++        durationFrames: Int,
++        extensionBytes: Int = 0,
++        projectMedia: Bool = false
++    ) async throws -> DeliveryFixture {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("export-delivery-\(UUID().uuidString)", isDirectory: true)
++        let package = root.appendingPathComponent("\(name).ngv", isDirectory: true)
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let generated = try await ImageVideoGenerator.blackVideo(
++            size: CGSize(width: 320, height: 180)
++        )
++        let source = root.appendingPathComponent("source.mov")
++        try FileManager.default.copyItem(at: generated, to: source)
++        var timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [
++            Fixtures.clip(mediaRef: "source", start: 0, duration: durationFrames),
++        ])])
++        timeline.width = 320
++        timeline.height = 180
++        try Fixtures.prepareProjectPackage(at: package, timeline: timeline)
++
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        editor.timeline = timeline
++        let workingRoot = try #require(editor.workingRoot)
++        let mediaSource: MediaSource
++        if projectMedia {
++            let relativePath = "media/source.mov"
++            let projectSource = workingRoot.appendingPathComponent(relativePath)
++            try FileManager.default.createDirectory(
++                at: projectSource.deletingLastPathComponent(),
++                withIntermediateDirectories: true
++            )
++            try FileManager.default.copyItem(at: source, to: projectSource)
++            mediaSource = .project(relativePath: relativePath)
++        } else {
++            mediaSource = .external(absolutePath: source.path)
++        }
++        editor.mediaManifest.entries = [MediaManifestEntry(
++            id: "source",
++            name: "Source",
++            type: .video,
++            source: mediaSource,
++            duration: 5
++        )]
++        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
++        try YAMLArtifactStore(dataRoot: dataRoot).save(
++            ProjectMeta(project: name.lowercased(), mode: .generic),
++            to: PipelineLayout.projectFile
++        )
++
++        var extensionRefs: [String] = []
++        if extensionBytes > 0 {
++            let extensionURL = dataRoot.appendingPathComponent("assets/bound.bin")
++            try FileManager.default.createDirectory(
++                at: extensionURL.deletingLastPathComponent(),
++                withIntermediateDirectories: true
++            )
++            guard FileManager.default.createFile(atPath: extensionURL.path, contents: nil) else {
++                throw ToolError("Could not create the delivery extension fixture.")
++            }
++            let handle = try FileHandle(forWritingTo: extensionURL)
++            let chunk = Data(repeating: 0x5a, count: 1_048_576)
++            for _ in 0..<(extensionBytes / chunk.count) {
++                try handle.write(contentsOf: chunk)
++            }
++            try handle.close()
++            extensionRefs = ["assets/bound.bin"]
++        }
++
++        _ = try PipelineDeliveryStore.adoptCurrentTimeline(
++            editor: editor,
++            requireSequenceReview: false
++        )
++        let spec = try PipelineDeliveryStore.defaultSpec(
++            id: "master.h264.720p",
++            targetKind: .master,
++            timeline: timeline,
++            format: .h264,
++            resolution: .r720p,
++            requireSequenceReview: false,
++            extensionRefs: extensionRefs
++        )
++        return DeliveryFixture(
++            root: root,
++            editor: editor,
++            dataRoot: dataRoot,
++            timeline: timeline,
++            spec: spec
++        )
++    }
++
++    private func wait(
++        _ job: ExportJob,
++        for status: ExportJobStatus
++    ) async -> Bool {
++        for _ in 0..<1_000 {
++            if job.status == status { return true }
++            if job.status.isTerminal { return false }
++            try? await Task.sleep(for: .milliseconds(2))
++        }
++        return false
++    }
++}
+diff --git a/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift b/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
+index 1ab2edf8..d0005349 100644
+--- a/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
++++ b/Tests/NexGenVideoTests/Export/PipelineDeliveryStoreTests.swift
+@@ -99,26 +99,195 @@ struct PipelineDeliveryStoreTests {
+             spec: spec,
+             finishedTimelineSHA256: FileDigest.sha256(of: Data("timeline".utf8)),
+             status: .running,
++            outputPath: home.appendingPathComponent("master.mp4").path,
+             createdAt: "2026-09-09T00:00:00Z"
+         )
+         try PipelineAssemblyStore.canonical(running).write(
+             to: job.appendingPathComponent("current.v1.json"),
+             options: .atomic
+         )
++        let active = DeliveryAttemptV1(
++            id: "attempt-active",
++            spec: spec,
++            finishedTimelineSHA256: running.finishedTimelineSHA256,
++            status: .queued,
++            outputPath: home.appendingPathComponent("active.mp4").path,
++            createdAt: running.createdAt
++        )
++        let activeJob = dataRoot.appendingPathComponent("delivery/jobs/attempt-active")
++        try FileManager.default.createDirectory(at: activeJob, withIntermediateDirectories: true)
++        try PipelineAssemblyStore.canonical(active).write(
++            to: activeJob.appendingPathComponent("current.v1.json"),
++            options: .atomic
++        )
+ 
+-        try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot)
++        try PipelineDeliveryStore.recoverInterruptedJobs(
++            dataRoot: dataRoot,
++            excludingIDs: [active.id]
++        )
+         let recovered = try PipelineDeliveryStore.loadAttempt(
+             id: running.id,
+             dataRoot: dataRoot
+         )
+         #expect(recovered.status == .interrupted)
++        #expect(recovered.outputPath == running.outputPath)
+         #expect(recovered.failures == ["Export interrupted before completion."])
+         #expect(recovered.completedAt != nil)
++        let stillQueued = try JSONDecoder().decode(
++            DeliveryAttemptV1.self,
++            from: Data(contentsOf: activeJob.appendingPathComponent("current.v1.json"))
++        )
++        #expect(stillQueued == active)
+ 
+-        try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot)
++        try PipelineDeliveryStore.recoverInterruptedJobs(
++            dataRoot: dataRoot,
++            excludingIDs: [active.id]
++        )
+         #expect(try PipelineDeliveryStore.loadAttempt(
+             id: running.id,
+             dataRoot: dataRoot
+         ) == recovered)
+     }
++
++    @Test("a bound success receipt stays historical when the current finish changes")
++    func exactReceiptDoesNotReplaceNewerSelection() throws {
++        let home = FileManager.default.temporaryDirectory
++            .appendingPathComponent("delivery-receipt-\(UUID().uuidString).ngv")
++        let dataRoot = home.appendingPathComponent("pipeline")
++        let output = home.appendingPathComponent("master.mp4")
++        defer { try? FileManager.default.removeItem(at: home) }
++        try FileManager.default.createDirectory(
++            at: dataRoot.appendingPathComponent("delivery/timelines"),
++            withIntermediateDirectories: true
++        )
++
++        let timeline = Timeline()
++        let timelineData = try PipelineAssemblyStore.canonical(timeline)
++        let timelineHash = FileDigest.sha256(of: timelineData)
++        let timelinePath = "delivery/timelines/\(timelineHash).json"
++        try timelineData.write(to: dataRoot.appendingPathComponent(timelinePath))
++        let plan = FinishPlanV1(
++            projectID: "receipt-project",
++            sourceTimelineSHA256: timelineHash
++        )
++        let planData = try PipelineAssemblyStore.canonical(plan)
++        let manifest = FinishedTimelineManifestV1(
++            projectID: plan.projectID,
++            finishPlanSHA256: FileDigest.sha256(of: planData),
++            timelinePath: timelinePath,
++            timelineSHA256: timelineHash,
++            media: [],
++            operationProofs: [],
++            adoptedManualTimeline: true
++        )
++        let manifestData = try PipelineAssemblyStore.canonical(manifest)
++        try planData.write(to: dataRoot.appendingPathComponent(FinishPlanV1.relativePath))
++        try manifestData.write(to: dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath))
++        let finished = PipelineDeliveryStore.FinishedState(
++            plan: plan,
++            planData: planData,
++            manifest: manifest,
++            manifestData: manifestData
++        )
++        let resolver = MediaResolver(manifest: { MediaManifest() }, projectURL: { home })
++        let spec = DeliverySpecV1(
++            id: "master.h264.match",
++            targetKind: .master,
++            container: "mp4",
++            videoCodec: "avc1",
++            width: timeline.width,
++            height: timeline.height,
++            fpsNumerator: timeline.fps,
++            colorSpace: "rec709-sdr",
++            hdr: false,
++            audioLayout: "none",
++            captionMode: "none",
++            disclosureMode: "project-record"
++        )
++        let queued = try PipelineDeliveryStore.enqueueAttempt(
++            id: "receipt-attempt",
++            dataRoot: dataRoot,
++            finished: finished,
++            spec: spec,
++            format: .h264,
++            resolution: .matchTimeline,
++            outputURL: output,
++            timeline: timeline,
++            resolver: resolver
++        )
++        #expect(throws: (any Error).self) {
++            _ = try PipelineDeliveryStore.enqueueAttempt(
++                id: queued.id,
++                dataRoot: dataRoot,
++                finished: finished,
++                spec: spec,
++                format: .h264,
++                resolution: .matchTimeline,
++                outputURL: output,
++                timeline: timeline,
++                resolver: resolver
++            )
++        }
++        let running = try PipelineDeliveryStore.markRunning(queued, dataRoot: dataRoot)
++
++        let newerPlan = FinishPlanV1(
++            projectID: "newer-project",
++            sourceTimelineSHA256: timelineHash
++        )
++        let newerPlanData = try PipelineAssemblyStore.canonical(newerPlan)
++        let newerManifest = FinishedTimelineManifestV1(
++            projectID: newerPlan.projectID,
++            finishPlanSHA256: FileDigest.sha256(of: newerPlanData),
++            timelinePath: timelinePath,
++            timelineSHA256: timelineHash,
++            media: [],
++            operationProofs: [],
++            adoptedManualTimeline: true
++        )
++        try newerPlanData.write(to: dataRoot.appendingPathComponent(FinishPlanV1.relativePath))
++        try PipelineAssemblyStore.canonical(newerManifest).write(
++            to: dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath)
++        )
++
++        try Data("verified encoded bytes".utf8).write(to: output)
++        let outputHash = try FileDigest.sha256(of: output)
++        let qc = DeliveryProbeQCV1(
++            durationValue: 30,
++            durationTimescale: 30,
++            width: timeline.width,
++            height: timeline.height,
++            fpsNumerator: timeline.fps,
++            fpsDenominator: 1,
++            videoCodec: "avc1",
++            audioCodec: nil,
++            audioChannels: 0,
++            passed: true
++        )
++        let outputSize = try #require(output.resourceValues(forKeys: [.fileSizeKey]).fileSize)
++        let result = try PipelineDeliveryStore.finishSuccessful(
++            running,
++            dataRoot: dataRoot,
++            finished: finished,
++            outputURL: output,
++            evidence: .init(
++                sha256: outputHash,
++                byteCount: Int64(outputSize),
++                probeQC: qc
++            ),
++            selectIfCurrent: true
++        )
++        let succeeded = result.attempt
++
++        #expect(succeeded.finishedTimelineSHA256 == timelineHash)
++        #expect(succeeded.outputSHA256 == outputHash)
++        #expect(!FileManager.default.fileExists(
++            atPath: dataRoot.appendingPathComponent(PipelineDeliveryStore.selectionPath).path
++        ))
++        #expect(try PipelineDeliveryStore.loadAttempt(id: succeeded.id, dataRoot: dataRoot) == succeeded)
++
++        try Data("replacement".utf8).write(to: output)
++        #expect(throws: (any Error).self) {
++            _ = try PipelineDeliveryStore.loadAttempt(id: succeeded.id, dataRoot: dataRoot)
++        }
++    }
+ }

@@ -1,0 +1,431 @@
+[
+  {
+    "fixture": "Medien",
+    "selector": "[data-do^=\"asset:\"]",
+    "items": [
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:media-locate",
+        "label": "In Produktion zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:asset-rename",
+        "label": "Umbenennen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:pool:move",
+        "label": "In Ordner verschieben…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:asset-path",
+        "label": "Dateiort anzeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:asset-delete",
+        "label": "Medium aus Projekt entfernen…",
+        "disabled": true
+      }
+    ]
+  },
+  {
+    "fixture": "Medien",
+    "selector": "[data-do^=\"pool:folder-\"]:not([data-do=\"pool:folder-all\"])",
+    "items": [
+      {
+        "cmd": "object:media-import",
+        "label": "Medien importieren…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:gen:open",
+        "label": "Medien generieren…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:pool:new",
+        "label": "Unterordner anlegen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:pool:rename",
+        "label": "Umbenennen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:folder-delete",
+        "label": "Ordner entfernen…",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Storyboard",
+    "selector": ".shot-tile",
+    "items": [
+      {
+        "cmd": "object:mode:moments",
+        "label": "Sketches öffnen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:rename",
+        "label": "Umbenennen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:previous",
+        "label": "Nach vorn verschieben",
+        "disabled": true
+      },
+      {
+        "cmd": "object:wf:next",
+        "label": "Nach hinten verschieben",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:first",
+        "label": "An den Anfang verschieben",
+        "disabled": true
+      },
+      {
+        "cmd": "object:wf:last",
+        "label": "Ans Ende verschieben",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:add",
+        "label": "Shot einfügen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:split",
+        "label": "Shot teilen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:delete",
+        "label": "Shot löschen…",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Storyboard",
+    "selector": "[data-do=\"moment:0\"]",
+    "items": [
+      {
+        "cmd": "object:inspect-moment",
+        "label": "Handlung und Zeitpunkt bearbeiten",
+        "disabled": false
+      },
+      {
+        "cmd": "object:sketch-source",
+        "label": "Sketch aus Medien wählen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:add-moment",
+        "label": "Handlungsmoment hinzufügen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:reveal-sketch-4-0",
+        "label": "In Medien zeigen",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Shotplanung",
+    "selector": "[data-shot]",
+    "items": [
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:source-binding",
+        "label": "Quellen prüfen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:open:blocking",
+        "label": "Blocking öffnen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:open:board",
+        "label": "Im Storyboard zeigen",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "References",
+    "selector": "[data-do=\"studio:entity-0\"]",
+    "items": [
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:entity-edit",
+        "label": "Änderung vorschlagen…",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Takes",
+    "selector": "[data-take]",
+    "items": [
+      {
+        "cmd": "object:inspect-take",
+        "label": "Take prüfen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:reveal-take-0-1",
+        "label": "In Medien zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:retake-cost",
+        "label": "Weiteren Take erzeugen…",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Blocking",
+    "selector": "[data-do^=\"clay:object-\"]",
+    "items": [
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:endpoint-start",
+        "label": "Anfangsposition zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:endpoint-end",
+        "label": "Endposition zeigen",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Blocking",
+    "selector": "[data-do^=\"clay:shot-\"]",
+    "items": [
+      {
+        "cmd": "object:clay:inspect",
+        "label": "Shot-Kamera zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:view-outputs",
+        "label": "Clay-Vorlagen zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:accept",
+        "label": "Vorlage bestätigen",
+        "disabled": true
+      },
+      {
+        "cmd": "object:open:plan",
+        "label": "In Shotplanung zeigen",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Blocking",
+    "selector": ".clay-stage canvas",
+    "items": [
+      {
+        "cmd": "object:clay:plan",
+        "label": "Draufsicht",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:inspect",
+        "label": "Shot-Kamera zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:clay:duplicate-location",
+        "label": "Location duplizieren",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Audio",
+    "selector": "[data-section]",
+    "items": [
+      {
+        "cmd": "object:wf:audio-play",
+        "label": "Abschnitt abhören",
+        "disabled": false
+      },
+      {
+        "cmd": "object:wf:audio-loop",
+        "label": "Abschnitt wiederholen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:analysis-proof",
+        "label": "Messdetails zeigen",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Schnitt",
+    "selector": "[data-sx-clip]",
+    "items": [
+      {
+        "cmd": "object:studio:copy",
+        "label": "Kopieren⌘C",
+        "disabled": false
+      },
+      {
+        "cmd": "object:cut-clips",
+        "label": "Ausschneiden⌘X",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:paste",
+        "label": "Einsetzen⌘V",
+        "disabled": true
+      },
+      {
+        "cmd": "object:studio:duplicate",
+        "label": "Duplizieren",
+        "disabled": false
+      },
+      {
+        "cmd": "object:nle:split",
+        "label": "Am Abspielkopf teilen⌘K",
+        "disabled": true
+      },
+      {
+        "cmd": "object:nle:trim-in",
+        "label": "Anfang bis Abspielkopf trimmenQ",
+        "disabled": true
+      },
+      {
+        "cmd": "object:nle:trim-out",
+        "label": "Ende bis Abspielkopf trimmenW",
+        "disabled": true
+      },
+      {
+        "cmd": "object:studio:link",
+        "label": "Clips verbinden",
+        "disabled": true
+      },
+      {
+        "cmd": "object:studio:swap",
+        "label": "Quelle austauschen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:audio-sync",
+        "label": "Audio synchronisieren…",
+        "disabled": true
+      },
+      {
+        "cmd": "object:studio:save-media",
+        "label": "Als Medium sichern",
+        "disabled": false
+      },
+      {
+        "cmd": "object:reveal-take-0-1",
+        "label": "In Medien zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:delete",
+        "label": "Löschen⌫",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:ripple",
+        "label": "Löschen und Lücke schließen⇧⌫",
+        "disabled": false
+      }
+    ]
+  },
+  {
+    "fixture": "Schnitt",
+    "selector": "[data-do=\"studio:track-V1\"]",
+    "items": [
+      {
+        "cmd": "object:studio:track-V1",
+        "label": "Spureinstellungen…",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:track-lock-V1",
+        "label": "Spur sperren",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:track-hide-V1",
+        "label": "Ausblenden",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:track-remove",
+        "label": "Leere Spur entfernen",
+        "disabled": true
+      }
+    ]
+  },
+  {
+    "fixture": "Postproduction",
+    "selector": "[data-sx-clip]",
+    "items": [
+      {
+        "cmd": "object:studio:copy",
+        "label": "Kopieren⌘C",
+        "disabled": false
+      },
+      {
+        "cmd": "object:inspect",
+        "label": "Im Inspector zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:reveal-take-0-1",
+        "label": "In Medien zeigen",
+        "disabled": false
+      },
+      {
+        "cmd": "object:studio:save-media",
+        "label": "Als Medium sichern",
+        "disabled": false
+      }
+    ]
+  }
+]

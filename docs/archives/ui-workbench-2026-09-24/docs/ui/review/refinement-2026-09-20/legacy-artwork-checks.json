@@ -1,0 +1,168 @@
+{
+  "results": [
+    {
+      "name": "Vorschaubild reachable without album artwork",
+      "pass": true
+    },
+    {
+      "name": "Optional by default",
+      "pass": true
+    },
+    {
+      "name": "Slider stays mounted during frame scrubbing",
+      "pass": true
+    },
+    {
+      "name": "Frame selection is captured explicitly",
+      "pass": true
+    },
+    {
+      "name": "Export save sheet includes image sidecar",
+      "pass": true
+    },
+    {
+      "name": "Export keeps its own image snapshot",
+      "pass": true
+    },
+    {
+      "name": "Changing image requires renewed selection",
+      "pass": true
+    },
+    {
+      "name": "Unapplied changes block only opted-in video preview",
+      "pass": true
+    },
+    {
+      "name": "Subsequent export cannot overwrite prior image",
+      "pass": true
+    },
+    {
+      "name": "Existing media can be assigned as export preview",
+      "pass": true
+    },
+    {
+      "name": "Album artist and title are not inferred",
+      "pass": true
+    },
+    {
+      "name": "No sketch offered as rendered album reference",
+      "pass": true
+    },
+    {
+      "name": "Album generation opens cost confirmation before running",
+      "pass": true
+    },
+    {
+      "name": "Amending album quote returns to contextual inspector",
+      "pass": true
+    },
+    {
+      "name": "Artwork generation appears as KI activity",
+      "pass": true
+    },
+    {
+      "name": "Generated album is separate project media",
+      "pass": true
+    },
+    {
+      "name": "Clean album variant retained for typography",
+      "pass": true
+    },
+    {
+      "name": "Typography requires explicit artist and title",
+      "pass": true
+    },
+    {
+      "name": "Typography preserves clean image and phase approvals",
+      "pass": true
+    },
+    {
+      "name": "Skipped format is visible and cannot run accidentally",
+      "pass": true
+    },
+    {
+      "name": "Cancelled image job creates no asset or cost",
+      "pass": true
+    },
+    {
+      "name": "Album retains native post-pipeline gate",
+      "pass": true
+    },
+    {
+      "name": "Generic project has preview but no album entry",
+      "pass": true
+    },
+    {
+      "name": "Typing and clicking costs works without a lost blur click",
+      "pass": true
+    },
+    {
+      "name": "Generic preview generation does not need a music workflow",
+      "pass": true
+    },
+    {
+      "name": "Generated preview is assigned only through explicit apply",
+      "pass": true
+    },
+    {
+      "name": "Generated media keeps no transient cost-approval context",
+      "pass": true
+    },
+    {
+      "name": "Saved export image selection survives reopening",
+      "pass": true
+    },
+    {
+      "name": "XML handoff is independent of unapplied video preview",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1440 16:9",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1440 1:1",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1440 9:16",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1048 16:9",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1048 1:1",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 1048 9:16",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 768 16:9",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 768 1:1",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 768 9:16",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 390 16:9",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 390 1:1",
+      "pass": true
+    },
+    {
+      "name": "Preview ratio and pane fit 390 9:16",
+      "pass": true
+    }
+  ]
+}

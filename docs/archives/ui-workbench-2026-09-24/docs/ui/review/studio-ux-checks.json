@@ -1,0 +1,68 @@
+{
+  "results": [
+    {
+      "name": "Status bar contains project context, no prototype badge or fixture control",
+      "pass": true
+    },
+    {
+      "name": "Footer does not duplicate workspace switching",
+      "pass": true
+    },
+    {
+      "name": "Transcript scope and placeholder use consistent wording",
+      "pass": true
+    },
+    {
+      "name": "Transcript search does not match filenames or text documents",
+      "pass": true
+    },
+    {
+      "name": "Transcript hit uses recorded text and time range",
+      "pass": true
+    },
+    {
+      "name": "Search hit keeps media workspace and source context",
+      "pass": true
+    },
+    {
+      "name": "Still-image search has no fabricated time range",
+      "pass": true
+    },
+    {
+      "name": "Clip selection synchronizes preview and inspector",
+      "pass": true
+    },
+    {
+      "name": "Audio selection exposes audio parameters only",
+      "pass": true
+    },
+    {
+      "name": "Postproduction audio selection switches tool context",
+      "pass": true
+    },
+    {
+      "name": "Timeline dragstart is not cancelled by storyboard handler",
+      "pass": true
+    },
+    {
+      "name": "Muted track is reflected in Export and end review",
+      "pass": true
+    },
+    {
+      "name": "Text-to-video profile does not offer unsupported source slots",
+      "pass": true
+    },
+    {
+      "name": "Online asset cannot be relinked and imported asset cannot reuse absent prompt",
+      "pass": true
+    },
+    {
+      "name": "Export stores historical fps",
+      "pass": true
+    },
+    {
+      "name": "Export history does not borrow current project fps",
+      "pass": true
+    }
+  ]
+}

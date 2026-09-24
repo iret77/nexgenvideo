@@ -1,0 +1,82 @@
+[
+  {
+    "name": "edit",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "center": 22
+      },
+      {
+        "label": "Medien",
+        "center": 22
+      },
+      {
+        "label": "Produktion",
+        "center": 22
+      },
+      {
+        "label": "Schnitt",
+        "center": 22
+      },
+      {
+        "label": "Postproduction",
+        "center": 22
+      },
+      {
+        "label": "Export",
+        "center": 22
+      },
+      {
+        "label": "Format",
+        "center": 22
+      },
+      {
+        "label": "Standard",
+        "center": 22
+      }
+    ],
+    "gap": 8,
+    "height": 850,
+    "overflow": false
+  },
+  {
+    "name": "media",
+    "items": [
+      {
+        "label": "Unbenannter Film",
+        "center": 22
+      },
+      {
+        "label": "Medien",
+        "center": 22
+      },
+      {
+        "label": "Produktion",
+        "center": 22
+      },
+      {
+        "label": "Schnitt",
+        "center": 22
+      },
+      {
+        "label": "Postproduction",
+        "center": 22
+      },
+      {
+        "label": "Export",
+        "center": 22
+      },
+      {
+        "label": "Format",
+        "center": 22
+      },
+      {
+        "label": "Standard",
+        "center": 22
+      }
+    ],
+    "gap": null,
+    "height": 850,
+    "overflow": false
+  }
+]

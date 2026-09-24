@@ -1,0 +1,132 @@
+{
+  "results": [
+    {
+      "name": "Take click opens review rather than selecting",
+      "pass": true
+    },
+    {
+      "name": "Creative exception requires a reason in handler",
+      "pass": true
+    },
+    {
+      "name": "No provider yields usable empty catalog",
+      "pass": true
+    },
+    {
+      "name": "Model disable removes the model from generator",
+      "pass": true
+    },
+    {
+      "name": "Manual generation prepares bound costs",
+      "pass": true
+    },
+    {
+      "name": "Generated asset persists provenance",
+      "pass": true
+    },
+    {
+      "name": "Rerun preserves provider model identity and intent",
+      "pass": true
+    },
+    {
+      "name": "Video preparation rejects an unapproved earlier phase",
+      "pass": true
+    },
+    {
+      "name": "Batch excludes completed shots",
+      "pass": true
+    },
+    {
+      "name": "Empty batch cannot be accepted",
+      "pass": true
+    },
+    {
+      "name": "Stopping batch preserves completed results",
+      "pass": true
+    },
+    {
+      "name": "Resume creates only outstanding results",
+      "pass": true
+    },
+    {
+      "name": "Timeline change invalidates pending task",
+      "pass": true
+    },
+    {
+      "name": "Audio clip changes invalidate full sequence review",
+      "pass": true
+    },
+    {
+      "name": "Track state invalidates full sequence review",
+      "pass": true
+    },
+    {
+      "name": "Locked track resists split and delete",
+      "pass": true
+    },
+    {
+      "name": "Split uses independent effect data",
+      "pass": true
+    },
+    {
+      "name": "Thirty fps steps by one frame",
+      "pass": true
+    },
+    {
+      "name": "Postproduction transport advances",
+      "pass": true
+    },
+    {
+      "name": "Postproduction advances its own review cursor",
+      "pass": true
+    },
+    {
+      "name": "Blockout scrubbing is numeric",
+      "pass": true
+    },
+    {
+      "name": "Settings preserve explicit MCP trust",
+      "pass": true
+    },
+    {
+      "name": "Unknown pack does not silently become generic",
+      "pass": true
+    },
+    {
+      "name": "Postproduction state survives reload",
+      "pass": true
+    },
+    {
+      "name": "Widget state persists below host size limit",
+      "pass": true
+    },
+    {
+      "name": "Compressed snapshot was delivered",
+      "pass": true
+    },
+    {
+      "name": "Compressed restore preserves postproduction",
+      "pass": true
+    },
+    {
+      "name": "Restored snapshot retains title",
+      "pass": true
+    },
+    {
+      "name": "Audio profiles expose appropriate fields",
+      "pass": true
+    },
+    {
+      "name": "Music profile exposes lyrics and instrumental",
+      "pass": true
+    },
+    {
+      "name": "Export can be cancelled",
+      "pass": true
+    },
+    {
+      "name": "Cancelled export is not reported as complete",
+      "pass": true
+    }
+  ]
+}

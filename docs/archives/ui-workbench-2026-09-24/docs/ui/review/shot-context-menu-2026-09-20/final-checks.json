@@ -1,0 +1,13 @@
+{
+  "results": [
+    {
+      "name": "Edit menu has no undefined shortcuts or duplicate Delete",
+      "pass": true
+    },
+    {
+      "name": "Actual mouse drag reorders the shot at the indicated boundary",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

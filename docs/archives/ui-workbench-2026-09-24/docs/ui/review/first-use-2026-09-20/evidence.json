@@ -1,0 +1,17 @@
+{
+  "artifact": "<local NexGenVideo checkout>/docs/ui/desktop-production-workbench.html",
+  "sha256": "c79bb604e066bec43b7a9c00fe69d905f818be751ed2a7b95ea1a8c834cd2e29",
+  "viewport": [
+    1280,
+    1000
+  ],
+  "method": "Static file in headless Chrome; UI clicks and field edits; no fixture/state APIs; simulated first-use walkthrough, not human participant study",
+  "scenario": "New Music Video project through all phases, optional Blocking, continuity correction, generated takes, edit, postproduction, preview image, album cover, completed simulated export; media folder management and manual generation",
+  "scopeLimits": [
+    "No native app execution",
+    "No real model/provider/file export",
+    "Fixed illustrative 20-second demo sequence despite 3:19 briefing request",
+    "Only one complete first-use scenario; no claim of coverage of every optional workflow"
+  ],
+  "trace": "interaction-trace.json"
+}

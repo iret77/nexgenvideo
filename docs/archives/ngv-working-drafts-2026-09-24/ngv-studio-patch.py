@@ -1,0 +1,13 @@
+from pathlib import Path
+p=Path('docs/ui/desktop-production-workbench.js')
+s=p.read_text().replace("finish:'Finish'","post:'Postproduction',finish:'Export'")
+s=s.replace("const workspace=()=>['media','edit','finish'].includes(S.view)?S.view:'production';","const workspace=()=>['media','edit','post','finish'].includes(S.view)?S.view:'production';")
+s=s.replace("const isEdit=()=>!S.running&&S.view===S.current&&!S.done[S.view]&&!S.covered[S.view];","const isEdit=()=>!S.running&&(['edit','post'].includes(S.view)||S.view===S.current&&!S.done[S.view]&&!S.covered[S.view]);")
+s=s.replace("const tc=t=>{const f=Math.floor(t*24+.001);return Math.floor(f/1440).toString().padStart(2,'0')+':'+Math.floor(f/24%60).toString().padStart(2,'0')+':'+(f%24).toString().padStart(2,'0');};","const fps=()=>S?.studio?.fps||24;\nconst tc=t=>{const rate=fps(),f=Math.floor(Math.max(0,t)*rate+.001);return Math.floor(f/(rate*60)).toString().padStart(2,'0')+':'+Math.floor(f/rate%60).toString().padStart(2,'0')+':'+(f%rate).toString().padStart(2,'0');};")
+s=s.replace("['finish','Finish']","['post','Postproduction'],['finish','Export']")
+s=s.replace("if(verb==='finish'){", "if(verb==='studio'){studioAction(param);return;}\n if(verb==='finish'){")
+s=s.replace("/*__FINISH_JS__*/\nfixture('Finish');","/*__FINISH_JS__*/\n/*__STUDIO_JS__*/\nfixture('Schnitt');")
+p.write_text(s)
+p=Path('docs/ui/build-desktop-production-workbench.py');s=p.read_text();s=s.replace(".replace('/*__FINISH_JS__*/', (root/'desktop-production-workbench.finish.js').read_text())", ".replace('/*__FINISH_JS__*/', (root/'desktop-production-workbench.finish.js').read_text()).replace('/*__STUDIO_JS__*/', (root/'desktop-production-workbench.studio.js').read_text())")
+s=s.replace("css = (root/'desktop-production-workbench.css').read_text()", "css = (root/'desktop-production-workbench.css').read_text() + (root/'desktop-production-workbench.studio.css').read_text()")
+p.write_text(s)

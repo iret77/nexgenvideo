@@ -1,0 +1,25 @@
+import {spawn} from 'node:child_process';
+import {readFile, writeFile} from 'node:fs/promises';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import path from 'node:path';
+const here='<local NexGenVideo checkout>/docs/ui';
+const chrome=spawn(process.env.CHROME_BIN||'google-chrome',['--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--remote-debugging-pipe','--window-size=1048,980','about:blank'],{stdio:['ignore','ignore','ignore','pipe','pipe']});
+let next=0,buffer='',session;const pending=new Map();
+chrome.stdio[4].on('data',chunk=>{buffer+=chunk.toString();let idx;while((idx=buffer.indexOf('\0'))>=0){const msg=JSON.parse(buffer.slice(0,idx));buffer=buffer.slice(idx+1);if(pending.has(msg.id)){const {resolve,reject}=pending.get(msg.id);pending.delete(msg.id);msg.error?reject(Error(JSON.stringify(msg.error))):resolve(msg.result);}}});
+function call(method,params={},sessionId){return new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});chrome.stdio[3].write(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})+'\0');});}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const evalJS=async expression=>{const r=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},session);if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+const deadline=setTimeout(()=>{chrome.kill();process.exitCode=1;console.error('Browser check timed out');},45000);
+try{
+ await call('Browser.getVersion');const {targetId}=await call('Target.createTarget',{url:pathToFileURL(path.join(here,'desktop-production-workbench.html')).href+'?view=Medien'});session=(await call('Target.attachToTarget',{targetId,flatten:true})).sessionId;await sleep(700);await call('Emulation.setDeviceMetricsOverride',{width:1024,height:1100,deviceScaleFactor:1,mobile:false},session);
+ const results=[];
+ async function click(selector){const p=await evalJS(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Missing '+${JSON.stringify(selector)});el.scrollIntoView({block:'nearest'});const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);await call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p},session);await call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p},session);await sleep(80);}
+ async function screenshot(name){const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);await writeFile('/tmp/ngv-'+name+'.png',Buffer.from(image.data,'base64'));}
+ await click('[data-do="workspace:production"]');await click('[data-do="sidebar:media"]');await click('[data-do="workspace:edit"]');await screenshot('edit-route-fixed');results.push(await evalJS(`({name:'Physical production to Edit',pass:!!document.querySelector('.nle-viewer')&&!document.querySelector('#nd-edit-dock').hidden})`));
+ await evalJS(`document.querySelector('#ngv-desk').ngvTest.fixture('Takes')`);await click('[data-do="approve"]');results.push(await evalJS(`({name:'Physical Take approval opens montage',pass:document.querySelectorAll('[data-nle-clip]').length===6&&!document.querySelector('[data-do="develop"]')})`));
+ await click('[data-do="workspace:media"]');await screenshot('generation-entry');await click('[data-do="gen:open"]');await click('#nd-generation-prompt');await call('Input.insertText',{text:'Eine blaue Lampe auf einer Werkbank, warmes Abendlicht.'},session);await sleep(80);
+ results.push(await evalJS(`({name:'Physical prompt entry',pass:document.activeElement.id==='nd-generation-prompt'&&!document.querySelector('[data-do="gen:review"]').disabled})`));
+ for(const width of [1024,736,500,320]){await call('Emulation.setDeviceMetricsOverride',{width,height:1600,deviceScaleFactor:1,mobile:false},session);await sleep(80);await screenshot('generation-form-'+width);results.push(await evalJS(`(()=>{const r=document.querySelector('#ngv-desk'),d=r.querySelector('.dialog');return{name:'Generation dialog ${width}',pass:r.scrollWidth<=r.clientWidth+1&&d.scrollWidth<=d.clientWidth+1&&d.getBoundingClientRect().width<=${width},height:d.getBoundingClientRect().height}})()`));}
+ await call('Emulation.setDeviceMetricsOverride',{width:1024,height:1100,deviceScaleFactor:1,mobile:false},session);await click('[data-do="gen:review"]');await screenshot('generation-cost');await click('[data-do="gen:run"]');await sleep(1300);await screenshot('generation-result');results.push(await evalJS(`({name:'Physical generation result',pass:document.querySelector('#ngv-desk').ngvTest.state().mediaImports.at(-1)?.generated&&document.querySelector('#nd-inspector').textContent.includes('blaue Lampe')})`));
+ console.log(JSON.stringify(results));await writeFile(path.join(here,'review/generation-workspace-checks.json'),JSON.stringify(results,null,2)+'\n');if(results.some(r=>!r.pass))process.exitCode=1;
+}finally{clearTimeout(deadline);await call('Browser.close').catch(()=>{});chrome.kill();}

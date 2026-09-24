@@ -1,0 +1,1748 @@
+diff --git a/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift b/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
+index a89af275..fd6a41da 100644
+--- a/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
++++ b/Sources/NexGenVideo/Agent/Panel/LibraryAssetPicker.swift
+@@ -107,6 +107,11 @@ struct LibraryAssetPicker: View {
+             }
+         }
+         .accessibilityIdentifier("mediaPicker.\(purpose.accessibilitySuffix)")
++        .onChange(of: editor.folders.map(\.id), initial: true) { _, folderIDs in
++            if let folderID = session.folderID, !Set(folderIDs).contains(folderID) {
++                session.folderID = nil
++            }
++        }
+     }
+ 
+     @ViewBuilder
+@@ -127,6 +132,15 @@ struct LibraryAssetPicker: View {
+                     anchor: .center
+                 )
+                 .frame(maxHeight: scrollHeight)
++                .background {
++                    if WorkspaceUIAcceptance.isRequested {
++                        AppRelaunchClickProbe(
++                            identifier: "mediaPicker.\(purpose.accessibilitySuffix).scroll"
++                        )
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                        .allowsHitTesting(false)
++                    }
++                }
+         } else {
+             list
+         }
+@@ -154,6 +168,18 @@ struct LibraryAssetPicker: View {
+             Button("Show in Media") { editor.revealMediaAsset(id: asset.id) }
+         }
+         .accessibilityIdentifier("mediaPicker.asset.\(asset.id)")
++        .onAppear {
++            WorkspaceUIAcceptance.recordPickerRow(assetID: asset.id, purpose: purpose)
++        }
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(
++                    identifier: "mediaPicker.\(purpose.accessibilitySuffix).asset.\(asset.id)"
++                )
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .allowsHitTesting(false)
++            }
++        }
+ 
+         if allowsDragging {
+             button.draggable(MediaTab.assetDragString(forAssetId: asset.id))
+@@ -253,6 +279,16 @@ struct LibraryAssetPicker: View {
+                         isSelected(t, session: session) ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor,
+                         in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                     )
++                    .background {
++                        if WorkspaceUIAcceptance.isRequested {
++                            AppRelaunchClickProbe(
++                                identifier: "mediaPicker.\(purpose.accessibilitySuffix).filter.\(t.label.lowercased())",
++                                acceptanceState: isSelected(t, session: session)
++                            )
++                            .frame(maxWidth: .infinity, maxHeight: .infinity)
++                            .allowsHitTesting(false)
++                        }
++                    }
+                     .contentShape(Rectangle())
+                     .onTapGesture {
+                         session.filterTypes = t.clipType.map { Set([$0]) } ?? []
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 23812e60..bd548b3f 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -1,9 +1,11 @@
++import AVFoundation
+ import AppKit
+ import SwiftUI
+ 
+ @MainActor
+ enum WorkspaceUIAcceptance {
+     private static var editorSizeProbes: [[String: String]] = []
++    private static var pickerRowProbes: [String: Set<String>] = [:]
+     static let agentPinnedAwayNotification = Notification.Name(
+         "WorkspaceUIAcceptance.agentPinnedAway"
+     )
+@@ -12,6 +14,20 @@ enum WorkspaceUIAcceptance {
+         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
+     }
+ 
++    static func resetPickerRowProbes(for purpose: MediaLibraryPurpose) {
++        guard isRequested else { return }
++        pickerRowProbes[purpose.accessibilitySuffix] = []
++    }
++
++    static func recordPickerRow(assetID: String, purpose: MediaLibraryPurpose) {
++        guard isRequested else { return }
++        pickerRowProbes[purpose.accessibilitySuffix, default: []].insert(assetID)
++    }
++
++    static func pickerRowProbeCount(for purpose: MediaLibraryPurpose) -> Int {
++        pickerRowProbes[purpose.accessibilitySuffix]?.count ?? 0
++    }
++
+     private static var inspectorRequested: Bool {
+         ProcessInfo.processInfo.environment["NGV_INSPECTOR_UI_ACCEPTANCE"] == "1"
+     }
+@@ -26,6 +42,7 @@ enum WorkspaceUIAcceptance {
+         }
+ 
+         editorSizeProbes = []
++        pickerRowProbes = [:]
+         resetWorkspaceDefaults(scale: scale)
+         let app = NSApplication.shared
+         app.setActivationPolicy(.regular)
+@@ -79,7 +96,7 @@ enum WorkspaceUIAcceptance {
+                     && editor.mediaAssets.count >= 523
+                     && editor.mediaAssets
+                         .filter { $0.id.hasPrefix("acceptance-bulk-") }
+-                        .allSatisfy { $0.thumbnail == nil }
++                        .allSatisfy { FileManager.default.fileExists(atPath: $0.url.path) }
+                     && editor.mediaManifest.intakeRoleByAssetID.keys
+                         .allSatisfy { !$0.hasPrefix("acceptance-bulk-") }
+                     && previewTimecodeIsSingleLine(in: window, scale: scale)
+@@ -92,11 +109,103 @@ enum WorkspaceUIAcceptance {
+             guard visiblePanelFrames(in: host) == preparedMediaFrames else {
+                 fail("large media layout did not settle", scale: scale)
+             }
+-            guard click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
++            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return !editor.isSidebarPresented
++                          && visiblePanelIDs(in: host) == ["previewPanel", "inspectorPanel"]
++                          && probeFrame("media.workspace.folderTree", in: host) == nil
++                          && probeFrame("media.workspace.browser", in: host) != nil
++                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
++                  }) else {
++                fail("media folder sidebar did not hide independently", scale: scale)
++            }
++            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourceAsset?.id == "selection-source"
++                          && editor.mediaCommandFocus == .browser
++                          && editor.focusedPanel == .preview
++                  }),
++                  pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.selectedMediaAssetIds == ["selection-secondary"]
++                  }) else {
++                fail("hidden-sidebar media browser did not keep its commands", scale: scale)
++            }
++            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourceAsset?.id == "selection-source"
++                          && editor.mediaCommandFocus == .browser
++                  }) else {
++                fail("could not restore the browser source selection", scale: scale)
++            }
++            let sourceFrameBeforePreviewArrow = editor.sourcePlayheadFrame
++            guard click(identifier: "media.workspace.sourcePreview", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.focusedPanel == .preview
++                          && editor.mediaCommandFocus == .sourcePreview
++                  }),
++                  pressKey(keyCode: 124, characters: "\u{F703}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.sourcePlayheadFrame == sourceFrameBeforePreviewArrow + 1
++                          && editor.mediaCommandFocus == .sourcePreview
++                  }) else {
++                fail("source preview did not keep its own arrow command", scale: scale)
++            }
++            guard click(identifier: "selection.asset.selection-source", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.focusedPanel == .preview
++                          && editor.mediaCommandFocus == .browser
++                  }),
++                  pressKey(keyCode: 50, characters: "`", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.maximizedPanel == .preview
++                          && visiblePanelIDs(in: host) == ["previewPanel"]
++                          && probeFrame("media.workspace.folderTree", in: host) == nil
++                          && probeFrame("media.workspace.browser", in: host) != nil
++                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
++                  }),
++                  pressKey(keyCode: 50, characters: "`", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.maximizedPanel == nil
++                          && !editor.isSidebarPresented
++                          && visiblePanelIDs(in: host) == ["previewPanel", "inspectorPanel"]
++                          && probeFrame("media.workspace.folderTree", in: host) == nil
++                          && probeFrame("media.workspace.browser", in: host) != nil
++                          && probeFrame("media.workspace.sourcePreview", in: host) != nil
++                  }) else {
++                fail("media browser maximize or restore targeted the wrong panel", scale: scale)
++            }
++            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.isSidebarPresented
++                          && visiblePanelIDs(in: host) == expectedPanels(for: .media)
++                          && mediaWorkspaceSurfaceIsValid(in: host)
++                  }),
++                  click(identifier: "selection.asset.selection-source", in: window) == nil,
++                  click(identifier: "media.folder.row.acceptance-folder-0", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                           && editor.mediaLibrarySession(for: .workspace).folderID
+                               == "acceptance-folder-0"
++                          && editor.mediaCommandFocus == .folderTree
++                          && editor.selectedFolderIds == ["acceptance-folder-0"]
++                          && editor.selectedMediaAssetIds.isEmpty
++                  }),
++                  pressKey(keyCode: 36, characters: "\r", in: window) == nil,
++                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaPanelDeleteFolderRequest == ["acceptance-folder-0"]
++                          && editor.folder(id: "acceptance-folder-0") != nil
++                          && editor.mediaAssets.contains { $0.id == "selection-source" }
++                          && editor.mediaCommandFocus == .folderTree
++                  }),
++                  pressKey(keyCode: 53, characters: "\u{1b}", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.mediaPanelDeleteFolderRequest.isEmpty
+                   }),
+                   click(identifier: "media.folder.library", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+@@ -105,6 +214,21 @@ enum WorkspaceUIAcceptance {
+                   }) else {
+                 fail("native folder tree did not route the shared media library", scale: scale)
+             }
++            emit(
++                "media-keyboard",
++                scale: scale,
++                fields: [
++                    "browserArrowSelected": "selection-secondary",
++                    "hiddenSidebarBrowserCommands": true,
++                    "browserLayoutPanel": "preview",
++                    "browserMaximizePreservedSurface": true,
++                    "browserRestorePreservedSurface": true,
++                    "sourcePreviewCommandsIsolated": true,
++                    "treeDeletePreservedAsset": editor.mediaAssets.contains { $0.id == "selection-source" },
++                    "treeDeleteRequestedConfirmation": editor.folder(id: "acceptance-folder-0") != nil,
++                    "folderCommandsIsolated": editor.mediaCommandFocus == .folderTree,
++                ]
++            )
+             resetSplitAutosaveDefaults()
+             editor.setWorkspaceFocus(.production)
+             guard await waitUntil(timeout: .seconds(5), {
+@@ -124,6 +248,142 @@ enum WorkspaceUIAcceptance {
+             guard visiblePanelFrames(in: host) == preparedProductionFrames else {
+                 fail("large production layout did not settle", scale: scale)
+             }
++            let pickerTimeline = editor.timeline
++            let productionPicker = editor.mediaLibrarySession(for: .productionSource)
++            productionPicker.folderID = "acceptance-folder-0"
++            productionPicker.filterTypes = []
++            productionPicker.scrollAnchorID = nil
++            WorkspaceUIAcceptance.resetPickerRowProbes(for: .productionSource)
++            let productionEligibleCount = MediaLibraryProjection.assets(
++                from: editor.mediaAssets.filter { !$0.isGenerating },
++                session: productionPicker
++            ).count
++            var initialPickerAnchor: String?
++            var productionScrollAnchor: String?
++            var productionRenderedRows = 0
++            guard productionEligibleCount > 1,
++                  click(identifier: "mediaPicker.toggle.production", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      let count = pickerRowProbeCount(for: .productionSource)
++                      let ready = probeState(identifier: "mediaPicker.toggle.production", in: window) == true
++                          && count > 0
++                          && count < productionEligibleCount
++                      if ready {
++                          initialPickerAnchor = productionPicker.scrollAnchorID
++                          productionRenderedRows = count
++                      }
++                      return ready
++                  }),
++                  scroll(identifier: "mediaPicker.production.scroll", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      guard let anchor = productionPicker.scrollAnchorID,
++                            anchor != initialPickerAnchor else { return false }
++                      productionScrollAnchor = anchor
++                      return true
++                  }),
++                  click(identifier: "mediaPicker.production.filter.video", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "mediaPicker.production.filter.video", in: window) == true
++                          && productionPicker.filterTypes == [.video]
++                          && findProbe(
++                              in: host,
++                              identifier: "mediaPicker.production.asset.acceptance-bulk-0"
++                          ) != nil
++                  }),
++                  click(
++                      identifier: "mediaPicker.production.asset.acceptance-bulk-0",
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourceAsset?.id == "acceptance-bulk-0"
++                          && productionPicker.selectedAssetIDs == ["acceptance-bulk-0"]
++                  }),
++                  click(identifier: "preview.scrub", horizontalFraction: 0.25, in: window) == nil,
++                  click(identifier: "source.markIn", in: window) == nil,
++                  click(identifier: "preview.scrub", horizontalFraction: 0.75, in: window) == nil,
++                  click(identifier: "source.markOut", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourcePreviewState?.inFrame != nil
++                          && editor.activeSourcePreviewState?.outFrame != nil
++                  }) else {
++                fail("production picker did not lazily select and range a real source", scale: scale)
++            }
++            let productionRange = editor.activeSourcePreviewState
++            let postPicker = editor.mediaLibrarySession(for: .postproductionSource)
++            postPicker.folderID = "acceptance-folder-0"
++            postPicker.filterTypes = []
++            WorkspaceUIAcceptance.resetPickerRowProbes(for: .postproductionSource)
++            guard click(identifier: "editor.workspace.postproduction", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.workspaceFocus == .postproduction
++                          && visiblePanelIDs(in: host) == expectedPanels(for: .postproduction)
++                  }),
++                  click(identifier: "mediaPicker.toggle.postproduction", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "mediaPicker.toggle.postproduction", in: window) == true
++                          && pickerRowProbeCount(for: .postproductionSource) > 0
++                  }),
++                  click(identifier: "mediaPicker.postproduction.filter.video", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "mediaPicker.postproduction.filter.video", in: window) == true
++                          && postPicker.filterTypes == [.video]
++                  }),
++                  click(
++                      identifier: "mediaPicker.postproduction.asset.acceptance-bulk-0",
++                      in: window
++                  ) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.activeSourceAsset?.id == "acceptance-bulk-0"
++                          && postPicker.selectedAssetIDs == ["acceptance-bulk-0"]
++                  }),
++                  click(identifier: "preview.scrub", horizontalFraction: 0.1, in: window) == nil,
++                  click(identifier: "source.markIn", in: window) == nil,
++                  click(identifier: "preview.scrub", horizontalFraction: 0.4, in: window) == nil,
++                  click(identifier: "source.markOut", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      guard let state = editor.activeSourcePreviewState else { return false }
++                      return state.inFrame != productionRange?.inFrame
++                          && state.outFrame != productionRange?.outFrame
++                  }),
++                  click(identifier: "mediaPicker.toggle.postproduction", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "mediaPicker.toggle.postproduction", in: window) == false
++                  }),
++                  click(identifier: "editor.workspace.production", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      editor.workspaceFocus == .production
++                          && editor.activeSourceAsset?.id == "acceptance-bulk-0"
++                          && editor.activeSourcePreviewState == productionRange
++                          && productionPicker.folderID == "acceptance-folder-0"
++                          && productionPicker.selectedAssetIDs == ["acceptance-bulk-0"]
++                          && editor.timeline == pickerTimeline
++                  }) else {
++                fail("picker purpose switch changed source range, folder, selection, or timeline", scale: scale)
++            }
++            emit(
++                "media-picker",
++                scale: scale,
++                fields: [
++                    "eligibleRows": productionEligibleCount,
++                    "renderedRows": productionRenderedRows,
++                    "activeAsset": editor.activeSourceAsset?.id ?? "",
++                    "folder": productionPicker.folderID ?? "",
++                    "sourceIn": editor.activeSourcePreviewState?.inFrame ?? -1,
++                    "sourceOut": editor.activeSourcePreviewState?.outFrame ?? -1,
++                    "timelineStable": editor.timeline == pickerTimeline,
++                    "nativeFilterSelected": productionPicker.filterTypes == [.video],
++                    "nativeScrollAnchored": productionScrollAnchor != nil,
++                    "postPurposeSelectedSameAsset": postPicker.selectedAssetIDs == ["acceptance-bulk-0"],
++                    "productionPurposeRestored": editor.activeSourcePreviewState == productionRange,
++                ]
++            )
++            guard click(identifier: "mediaPicker.toggle.production", in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      probeState(identifier: "mediaPicker.toggle.production", in: window) == false
++                  }) else {
++                fail("production picker did not close after acceptance", scale: scale)
++            }
+             emit(
+                 "window-ready",
+                 scale: scale,
+@@ -217,9 +477,9 @@ enum WorkspaceUIAcceptance {
+                 if workspace == .media {
+                     fields["mediaAssetCount"] = editor.mediaAssets.count
+                     fields["mediaSurface"] = mediaWorkspaceSurfaceDiagnostics(in: host)
+-                    fields["bulkThumbnailsLoaded"] = editor.mediaAssets
++                    fields["bulkFilesUnavailable"] = editor.mediaAssets
+                         .filter { $0.id.hasPrefix("acceptance-bulk-") }
+-                        .filter { $0.thumbnail != nil }
++                        .filter { !FileManager.default.fileExists(atPath: $0.url.path) }
+                         .count
+                     fields["bulkIntakeAssignments"] = editor.mediaManifest.intakeRoleByAssetID.keys
+                         .filter { $0.hasPrefix("acceptance-bulk-") }
+@@ -1479,6 +1739,41 @@ enum WorkspaceUIAcceptance {
+         )
+         let sourceURL = mediaDirectory.appendingPathComponent("selection-source.mov")
+         try FileManager.default.copyItem(at: generatedVideo, to: sourceURL)
++        let audioURL = mediaDirectory.appendingPathComponent("bulk-audio.wav")
++        guard let audioFormat = AVAudioFormat(
++            standardFormatWithSampleRate: 8_000,
++            channels: 1
++        ) else { throw CocoaError(.fileWriteUnknown) }
++        let audioFile = try AVAudioFile(forWriting: audioURL, settings: audioFormat.settings)
++        guard let audioBuffer = AVAudioPCMBuffer(
++            pcmFormat: audioFormat,
++            frameCapacity: 8_000
++        ), let audioChannel = audioBuffer.floatChannelData?[0] else {
++            throw CocoaError(.fileWriteUnknown)
++        }
++        audioBuffer.frameLength = 8_000
++        audioChannel.initialize(repeating: 0, count: 8_000)
++        try audioFile.write(from: audioBuffer)
++
++        let imageURL = mediaDirectory.appendingPathComponent("bulk-image.png")
++        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
++            NSColor.systemBlue.setFill()
++            rect.fill()
++            return true
++        }
++        guard let tiff = image.tiffRepresentation,
++              let bitmap = NSBitmapImageRep(data: tiff),
++              let png = bitmap.representation(using: .png, properties: [:]) else {
++            throw CocoaError(.fileWriteUnknown)
++        }
++        try png.write(to: imageURL, options: .atomic)
++
++        let documentURL = mediaDirectory.appendingPathComponent("bulk-document.md")
++        try Data("Acceptance document content".utf8).write(to: documentURL, options: .atomic)
++        let lottieURL = mediaDirectory.appendingPathComponent("bulk-lottie.json")
++        try Data(
++            #"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":64,"h":64,"layers":[]}"#.utf8
++        ).write(to: lottieURL, options: .atomic)
+ 
+         var clip = Clip(
+             mediaRef: "selection-source",
+@@ -1609,24 +1904,30 @@ enum WorkspaceUIAcceptance {
+                 originalFilename: "Offline Source.mov"
+             ),
+         ]
+-        let bulkTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
+         let bulkFolderCount = manifest.folders.count
+         manifest.entries.append(contentsOf: (0..<520).map { index in
+-            let type = bulkTypes[index % bulkTypes.count]
+-            let fileExtension = switch type {
+-            case .video: "mov"
+-            case .audio: "wav"
+-            case .image: "png"
+-            case .document: "md"
+-            case .lottie: "json"
+-            case .text: "txt"
+-            }
++            let type: ClipType = switch index {
++            case 0: .video
++            case 1: .audio
++            case 2: .image
++            case 3: .lottie
++            default: .document
++            }
++            let relativePath = switch type {
++            case .video: "selection-source.mov"
++            case .audio: "bulk-audio.wav"
++            case .image: "bulk-image.png"
++            case .document: "bulk-document.md"
++            case .lottie: "bulk-lottie.json"
++            case .text: "bulk-document.md"
++            }
++            let fileExtension = URL(fileURLWithPath: relativePath).pathExtension
+             return MediaManifestEntry(
+                 id: "acceptance-bulk-\(index)",
+                 name: "Storage \(index)",
+                 type: type,
+                 source: .project(
+-                    relativePath: "\(Project.mediaDirectoryName)/missing-bulk-\(index).\(fileExtension)"
++                    relativePath: "\(Project.mediaDirectoryName)/\(relativePath)"
+                 ),
+                 duration: type == .video || type == .audio ? Double((index % 30) + 1) : 0,
+                 folderId: "acceptance-folder-\(index % bulkFolderCount)",
+@@ -2360,6 +2661,44 @@ enum WorkspaceUIAcceptance {
+         return nil
+     }
+ 
++    private static func scroll(identifier: String, in window: NSWindow) -> String? {
++        guard let root = window.contentView,
++              let probe = findProbe(in: root, identifier: identifier) else {
++            return "scroll geometry unavailable"
++        }
++        let probeCenter = probe.convert(
++            NSPoint(x: probe.bounds.midX, y: probe.bounds.midY),
++            to: root
++        )
++        var candidates: [(view: NSScrollView, area: CGFloat)] = []
++        func collect(_ view: NSView) {
++            if let scrollView = view as? NSScrollView,
++               !scrollView.isHiddenOrHasHiddenAncestor {
++                let frame = scrollView.convert(scrollView.bounds, to: root)
++                if frame.contains(probeCenter) {
++                    candidates.append((scrollView, frame.width * frame.height))
++                }
++            }
++            view.subviews.forEach(collect)
++        }
++        collect(root)
++        let scrollView = enclosingScrollView(for: probe)
++            ?? candidates.min(by: { $0.area < $1.area })?.view
++        guard let scrollView,
++              let event = CGEvent(
++                  scrollWheelEvent2Source: nil,
++                  units: .pixel,
++                  wheelCount: 1,
++                  wheel1: -300,
++                  wheel2: 0,
++                  wheel3: 0
++              ), let wheel = NSEvent(cgEvent: event) else {
++            return "native scroll event unavailable"
++        }
++        scrollView.scrollWheel(with: wheel)
++        return nil
++    }
++
+     private static func contextClick(identifier: String, in window: NSWindow) -> String? {
+         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+               let root = window.contentView,
+diff --git a/Sources/NexGenVideo/Editor/EditorWindowController.swift b/Sources/NexGenVideo/Editor/EditorWindowController.swift
+index b71c90a1..1a0085c6 100644
+--- a/Sources/NexGenVideo/Editor/EditorWindowController.swift
++++ b/Sources/NexGenVideo/Editor/EditorWindowController.swift
+@@ -53,8 +53,12 @@ final class EditorWindowController: NSWindowController {
+         let cmd = mods.contains(.command)
+         let rangeMarkShortcut = mods.intersection([.command, .option, .control]).isEmpty
+ 
+-        if canHandleMediaShortcut(), !shift,
+-           let direction = mediaArrowDirection(for: event.keyCode) {
++        let mediaDirection = mediaArrowDirection(for: event.keyCode)
++        if canHandleMediaShortcut(), editorViewModel.mediaCommandFocus == .folderTree,
++           mediaDirection != nil {
++            return false
++        }
++        if canHandleMediaBrowserShortcut(), !shift, let direction = mediaDirection {
+             editorViewModel.moveMediaSelection(direction: direction)
+             return true
+         }
+@@ -127,7 +131,7 @@ final class EditorWindowController: NSWindowController {
+             return false
+ 
+         case 36: // Return / Enter
+-            if canHandleMediaShortcut(),
++            if canHandleMediaFolderShortcut(),
+                editorViewModel.selectedFolderIds.count == 1,
+                let folderId = editorViewModel.selectedFolderIds.first {
+                 editorViewModel.mediaPanelOpenFolderId = folderId
+@@ -287,15 +291,41 @@ extension EditorWindowController: EditorActions {
+     }
+ 
+     private func canHandleMediaShortcut() -> Bool {
+-        !isTextInputFocused
+-            && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
+-            && editorViewModel.focusedPanel == .media
+-            && editorViewModel.isSidebarPresented
++        guard !isTextInputFocused, !editorViewModel.theaterActive else { return false }
++        switch (editorViewModel.workspaceFocus, editorViewModel.mediaCommandFocus) {
++        case (.media, .some(.folderTree)):
++            return editorViewModel.focusedPanel == .media
++                && editorViewModel.isSidebarPresented
++        case (.media, .some(.browser)):
++            return editorViewModel.focusedPanel == .preview
++                && (editorViewModel.maximizedPanel == nil
++                    || editorViewModel.maximizedPanel == .preview)
++        case (.edit, .some(.browser)):
++            return editorViewModel.focusedPanel == .media
++                && editorViewModel.isSidebarPresented
++        default:
++            return false
++        }
++    }
++
++    private func canHandleMediaFolderShortcut() -> Bool {
++        canHandleMediaShortcut() && editorViewModel.mediaCommandFocus == .folderTree
++    }
++
++    private func canHandleMediaBrowserShortcut() -> Bool {
++        canHandleMediaShortcut() && editorViewModel.mediaCommandFocus == .browser
+     }
+ 
+     @discardableResult
+     private func performContextualDelete(ripple: Bool) -> Bool {
+         if canHandleMediaShortcut() {
++            if editorViewModel.mediaCommandFocus == .folderTree {
++                let folderIDs = editorViewModel.selectedFolderIds
++                guard !folderIDs.isEmpty,
++                      editorViewModel.canDeleteFolders(ids: folderIDs) else { return false }
++                editorViewModel.mediaPanelDeleteFolderRequest = folderIDs
++                return true
++            }
+             let hasFolders = !editorViewModel.selectedFolderIds.isEmpty
+             let hasAssets = !editorViewModel.selectedMediaAssetIds.isEmpty
+             guard hasFolders || hasAssets else { return false }
+@@ -445,6 +475,11 @@ extension EditorWindowController: EditorActions {
+             return !isTextInputFocused && editorViewModel.canOverwriteActiveSource
+         case #selector(deleteSelectedClips(_:)):
+             if canHandleMediaShortcut() {
++                if editorViewModel.mediaCommandFocus == .folderTree {
++                    let folderIds = editorViewModel.selectedFolderIds
++                    return !folderIds.isEmpty
++                        && editorViewModel.canDeleteFolders(ids: folderIds)
++                }
+                 let folderIds = editorViewModel.selectedFolderIds
+                 let assetIds = editorViewModel.selectedMediaAssetIds
+                 return (!folderIds.isEmpty || !assetIds.isEmpty)
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+index 532540a6..414349c0 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+@@ -89,6 +89,7 @@ extension EditorViewModel {
+ 
+         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
+         selectedFolderIds.subtract(allFolderIds)
++        normalizeMediaLibraryFolderSessions()
+ 
+         undoManager?.registerUndo(withTarget: self) { vm in
+             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Folder")
+@@ -213,6 +214,7 @@ extension EditorViewModel {
+         previewTabHistoryIndex = snapshot.previewTabHistoryIndex
+         sourcePreviewStates = snapshot.sourcePreviewStates
+         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
++        normalizeMediaLibraryFolderSessions()
+         videoEngine?.activateTab(activePreviewTab)
+         refreshMissingMediaCache()
+         notifyTimelineChanged()
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 155812f8..724a728b 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -52,6 +52,12 @@ final class EditorViewModel {
+         }
+     }
+ 
++    enum MediaCommandFocus: Equatable, Sendable {
++        case folderTree
++        case browser
++        case sourcePreview
++    }
++
+     /// The top-level workspace. Workspaces rearrange canonical panels without changing project data.
+     enum WorkspaceFocus: String, CaseIterable, Sendable {
+         case media, production, edit, postproduction, export
+@@ -891,6 +897,7 @@ final class EditorViewModel {
+             mediaFolderId: mediaPanelCurrentFolderId
+         )
+         workspaceFocus = focus
++        mediaCommandFocus = nil
+         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
+         isRestoringWorkspacePresentation = true
+         defer { isRestoringWorkspacePresentation = false }
+@@ -921,9 +928,11 @@ final class EditorViewModel {
+         }
+         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
+         var restoredSourceFrame = max(0, state.sourceFrame)
+-        if let purpose = mediaLibraryPurpose(for: focus),
+-           let asset = activeSourceAsset {
++        let restoredPurpose = mediaLibraryPurpose(for: focus)
++        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : restoredPurpose
++        if let purpose = restoredPurpose, let asset = activeSourceAsset {
+             let sourceState = mediaLibrarySession(for: purpose).sourceStates[asset.id]
++                ?? sourcePreviewStates[asset.id]
+                 ?? SourcePreviewState(playheadFrame: restoredSourceFrame)
+             let duration = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
+             let restored = sourceState.clamped(to: duration)
+@@ -931,7 +940,6 @@ final class EditorViewModel {
+             restoredSourceFrame = restored.playheadFrame
+         }
+         sourcePlayheadFrame = restoredSourceFrame
+-        activeMediaLibraryPurpose = activeSourceAsset == nil ? nil : mediaLibraryPurpose(for: focus)
+         mediaPanelTab = state.mediaPanelTab
+         mediaPanelCurrentFolderId = state.mediaFolderId
+         videoEngine?.activateTab(activePreviewTab)
+@@ -1190,6 +1198,8 @@ final class EditorViewModel {
+     var mediaPanelOpenFolderId: String?
+     var mediaPanelCurrentFolderId: String?
+     var mediaPanelPasteRequestTick: Int = 0
++    var mediaPanelDeleteFolderRequest: Set<String> = []
++    var mediaCommandFocus: MediaCommandFocus?
+     var mediaPanelToast: MediaPanelToast?
+     var mediaImportProgress: MediaImportProgress?
+     @ObservationIgnored var mediaImportTail: Task<MediaImportSummary, Never>?
+@@ -1199,7 +1209,12 @@ final class EditorViewModel {
+     @ObservationIgnored var songAttachInProgress = false
+ 
+     func mediaLibrarySession(for purpose: MediaLibraryPurpose) -> MediaLibrarySession {
+-        if let session = mediaLibrarySessions[purpose] { return session }
++        if let session = mediaLibrarySessions[purpose] {
++            if let folderID = session.folderID, folder(id: folderID) == nil {
++                session.folderID = nil
++            }
++            return session
++        }
+         let session = MediaLibrarySession(purpose: purpose)
+         mediaLibrarySessions[purpose] = session
+         return session
+@@ -1207,6 +1222,7 @@ final class EditorViewModel {
+ 
+     func selectMediaAsset(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
+         rememberActiveMediaLibrarySource()
++        activeMediaLibraryPurpose = nil
+         let session = mediaLibrarySession(for: purpose)
+         session.activeAssetID = asset.id
+         session.selectedAssetIDs = [asset.id]
+@@ -1216,6 +1232,9 @@ final class EditorViewModel {
+         sourcePreviewStates[asset.id] = restored.clamped(to: duration)
+         selectMediaAsset(asset)
+         activeMediaLibraryPurpose = purpose
++        if purpose == .workspace || purpose == .editSource {
++            mediaCommandFocus = .browser
++        }
+     }
+ 
+     func activateMediaAsset(
+@@ -1224,6 +1243,7 @@ final class EditorViewModel {
+         for purpose: MediaLibraryPurpose
+     ) {
+         rememberActiveMediaLibrarySource()
++        activeMediaLibraryPurpose = nil
+         let session = mediaLibrarySession(for: purpose)
+         session.activeAssetID = asset.id
+         session.scrollAnchorID = asset.id
+@@ -1232,6 +1252,9 @@ final class EditorViewModel {
+         activateMediaAsset(asset, preservingSelection: preservingSelection)
+         session.selectedAssetIDs = selectedMediaAssetIds
+         activeMediaLibraryPurpose = purpose
++        if purpose == .workspace || purpose == .editSource {
++            mediaCommandFocus = .browser
++        }
+     }
+ 
+     func toggleMediaAssetSelection(_ asset: MediaAsset, for purpose: MediaLibraryPurpose) {
+@@ -1265,20 +1288,40 @@ final class EditorViewModel {
+     private func snapshotMediaLibrarySession(for workspace: WorkspaceFocus) {
+         guard let purpose = mediaLibraryPurpose(for: workspace) else { return }
+         let session = mediaLibrarySession(for: purpose)
+-        session.selectedAssetIDs = selectedMediaAssetIds
+-        session.folderID = mediaPanelCurrentFolderId
+-        guard activeMediaLibraryPurpose == purpose, let asset = activeSourceAsset else { return }
++        if purpose == .workspace || purpose == .editSource {
++            session.selectedAssetIDs = selectedMediaAssetIds
++            session.folderID = mediaPanelCurrentFolderId
++        }
++        guard let asset = activeSourceAsset,
++              activeMediaLibraryPurpose == purpose || activeMediaLibraryPurpose == nil else { return }
+         session.activeAssetID = asset.id
+         session.rememberSourceState(sourcePreviewState(for: asset.id), for: asset.id)
+     }
+ 
++    func normalizeMediaLibraryFolderSessions() {
++        let folderIDs = Set(folders.map(\.id))
++        for session in mediaLibrarySessions.values {
++            if let folderID = session.folderID, !folderIDs.contains(folderID) {
++                session.folderID = nil
++            }
++        }
++    }
++
+     func revealMediaAsset(id: String) {
++        guard let asset = mediaAssets.first(where: { $0.id == id }) else { return }
++        let session = mediaLibrarySession(for: .workspace)
++        session.folderID = asset.folderId
++        session.scrollAnchorID = id
++        session.selectedAssetIDs = [id]
++        session.activeAssetID = id
+         setWorkspaceFocus(.media)
+         theaterActive = false
+         mediaPanelVisible = true
+         maximizedPanel = nil
+-        focusedPanel = .media
++        focusedPanel = .preview
++        mediaCommandFocus = .browser
+         showMediaPanelMediaTab()
++        selectMediaAsset(asset, for: .workspace)
+         mediaPanelRevealAssetId = id
+     }
+ 
+@@ -1296,7 +1339,8 @@ final class EditorViewModel {
+         theaterActive = false
+         mediaPanelVisible = true
+         maximizedPanel = nil
+-        focusedPanel = .media
++        focusedPanel = workspaceFocus == .media ? .preview : .media
++        mediaCommandFocus = .browser
+         showMediaPanelMediaTab()
+     }
+ 
+diff --git a/Sources/NexGenVideo/Generation/UI/DropZoneView.swift b/Sources/NexGenVideo/Generation/UI/DropZoneView.swift
+index bd7a83ee..64d59092 100644
+--- a/Sources/NexGenVideo/Generation/UI/DropZoneView.swift
++++ b/Sources/NexGenVideo/Generation/UI/DropZoneView.swift
+@@ -4,23 +4,30 @@ import SwiftUI
+ /// Transparent native AppKit drop target.
+ struct DropTargetOverlay: NSViewRepresentable {
+     @Binding var isTargeted: Bool
++    var helpText: String
++    var onClick: () -> Void
+     var onDrop: (String) -> Void
+ 
+     func makeNSView(context: Context) -> DropTargetNSView {
+         let view = DropTargetNSView()
++        view.toolTip = helpText
+         view.onTargetChanged = { isTargeted = $0 }
++        view.onClick = onClick
+         view.onDrop = onDrop
+         return view
+     }
+ 
+     func updateNSView(_ nsView: DropTargetNSView, context: Context) {
++        nsView.toolTip = helpText
+         nsView.onTargetChanged = { isTargeted = $0 }
++        nsView.onClick = onClick
+         nsView.onDrop = onDrop
+     }
+ }
+ 
+ final class DropTargetNSView: NSView {
+     var onTargetChanged: ((Bool) -> Void)?
++    var onClick: (() -> Void)?
+     var onDrop: ((String) -> Void)?
+ 
+     override init(frame: NSRect) {
+@@ -30,6 +37,10 @@ final class DropTargetNSView: NSView {
+ 
+     required init?(coder: NSCoder) { fatalError() }
+ 
++    override func mouseDown(with event: NSEvent) {
++        onClick?()
++    }
++
+     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+         onTargetChanged?(true)
+         return .copy
+diff --git a/Sources/NexGenVideo/Generation/UI/GenerationView.swift b/Sources/NexGenVideo/Generation/UI/GenerationView.swift
+index c637e292..1fe36e0b 100644
+--- a/Sources/NexGenVideo/Generation/UI/GenerationView.swift
++++ b/Sources/NexGenVideo/Generation/UI/GenerationView.swift
+@@ -1439,10 +1439,20 @@ struct GenerationView: View {
+         }
+         .buttonStyle(.plain)
+         .help("Choose from Media or drop a source")
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(identifier: "mediaPicker.generation-\(pickerID)")
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .allowsHitTesting(false)
++            }
++        }
+         .overlay {
+-            DropTargetOverlay(isTargeted: isTargeted) { payload in
+-                for asset in editor.assetsFromDragPayload(payload)
+-                where acceptedTypes.contains(asset.type) {
++            DropTargetOverlay(
++                isTargeted: isTargeted,
++                helpText: "Choose from Media or drop a source",
++                onClick: { activeLibraryPickerID = pickerID }
++            ) { payload in
++                for asset in editor.assetsFromDragPayload(payload) {
+                     onDrop(asset)
+                 }
+             }
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
+index a36af119..3c0e31ee 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Grids.swift
+@@ -36,6 +36,7 @@ extension MediaTab {
+ 
+     func listScroll(cells: [MediaCell]) -> some View {
+         let orderedIDs = cells.map(\.id)
++        let session = editor.mediaLibrarySession(for: mediaPurpose)
+         return ScrollViewReader { proxy in
+             ScrollView {
+                 LazyVStack(spacing: AppTheme.Spacing.xs) {
+@@ -45,7 +46,15 @@ extension MediaTab {
+                     }
+                 }
+                 .padding(AppTheme.Spacing.md)
++                .scrollTargetLayout()
+             }
++            .scrollPosition(
++                id: Binding(
++                    get: { session.scrollAnchorID },
++                    set: { session.scrollAnchorID = $0 }
++                ),
++                anchor: .center
++            )
+             .onAppear {
+                 publishOrderedIds(orderedIDs)
+                 if editor.mediaPanelColumnCount != 1 { editor.mediaPanelColumnCount = 1 }
+@@ -117,6 +126,7 @@ extension MediaTab {
+         topPadding: CGFloat,
+         @ViewBuilder cellView: @escaping (Cell) -> Content
+     ) -> some View where Cell.ID == String {
++        let session = editor.mediaLibrarySession(for: mediaPurpose)
+         ScrollViewReader { proxy in
+             ScrollView(showsIndicators: false) {
+                 let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: spacing), count: max(cols, 1))
+@@ -130,7 +140,15 @@ extension MediaTab {
+                 .padding(AppTheme.Spacing.md)
+                 .padding(.top, topPadding)
+                 .frame(maxWidth: .infinity, alignment: .leading)
++                .scrollTargetLayout()
+             }
++            .scrollPosition(
++                id: Binding(
++                    get: { session.scrollAnchorID },
++                    set: { session.scrollAnchorID = $0 }
++                ),
++                anchor: .center
++            )
+             .coordinateSpace(name: "mediaGrid")
+             .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                 guard workspace == editor.workspaceFocus else { return }
+@@ -209,6 +227,7 @@ extension MediaTab {
+ 
+ extension MediaTab {
+     var groupedGridView: some View {
++        let session = editor.mediaLibrarySession(for: mediaPurpose)
+         // Bucket once so each section is O(1).
+         let bucketed = editor.mediaAssets.reduce(into: [String?: [MediaAsset]]()) { dict, asset in
+             dict[asset.folderId, default: []].append(asset)
+@@ -248,7 +267,15 @@ extension MediaTab {
+                         }
+                     }
+                     .padding(AppTheme.Spacing.md)
++                    .scrollTargetLayout()
+                 }
++                .scrollPosition(
++                    id: Binding(
++                        get: { session.scrollAnchorID },
++                        set: { session.scrollAnchorID = $0 }
++                    ),
++                    anchor: .center
++                )
+                 .coordinateSpace(name: "mediaGrid")
+                 .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                     guard workspace == editor.workspaceFocus else { return }
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
+index 332cc2ac..b3f2b4a7 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab+Search.swift
+@@ -8,27 +8,30 @@ extension MediaTab {
+ 
+     var searchResults: some View {
+         let nameMatches = searchScope == .filename ? sortAndFilter(editor.mediaAssets) : []
++        let visibleVisualHits = visualHits.filter(hitPassesFilters)
++        let visibleSpokenHits = spokenHits.filter(hitPassesFilters)
++        let visibleDocumentHits = documentHits.filter(hitPassesFilters)
+         return ScrollView {
+             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+-                if !visualHits.isEmpty {
+-                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
++                if !visibleVisualHits.isEmpty {
++                    momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visibleVisualHits.count, collapsible: true)
+                     if !collapsedSearchSections.contains("Moments") {
+-                        resultsGrid { ForEach(visualHits.indices, id: \.self) { momentCard(visualHits[$0]) } }
++                        resultsGrid { ForEach(visibleVisualHits.indices, id: \.self) { momentCard(visibleVisualHits[$0]) } }
+                     }
+                 }
+-                if !spokenHits.isEmpty {
+-                    momentHeader("Transcript", icon: "waveform", count: spokenHits.count, collapsible: true)
++                if !visibleSpokenHits.isEmpty {
++                    momentHeader("Transcript", icon: "waveform", count: visibleSpokenHits.count, collapsible: true)
+                     if !collapsedSearchSections.contains("Transcript") {
+                         VStack(spacing: AppTheme.Spacing.sm) {
+-                            ForEach(spokenHits.indices, id: \.self) { spokenRow(spokenHits[$0]) }
++                            ForEach(visibleSpokenHits.indices, id: \.self) { spokenRow(visibleSpokenHits[$0]) }
+                         }
+                         .padding(.bottom, AppTheme.Spacing.sm)
+                     }
+                 }
+-                if !documentHits.isEmpty {
+-                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: documentHits.count)
++                if !visibleDocumentHits.isEmpty {
++                    momentHeader("Text Content", icon: "doc.text.magnifyingglass", count: visibleDocumentHits.count)
+                     VStack(spacing: AppTheme.Spacing.sm) {
+-                        ForEach(documentHits) { documentRow($0) }
++                        ForEach(visibleDocumentHits) { documentRow($0) }
+                     }
+                     .padding(.bottom, AppTheme.Spacing.sm)
+                 }
+@@ -36,7 +39,10 @@ extension MediaTab {
+                     momentHeader("Files", icon: "doc", count: nameMatches.count)
+                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
+                 }
+-                if visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
++                if visibleVisualHits.isEmpty,
++                   visibleSpokenHits.isEmpty,
++                   visibleDocumentHits.isEmpty,
++                   nameMatches.isEmpty {
+                     Text("No matches for “\(trimmedSearchQuery)”")
+                         .interfaceFont(size: AppTheme.Typography.ui)
+                         .foregroundStyle(AppTheme.Text.tertiaryColor)
+@@ -49,6 +55,18 @@ extension MediaTab {
+         }
+     }
+ 
++    private func hitPassesFilters(_ hit: VisualSearch.Hit) -> Bool {
++        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
++    }
++
++    private func hitPassesFilters(_ hit: TranscriptSearch.Hit) -> Bool {
++        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
++    }
++
++    private func hitPassesFilters(_ hit: DocumentSearch.Hit) -> Bool {
++        editor.mediaAssets.first(where: { $0.id == hit.assetID }).map(passesFilters) ?? false
++    }
++
+     private func resultsGrid<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+         LazyVGrid(
+             columns: [GridItem(.adaptive(minimum: CGFloat(thumbnailSize) * 1.4), spacing: AppTheme.Spacing.sm)],
+@@ -262,6 +280,7 @@ extension MediaTab {
+             visualHits = []
+             documentHits = []
+         }
++        let scope = searchScope
+         let matchingAssets = editor.mediaAssets.filter(passesFilters)
+         let timedAssets = matchingAssets
+             .filter { $0.type == .video || $0.type == .audio }
+@@ -277,7 +296,7 @@ extension MediaTab {
+             let spoken: [TranscriptSearch.Hit]
+             let visual: [VisualSearch.Hit]
+             let text: [DocumentSearch.Hit]
+-            switch searchScope {
++            switch scope {
+             case .filename:
+                 spoken = []
+                 visual = []
+@@ -313,15 +332,18 @@ enum DocumentSearch {
+         query: String,
+         assets: [(id: String, url: URL)]
+     ) async -> [Hit] {
+-        await Task.detached(priority: .userInitiated) {
+-            let needle = query.lowercased()
+-            return assets.compactMap { asset in
+-                guard let handle = try? FileHandle(forReadingFrom: asset.url) else { return nil }
+-                defer { try? handle.close() }
+-                guard let data = try? handle.read(upToCount: maximumBytes),
+-                      let text = String(data: data, encoding: .utf8),
+-                      let match = text.lowercased().range(of: needle)
+-                else { return nil }
++        let worker = Task.detached(priority: .userInitiated) {
++            var hits: [Hit] = []
++            for asset in assets {
++                guard !Task.isCancelled else { return hits }
++                guard let read = try? BoundedTextFileReader.readUTF8Prefix(
++                    from: asset.url,
++                    maximumBytes: maximumBytes
++                ), let match = read.text.range(
++                    of: query,
++                    options: [.caseInsensitive, .diacriticInsensitive]
++                ) else { continue }
++                let text = read.text
+                 let lower = text.index(match.lowerBound, offsetBy: -snippetRadius, limitedBy: text.startIndex)
+                     ?? text.startIndex
+                 let upper = text.index(match.upperBound, offsetBy: snippetRadius, limitedBy: text.endIndex)
+@@ -329,9 +351,15 @@ enum DocumentSearch {
+                 let snippet = text[lower..<upper]
+                     .replacingOccurrences(of: "\n", with: " ")
+                     .trimmingCharacters(in: .whitespacesAndNewlines)
+-                return Hit(assetID: asset.id, snippet: snippet)
++                hits.append(Hit(assetID: asset.id, snippet: snippet))
+             }
+-        }.value
++            return hits
++        }
++        return await withTaskCancellationHandler {
++            await worker.value
++        } onCancel: {
++            worker.cancel()
++        }
+     }
+ }
+ 
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+index e87f643a..8fae9265 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/MediaTab.swift
+@@ -132,6 +132,11 @@ struct MediaTab: View {
+             .layoutPriority(1)
+             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
+             .onChange(of: searchScope) { _, _ in scheduleMomentSearch() }
++            .onChange(of: filterTypes) { _, _ in scheduleMomentSearch() }
++            .onChange(of: filterAI) { _, _ in scheduleMomentSearch() }
++            .onChange(of: currentFolderId) { _, _ in scheduleMomentSearch() }
++            .onChange(of: viewMode) { _, _ in scheduleMomentSearch() }
++            .onChange(of: momentSearchAssetRevision) { _, _ in scheduleMomentSearch() }
+ 
+             if editor.showGenerationPanel && !mediaAreaCollapsed {
+                 GenerationView(
+@@ -150,6 +155,11 @@ struct MediaTab: View {
+         }
+         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
+         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
++        .simultaneousGesture(TapGesture().onEnded {
++            guard workspace == editor.workspaceFocus else { return }
++            editor.focusedPanel = workspace == .media ? .preview : .media
++            editor.mediaCommandFocus = .browser
++        })
+         .background {
+             if WorkspaceUIAcceptance.isRequested {
+                 AppRelaunchClickProbe(
+@@ -161,7 +171,7 @@ struct MediaTab: View {
+             }
+         }
+         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
+-        .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
++        .onChange(of: editor.mediaPanelRevealAssetId) { _, target in
+             guard workspace == editor.workspaceFocus, let target else { return }
+             revealAsset(id: target)
+             editor.mediaPanelRevealAssetId = nil
+@@ -171,7 +181,7 @@ struct MediaTab: View {
+             if target == MediaWorkspaceNavigation.rootRouteID {
+                 navigateToFolder(nil)
+             } else {
+-                openFolder(id: target)
++                openFolder(id: target, preservingSelection: true)
+             }
+             editor.mediaPanelOpenFolderId = nil
+         }
+@@ -195,7 +205,10 @@ struct MediaTab: View {
+             assetLayout = session.layout
+             currentFolderId = session.folderID ?? editor.mediaPanelCurrentFolderId
+             editor.publishMediaPanelFolder(currentFolderId, for: workspace)
+-            if let anchor = session.scrollAnchorID {
++            if let target = editor.mediaPanelRevealAssetId, workspace == editor.workspaceFocus {
++                revealAsset(id: target)
++                editor.mediaPanelRevealAssetId = nil
++            } else if let anchor = session.scrollAnchorID {
+                 DispatchQueue.main.async { editor.mediaPanelScrollTarget = anchor }
+             }
+         }
+@@ -300,17 +313,21 @@ struct MediaTab: View {
+         if viewMode == .grouped {
+             collapsedGroupedKeys.remove(asset.folderId ?? "")
+         }
++        let session = editor.mediaLibrarySession(for: mediaPurpose)
++        session.folderID = asset.folderId
++        session.scrollAnchorID = id
++        editor.selectMediaAsset(asset, for: mediaPurpose)
+         editor.mediaPanelScrollTarget = id
+     }
+ 
+-    func openFolder(id: String) {
++    func openFolder(id: String, preservingSelection: Bool = false) {
+         guard editor.folder(id: id) != nil else { return }
+         if viewMode != .folder {
+             folderReturnViewMode = viewMode
+         }
+         currentFolderId = id
+         viewMode = .folder
+-        editor.selectedFolderIds.removeAll()
++        if !preservingSelection { editor.selectedFolderIds.removeAll() }
+     }
+ 
+     // MARK: - Toolbar
+@@ -589,13 +606,20 @@ struct MediaTab: View {
+     }
+ 
+     func passesFilters(_ asset: MediaAsset) -> Bool {
++        let folderOk = viewMode != .folder || currentFolderId == nil || asset.folderId == currentFolderId
+         let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
+         let aiOk = !filterAI || asset.isGenerated
+         let q = searchQuery.trimmingCharacters(in: .whitespaces)
+         let nameOk = q.isEmpty || searchScope != .filename
+             || asset.userFacingFilename.localizedCaseInsensitiveContains(q)
+             || asset.name.localizedCaseInsensitiveContains(q)
+-        return typeOk && aiOk && nameOk
++        return folderOk && typeOk && aiOk && nameOk
++    }
++
++    var momentSearchAssetRevision: [String] {
++        editor.mediaAssets.map {
++            "\($0.id)|\($0.folderId ?? "")|\($0.type.rawValue)|\($0.isGenerated)"
++        }
+     }
+ 
+     func sortAndFilter(_ assets: [MediaAsset]) -> [MediaAsset] {
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift
+index 34d90b1a..d1c7547e 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceNavigation.swift
+@@ -9,6 +9,7 @@ struct MediaWorkspaceNavigation: View {
+     @State private var renameFolderID: String?
+     @State private var renameDraft = ""
+     @State private var pendingDelete: Set<String> = []
++    @State private var synchronizedSelection: Set<String>?
+ 
+     private struct Node: Identifiable {
+         let folder: MediaFolder
+@@ -49,16 +50,37 @@ struct MediaWorkspaceNavigation: View {
+                     .allowsHitTesting(false)
+             }
+         }
+-        .onAppear { selection = editor.selectedFolderIds }
++        .onAppear {
++            synchronizedSelection = editor.selectedFolderIds
++            selection = editor.selectedFolderIds
++        }
++        .simultaneousGesture(TapGesture().onEnded {
++            editor.focusedPanel = .media
++            editor.mediaCommandFocus = .folderTree
++        })
+         .onChange(of: editor.mediaPanelCurrentFolderId) { _, folderID in
+             guard editor.workspaceFocus == .media else { return }
+-            selection = folderID.map { Set([$0]) } ?? []
++            let value = folderID.map { Set([$0]) } ?? []
++            synchronizedSelection = value
++            selection = value
+         }
+         .onChange(of: selection) { _, value in
++            if synchronizedSelection == value {
++                synchronizedSelection = nil
++                return
++            }
++            synchronizedSelection = nil
++            editor.focusedPanel = .media
++            editor.mediaCommandFocus = .folderTree
+             editor.selectedFolderIds = value
++            editor.selectedMediaAssetIds.removeAll()
+             guard value.count == 1, let folderID = value.first else { return }
+             openFolder(folderID)
+         }
++        .onChange(of: editor.mediaPanelDeleteFolderRequest) { _, folderIDs in
++            guard !folderIDs.isEmpty else { return }
++            pendingDelete = folderIDs
++        }
+         .alert("Rename Folder", isPresented: renameAlertPresented) {
+             TextField("Folder name", text: $renameDraft)
+             Button("Cancel", role: .cancel) { renameFolderID = nil }
+@@ -73,8 +95,12 @@ struct MediaWorkspaceNavigation: View {
+                 editor.deleteFolders(ids: pendingDelete)
+                 selection.subtract(pendingDelete)
+                 pendingDelete.removeAll()
++                editor.mediaPanelDeleteFolderRequest = []
++            }
++            Button("Cancel", role: .cancel) {
++                pendingDelete.removeAll()
++                editor.mediaPanelDeleteFolderRequest = []
+             }
+-            Button("Cancel", role: .cancel) { pendingDelete.removeAll() }
+         } message: {
+             Text("Assets move to Imports. Asset IDs and edit references stay unchanged.")
+         }
+@@ -108,6 +134,8 @@ struct MediaWorkspaceNavigation: View {
+             Button {
+                 selection.removeAll()
+                 editor.selectedFolderIds.removeAll()
++                editor.selectedMediaAssetIds.removeAll()
++                editor.mediaCommandFocus = .folderTree
+                 editor.mediaPanelOpenFolderId = Self.rootRouteID
+                 editor.publishMediaPanelFolder(nil, for: .media)
+                 editor.mediaLibrarySession(for: .workspace).folderID = nil
+@@ -234,7 +262,12 @@ struct MediaWorkspaceNavigation: View {
+     private var deleteConfirmationPresented: Binding<Bool> {
+         Binding(
+             get: { !pendingDelete.isEmpty },
+-            set: { if !$0 { pendingDelete.removeAll() } }
++            set: {
++                if !$0 {
++                    pendingDelete.removeAll()
++                    editor.mediaPanelDeleteFolderRequest = []
++                }
++            }
+         )
+     }
+ 
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift
+index 5732e276..677b0efa 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaWorkspaceViews.swift
+@@ -19,6 +19,10 @@ struct MediaWorkspaceCenterView: View {
+                                 .allowsHitTesting(false)
+                         }
+                     }
++                    .simultaneousGesture(TapGesture().onEnded {
++                        editor.focusedPanel = .preview
++                        editor.mediaCommandFocus = .browser
++                    })
+                 PreviewContainerView()
+                     .frame(minHeight: AppTheme.Layout.previewMinHeight)
+                     .accessibilityIdentifier("media.workspace.sourcePreview")
+@@ -29,6 +33,10 @@ struct MediaWorkspaceCenterView: View {
+                                 .allowsHitTesting(false)
+                         }
+                     }
++                    .simultaneousGesture(TapGesture().onEnded {
++                        editor.focusedPanel = .preview
++                        editor.mediaCommandFocus = .sourcePreview
++                    })
+             }
+         }
+     }
+@@ -149,6 +157,16 @@ private func compactLibraryDisclosure(
+         .buttonStyle(.plain)
+         .hoverHighlight()
+         .accessibilityLabel(showsLibrary.wrappedValue ? "Hide Library" : "Show Library")
++        .background {
++            if WorkspaceUIAcceptance.isRequested {
++                AppRelaunchClickProbe(
++                    identifier: "mediaPicker.toggle.\(purpose.accessibilitySuffix)",
++                    acceptanceState: showsLibrary.wrappedValue
++                )
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .allowsHitTesting(false)
++            }
++        }
+ 
+         if showsLibrary.wrappedValue {
+             CompactMediaSourcePicker(purpose: purpose, title: title)
+diff --git a/Sources/NexGenVideo/Models/MediaAsset.swift b/Sources/NexGenVideo/Models/MediaAsset.swift
+index 69ff86b5..b8acac72 100644
+--- a/Sources/NexGenVideo/Models/MediaAsset.swift
++++ b/Sources/NexGenVideo/Models/MediaAsset.swift
+@@ -195,6 +195,10 @@ final class MediaAsset: Identifiable {
+     }
+ 
+     func loadMetadata() async {
++        if type == .document {
++            duration = 0
++            return
++        }
+         if type == .image {
+             duration = Defaults.imageDurationSeconds
+             let imageURL = url
+diff --git a/Sources/NexGenVideo/Preview/PreviewContainerView.swift b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+index 7e76eff1..d6b1c958 100644
+--- a/Sources/NexGenVideo/Preview/PreviewContainerView.swift
++++ b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+@@ -751,6 +751,7 @@ private struct ReadOnlyDocumentPreview: View {
+     let url: URL
+     @State private var text = ""
+     @State private var error: String?
++    @State private var isTruncated = false
+ 
+     var body: some View {
+         ScrollView {
+@@ -762,11 +763,19 @@ private struct ReadOnlyDocumentPreview: View {
+                         description: Text(error)
+                     )
+                 } else {
+-                    Text(text)
+-                        .interfaceFont(size: AppTheme.Typography.reading)
+-                        .foregroundStyle(AppTheme.Text.primaryColor)
+-                        .textSelection(.enabled)
+-                        .frame(maxWidth: .infinity, alignment: .leading)
++                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
++                        if isTruncated {
++                            Label("Showing first 2 MB", systemImage: "doc.text.magnifyingglass")
++                                .interfaceFont(size: AppTheme.Typography.metadata)
++                                .foregroundStyle(AppTheme.Text.secondaryColor)
++                                .accessibilityIdentifier("preview.documentTruncated")
++                        }
++                        Text(text)
++                            .interfaceFont(size: AppTheme.Typography.reading)
++                            .foregroundStyle(AppTheme.Text.primaryColor)
++                            .textSelection(.enabled)
++                            .frame(maxWidth: .infinity, alignment: .leading)
++                    }
+                 }
+             }
+             .padding(AppTheme.Spacing.lg)
+@@ -777,22 +786,23 @@ private struct ReadOnlyDocumentPreview: View {
+             let result = await Self.load(url)
+             text = result.text
+             error = result.error
++            isTruncated = result.isTruncated
+         }
+         .accessibilityIdentifier("preview.readOnlyDocument")
+     }
+ 
+-    nonisolated private static func load(_ url: URL) async -> (text: String, error: String?) {
++    nonisolated private static func load(
++        _ url: URL
++    ) async -> (text: String, error: String?, isTruncated: Bool) {
+         await Task.detached(priority: .userInitiated) {
+             do {
+-                let handle = try FileHandle(forReadingFrom: url)
+-                defer { try? handle.close() }
+-                let data = try handle.read(upToCount: 2_000_000) ?? Data()
+-                guard let value = String(data: data, encoding: .utf8) else {
+-                    throw CocoaError(.fileReadInapplicableStringEncoding)
+-                }
+-                return (value, nil)
++                let read = try BoundedTextFileReader.readUTF8Prefix(
++                    from: url,
++                    maximumBytes: 2_000_000
++                )
++                return (read.text, nil, read.isTruncated)
+             } catch {
+-                return ("", error.localizedDescription)
++                return ("", error.localizedDescription, false)
+             }
+         }.value
+     }
+diff --git a/Sources/NexGenVideo/Utilities/BoundedTextFileReader.swift b/Sources/NexGenVideo/Utilities/BoundedTextFileReader.swift
+new file mode 100644
+index 00000000..edbaa631
+--- /dev/null
++++ b/Sources/NexGenVideo/Utilities/BoundedTextFileReader.swift
+@@ -0,0 +1,37 @@
++import Foundation
++
++struct BoundedTextFileRead: Sendable {
++    let text: String
++    let isTruncated: Bool
++}
++
++enum BoundedTextFileReader {
++    nonisolated static func readUTF8Prefix(
++        from url: URL,
++        maximumBytes: Int
++    ) throws -> BoundedTextFileRead {
++        precondition(maximumBytes > 0)
++        let handle = try FileHandle(forReadingFrom: url)
++        defer { try? handle.close() }
++        let fileSize = try handle.seekToEnd()
++        try handle.seek(toOffset: 0)
++        let data = try handle.read(upToCount: maximumBytes) ?? Data()
++        let isTruncated = fileSize > UInt64(maximumBytes)
++
++        if let text = String(data: data, encoding: .utf8) {
++            return BoundedTextFileRead(text: text, isTruncated: isTruncated)
++        }
++        guard isTruncated else {
++            throw CocoaError(.fileReadInapplicableStringEncoding)
++        }
++        for removedByteCount in 1...min(3, data.count) {
++            if let text = String(
++                data: Data(data.dropLast(removedByteCount)),
++                encoding: .utf8
++            ) {
++                return BoundedTextFileRead(text: text, isTruncated: true)
++            }
++        }
++        throw CocoaError(.fileReadInapplicableStringEncoding)
++    }
++}
+diff --git a/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift b/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift
+index 5b754463..434e0fab 100644
+--- a/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift
++++ b/Tests/NexGenVideoTests/Media/MediaWorkspaceTests.swift
+@@ -1,3 +1,4 @@
++import AppKit
+ import Foundation
+ import Testing
+ @testable import NexGenVideo
+@@ -5,7 +6,7 @@ import Testing
+ @Suite("Media workspace")
+ @MainActor
+ struct MediaWorkspaceTests {
+-    @Test func projectsMoreThanFiveHundredMixedAssetsWithoutLoadingPreviews() {
++    @Test func projectionFiltersMoreThanFiveHundredMixedAssetsWithoutChangingPreview() {
+         let editor = EditorViewModel()
+         let root = editor.createFolder(name: "Shoot")
+         let nested = editor.createFolder(name: "Day 1", in: root)
+@@ -43,52 +44,43 @@ struct MediaWorkspaceTests {
+         #expect(projected.allSatisfy { $0.folderId == nested })
+         #expect(projected.allSatisfy { $0.type == .video || $0.type == .document })
+         #expect(projected.allSatisfy(\.isGenerated))
+-        #expect(editor.mediaAssets.allSatisfy { $0.thumbnail == nil })
+         #expect(editor.activePreviewTab == .timeline)
+     }
+ 
+-    @Test func pickerPurposesKeepFilterScrollSelectionAndSourceRangeSeparate() {
++    @Test func workspaceSwitchPreservesCompactPickerStateAndPerPurposeSourceRange() {
+         let editor = EditorViewModel()
+-        let edit = editor.mediaLibrarySession(for: .editSource)
+-        let production = editor.mediaLibrarySession(for: .productionSource)
+-        edit.query = "close"
+-        edit.folderID = "rushes"
+-        edit.scrollAnchorID = "asset-edit"
+-        edit.selectedAssetIDs = ["asset-edit"]
+-        edit.rememberSourceState(
+-            SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72),
+-            for: "asset-edit"
++        editor.timeline.fps = 30
++        let productionFolder = editor.createFolder(name: "Production")
++        let source = MediaAsset(
++            id: "shared-purpose-source",
++            url: URL(fileURLWithPath: "/tmp/shared-purpose.mov"),
++            type: .video,
++            name: "Shared Purpose",
++            duration: 10,
++            originalFilename: "Shared Purpose.mov"
+         )
++        editor.mediaAssets = [source]
++        let production = editor.mediaLibrarySession(for: .productionSource)
++        production.folderID = productionFolder
++        editor.selectMediaAsset(source, for: .productionSource)
++        editor.seekSourceToFrame(42)
++        editor.markSourceIn()
++        editor.seekSourceToFrame(72)
++        editor.markSourceOut()
+ 
+-        production.query = "wide"
+-        production.folderID = "plates"
+-        production.scrollAnchorID = "asset-production"
+-        production.selectedAssetIDs = ["asset-production"]
+-
+-        #expect(edit.query == "close")
+-        #expect(edit.folderID == "rushes")
+-        #expect(edit.scrollAnchorID == "asset-edit")
+-        #expect(edit.selectedAssetIDs == ["asset-edit"])
+-        #expect(edit.sourceState(for: "asset-edit") == SourcePreviewState(playheadFrame: 42, inFrame: 18, outFrame: 72))
+-        #expect(production.query == "wide")
+-        #expect(production.folderID == "plates")
+-        #expect(production.scrollAnchorID == "asset-production")
+-        #expect(production.selectedAssetIDs == ["asset-production"])
+-        #expect(production.sourceState(for: "asset-edit") == SourcePreviewState())
+-    }
+-
+-    @Test func pickerStateChangesDoNotMutateTimelinePreviewOrIntakeAssignments() {
+-        let editor = EditorViewModel()
+-        let timeline = editor.timeline
+-        let session = editor.mediaLibrarySession(for: .generationInput("first-frame"))
+-        session.query = "hero"
+-        session.selectedAssetIDs = ["candidate"]
+-        session.activeAssetID = "candidate"
++        editor.setWorkspaceFocus(.edit)
++        editor.selectMediaAsset(source, for: .editSource)
++        editor.seekSourceToFrame(9)
++        editor.markSourceIn()
++        editor.seekSourceToFrame(21)
++        editor.markSourceOut()
++        editor.setWorkspaceFocus(.production)
+ 
+-        #expect(editor.timeline == timeline)
+-        #expect(editor.activePreviewTab == .timeline)
+-        #expect(editor.mediaManifest.intakeRoleByAssetID.isEmpty)
+-        #expect(editor.selectedMediaAssetIds.isEmpty)
++        #expect(production.folderID == productionFolder)
++        #expect(production.selectedAssetIDs == [source.id])
++        #expect(editor.activeSourcePreviewState == SourcePreviewState(playheadFrame: 72, inFrame: 42, outFrame: 72))
++        #expect(editor.mediaLibrarySession(for: .editSource).sourceState(for: source.id)
++            == SourcePreviewState(playheadFrame: 21, inFrame: 9, outFrame: 21))
+     }
+ 
+     @Test func selectingTheSameSourceRestoresEachPurposesOwnRange() {
+@@ -144,6 +136,118 @@ struct MediaWorkspaceTests {
+         #expect(editor.timeline == timeline)
+     }
+ 
++    @Test func globalSourceRangeFallsBackIntoWorkspacePurpose() {
++        let editor = EditorViewModel()
++        editor.timeline.fps = 30
++        let source = MediaAsset(
++            id: "global-source",
++            url: URL(fileURLWithPath: "/tmp/global-source.mov"),
++            type: .video,
++            name: "Global Source",
++            duration: 10,
++            originalFilename: "Global Source.mov"
++        )
++        editor.mediaAssets = [source]
++        editor.selectMediaAsset(source)
++        editor.seekSourceToFrame(30)
++        editor.markSourceIn()
++        editor.seekSourceToFrame(60)
++        editor.markSourceOut()
++
++        editor.setWorkspaceFocus(.edit)
++        editor.setWorkspaceFocus(.production)
++
++        #expect(editor.activeSourcePreviewState
++            == SourcePreviewState(playheadFrame: 60, inFrame: 30, outFrame: 60))
++        #expect(editor.mediaLibrarySession(for: .productionSource).sourceState(for: source.id)
++            == SourcePreviewState(playheadFrame: 60, inFrame: 30, outFrame: 60))
++    }
++
++    @Test func deletingFolderNormalizesEveryPickerSession() {
++        let editor = EditorViewModel()
++        let folderID = editor.createFolder(name: "Temporary")
++        editor.mediaLibrarySession(for: .productionSource).folderID = folderID
++        editor.mediaLibrarySession(for: .generationInput("first-frame")).folderID = folderID
++
++        editor.deleteFolders(ids: [folderID])
++
++        #expect(editor.mediaLibrarySession(for: .productionSource).folderID == nil)
++        #expect(editor.mediaLibrarySession(for: .generationInput("first-frame")).folderID == nil)
++    }
++
++    @Test func revealSelectsTheSameAssetAndPrimesItsWorkspaceLocation() {
++        let editor = EditorViewModel()
++        let folderID = editor.createFolder(name: "Reveal")
++        let source = MediaAsset(
++            id: "reveal-source",
++            url: URL(fileURLWithPath: "/tmp/reveal.mov"),
++            type: .video,
++            name: "Reveal",
++            duration: 4,
++            originalFilename: "Reveal.mov"
++        )
++        source.folderId = folderID
++        editor.mediaAssets = [source]
++
++        editor.revealMediaAsset(id: source.id)
++
++        let session = editor.mediaLibrarySession(for: .workspace)
++        #expect(editor.workspaceFocus == .media)
++        #expect(editor.activeSourceAsset?.id == source.id)
++        #expect(editor.selectedMediaAssetIds == [source.id])
++        #expect(editor.focusedPanel == .preview)
++        #expect(editor.mediaCommandFocus == .browser)
++        #expect(session.folderID == folderID)
++        #expect(session.scrollAnchorID == source.id)
++    }
++
++    @Test func documentSearchUsesOriginalStringIndicesAroundUnicodeCaseMappings() async throws {
++        let url = FileManager.default.temporaryDirectory
++            .appendingPathComponent("ngv-document-search-\(UUID().uuidString).txt")
++        defer { try? FileManager.default.removeItem(at: url) }
++        try Data("İ prefix K TARGET suffix".utf8).write(to: url)
++
++        let hits = await DocumentSearch.search(query: "target", assets: [(id: "unicode", url: url)])
++
++        #expect(hits.count == 1)
++        #expect(hits.first?.assetID == "unicode")
++        #expect(hits.first?.snippet.contains("TARGET") == true)
++    }
++
++    @Test func boundedUTF8ReadDropsOnlyAnIncompleteTrailingSequence() throws {
++        let url = FileManager.default.temporaryDirectory
++            .appendingPathComponent("ngv-bounded-text-\(UUID().uuidString).txt")
++        defer { try? FileManager.default.removeItem(at: url) }
++        try Data("1234ärest".utf8).write(to: url)
++
++        let read = try BoundedTextFileReader.readUTF8Prefix(from: url, maximumBytes: 5)
++
++        #expect(read.text == "1234")
++        #expect(read.isTruncated)
++    }
++
++    @Test func nativeGenerationDropTargetHandlesClickAndRemainsRegisteredForDrops() throws {
++        let view = DropTargetNSView()
++        var clickCount = 0
++        view.onClick = { clickCount += 1 }
++        let event = try #require(NSEvent.mouseEvent(
++            with: .leftMouseDown,
++            location: .zero,
++            modifierFlags: [],
++            timestamp: 0,
++            windowNumber: 0,
++            context: nil,
++            eventNumber: 0,
++            clickCount: 1,
++            pressure: 1
++        ))
++
++        view.mouseDown(with: event)
++
++        #expect(clickCount == 1)
++        #expect(view.registeredDraggedTypes.contains(.string))
++    }
++
+     @Test func filenameProjectionUsesOriginalNameInsteadOfStorageHash() {
+         let editor = EditorViewModel()
+         let hash = String(repeating: "b", count: 64)
+diff --git a/Tests/NexGenVideoTests/UI/WorkspaceFocusTests.swift b/Tests/NexGenVideoTests/UI/WorkspaceFocusTests.swift
+index e3f02a42..faeb91d8 100644
+--- a/Tests/NexGenVideoTests/UI/WorkspaceFocusTests.swift
++++ b/Tests/NexGenVideoTests/UI/WorkspaceFocusTests.swift
+@@ -261,7 +261,21 @@ struct WorkspaceFocusTests {
+         #expect(editor.workspaceFocus == .media)
+         #expect(editor.mediaPanelVisible)
+         #expect(editor.maximizedPanel == nil)
++        #expect(editor.focusedPanel == .preview)
++        #expect(editor.mediaCommandFocus == .browser)
++        #expect(editor.mediaPanelTab == .assets)
++
++        editor.setWorkspaceFocus(.edit)
++        editor.mediaPanelVisible = false
++        editor.maximizedPanel = .preview
++
++        editor.revealMediaTools()
++
++        #expect(editor.workspaceFocus == .edit)
++        #expect(editor.mediaPanelVisible)
++        #expect(editor.maximizedPanel == nil)
+         #expect(editor.focusedPanel == .media)
++        #expect(editor.mediaCommandFocus == .browser)
+         #expect(editor.mediaPanelTab == .assets)
+     }
+ 
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index 20f0094c..a58aa75e 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -73,7 +73,7 @@ def valid_media_surface(row):
+         and contains_frame(center_panel, source)
+         and vertically_separate
+         and row.get("mediaAssetCount", 0) >= 523
+-        and row.get("bulkThumbnailsLoaded") == 0
++        and row.get("bulkFilesUnavailable") == 0
+         and row.get("bulkIntakeAssignments") == 0
+     )
+ 
+@@ -194,6 +194,8 @@ def run_scale(executable, output, scale):
+     narrow = [row for row in rows if row.get("event") == "narrow-production"]
+     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
+     selection_source = [row for row in rows if row.get("event") == "selection-source"]
++    media_picker = [row for row in rows if row.get("event") == "media-picker"]
++    media_keyboard = [row for row in rows if row.get("event") == "media-keyboard"]
+     selection_timeline = [row for row in rows if row.get("event") == "selection-timeline"]
+     invariants = [row for row in rows if row.get("event") == "invariants"]
+     inspector = [row for row in rows if row.get("event") == "inspector"]
+@@ -231,6 +233,27 @@ def run_scale(executable, output, scale):
+         and len(narrow) == 1
+         and len(pinned) == 1
+         and len(selection_source) == 1
++        and len(media_picker) == 1
++        and len(media_keyboard) == 1
++        and media_keyboard[0].get("browserArrowSelected") == "selection-secondary"
++        and media_keyboard[0].get("hiddenSidebarBrowserCommands") is True
++        and media_keyboard[0].get("browserLayoutPanel") == "preview"
++        and media_keyboard[0].get("browserMaximizePreservedSurface") is True
++        and media_keyboard[0].get("browserRestorePreservedSurface") is True
++        and media_keyboard[0].get("sourcePreviewCommandsIsolated") is True
++        and media_keyboard[0].get("treeDeletePreservedAsset") is True
++        and media_keyboard[0].get("treeDeleteRequestedConfirmation") is True
++        and media_keyboard[0].get("folderCommandsIsolated") is True
++        and 0 < media_picker[0].get("renderedRows", 0) < media_picker[0].get("eligibleRows", 0)
++        and media_picker[0].get("activeAsset") == "acceptance-bulk-0"
++        and media_picker[0].get("folder") == "acceptance-folder-0"
++        and media_picker[0].get("sourceIn", -1) >= 0
++        and media_picker[0].get("sourceOut", -1) > media_picker[0].get("sourceIn", -1)
++        and media_picker[0].get("timelineStable") is True
++        and media_picker[0].get("nativeFilterSelected") is True
++        and media_picker[0].get("nativeScrollAnchored") is True
++        and media_picker[0].get("postPurposeSelectedSameAsset") is True
++        and media_picker[0].get("productionPurposeRestored") is True
+         and selection_source[0].get("activeAsset") == "selection-source"
+         and selection_source[0].get("sourceFrame") == 42
+         and selection_source[0].get("sourceIn") == 18

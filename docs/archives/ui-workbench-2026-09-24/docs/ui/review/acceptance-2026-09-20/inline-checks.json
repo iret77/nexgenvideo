@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Inline-Fragment lädt und nutzt die volle Arbeitshöhe",
+    "pass": true
+  },
+  {
+    "name": "Inline wechselt Arbeitsräume ohne leere Hauptfläche",
+    "pass": true
+  }
+]

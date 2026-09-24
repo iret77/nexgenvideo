@@ -1,0 +1,93 @@
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 1e127325..7551210b 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -2710,6 +2710,7 @@ final class AgentService {
+     func cancel() {
+         // Gate approval remains open because its tool call has already returned.
+         abandonSpendApproval()
++        let wasStreaming = isStreaming
+         if let currentSessionId {
+             runtimeAdapter?.cancel(sessionID: currentSessionId)
+         }
+@@ -2719,6 +2720,10 @@ final class AgentService {
+         runtimeSessionID = nil
+         runtimeContextSignature = nil
+         isStreaming = false
++        if wasStreaming {
++            syncMessagesIntoCurrentSession()
++            onSessionsChanged?()
++        }
+     }
+ 
+     // MARK: - Host-owned runtime
+@@ -3014,16 +3019,16 @@ final class AgentService {
+         let transientImages = pendingTurnImages
+         pendingTurnImages = []
+         currentTask = Task { [weak self] in
+-            defer {
+-                guard let self, self.currentSessionId == boundSessionID else { return }
+-                self.isStreaming = false
+-                self.syncMessagesIntoCurrentSession()
+-                self.onSessionsChanged?()
+-            }
+             await self?.runRuntimeTurn(
+                 sessionID: boundSessionID,
+                 transientImages: transientImages
+             )
++            guard !Task.isCancelled,
++                  let self,
++                  self.currentSessionId == boundSessionID else { return }
++            self.isStreaming = false
++            self.syncMessagesIntoCurrentSession()
++            self.onSessionsChanged?()
+         }
+     }
+ 
+diff --git a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+index 4f5d208a..089e71a2 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+@@ -181,6 +181,42 @@ struct AgentServiceRuntimeContractTests {
+         #expect(!service.isStreaming)
+     }
+ 
++    @Test("cancelled turn completion cannot clear a replacement turn in the same chat")
++    func cancelledTurnCannotFinishReplacementTurn() async throws {
++        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
++        let service = makeService(backend: .anthropicAPI, adapter: adapter)
++
++        #expect(service.send(text: "First turn", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let firstTurn = try #require(adapter.sendRequests.first)
++        adapter.emit(
++            .text(messageID: "first-answer", value: "Partial", isDelta: true),
++            for: firstTurn
++        )
++        await waitUntil { assistantText(in: service.messages) == "Partial" }
++
++        service.cancel()
++        let sessionID = try #require(service.currentSessionId)
++        let storedSession = try #require(service.sessions.first { $0.id == sessionID })
++        #expect(assistantText(in: storedSession.messages) == "Partial")
++
++        #expect(service.send(text: "Replacement turn", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 2 }
++        let replacementTurn = adapter.sendRequests[1]
++        await Task.yield()
++        #expect(service.isStreaming)
++
++        adapter.emit(
++            .text(messageID: "replacement-answer", value: "Complete", isDelta: true),
++            for: replacementTurn
++        )
++        adapter.emit(.terminal(.completed(.endTurn)), for: replacementTurn)
++        adapter.finish(replacementTurn)
++        await waitUntil { !service.isStreaming }
++
++        #expect(assistantText(in: service.messages) == "PartialComplete")
++    }
++
+     @Test("a second send cannot replace an in-flight runtime turn")
+     func backToBackSendIsRejectedWithoutChangingTranscript() async {
+         let adapter = FakeRuntimeAdapter(backend: .claudeCode)

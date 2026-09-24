@@ -1,0 +1,26 @@
+PASS Two independent indicators in all workspaces
+PASS Opening AI changes no project state
+PASS Switching indicators opens only the requested flyout
+PASS Escape closes and returns focus to invoking indicator
+PASS Second click closes without a layout toggle
+PASS Click outside dismisses and preserves requested workspace action
+PASS Actual export activates only export indicator
+PASS Open export flyout updates progress from its job
+PASS Completed export remains inspectable without active spinner
+PASS Export cancel targets export and records cancellation
+PASS Cancelled export never completes from a stale timer
+PASS Manual AI generation uses nonmodal activity and unknown progress
+PASS Dismissal and workspace switch leave AI job running
+PASS AI stage updates in the open flyout without invented percent
+PASS AI cancel does not open a generation form or activate export
+PASS Batch reports completed results, not fictitious model progress
+PASS Batch exposes shot identities and individual states
+PASS Batch stop preserves output and shows interrupted state
+PASS Restored batch is interrupted and never silently resubmitted
+PASS Failure has visible and accessible state without spinner
+PASS Reduced motion keeps activity visible without rotation
+PASS Flyout stays inside window at 1440
+PASS Flyout stays inside window at 1024
+PASS Flyout stays inside window at 768
+PASS Flyout stays inside window at 390
+{"passed":25,"failed":[]}

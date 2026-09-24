@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Übersicht besitzt keinen Animatic-Transport",
+    "pass": true
+  },
+  {
+    "name": "Zweite räumliche Vorlage wird nicht automatisch bestätigt",
+    "pass": true
+  },
+  {
+    "name": "Identitäten führen unmittelbar zum Ankerauftrag",
+    "pass": true
+  },
+  {
+    "name": "Unverändertes Blocking wird erklärt und bleibt eine ausdrückliche Freigabe",
+    "pass": true
+  },
+  {
+    "name": "Nur passende Bildbindung ermöglicht Freigabe",
+    "pass": true
+  },
+  {
+    "name": "Storyboard bleibt während des Videoauftrags lesbar",
+    "pass": true
+  },
+  {
+    "name": "Sechs Takes ohne sechs Dialoge ausgewählt",
+    "pass": true
+  },
+  {
+    "name": "Rohschnitt enthält die gewählte Auswahl",
+    "pass": true
+  },
+  {
+    "name": "Farbe überschreibt keinen Titel",
+    "pass": true
+  },
+  {
+    "name": "Export übernimmt vollständige Sequenz und Prüfung",
+    "pass": true
+  },
+  {
+    "name": "Neuer leerer Ordner hat keine unsichtbare Auswahl",
+    "pass": true
+  },
+  {
+    "name": "Keine unbehandelten Browserfehler",
+    "pass": true,
+    "errors": []
+  }
+]

@@ -1,0 +1,2479 @@
+diff --git a/.github/workflows/codex-app-server-acceptance.yml b/.github/workflows/codex-app-server-acceptance.yml
+new file mode 100644
+index 00000000..cf6fcaff
+--- /dev/null
++++ b/.github/workflows/codex-app-server-acceptance.yml
+@@ -0,0 +1,108 @@
++name: Codex App Server Acceptance
++
++# ci-lint: allow-CI008 Manual workflow_dispatch is required because this includes a paid LLM smoke.
++# ci-lint: allow-CI007 No push or pull_request event may start this workflow.
++on:
++  workflow_dispatch:
++    inputs:
++      run_paid_llm_smoke:
++        description: "Run the separately approved paid Codex LLM smoke"
++        type: boolean
++        required: true
++        default: false
++      approval:
++        description: "Enter APPROVE-CODEX-LLM-SMOKE"
++        type: string
++        required: true
++
++permissions:
++  contents: read
++
++concurrency:
++  group: codex-app-server-acceptance-${{ github.ref }}
++  cancel-in-progress: false
++
++jobs:
++  acceptance:
++    if: inputs.run_paid_llm_smoke && inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
++    runs-on: xcode-27
++    timeout-minutes: 25
++    env:
++      NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
++      CODEX_HOME: ${{ runner.temp }}/nexgenvideo-codex-home
++      NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: ./.github/actions/setup-xcode-27
++
++      - uses: ./.github/actions/cache-swiftpm-dependencies
++
++      - name: Require isolated acceptance credential
++        shell: bash
++        env:
++          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
++        run: |
++          set -euo pipefail
++          test -n "$CODEX_ACCEPTANCE_API_KEY"
++
++      - name: Install pinned Codex CLI
++        shell: bash
++        run: |
++          set -euo pipefail
++          npm install --global @openai/codex@0.156.0
++          test "$(codex --version)" = "codex-cli 0.156.0"
++
++      - name: Prepare isolated keyring account
++        shell: bash
++        env:
++          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
++        run: |
++          set -euo pipefail
++          mkdir -p "$CODEX_HOME"
++          chmod 700 "$CODEX_HOME"
++          printf '%s\n' 'cli_auth_credentials_store = "keyring"' > "$CODEX_HOME/config.toml"
++          chmod 600 "$CODEX_HOME/config.toml"
++          printf '%s' "$CODEX_ACCEPTANCE_API_KEY" | codex login --with-api-key
++
++      - name: Export and pin protocol schemas
++        shell: bash
++        run: |
++          set -euo pipefail
++          schema_dir="$RUNNER_TEMP/codex-app-server-schema"
++          codex app-server generate-json-schema --out "$schema_dir"
++          test "$(shasum -a 256 "$schema_dir/codex_app_server_protocol.schemas.json" | cut -d' ' -f1)" = "eb1ba91bd0fab656523092f6ed7de3ea7aef278921a650f14dc871ae7dcfaf84"
++          test "$(shasum -a 256 "$schema_dir/codex_app_server_protocol.v2.schemas.json" | cut -d' ' -f1)" = "995fc3b8f8c469f6787e8fc5be4038c4f31359025edd8480b862e83355f3bf3b"
++
++      - name: Build acceptance test target
++        run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
++
++      - name: Stage test runtime inputs
++        run: scripts/stage_test_runtime.sh debug
++
++      - name: Run real Codex consumer smoke
++        shell: bash
++        run: |
++          set -euo pipefail
++          swift test \
++            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
++            --skip-build \
++            --filter CodexAppServerLiveAcceptanceTests
++
++      - name: Verify redacted evidence
++        shell: bash
++        run: |
++          set -euo pipefail
++          test -s "$NGV_CODEX_ACCEPTANCE_EVIDENCE"
++          if grep -Eiq 'sk-[[:alnum:]_-]{12,}|bearer[[:space:]]+[[:alnum:]_.-]+|prompt|token' "$NGV_CODEX_ACCEPTANCE_EVIDENCE"; then
++            echo "Acceptance evidence contains a forbidden sensitive field" >&2
++            exit 1
++          fi
++
++      - name: Upload redacted evidence
++        uses: actions/upload-artifact@v4
++        with:
++          name: codex-app-server-acceptance-${{ github.run_id }}
++          path: ${{ runner.temp }}/codex-app-server-evidence.json
++          if-no-files-found: error
++          retention-days: 14
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 6956325f..fced19f1 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -117,6 +117,7 @@ final class AgentService {
+         switch backend {
+         case .anthropicAPI: return isCheckingAPIKey && !hasApiKey
+         case .claudeCode: return isCheckingClaude && claudeStatus?.isAuthenticated != true
++        case .codexAppServer: return false
+         }
+     }
+ 
+@@ -124,6 +125,7 @@ final class AgentService {
+         switch backend {
+         case .anthropicAPI: return "Checking Anthropic API key…"
+         case .claudeCode: return "Checking Claude Code…"
++        case .codexAppServer: return "Checking Codex…"
+         }
+     }
+ 
+@@ -140,6 +142,18 @@ final class AgentService {
+             return claudeStatus?.isAuthenticated == true
+                 ? nil
+                 : .upstream(setupPrompt + " Agent settings.")
++        case .codexAppServer:
++            guard CodexAppServerContract.isAcceptanceRun else {
++                return .upstream(
++                    "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated runtime."
++                )
++            }
++            return CodexAppServerLocator.executable(
++                environment: ProcessInfo.processInfo.environment,
++                fileManager: .default
++            ) == nil
++                ? .upstream("Install the supported Codex CLI in Agent settings.")
++                : nil
+         }
+     }
+ 
+@@ -153,6 +167,8 @@ final class AgentService {
+             return "Install Claude Code in"
+         case .claudeCode:
+             return "Sign in to Claude Code in"
++        case .codexAppServer:
++            return "Set up the isolated Codex account in"
+         }
+     }
+ 
+@@ -164,6 +180,8 @@ final class AgentService {
+             return "Install Claude Code to use the AI chat."
+         case .claudeCode:
+             return "Sign in to Claude Code to use the AI chat."
++        case .codexAppServer:
++            return "Set up the isolated Codex account to use the AI chat."
+         }
+     }
+ 
+@@ -180,6 +198,8 @@ final class AgentService {
+         case .claudeCode:
+             isCheckingClaude = true
+             Task { await refreshClaudeCodeStatus() }
++        case .codexAppServer:
++            isCheckingClaude = false
+         }
+     }
+ 
+@@ -3134,11 +3154,17 @@ final class AgentService {
+             pluginDirectories: pluginDirectories,
+             externalMCPServers: externalMCPServers
+         )
+-        let providerConfiguration = backend == .anthropicAPI
+-            ? "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+-            : externalMCPServers.keys.sorted().map {
++        let providerConfiguration: String
++        switch backend {
++        case .anthropicAPI:
++            providerConfiguration = "\(effectiveModel.rawValue):\(apiKeyGeneration)"
++        case .codexAppServer:
++            providerConfiguration = CodexAppServerContract.cliVersion
++        case .claudeCode:
++            providerConfiguration = externalMCPServers.keys.sorted().map {
+                 "\($0)=\(externalMCPServers[$0] ?? "")"
+             }.joined(separator: ",")
++        }
+         let signature = [
+             backend.runtimeID.rawValue,
+             providerConfiguration,
+@@ -3167,10 +3193,22 @@ final class AgentService {
+                     throw AgentRuntimeContractError.sessionNotStarted
+                 }
+                 adapter = AnthropicRuntimeAdapter(client: client)
++            case .codexAppServer:
++                adapter = CodexAppServerRuntimeAdapter()
+             }
+         }
+-        let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
++        let providerSessionID: String?
++        switch backend {
++        case .claudeCode:
++            providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
++        case .codexAppServer:
++            providerSessionID = nil
++        case .anthropicAPI:
++            providerSessionID = nil
++        }
+         let generationID = UUID()
++        let projectID = projectGenerationID
++        let runtimeBackendID = adapter.descriptor.identity.backendID
+         let request = AgentRuntimeSessionRequest(
+             sessionID: sessionID,
+             runtimeGenerationID: generationID,
+@@ -3182,7 +3220,11 @@ final class AgentService {
+             providerExtensions: providerExtensions,
+             mcpPort: Int(MCPService.port),
+             executeTool: { [weak self] id, name, inputJSON in
+-                guard let self, self.currentSessionId == sessionID else {
++                guard let self,
++                      self.currentSessionId == sessionID,
++                      self.runtimeGenerationID == generationID,
++                      self.projectGenerationID == projectID,
++                      self.backend.runtimeID == runtimeBackendID else {
+                     return .error("The originating chat session is no longer active.")
+                 }
+                 guard let executor = self.toolExecutor else {
+@@ -3226,9 +3268,19 @@ final class AgentService {
+     ) {
+         switch event {
+         case .providerSessionStarted(let providerID):
+-            storeClaudeSessionId(providerID, for: sessionID)
++            switch backend {
++            case .claudeCode, .anthropicAPI:
++                storeClaudeSessionId(providerID, for: sessionID)
++            case .codexAppServer:
++                break
++            }
+         case .providerSessionInvalidated:
+-            clearClaudeSessionId(for: sessionID)
++            switch backend {
++            case .claudeCode, .anthropicAPI:
++                clearClaudeSessionId(for: sessionID)
++            case .codexAppServer:
++                runtimeContextSignature = nil
++            }
+         case .text(let messageID, let value, _):
+             let id = assistantID(
+                 providerMessageID: messageID,
+@@ -3264,8 +3316,13 @@ final class AgentService {
+         case .usage(let usage):
+             lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
+         case .error(let failure):
+-            if failure.kind == .authenticationRequired, backend == .claudeCode {
+-                requireClaudeAuthentication(for: sessionID)
++            if failure.kind == .authenticationRequired {
++                if backend == .claudeCode {
++                    requireClaudeAuthentication(for: sessionID)
++                } else {
++                    streamError = .authenticationRequired
++                    runtimeContextSignature = nil
++                }
+             } else {
+                 streamError = .upstream(failure.message)
+             }
+diff --git a/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift b/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
+index 7f3a1f34..9bfd9979 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
+@@ -3,6 +3,9 @@ import Foundation
+ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+     case claudeCode
+     case anthropicAPI
++    case codexAppServer
++
++    static let selectableCases: [AgentBackend] = [.claudeCode, .anthropicAPI]
+ 
+     var id: String { rawValue }
+ 
+@@ -10,6 +13,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+         switch self {
+         case .claudeCode: .claudeCode
+         case .anthropicAPI: .anthropicAPI
++        case .codexAppServer: .codexAppServer
+         }
+     }
+ 
+@@ -17,6 +21,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+         switch self {
+         case .claudeCode: return "Claude Code"
+         case .anthropicAPI: return "Anthropic API"
++        case .codexAppServer: return "Codex"
+         }
+     }
+ 
+@@ -30,6 +35,8 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+             .externalSubscription(command: "claude")
+         case .anthropicAPI:
+             .apiKey(service: "Anthropic")
++        case .codexAppServer:
++            .isolatedExternalAccount(command: "codex app-server")
+         }
+     }
+ 
+@@ -73,6 +80,9 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+         case .anthropicAPI:
+             operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
+             transport = .hostRoundTrip
++        case .codexAppServer:
++            operations.insert(.reportTokenUsage)
++            transport = .hostRoundTrip
+         }
+         return AgentRuntimeDescriptor(
+             identity: runtimeIdentity,
+@@ -101,7 +111,9 @@ enum AgentBackendPreference {
+     }
+ 
+     static func selected(in defaults: UserDefaults) -> AgentBackend {
+-        if let raw = defaults.string(forKey: key), let backend = AgentBackend(rawValue: raw) {
++        if let raw = defaults.string(forKey: key),
++           let backend = AgentBackend(rawValue: raw),
++           AgentBackend.selectableCases.contains(backend) {
+             return backend
+         }
+         if defaults.object(forKey: legacyKey) != nil {
+@@ -111,7 +123,7 @@ enum AgentBackendPreference {
+     }
+ 
+     static func set(_ backend: AgentBackend) {
+-        guard selected != backend else { return }
++        guard AgentBackend.selectableCases.contains(backend), selected != backend else { return }
+         let defaults = UserDefaults.standard
+         defaults.set(backend.rawValue, forKey: key)
+         defaults.set(backend == .claudeCode, forKey: legacyKey)
+diff --git a/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift b/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
+index 65dfff9e..924bc02a 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
+@@ -9,6 +9,7 @@ struct AgentBackendID: RawRepresentable, Hashable, Sendable {
+ 
+     static let claudeCode = AgentBackendID(rawValue: "claude-code")
+     static let anthropicAPI = AgentBackendID(rawValue: "anthropic-api")
++    static let codexAppServer = AgentBackendID(rawValue: "codex-app-server")
+ }
+ 
+ struct AgentRuntimeIdentity: Hashable, Sendable {
+@@ -19,6 +20,7 @@ struct AgentRuntimeIdentity: Hashable, Sendable {
+ enum AgentRuntimeAuthentication: Hashable, Sendable {
+     case apiKey(service: String)
+     case externalSubscription(command: String)
++    case isolatedExternalAccount(command: String)
+ }
+ 
+ enum AgentRuntimeOperation: String, Hashable, Sendable {
+diff --git a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift
+new file mode 100644
+index 00000000..0a8a64bf
+--- /dev/null
++++ b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift
+@@ -0,0 +1,522 @@
++import Foundation
++import Darwin
++
++enum CodexAppServerContract {
++    static let cliVersion = "0.156.0"
++    static let protocolRevision = "rust-v0.156.0"
++    static let toolNamespace = "nexgen"
++    static let requestTimeout: Duration = .seconds(15)
++    static let turnTimeout: Duration = .seconds(900)
++    static let maximumProtocolMessageBytes = 8 * 1_024 * 1_024
++
++    static var isAcceptanceRun: Bool {
++        ProcessInfo.processInfo.environment["NGV_CODEX_APP_SERVER_ACCEPTANCE"] == "1"
++    }
++
++    static let isolatedConfig = """
++    cli_auth_credentials_store = "keyring"
++    mcp_oauth_credentials_store = "keyring"
++    approval_policy = "never"
++    sandbox_mode = "read-only"
++    web_search = "disabled"
++    check_for_update_on_startup = false
++
++    [analytics]
++    enabled = false
++
++    [feedback]
++    enabled = false
++
++    [otel]
++    log_user_prompt = false
++    exporter = "none"
++    trace_exporter = "none"
++    metrics_exporter = "none"
++
++    [tools.update_plan]
++    enabled = false
++
++    [tools.experimental_request_user_input]
++    enabled = false
++
++    [apps._default]
++    enabled = false
++    destructive_enabled = false
++    open_world_enabled = false
++
++    [features]
++    shell_tool = false
++    view_image = false
++    sleep_tool = false
++    unified_exec = false
++    unified_exec_tty = false
++    shell_snapshot = false
++    unbounded_connection_retries = false
++    deferred_executor = false
++    request_permissions_tool = false
++    standalone_web_search = false
++    hooks = false
++    code_mode_host = false
++    worktrees = false
++    multi_agent = false
++    multi_agent_v2 = false
++    apps = false
++    enable_mcp_apps = false
++    tool_suggest = false
++    recommended_plugins = false
++    plugins = false
++    executor_capability_discovery = false
++    in_app_browser = false
++    in_app_chat = false
++    in_app_dictation = false
++    in_app_local_automation = false
++    in_app_updates = false
++    browser_use = false
++    browser_use_full_cdp_access = false
++    browser_use_external = false
++    computer_use = false
++    remote_plugin = false
++    plugin_sharing = false
++    image_generation = false
++    send_message_to_user_async = false
++    token_budget = false
++    current_time_reminder = false
++    realtime_conversation = false
++    auth_elicitation = false
++    tool_call_mcp_elicitation = false
++    artifact = false
++    memories = false
++    skill_mcp_dependency_install = false
++    skill_search = false
++    guardian_approval = false
++    goals = false
++    """
++
++    static func accepts(userAgent: String) -> Bool {
++        userAgent.split(whereSeparator: { !$0.isNumber && $0 != "." })
++            .contains(Substring(cliVersion))
++    }
++
++    static func childEnvironment(
++        ambient: [String: String],
++        home: URL,
++        scratch: URL
++    ) -> [String: String] {
++        var result = [
++            "CODEX_HOME": home.path,
++            "HOME": home.path,
++            "XDG_CONFIG_HOME": home.appendingPathComponent("config", isDirectory: true).path,
++            "XDG_CACHE_HOME": scratch.appendingPathComponent("cache", isDirectory: true).path,
++            "XDG_DATA_HOME": home.appendingPathComponent("data", isDirectory: true).path,
++            "TMPDIR": scratch.path,
++            "RUST_LOG": "error",
++            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
++        ]
++        for key in ["LANG", "LC_ALL", "USER", "LOGNAME"] {
++            if let value = ambient[key] { result[key] = value }
++        }
++        return result
++    }
++}
++
++enum CodexAppServerError: LocalizedError, Equatable {
++    case executableUnavailable
++    case incompatibleVersion(String)
++    case isolatedHomeMismatch
++    case authenticationRequired
++    case resumeIsolationUnavailable
++    case malformedMessage
++    case remote(code: Int, message: String)
++    case requestTimedOut(String)
++    case transportClosed
++    case launchFailed(String)
++
++    var errorDescription: String? {
++        switch self {
++        case .executableUnavailable:
++            "Install Codex CLI \(CodexAppServerContract.cliVersion) to use this runtime."
++        case .incompatibleVersion(let value):
++            "Codex CLI \(value) is incompatible; version \(CodexAppServerContract.cliVersion) is required."
++        case .isolatedHomeMismatch:
++            "Codex did not honor the isolated runtime home."
++        case .authenticationRequired:
++            "Sign in to the isolated NexGenVideo Codex account before starting a turn."
++        case .resumeIsolationUnavailable:
++            "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated tool surface."
++        case .malformedMessage:
++            "Codex App Server returned an invalid protocol message."
++        case .remote(_, let message):
++            "Codex App Server rejected the request: \(message)"
++        case .requestTimedOut(let method):
++            "Codex App Server timed out while handling \(method)."
++        case .transportClosed:
++            "Codex App Server closed its transport."
++        case .launchFailed(let message):
++            "Codex App Server could not start: \(message)"
++        }
++    }
++}
++
++enum CodexAppServerInbound {
++    case notification(method: String, params: [String: Any])
++    case request(id: Any, method: String, params: [String: Any])
++    case closed(CodexAppServerError)
++}
++
++struct CodexAppServerAccountStatus: Equatable, Sendable {
++    enum Billing: Equatable, Sendable {
++        case apiKey
++        case chatGPT(plan: String)
++        case amazonBedrock(managedCredentials: Bool)
++    }
++
++    let billing: Billing
++}
++
++@MainActor
++protocol CodexAppServerDriving: AnyObject {
++    var events: AsyncStream<CodexAppServerInbound> { get }
++    var accountStatus: CodexAppServerAccountStatus? { get }
++
++    func start(home: URL, scratch: URL) async throws
++    func request(method: String, params: [String: Any]) async throws -> [String: Any]
++    func respond(id: Any, result: [String: Any]) throws
++    func respond(id: Any, errorCode: Int, message: String) throws
++    func stop()
++}
++
++@MainActor
++final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
++    private struct Pending {
++        let method: String
++        let continuation: CheckedContinuation<[String: Any], Error>
++        let timeout: Task<Void, Never>
++    }
++
++    let events: AsyncStream<CodexAppServerInbound>
++    private(set) var accountStatus: CodexAppServerAccountStatus?
++
++    private let eventContinuation: AsyncStream<CodexAppServerInbound>.Continuation
++    private let fileManager: FileManager
++    private let environment: [String: String]
++    private var process: Process?
++    private var stdin: FileHandle?
++    private var stdout: FileHandle?
++    private var stderr: FileHandle?
++    private var readBuffer = Data()
++    private var pending: [Int: Pending] = [:]
++    private var nextRequestID = 1
++    private var didClose = false
++
++    init(
++        fileManager: FileManager = .default,
++        environment: [String: String] = ProcessInfo.processInfo.environment
++    ) {
++        self.fileManager = fileManager
++        self.environment = environment
++        var continuation: AsyncStream<CodexAppServerInbound>.Continuation!
++        events = AsyncStream { continuation = $0 }
++        eventContinuation = continuation
++    }
++
++    func start(home: URL, scratch: URL) async throws {
++        guard process == nil else { return }
++        guard let executable = CodexAppServerLocator.executable(
++            environment: environment,
++            fileManager: fileManager
++        ) else {
++            throw CodexAppServerError.executableUnavailable
++        }
++        try prepare(home: home, scratch: scratch)
++
++        let input = Pipe()
++        let output = Pipe()
++        let errors = Pipe()
++        let process = Process()
++        process.executableURL = executable
++        process.arguments = ["app-server", "--strict-config"]
++        process.currentDirectoryURL = scratch
++        process.standardInput = input
++        process.standardOutput = output
++        process.standardError = errors
++        process.environment = CodexAppServerContract.childEnvironment(
++            ambient: environment,
++            home: home,
++            scratch: scratch
++        )
++        process.terminationHandler = { [weak self] _ in
++            Task { @MainActor in self?.transportClosed() }
++        }
++        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
++            let data = handle.availableData
++            Task { @MainActor in self?.receive(data) }
++        }
++        errors.fileHandleForReading.readabilityHandler = { handle in
++            _ = handle.availableData
++        }
++        do {
++            try process.run()
++        } catch {
++            output.fileHandleForReading.readabilityHandler = nil
++            errors.fileHandleForReading.readabilityHandler = nil
++            throw CodexAppServerError.launchFailed(error.localizedDescription)
++        }
++        self.process = process
++        stdin = input.fileHandleForWriting
++        stdout = output.fileHandleForReading
++        stderr = errors.fileHandleForReading
++
++        let initialize = try await request(method: "initialize", params: [
++            "clientInfo": ["name": "NexGenVideo", "version": "1"],
++            "capabilities": ["experimentalApi": true],
++        ])
++        guard let userAgent = initialize["userAgent"] as? String else {
++            throw CodexAppServerError.malformedMessage
++        }
++        guard CodexAppServerContract.accepts(userAgent: userAgent) else {
++            throw CodexAppServerError.incompatibleVersion(userAgent)
++        }
++        guard let reportedHome = initialize["codexHome"] as? String,
++              URL(fileURLWithPath: reportedHome).standardizedFileURL == home.standardizedFileURL else {
++            throw CodexAppServerError.isolatedHomeMismatch
++        }
++        try send(["method": "initialized", "params": [:]])
++
++        let account = try await request(method: "account/read", params: ["refreshToken": false])
++        if account["requiresOpenaiAuth"] as? Bool == true, account["account"] is NSNull {
++            throw CodexAppServerError.authenticationRequired
++        }
++        guard let details = account["account"] as? [String: Any],
++              let type = details["type"] as? String else {
++            throw CodexAppServerError.authenticationRequired
++        }
++        switch type {
++        case "apiKey":
++            accountStatus = .init(billing: .apiKey)
++        case "chatgpt":
++            guard let plan = details["planType"] as? String else {
++                throw CodexAppServerError.malformedMessage
++            }
++            accountStatus = .init(billing: .chatGPT(plan: plan))
++        case "amazonBedrock":
++            accountStatus = .init(billing: .amazonBedrock(
++                managedCredentials: details["usesCodexManagedCredentials"] as? Bool ?? false
++            ))
++        default:
++            throw CodexAppServerError.malformedMessage
++        }
++    }
++
++    func request(method: String, params: [String: Any]) async throws -> [String: Any] {
++        let id = nextRequestID
++        nextRequestID += 1
++        return try await withCheckedThrowingContinuation { continuation in
++            let timeout = Task { [weak self] in
++                try? await Task.sleep(for: CodexAppServerContract.requestTimeout)
++                guard !Task.isCancelled else { return }
++                self?.timeout(id: id)
++            }
++            pending[id] = Pending(method: method, continuation: continuation, timeout: timeout)
++            do {
++                try send(["id": id, "method": method, "params": params])
++            } catch {
++                pending.removeValue(forKey: id)?.timeout.cancel()
++                continuation.resume(throwing: error)
++            }
++        }
++    }
++
++    func respond(id: Any, result: [String: Any]) throws {
++        try send(["id": id, "result": result])
++    }
++
++    func respond(id: Any, errorCode: Int, message: String) throws {
++        try send(["id": id, "error": ["code": errorCode, "message": message]])
++    }
++
++    func stop() {
++        let shouldFinish = !didClose
++        didClose = true
++        stdout?.readabilityHandler = nil
++        stderr?.readabilityHandler = nil
++        try? stdin?.close()
++        if let process, process.isRunning {
++            Self.terminate(process)
++        }
++        if shouldFinish {
++            finishPending(with: CodexAppServerError.transportClosed)
++            eventContinuation.finish()
++        }
++        process = nil
++        stdin = nil
++        stdout = nil
++        stderr = nil
++    }
++
++    private func prepare(home: URL, scratch: URL) throws {
++        try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
++        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
++        let config = home.appendingPathComponent("config.toml")
++        try Data(CodexAppServerContract.isolatedConfig.utf8).write(to: config, options: .atomic)
++        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
++        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
++        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
++    }
++
++    private func receive(_ data: Data) {
++        guard !didClose else { return }
++        guard !data.isEmpty else {
++            transportClosed()
++            return
++        }
++        readBuffer.append(data)
++        guard readBuffer.count <= CodexAppServerContract.maximumProtocolMessageBytes else {
++            eventContinuation.yield(.closed(.malformedMessage))
++            stop()
++            return
++        }
++        while let newline = readBuffer.firstIndex(of: 0x0A) {
++            let line = readBuffer[..<newline]
++            readBuffer.removeSubrange(...newline)
++            guard !line.isEmpty else { continue }
++            do {
++                let value = try JSONSerialization.jsonObject(with: Data(line))
++                guard let object = value as? [String: Any] else {
++                    throw CodexAppServerError.malformedMessage
++                }
++                try route(object)
++            } catch {
++                eventContinuation.yield(.closed(.malformedMessage))
++                stop()
++                return
++            }
++        }
++    }
++
++    private func route(_ object: [String: Any]) throws {
++        if let id = object["id"], object["method"] == nil {
++            guard let numericID = (id as? NSNumber)?.intValue,
++                  let pending = pending.removeValue(forKey: numericID) else { return }
++            pending.timeout.cancel()
++            if let error = object["error"] as? [String: Any] {
++                let code = (error["code"] as? NSNumber)?.intValue ?? -32_000
++                let message = error["message"] as? String ?? "Unknown protocol error"
++                pending.continuation.resume(throwing: CodexAppServerError.remote(code: code, message: message))
++            } else if let result = object["result"] as? [String: Any] {
++                pending.continuation.resume(returning: result)
++            } else if object["result"] is NSNull {
++                pending.continuation.resume(returning: [:])
++            } else {
++                pending.continuation.resume(throwing: CodexAppServerError.malformedMessage)
++            }
++            return
++        }
++        guard let method = object["method"] as? String else {
++            throw CodexAppServerError.malformedMessage
++        }
++        let params = object["params"] as? [String: Any] ?? [:]
++        if let id = object["id"] {
++            eventContinuation.yield(.request(id: id, method: method, params: params))
++        } else {
++            eventContinuation.yield(.notification(method: method, params: params))
++        }
++    }
++
++    private func send(_ object: [String: Any]) throws {
++        guard let stdin, process?.isRunning == true, !didClose else {
++            throw CodexAppServerError.transportClosed
++        }
++        var data = try JSONSerialization.data(withJSONObject: object)
++        guard data.count <= CodexAppServerContract.maximumProtocolMessageBytes else {
++            throw CodexAppServerError.malformedMessage
++        }
++        data.append(0x0A)
++        try stdin.write(contentsOf: data)
++    }
++
++    private func timeout(id: Int) {
++        guard let pending = pending.removeValue(forKey: id) else { return }
++        pending.continuation.resume(throwing: CodexAppServerError.requestTimedOut(pending.method))
++    }
++
++    private func transportClosed() {
++        guard !didClose else { return }
++        didClose = true
++        stdout?.readabilityHandler = nil
++        stderr?.readabilityHandler = nil
++        try? stdin?.close()
++        if let process, process.isRunning {
++            Self.terminate(process)
++        }
++        finishPending(with: CodexAppServerError.transportClosed)
++        eventContinuation.yield(.closed(.transportClosed))
++        eventContinuation.finish()
++        process = nil
++        stdin = nil
++        stdout = nil
++        stderr = nil
++    }
++
++    private func finishPending(with error: Error) {
++        let values = Array(pending.values)
++        pending.removeAll()
++        for value in values {
++            value.timeout.cancel()
++            value.continuation.resume(throwing: error)
++        }
++    }
++
++    private static func terminate(_ process: Process) {
++        process.terminate()
++        Task { @MainActor [weak process] in
++            try? await Task.sleep(for: .seconds(2))
++            guard let process, process.isRunning else { return }
++            kill(process.processIdentifier, SIGKILL)
++        }
++    }
++}
++
++enum CodexAppServerLocator {
++    static func executable(
++        environment: [String: String],
++        fileManager: FileManager
++    ) -> URL? {
++        let candidates = (environment["PATH"] ?? "")
++            .split(separator: ":")
++            .map { URL(fileURLWithPath: String($0)).appendingPathComponent("codex") }
++            + [
++                URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
++                URL(fileURLWithPath: "/usr/local/bin/codex"),
++            ]
++        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
++            if let native = nativeExecutable(for: candidate, fileManager: fileManager) {
++                return native
++            }
++            let resolved = candidate.resolvingSymlinksInPath()
++            if isMachO(resolved) { return resolved }
++        }
++        return nil
++    }
++
++    private static func nativeExecutable(for wrapper: URL, fileManager: FileManager) -> URL? {
++        let resolved = wrapper.resolvingSymlinksInPath()
++        guard resolved.lastPathComponent == "codex.js" else { return nil }
++        let packageRoot = resolved.deletingLastPathComponent().deletingLastPathComponent()
++        let binary = packageRoot
++            .appendingPathComponent("node_modules/@openai/codex-darwin-arm64")
++            .appendingPathComponent("vendor/aarch64-apple-darwin/bin/codex")
++        return fileManager.isExecutableFile(atPath: binary.path) ? binary : nil
++    }
++
++    private static func isMachO(_ executable: URL) -> Bool {
++        guard let handle = try? FileHandle(forReadingFrom: executable) else { return false }
++        defer { try? handle.close() }
++        guard let bytes = try? handle.read(upToCount: 4), bytes.count == 4 else { return false }
++        return [
++            Data([0xCF, 0xFA, 0xED, 0xFE]),
++            Data([0xFE, 0xED, 0xFA, 0xCF]),
++            Data([0xCA, 0xFE, 0xBA, 0xBE]),
++            Data([0xBE, 0xBA, 0xFE, 0xCA]),
++        ].contains(bytes)
++    }
++}
+diff --git a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift
+new file mode 100644
+index 00000000..694168f5
+--- /dev/null
++++ b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift
+@@ -0,0 +1,622 @@
++import Foundation
++
++@MainActor
++final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
++    typealias DriverFactory = @MainActor () -> any CodexAppServerDriving
++    typealias RuntimeLocations = @MainActor (_ session: AgentRuntimeSessionRequest) throws -> (home: URL, scratch: URL)
++
++    private let driverFactory: DriverFactory
++    private let runtimeLocations: RuntimeLocations
++    private var session: AgentRuntimeSessionRequest?
++    private var driver: (any CodexAppServerDriving)?
++    private var activeRelay: AgentRuntimeEventRelay?
++    private var activeTask: Task<Void, Never>?
++    private var activeTurnID: UUID?
++    private var providerThreadID: String?
++    private var providerTurnID: String?
++
++    private(set) var descriptor: AgentRuntimeDescriptor
++    private(set) var state: AgentRuntimeState = .idle
++
++    init(
++        driverFactory: DriverFactory? = nil,
++        runtimeLocations: RuntimeLocations? = nil
++    ) {
++        self.driverFactory = driverFactory ?? { CodexAppServerJSONRPCDriver() }
++        self.runtimeLocations = runtimeLocations ?? Self.liveLocations
++        descriptor = AgentBackend.codexAppServer.runtimeDescriptor(toolNames: [])
++    }
++
++    func start(_ request: AgentRuntimeSessionRequest) throws {
++        guard request.providerSessionID == nil else {
++            throw CodexAppServerError.resumeIsolationUnavailable
++        }
++        try configure(request)
++    }
++
++    func resume(_ request: AgentRuntimeSessionRequest) throws {
++        throw CodexAppServerError.resumeIsolationUnavailable
++    }
++
++    func send(_ request: AgentRuntimeTurnRequest) throws -> AsyncStream<AgentRuntimeEventEnvelope> {
++        guard let session else { throw AgentRuntimeContractError.sessionNotStarted }
++        guard session.sessionID == request.sessionID else { throw AgentRuntimeContractError.sessionMismatch }
++        guard activeRelay == nil else { throw AgentRuntimeContractError.turnAlreadyRunning }
++        guard request.currentMessage.role == .user,
++              request.messages.last == request.currentMessage else {
++            throw AgentRuntimeContractError.invalidCurrentMessage
++        }
++
++        let relay = AgentRuntimeEventRelay(sessionID: request.sessionID, turnID: request.turnID)
++        activeRelay = relay
++        activeTurnID = request.turnID
++        state = .running(sessionID: request.sessionID, turnID: request.turnID)
++        activeTask = Task { [weak self] in
++            await self?.run(request: request, session: session, relay: relay)
++        }
++        return relay.stream
++    }
++
++    func cancel(sessionID: UUID) {
++        guard session?.sessionID == sessionID else { return }
++        if let relay = activeRelay, let activeTurnID {
++            state = .cancelling(sessionID: sessionID, turnID: activeTurnID)
++            relay.finish(.cancelled)
++        }
++        let driver = self.driver
++        let threadID = providerThreadID
++        let turnID = providerTurnID
++        Task { @MainActor in
++            if let driver, let threadID, let turnID {
++                _ = try? await driver.request(
++                    method: "turn/interrupt",
++                    params: ["threadId": threadID, "turnId": turnID]
++                )
++            }
++        }
++        Task { @MainActor in
++            try? await Task.sleep(for: .milliseconds(250))
++            driver?.stop()
++        }
++        activeTask?.cancel()
++        activeTask = nil
++        self.driver = nil
++        activeRelay = nil
++        activeTurnID = nil
++        providerTurnID = nil
++        state = .ready(sessionID: sessionID)
++    }
++
++    func end(sessionID: UUID) {
++        guard session?.sessionID == sessionID else { return }
++        cancel(sessionID: sessionID)
++        session = nil
++        providerThreadID = nil
++        state = .ended(sessionID: sessionID)
++    }
++
++    private func configure(_ request: AgentRuntimeSessionRequest) throws {
++        if let activeRelay, activeRelay.terminal == nil {
++            throw AgentRuntimeContractError.turnAlreadyRunning
++        }
++        driver?.stop()
++        driver = nil
++        session = request
++        providerThreadID = request.providerSessionID
++        providerTurnID = nil
++        descriptor = AgentBackend.codexAppServer.runtimeDescriptor(
++            toolNames: Set(request.hostContext.toolSchemas.map(\.name))
++        )
++        state = .ready(sessionID: request.sessionID)
++    }
++
++    private func run(
++        request: AgentRuntimeTurnRequest,
++        session: AgentRuntimeSessionRequest,
++        relay: AgentRuntimeEventRelay
++    ) async {
++        let generationID = session.runtimeGenerationID
++        do {
++            let locations = try runtimeLocations(session)
++            let driver: any CodexAppServerDriving
++            let threadID: String
++            if let existingDriver = self.driver, let existingThread = providerThreadID {
++                driver = existingDriver
++                threadID = existingThread
++            } else {
++                driver = driverFactory()
++                guard isCurrent(session: session, request: request, relay: relay) else { return }
++                self.driver = driver
++                try await driver.start(home: locations.home, scratch: locations.scratch)
++                try Task.checkCancellation()
++                guard isCurrent(session: session, request: request, relay: relay),
++                      self.session?.runtimeGenerationID == generationID else { return }
++                updateAuthentication(driver.accountStatus)
++
++                threadID = try await openThread(
++                    driver: driver,
++                    session: session,
++                    scratch: locations.scratch
++                )
++                try Task.checkCancellation()
++                guard isCurrent(session: session, request: request, relay: relay),
++                      self.session?.runtimeGenerationID == generationID else { return }
++                providerThreadID = threadID
++                relay.yield(.providerSessionStarted(threadID))
++            }
++
++            let response = try await driver.request(method: "turn/start", params: [
++                "threadId": threadID,
++                "input": Self.input(request.currentMessage),
++                "cwd": locations.scratch.path,
++            ])
++            guard let turn = response["turn"] as? [String: Any],
++                  let turnID = turn["id"] as? String else {
++                throw CodexAppServerError.malformedMessage
++            }
++            guard isCurrent(session: session, request: request, relay: relay) else { return }
++            providerTurnID = turnID
++            let eventTask = Task { [weak self] in
++                guard let self else { return }
++                for await inbound in driver.events {
++                    await self.receive(
++                        inbound,
++                        driver: driver,
++                        session: session,
++                        request: request,
++                        relay: relay
++                    )
++                    if relay.terminal != nil { break }
++                }
++            }
++            let timeout = Task { [weak self] in
++                try? await Task.sleep(for: CodexAppServerContract.turnTimeout)
++                guard !Task.isCancelled, let self else { return }
++                self.protocolFailure("Codex turn timed out.", request: request, relay: relay)
++            }
++            await eventTask.value
++            timeout.cancel()
++            if relay.terminal == nil {
++                throw CodexAppServerError.transportClosed
++            }
++        } catch is CancellationError {
++            relay.finish(.cancelled)
++        } catch {
++            guard isCurrent(session: session, request: request, relay: relay) else { return }
++            fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
++        }
++        if activeRelay === relay {
++            activeRelay = nil
++            activeTask = nil
++            activeTurnID = nil
++            providerTurnID = nil
++        }
++    }
++
++    private func openThread(
++        driver: any CodexAppServerDriving,
++        session: AgentRuntimeSessionRequest,
++        scratch: URL
++    ) async throws -> String {
++        let common: [String: Any] = [
++            "cwd": scratch.path,
++            "runtimeWorkspaceRoots": [],
++            "approvalPolicy": "never",
++            "sandbox": "read-only",
++            "baseInstructions": session.hostContext.systemInstructions,
++            "developerInstructions": Self.developerInstructions(for: session.hostContext),
++            "config": Self.turnConfiguration,
++        ]
++        var params = common
++        params["ephemeral"] = true
++        params["allowProviderModelFallback"] = false
++        params["environments"] = []
++        params["dynamicTools"] = [Self.dynamicToolNamespace(session.hostContext.toolSchemas)]
++        let response = try await driver.request(method: "thread/start", params: params)
++        guard let thread = response["thread"] as? [String: Any],
++              let threadID = thread["id"] as? String,
++              response["cwd"] as? String == scratch.path else {
++            throw CodexAppServerError.malformedMessage
++        }
++        let instructionSources = response["instructionSources"] as? [Any] ?? []
++        guard instructionSources.isEmpty else {
++            throw CodexAppServerError.remote(code: -32_001, message: "Inherited instructions are forbidden")
++        }
++        if let roots = response["runtimeWorkspaceRoots"] as? [Any], !roots.isEmpty {
++            throw CodexAppServerError.remote(code: -32_001, message: "Runtime workspace access is forbidden")
++        }
++        return threadID
++    }
++
++    private func receive(
++        _ inbound: CodexAppServerInbound,
++        driver: any CodexAppServerDriving,
++        session: AgentRuntimeSessionRequest,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) async {
++        guard isCurrent(session: session, request: request, relay: relay) else { return }
++        switch inbound {
++        case .closed(let error):
++            fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
++        case .request(let id, let method, let params):
++            if let inboundThreadID = params["threadId"] as? String,
++               inboundThreadID != providerThreadID {
++                try? driver.respond(id: id, errorCode: -32_602, message: "Stale host tool request")
++                return
++            }
++            guard method == "item/tool/call" else {
++                try? driver.respond(id: id, errorCode: -32_601, message: "Unsupported server request")
++                protocolFailure("Codex requested a forbidden capability: \(method)", request: request, relay: relay)
++                return
++            }
++            await executeTool(
++                id: id,
++                params: params,
++                driver: driver,
++                session: session,
++                request: request,
++                relay: relay
++            )
++        case .notification(let method, let params):
++            receiveNotification(method: method, params: params, request: request, relay: relay)
++        }
++    }
++
++    private func executeTool(
++        id responseID: Any,
++        params: [String: Any],
++        driver: any CodexAppServerDriving,
++        session: AgentRuntimeSessionRequest,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) async {
++        guard matchesThread(params) else {
++            try? driver.respond(id: responseID, errorCode: -32_602, message: "Stale host tool request")
++            return
++        }
++        guard params["turnId"] as? String == providerTurnID else {
++            try? driver.respond(id: responseID, errorCode: -32_602, message: "Stale host tool request")
++            return
++        }
++        guard params["namespace"] as? String == CodexAppServerContract.toolNamespace,
++              let callID = params["callId"] as? String,
++              let name = params["tool"] as? String,
++              session.hostContext.toolSchemas.contains(where: { $0.name == name }),
++              let arguments = params["arguments"],
++              JSONSerialization.isValidJSONObject(arguments),
++              let input = try? JSONSerialization.data(withJSONObject: arguments),
++              let inputJSON = String(data: input, encoding: .utf8) else {
++            try? driver.respond(id: responseID, errorCode: -32_602, message: "Invalid host tool request")
++            protocolFailure("Codex requested an invalid host tool.", request: request, relay: relay)
++            return
++        }
++        relay.yield(.toolCall(messageID: nil, id: callID, name: name, inputJSON: inputJSON))
++        let result = await session.executeTool(callID, name, inputJSON)
++        guard isCurrent(session: session, request: request, relay: relay),
++              matchesActiveProviderTurn(params) else { return }
++        relay.yield(.toolResult(id: callID, content: result.content, isError: result.isError))
++        do {
++            try driver.respond(id: responseID, result: [
++                "contentItems": Self.contentItems(result.content),
++                "success": !result.isError,
++            ])
++        } catch {
++            fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
++            return
++        }
++        if result.turnDisposition == .suspendTurn {
++            relay.finish(.completed(.toolUse))
++            if let threadID = providerThreadID, let turnID = providerTurnID {
++                Task { @MainActor in
++                    _ = try? await driver.request(
++                        method: "turn/interrupt",
++                        params: ["threadId": threadID, "turnId": turnID]
++                    )
++                }
++            }
++            setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++        }
++    }
++
++    private func receiveNotification(
++        method: String,
++        params: [String: Any],
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) {
++        if let inboundThreadID = params["threadId"] as? String,
++           inboundThreadID != providerThreadID {
++            return
++        }
++        switch method {
++        case "thread/started", "thread/status/changed", "account/rateLimits/updated", "account/updated",
++             "model/safetyBuffering/updated", "model/verification":
++            break
++        case "turn/started":
++            guard matchesThread(params),
++                  let turn = params["turn"] as? [String: Any],
++                  turn["id"] as? String == providerTurnID else { return }
++        case "thread/name/updated":
++            guard matchesThread(params) else { return }
++        case "serverRequest/resolved":
++            guard matchesThread(params) else { return }
++        case "thread/compacted", "turn/moderationMetadata":
++            guard matchesActiveProviderTurn(params) else { return }
++        case "item/reasoning/summaryPartAdded", "item/reasoning/summaryTextDelta",
++             "item/reasoning/textDelta":
++            guard matchesActiveProviderTurn(params) else { return }
++        case "item/agentMessage/delta":
++            guard matchesActiveProviderTurn(params),
++                  let value = params["delta"] as? String else { return }
++            relay.yield(.text(
++                messageID: params["itemId"] as? String,
++                value: value,
++                isDelta: true
++            ))
++        case "thread/tokenUsage/updated":
++            guard matchesActiveProviderTurn(params),
++                  let usage = params["tokenUsage"] as? [String: Any],
++                  let last = usage["last"] as? [String: Any] else { return }
++            relay.yield(.usage(.init(
++                inputTokens: Self.int(last["inputTokens"]),
++                outputTokens: Self.int(last["outputTokens"]),
++                cacheReadInputTokens: Self.int(last["cachedInputTokens"]),
++                cacheCreationInputTokens: Self.int(last["cacheWriteInputTokens"])
++            )))
++        case "item/started", "item/completed":
++            guard matchesActiveProviderTurn(params),
++                  let item = params["item"] as? [String: Any],
++                  let type = item["type"] as? String else { return }
++            let allowed = [
++                "userMessage", "agentMessage", "reasoning", "dynamicToolCall",
++                "functionCallOutput", "contextCompaction",
++            ]
++            guard allowed.contains(type) else {
++                protocolFailure("Codex exposed a forbidden \(type) capability.", request: request, relay: relay)
++                return
++            }
++        case "turn/completed":
++            guard matchesThread(params),
++                  let turn = params["turn"] as? [String: Any],
++                  turn["id"] as? String == providerTurnID,
++                  let status = turn["status"] as? String else { return }
++            switch status {
++            case "completed":
++                relay.finish(.completed(.endTurn))
++                setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++            case "interrupted":
++                relay.finish(.cancelled)
++                setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++            default:
++                runtimeFailure(
++                    turn["error"] as? [String: Any],
++                    fallback: "Codex turn ended with status \(status).",
++                    request: request,
++                    relay: relay
++                )
++            }
++        case "error":
++            guard matchesActiveProviderTurn(params) else { return }
++            runtimeFailure(
++                params["error"] as? [String: Any],
++                fallback: "Codex reported a runtime error.",
++                request: request,
++                relay: relay
++            )
++        default:
++            protocolFailure("Codex emitted an unsupported protocol event: \(method)", request: request, relay: relay)
++        }
++    }
++
++    private func protocolFailure(
++        _ message: String,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) {
++        fail(.init(kind: .protocolViolation, message: message), sessionID: request.sessionID, relay: relay)
++    }
++
++    private func runtimeFailure(
++        _ details: [String: Any]?,
++        fallback: String,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) {
++        let authenticationRequired = details?["codexErrorInfo"] as? String == "unauthorized"
++        let failure = AgentRuntimeFailure(
++            kind: authenticationRequired ? .authenticationRequired : .transport,
++            message: authenticationRequired
++                ? CodexAppServerError.authenticationRequired.localizedDescription
++                : (details?["message"] as? String ?? fallback)
++        )
++        fail(failure, sessionID: request.sessionID, relay: relay)
++    }
++
++    private func fail(
++        _ failure: AgentRuntimeFailure,
++        sessionID: UUID,
++        relay: AgentRuntimeEventRelay
++    ) {
++        guard relay.terminal == nil else { return }
++        relay.yield(.error(failure))
++        relay.finish(.failed)
++        driver?.stop()
++        driver = nil
++        setStateIfActive(.failed(sessionID: sessionID, message: failure.message), relay: relay)
++    }
++
++    private func setStateIfActive(_ value: AgentRuntimeState, relay: AgentRuntimeEventRelay) {
++        guard activeRelay === relay else { return }
++        state = value
++    }
++
++    private func updateAuthentication(_ account: CodexAppServerAccountStatus?) {
++        guard let account else { return }
++        let authentication: AgentRuntimeAuthentication
++        switch account.billing {
++        case .apiKey:
++            authentication = .apiKey(service: "OpenAI via isolated Codex")
++        case .chatGPT(let plan):
++            authentication = .isolatedExternalAccount(command: "Codex ChatGPT \(plan)")
++        case .amazonBedrock(let managed):
++            authentication = .isolatedExternalAccount(
++                command: managed ? "Codex managed Amazon Bedrock" : "Amazon Bedrock"
++            )
++        }
++        descriptor = AgentRuntimeDescriptor(
++            identity: descriptor.identity,
++            authentication: authentication,
++            capabilities: descriptor.capabilities,
++            toolExecutionTransport: descriptor.toolExecutionTransport
++        )
++    }
++
++    private func isCurrent(
++        session: AgentRuntimeSessionRequest,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
++    ) -> Bool {
++        self.session?.sessionID == session.sessionID
++            && self.session?.runtimeGenerationID == session.runtimeGenerationID
++            && activeRelay === relay
++            && activeTurnID == request.turnID
++            && relay.terminal == nil
++    }
++
++    private func matchesThread(_ params: [String: Any]) -> Bool {
++        params["threadId"] as? String == providerThreadID
++    }
++
++    private func matchesActiveProviderTurn(_ params: [String: Any]) -> Bool {
++        matchesThread(params) && params["turnId"] as? String == providerTurnID
++    }
++
++    private static func input(_ message: AgentRuntimeMessage) -> [[String: Any]] {
++        message.content.compactMap { content in
++            switch content {
++            case .text(let value):
++                ["type": "text", "text": value]
++            case .image(let image):
++                [
++                    "type": "image",
++                    "url": "data:\(image.mediaType);base64,\(image.base64)",
++                ]
++            case .toolUse, .toolResult:
++                nil
++            }
++        }
++    }
++
++    private static func dynamicToolNamespace(_ schemas: [AgentRuntimeToolSchema]) -> [String: Any] {
++        [
++            "type": "namespace",
++            "name": CodexAppServerContract.toolNamespace,
++            "description": "NexGenVideo host tools. Every call is validated and executed by the host.",
++            "tools": schemas.map {
++                [
++                    "type": "function",
++                    "name": $0.name,
++                    "description": $0.description,
++                    "inputSchema": $0.inputSchema,
++                    "deferLoading": false,
++                ] as [String: Any]
++            },
++        ]
++    }
++
++    private static func contentItems(_ blocks: [ToolResult.Block]) -> [[String: Any]] {
++        blocks.map { block in
++            switch block {
++            case .text(let value):
++                ["type": "inputText", "text": value]
++            case .image(let base64, let mediaType):
++                ["type": "inputImage", "imageUrl": "data:\(mediaType);base64,\(base64)"]
++            }
++        }
++    }
++
++    private static var turnConfiguration: [String: Any] {
++        [
++            "approval_policy": "never",
++            "sandbox_mode": "read-only",
++            "web_search": "disabled",
++            "tools": [
++                "update_plan": ["enabled": false],
++                "experimental_request_user_input": ["enabled": false],
++            ],
++            "features": [
++                "shell_tool": false,
++                "view_image": false,
++                "sleep_tool": false,
++                "unified_exec": false,
++                "unified_exec_tty": false,
++                "deferred_executor": false,
++                "request_permissions_tool": false,
++                "standalone_web_search": false,
++                "hooks": false,
++                "multi_agent": false,
++                "apps": false,
++                "enable_mcp_apps": false,
++                "plugins": false,
++                "image_generation": false,
++                "send_message_to_user_async": false,
++                "token_budget": false,
++                "current_time_reminder": false,
++                "realtime_conversation": false,
++                "auth_elicitation": false,
++                "tool_call_mcp_elicitation": false,
++                "unbounded_connection_retries": false,
++            ],
++        ]
++    }
++
++    private static func developerInstructions(for context: AgentRuntimeHostContext) -> String {
++        """
++        Interface language: \(context.interfaceLanguage.instruction)
++        Use only the host-provided \(CodexAppServerContract.toolNamespace) namespace. Audio and video are inspected through those host tools; they are not native model inputs. Host dialogs, spend approvals, output approvals, and pipeline gates remain host authority.
++        """
++    }
++
++    private static func failure(_ error: Error) -> AgentRuntimeFailure {
++        if let codex = error as? CodexAppServerError {
++            switch codex {
++            case .authenticationRequired:
++                return .init(kind: .authenticationRequired, message: codex.localizedDescription)
++            case .executableUnavailable, .incompatibleVersion, .resumeIsolationUnavailable:
++                return .init(kind: .backendUnavailable, message: codex.localizedDescription)
++            case .malformedMessage, .isolatedHomeMismatch:
++                return .init(kind: .protocolViolation, message: codex.localizedDescription)
++            case .remote, .requestTimedOut, .transportClosed, .launchFailed:
++                return .init(kind: .transport, message: codex.localizedDescription)
++            }
++        }
++        return .init(kind: .transport, message: error.localizedDescription)
++    }
++
++    private static func int(_ value: Any?) -> Int? {
++        (value as? NSNumber)?.intValue
++    }
++
++    private static func liveLocations(
++        _ session: AgentRuntimeSessionRequest
++    ) throws -> (home: URL, scratch: URL) {
++        let manager = FileManager.default
++        guard let applicationSupport = manager.urls(
++            for: .applicationSupportDirectory,
++            in: .userDomainMask
++        ).first,
++              let caches = manager.urls(for: .cachesDirectory, in: .userDomainMask).first else {
++            throw CodexAppServerError.launchFailed("Runtime directories are unavailable")
++        }
++        let home = applicationSupport
++            .appendingPathComponent("NexGenVideo", isDirectory: true)
++            .appendingPathComponent("CodexRuntime", isDirectory: true)
++            .appendingPathComponent(CodexAppServerContract.cliVersion, isDirectory: true)
++        let scratch = caches
++            .appendingPathComponent("NexGenVideo", isDirectory: true)
++            .appendingPathComponent("CodexRuntime", isDirectory: true)
++            .appendingPathComponent(session.runtimeGenerationID.uuidString, isDirectory: true)
++        return (home, scratch)
++    }
++}
+diff --git a/Sources/NexGenVideo/Settings/AgentPane.swift b/Sources/NexGenVideo/Settings/AgentPane.swift
+index 5a2a0474..5f126657 100644
+--- a/Sources/NexGenVideo/Settings/AgentPane.swift
++++ b/Sources/NexGenVideo/Settings/AgentPane.swift
+@@ -187,12 +187,10 @@ struct AgentPane: View {
+             SettingsCard {
+                 SettingsRow(
+                     title: "Run agent with",
+-                    subtitle: backend == .claudeCode
+-                        ? "Uses your signed-in Claude subscription."
+-                        : "Uses your Anthropic API account."
++                    subtitle: runtimeSubtitle
+                 ) {
+                     Picker("Agent runtime", selection: $backend) {
+-                        ForEach(AgentBackend.allCases) { option in
++                        ForEach(AgentBackend.selectableCases) { option in
+                             Text(option.displayName).tag(option)
+                         }
+                     }
+@@ -209,6 +207,8 @@ struct AgentPane: View {
+                 SettingsDivider()
+                 if backend == .claudeCode {
+                     claudeCodeConfiguration
++                } else if backend == .codexAppServer {
++                    codexConfiguration
+                 } else {
+                     anthropicConfiguration
+                 }
+@@ -216,6 +216,34 @@ struct AgentPane: View {
+         }
+     }
+ 
++    private var runtimeSubtitle: String {
++        switch backend {
++        case .claudeCode:
++            "Uses your signed-in Claude subscription."
++        case .anthropicAPI:
++            "Uses your Anthropic API account."
++        case .codexAppServer:
++            "Uses an isolated Codex account."
++        }
++    }
++
++    private var codexConfiguration: some View {
++        VStack(spacing: AppTheme.Spacing.none) {
++            SettingsRow(
++                title: "Codex App Server \(CodexAppServerContract.cliVersion)",
++                subtitle: "Cold resume cannot preserve the isolated tool surface. Personal Codex settings and chats are not loaded."
++            ) {
++                SettingsStatusBadge(text: "Incompatible", tone: .warning)
++            }
++            SettingsDivider()
++            SettingsNotice(
++                text: "Codex remains unavailable until a pinned CLI can preserve isolation across resume and its model-visible tools pass approved Actions acceptance.",
++                systemImage: "lock.shield",
++                tone: .neutral
++            )
++        }
++    }
++
+     private var anthropicConfiguration: some View {
+         VStack(spacing: AppTheme.Spacing.none) {
+             SettingsRow(title: "Anthropic API") {
+diff --git a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+index 50b87a22..e7888b7e 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+@@ -163,6 +163,7 @@ struct AgentRuntimeContractTests {
+             toolNames: names,
+             providerExtensions: ["mcp:ace", "claude-code-plugin:review"]
+         )
++        let codex = AgentBackend.codexAppServer.runtimeDescriptor(toolNames: names)
+ 
+         #expect(anthropic.toolExecutionTransport == .hostRoundTrip)
+         #expect(anthropic.identity.backendID == .anthropicAPI)
+@@ -195,6 +196,19 @@ struct AgentRuntimeContractTests {
+         #expect(!claude.capabilities.supports(.resumeFromTranscript))
+         #expect(!claude.capabilities.supports(.reportTokenUsage))
+         #expect(!claude.capabilities.supports(.webResearch))
++
++        #expect(codex.toolExecutionTransport == .hostRoundTrip)
++        #expect(codex.identity.backendID == .codexAppServer)
++        #expect(codex.authentication == .isolatedExternalAccount(command: "codex app-server"))
++        #expect(codex.capabilities.toolNames == names)
++        #expect(codex.capabilities.providerExtensions.isEmpty)
++        #expect(codex.capabilities.supports(.executeHostTools))
++        #expect(codex.capabilities.supports(.structuredDialogs))
++        #expect(codex.capabilities.supports(.approvalSuspension))
++        #expect(!codex.capabilities.supports(.resumeNativeSession))
++        #expect(codex.capabilities.supports(.reportTokenUsage))
++        #expect(!codex.capabilities.supports(.readProjectFiles))
++        #expect(!codex.capabilities.supports(.webResearch))
+     }
+ }
+ 
+diff --git a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+index f6a36c6a..7891ddcf 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+@@ -70,8 +70,13 @@ struct AgentServiceRuntimeContractTests {
+         let anthropicRequest = try #require(
+             fixtures.first(where: { $0.service.backend == .anthropicAPI })?.adapter.sendRequests.first
+         )
++        let codexRequest = try #require(
++            fixtures.first(where: { $0.service.backend == .codexAppServer })?.adapter.sendRequests.first
++        )
+         #expect(claudeRequest.messages == anthropicRequest.messages)
+         #expect(claudeRequest.currentMessage == anthropicRequest.currentMessage)
++        #expect(codexRequest.messages == anthropicRequest.messages)
++        #expect(codexRequest.currentMessage == anthropicRequest.currentMessage)
+         #expect(claudeRequest.currentMessage == .init(
+             role: .user,
+             content: [.text("Continue")]
+@@ -388,7 +393,7 @@ struct AgentServiceRuntimeContractTests {
+             #expect(service.send(text: "Write the brief.", mentions: []))
+             await waitUntil { adapter.sendRequests.count == 1 }
+             let turn = try #require(adapter.sendRequests.first)
+-            if backend == .anthropicAPI {
++            if backend != .claudeCode {
+                 adapter.emit(.toolCall(
+                     messageID: "writer-message",
+                     id: "writer",
+@@ -719,7 +724,7 @@ struct AgentServiceRuntimeContractTests {
+             let first = hostRecord(state: .writeRejected, suffix: "first")
+             let second = hostRecord(state: .persisted, suffix: "second")
+ 
+-            if backend == .anthropicAPI {
++            if backend != .claudeCode {
+                 let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
+                 service.recordHostState(second, origin: origin, toolUseID: "second")
+                 service.recordHostState(first, origin: origin, toolUseID: "first")
+@@ -1193,6 +1198,13 @@ struct AgentServiceRuntimeContractTests {
+                     == !providerExtensions.isEmpty
+             )
+             #expect(!descriptor.capabilities.supports(.resumeFromTranscript))
++        case .codexAppServer:
++            #expect(descriptor.toolExecutionTransport == .hostRoundTrip)
++            #expect(!descriptor.capabilities.supports(.resumeNativeSession))
++            #expect(descriptor.capabilities.supports(.reportTokenUsage))
++            #expect(!descriptor.capabilities.supports(.reportCostUsage))
++            #expect(!descriptor.capabilities.supports(.readProjectFiles))
++            #expect(!descriptor.capabilities.supports(.externalClaudeCodePlugins))
+         }
+     }
+ 
+diff --git a/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift b/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
+index 78175de5..27d80775 100644
+--- a/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
+@@ -210,5 +210,9 @@ struct AgentBackendPreferenceTests {
+         #expect(AgentBackendPreference.selected(in: defaults) == .claudeCode)
+         defaults.set(AgentBackend.anthropicAPI.rawValue, forKey: AgentBackendPreference.key)
+         #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
++        defaults.removeObject(forKey: AgentBackendPreference.legacyKey)
++        defaults.set(AgentBackend.codexAppServer.rawValue, forKey: AgentBackendPreference.key)
++        #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
++        #expect(!AgentBackend.selectableCases.contains(.codexAppServer))
+     }
+ }
+diff --git a/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift b/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift
+new file mode 100644
+index 00000000..e578b87a
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift
+@@ -0,0 +1,195 @@
++import Foundation
++import Testing
++@testable import NexGenVideo
++
++@MainActor
++@Suite("Codex App Server live acceptance")
++struct CodexAppServerLiveAcceptanceTests {
++    @Test("real isolated text, image, namespaced tool, typed result, dialogue, and cancel")
++    func liveConsumerSmoke() async throws {
++        guard CodexAppServerContract.isAcceptanceRun else { return }
++        let environment = ProcessInfo.processInfo.environment
++        let homePath = try #require(environment["CODEX_HOME"])
++        let scratchPath = try #require(environment["RUNNER_TEMP"])
++        let home = URL(fileURLWithPath: homePath, isDirectory: true)
++        let scratchRoot = URL(fileURLWithPath: scratchPath, isDirectory: true)
++        let firstDriver = CodexAppServerJSONRPCDriver()
++        let firstAdapter = CodexAppServerRuntimeAdapter(
++            driverFactory: { firstDriver },
++            runtimeLocations: { request in
++                (home, scratchRoot.appendingPathComponent(request.runtimeGenerationID.uuidString))
++            }
++        )
++        let sessionID = UUID()
++        let session = liveSession(sessionID: sessionID)
++        try firstAdapter.start(session)
++        let image = AgentRuntimeImage(
++            mediaType: "image/png",
++            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII="
++        )
++        let current = AgentRuntimeMessage(role: .user, content: [
++            .text("Call the nexgen acceptance_echo tool exactly once with value image_received. Then briefly confirm completion."),
++            .image(image),
++        ])
++        let firstEvents = await collectLiveCodexEvents(try firstAdapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++        let providerThreadID = try #require(firstEvents.compactMap { envelope -> String? in
++            guard case .providerSessionStarted(let value) = envelope.event else { return nil }
++            return value
++        }.first)
++        #expect(firstDriver.accountStatus == .init(billing: .apiKey))
++        #expect(firstEvents.contains { envelope in
++            guard case .toolCall(_, _, let name, _) = envelope.event else { return false }
++            return name == "acceptance_echo"
++        })
++        #expect(firstEvents.contains { envelope in
++            guard case .toolResult(_, let content, let isError) = envelope.event else { return false }
++            return !isError && content.contains(.text("controlled-result"))
++        })
++        #expect(liveTerminals(firstEvents) == [.completed(.endTurn)])
++        let modelResponse = try await firstDriver.request(
++            method: "model/list",
++            params: ["limit": 100]
++        )
++        let models = try #require(modelResponse["data"] as? [[String: Any]])
++        let defaultModel = try #require(models.first { $0["isDefault"] as? Bool == true })
++        let modalities = defaultModel["inputModalities"] as? [String] ?? []
++        #expect(modalities.contains("text"))
++        #expect(modalities.contains("image"))
++
++        let followUp = AgentRuntimeMessage(role: .user, content: [
++            .text("Reply with the single word continued."),
++        ])
++        let followUpEvents = await collectLiveCodexEvents(try firstAdapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current, followUp],
++            currentMessage: followUp
++        )))
++        #expect(followUpEvents.contains { envelope in
++            guard case .text(_, let value, _) = envelope.event else { return false }
++            return value.localizedCaseInsensitiveContains("continued")
++        })
++        #expect(liveTerminals(followUpEvents) == [.completed(.endTurn)])
++
++        let cancelMessage = AgentRuntimeMessage(role: .user, content: [
++            .text("Wait before answering so cancellation can be verified."),
++        ])
++        let cancelStream = try firstAdapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current, cancelMessage],
++            currentMessage: cancelMessage
++        ))
++        await Task.yield()
++        firstAdapter.cancel(sessionID: sessionID)
++        #expect(liveTerminals(await collectLiveCodexEvents(cancelStream)) == [.cancelled])
++        try await Task.sleep(for: .seconds(1))
++
++        let coldAdapter = CodexAppServerRuntimeAdapter()
++        #expect(throws: CodexAppServerError.resumeIsolationUnavailable) {
++            try coldAdapter.resume(liveSession(
++                sessionID: sessionID,
++                providerSessionID: providerThreadID
++            ))
++        }
++        if let evidencePath = environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
++            let evidence: [String: Any] = [
++                "cli_version": CodexAppServerContract.cliVersion,
++                "protocol_revision": CodexAppServerContract.protocolRevision,
++                "combined_schema_sha256": "eb1ba91bd0fab656523092f6ed7de3ea7aef278921a650f14dc871ae7dcfaf84",
++                "v2_schema_sha256": "995fc3b8f8c469f6787e8fc5be4038c4f31359025edd8480b862e83355f3bf3b",
++                "compatibility": "incompatible_pending_tool_inventory_and_safe_resume",
++                "billing": "api_key",
++                "isolated_home": true,
++                "account_verified_before_thread": true,
++                "text": true,
++                "image_input": true,
++                "typed_image_tool_result": true,
++                "nexgen_tool_round_trip": true,
++                "warm_dialogue": true,
++                "cancel": true,
++                "cold_resume_rejected": true,
++                "model_catalog_count": models.count,
++                "default_model_has_text_and_image": true,
++                "model_visible_tool_inventory_captured": false,
++                "evidence_payload_redacted": true,
++            ]
++            let data = try JSONSerialization.data(
++                withJSONObject: evidence,
++                options: [.prettyPrinted, .sortedKeys]
++            )
++            try data.write(to: URL(fileURLWithPath: evidencePath), options: .atomic)
++        }
++    }
++
++    private func liveSession(
++        sessionID: UUID,
++        providerSessionID: String? = nil
++    ) -> AgentRuntimeSessionRequest {
++        let tool = AgentRuntimeToolSchema(
++            name: "acceptance_echo",
++            description: "Return a controlled acceptance result.",
++            inputSchema: [
++                "type": "object",
++                "properties": ["value": ["type": "string"]],
++                "required": ["value"],
++                "additionalProperties": false,
++            ]
++        )
++        let context = AgentRuntimeHostContext(
++            interfaceLanguage: .init(identifier: "en", displayName: "English"),
++            baseInstructions: "Follow the host contract and use only the supplied nexgen tool.",
++            pack: .init(id: "acceptance", version: "1", projectSchema: "1", currentPhase: "smoke"),
++            phaseInstructions: "Call acceptance_echo when requested.",
++            toolSchemas: [tool],
++            authority: [.toolSchemas, .toolExecution, .structuredDialogs, .outputApprovals, .gateRefusals]
++        )
++        return AgentRuntimeSessionRequest(
++            sessionID: sessionID,
++            runtimeGenerationID: UUID(),
++            providerSessionID: providerSessionID,
++            priorMessages: [],
++            hostContext: context,
++            workingDirectory: nil,
++            pluginDirectories: [],
++            providerExtensions: [],
++            mcpPort: 0,
++            executeTool: { _, name, input in
++                guard name == "acceptance_echo", input.contains("image_received") else {
++                    return .error("unexpected acceptance call")
++                }
++                return ToolResult(
++                    content: [
++                        .text("controlled-result"),
++                        .image(
++                            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII=",
++                            mediaType: "image/png"
++                        ),
++                    ],
++                    isError: false
++                )
++            }
++        )
++    }
++}
++
++@MainActor
++private func collectLiveCodexEvents(
++    _ stream: AsyncStream<AgentRuntimeEventEnvelope>
++) async -> [AgentRuntimeEventEnvelope] {
++    var events: [AgentRuntimeEventEnvelope] = []
++    for await event in stream { events.append(event) }
++    return events
++}
++
++private func liveTerminals(_ events: [AgentRuntimeEventEnvelope]) -> [AgentRuntimeTerminal] {
++    events.compactMap {
++        guard case .terminal(let value) = $0.event else { return nil }
++        return value
++    }
++}
+diff --git a/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift b/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift
+new file mode 100644
+index 00000000..93929fd5
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift
+@@ -0,0 +1,522 @@
++import Foundation
++import Testing
++@testable import NexGenVideo
++
++@MainActor
++private final class FakeCodexAppServerDriver: CodexAppServerDriving {
++    struct Call {
++        let method: String
++        let params: [String: Any]
++    }
++
++    let events: AsyncStream<CodexAppServerInbound>
++    var accountStatus: CodexAppServerAccountStatus? = .init(billing: .apiKey)
++    private let continuation: AsyncStream<CodexAppServerInbound>.Continuation
++    var startError: Error?
++    var inheritedInstructionSources: [String] = []
++    var scriptedEvents: [CodexAppServerInbound] = []
++    var completeAfterToolResponse = false
++    private(set) var calls: [Call] = []
++    private(set) var responses: [[String: Any]] = []
++    private(set) var stopCount = 0
++
++    init() {
++        var continuation: AsyncStream<CodexAppServerInbound>.Continuation!
++        events = AsyncStream { continuation = $0 }
++        self.continuation = continuation
++    }
++
++    func start(home: URL, scratch: URL) async throws {
++        if let startError { throw startError }
++    }
++
++    func request(method: String, params: [String: Any]) async throws -> [String: Any] {
++        calls.append(.init(method: method, params: params))
++        switch method {
++        case "thread/start":
++            return [
++                "thread": ["id": "thread-1"],
++                "cwd": params["cwd"] as? String ?? "",
++                "instructionSources": inheritedInstructionSources,
++                "runtimeWorkspaceRoots": [],
++            ]
++        case "turn/start":
++            Task { @MainActor in
++                await Task.yield()
++                for event in self.scriptedEvents { self.continuation.yield(event) }
++            }
++            return ["turn": ["id": "provider-turn-1"]]
++        case "turn/interrupt":
++            return [:]
++        default:
++            throw CodexAppServerError.remote(code: -32_601, message: method)
++        }
++    }
++
++    func respond(id: Any, result: [String: Any]) throws {
++        responses.append(result)
++        if completeAfterToolResponse {
++            continuation.yield(.notification(method: "turn/completed", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
++            ]))
++        }
++    }
++
++    func respond(id: Any, errorCode: Int, message: String) throws {
++        responses.append(["error": ["code": errorCode, "message": message]])
++    }
++
++    func stop() {
++        stopCount += 1
++        continuation.finish()
++    }
++
++    func emit(_ event: CodexAppServerInbound) {
++        continuation.yield(event)
++    }
++}
++
++@MainActor
++@Suite("Codex App Server runtime adapter")
++struct CodexAppServerRuntimeAdapterTests {
++    @Test("pinned contract disables inherited and built-in capability surfaces")
++    func isolatedConfigurationIsExplicitAndFailClosed() {
++        let config = CodexAppServerContract.isolatedConfig
++        for required in [
++            "cli_auth_credentials_store = \"keyring\"",
++            "mcp_oauth_credentials_store = \"keyring\"",
++            "sandbox_mode = \"read-only\"",
++            "web_search = \"disabled\"",
++            "shell_tool = false",
++            "view_image = false",
++            "hooks = false",
++            "multi_agent = false",
++            "apps = false",
++            "enable_mcp_apps = false",
++            "plugins = false",
++            "image_generation = false",
++            "send_message_to_user_async = false",
++            "current_time_reminder = false",
++            "unbounded_connection_retries = false",
++        ] {
++            #expect(config.contains(required))
++        }
++        #expect(!config.contains("mcp_servers."))
++        #expect(CodexAppServerContract.cliVersion == "0.156.0")
++        #expect(CodexAppServerContract.protocolRevision == "rust-v0.156.0")
++        #expect(CodexAppServerContract.accepts(userAgent: "codex_cli_rs/0.156.0"))
++        #expect(!CodexAppServerContract.accepts(userAgent: "codex_cli_rs/0.157.0"))
++        let environment = CodexAppServerContract.childEnvironment(
++            ambient: [
++                "PATH": "/trusted/bin",
++                "HOME": "/Users/person",
++                "CODEX_HOME": "/Users/person/.codex",
++                "OPENAI_API_KEY": "private-key",
++                "CLAUDE_CODE_PLUGIN_DIR": "/Users/person/plugins",
++            ],
++            home: URL(fileURLWithPath: "/isolated/codex"),
++            scratch: URL(fileURLWithPath: "/isolated/scratch")
++        )
++        #expect(environment["CODEX_HOME"] == "/isolated/codex")
++        #expect(environment["HOME"] == "/isolated/codex")
++        #expect(environment["TMPDIR"] == "/isolated/scratch")
++        #expect(environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
++        #expect(environment["XDG_CONFIG_HOME"] == "/isolated/codex/config")
++        #expect(environment["XDG_CACHE_HOME"] == "/isolated/scratch/cache")
++        #expect(environment["OPENAI_API_KEY"] == nil)
++        #expect(environment["CLAUDE_CODE_PLUGIN_DIR"] == nil)
++    }
++
++    @Test("text, real image data, namespaced tool result, and usage preserve the host contract")
++    func textImageAndToolRoundTrip() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.completeAfterToolResponse = true
++        driver.scriptedEvents = [
++            .notification(method: "turn/started", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "inProgress", "items": []],
++            ]),
++            .notification(method: "item/agentMessage/delta", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "itemId": "message-1",
++                "delta": "Working",
++            ]),
++            .request(id: 91, method: "item/tool/call", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "callId": "call-1",
++                "namespace": "nexgen",
++                "tool": "host_tool",
++                "arguments": ["value": "safe"],
++            ]),
++        ]
++        var executions: [(String, String, String)] = []
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID) { id, name, input in
++            executions.append((id, name, input))
++            return ToolResult(
++                content: [
++                    .text("host result"),
++                    .image(base64: "aW1hZ2U=", mediaType: "image/png"),
++                ],
++                isError: false
++            )
++        })
++        let current = AgentRuntimeMessage(role: .user, content: [
++            .text("Inspect this frame"),
++            .image(.init(mediaType: "image/jpeg", base64: "ZnJhbWU=")),
++        ])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(executions.count == 1)
++        #expect(executions.first?.0 == "call-1")
++        #expect(executions.first?.1 == "host_tool")
++        #expect(executions.first?.2.contains("safe") == true)
++        #expect(driver.responses.count == 1)
++        let contentItems = driver.responses.first?["contentItems"] as? [[String: Any]]
++        #expect(contentItems?.count == 2)
++        #expect(contentItems?.last?["imageUrl"] as? String == "data:image/png;base64,aW1hZ2U=")
++        let start = driver.calls.first(where: { $0.method == "thread/start" })
++        #expect(start?.params["ephemeral"] as? Bool == true)
++        #expect(start?.params["allowProviderModelFallback"] as? Bool == false)
++        #expect((start?.params["environments"] as? [Any])?.isEmpty == true)
++        #expect((start?.params["runtimeWorkspaceRoots"] as? [Any])?.isEmpty == true)
++        let namespaces = start?.params["dynamicTools"] as? [[String: Any]]
++        #expect(namespaces?.first?["name"] as? String == "nexgen")
++        let turn = driver.calls.first(where: { $0.method == "turn/start" })
++        let input = turn?.params["input"] as? [[String: Any]]
++        #expect(input?.last?["url"] as? String == "data:image/jpeg;base64,ZnJhbWU=")
++        #expect(events.map(\.event).contains(.providerSessionStarted("thread-1")))
++        #expect(events.map(\.event).contains(.text(
++            messageID: "message-1",
++            value: "Working",
++            isDelta: true
++        )))
++        #expect(codexTerminals(events) == [.completed(.endTurn)])
++    }
++
++    @Test("dialog or spend suspension returns the tool result and interrupts before continuation")
++    func hostSuspensionStopsTheTurn() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "turn/started", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "inProgress", "items": []],
++            ]),
++            .request(id: 1, method: "item/tool/call", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "callId": "dialog-1",
++                "namespace": "nexgen",
++                "tool": "host_tool",
++                "arguments": [:],
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID) { _, _, _ in
++            .suspended("Decision opened")
++        })
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Ask")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(driver.responses.count == 1)
++        #expect(codexTerminals(events) == [.completed(.toolUse)])
++    }
++
++    @Test("unknown protocol events fail closed and cannot append a late answer")
++    func unknownEventFailsClosed() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "future/unsafeEvent", params: [:]),
++            .notification(method: "item/agentMessage/delta", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "itemId": "late",
++                "delta": "late answer",
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        let failures = events.compactMap { envelope -> AgentRuntimeFailure? in
++            guard case .error(let value) = envelope.event else { return nil }
++            return value
++        }
++        #expect(failures.count == 1)
++        #expect(failures.first?.kind == .protocolViolation)
++        #expect(!events.map(\.event).contains(.text(messageID: "late", value: "late answer", isDelta: true)))
++        #expect(codexTerminals(events) == [.failed])
++    }
++
++    @Test("events from an old provider thread cannot fail or append to the active turn")
++    func staleProviderEventsAreDropped() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "future/unsafeEvent", params: [
++                "threadId": "old-thread",
++                "turnId": "old-turn",
++            ]),
++            .notification(method: "item/agentMessage/delta", params: [
++                "threadId": "old-thread",
++                "turnId": "old-turn",
++                "itemId": "late",
++                "delta": "late answer",
++            ]),
++            .notification(method: "turn/completed", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(!events.contains { envelope in
++            guard case .text(_, let value, _) = envelope.event else { return false }
++            return value == "late answer"
++        })
++        #expect(!events.contains { envelope in
++            guard case .error = envelope.event else { return false }
++            return true
++        })
++        #expect(codexTerminals(events) == [.completed(.endTurn)])
++    }
++
++    @Test("runtime unauthorized becomes an explicit authentication failure")
++    func runtimeUnauthorizedIsVisible() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "error", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "willRetry": false,
++                "error": [
++                    "message": "provider detail",
++                    "codexErrorInfo": "unauthorized",
++                ],
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++        let failure = try #require(events.compactMap { envelope -> AgentRuntimeFailure? in
++            guard case .error(let value) = envelope.event else { return nil }
++            return value
++        }.first)
++
++        #expect(failure.kind == .authenticationRequired)
++        #expect(failure.message == CodexAppServerError.authenticationRequired.localizedDescription)
++        #expect(codexTerminals(events) == [.failed])
++    }
++
++    @Test("missing isolated auth fails before any thread or model request")
++    func missingAuthenticationDoesNotStartAThread() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.startError = CodexAppServerError.authenticationRequired
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(driver.calls.isEmpty)
++        #expect(events.map(\.event).contains(.error(.init(
++            kind: .authenticationRequired,
++            message: CodexAppServerError.authenticationRequired.localizedDescription
++        ))))
++        #expect(codexTerminals(events) == [.failed])
++    }
++
++    @Test("incompatible CLI versions and EOF fail before stale output can mutate the chat")
++    func incompatibleVersionAndEOFHaveExplicitFailures() async throws {
++        for error in [
++            CodexAppServerError.incompatibleVersion("codex_cli_rs/0.157.0"),
++            CodexAppServerError.transportClosed,
++        ] {
++            let driver = FakeCodexAppServerDriver()
++            driver.startError = error
++            let sessionID = UUID()
++            let adapter = makeAdapter(driver)
++            try adapter.start(sessionRequest(sessionID: sessionID))
++            let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++            let events = await collectCodexEvents(try adapter.send(.init(
++                sessionID: sessionID,
++                turnID: UUID(),
++                messages: [current],
++                currentMessage: current
++            )))
++            let failure = try #require(events.compactMap { envelope -> AgentRuntimeFailure? in
++                guard case .error(let value) = envelope.event else { return nil }
++                return value
++            }.first)
++            #expect(failure.kind == (error == .transportClosed ? .transport : .backendUnavailable))
++            #expect(codexTerminals(events) == [.failed])
++        }
++    }
++
++    @Test("cold resume is rejected because 0.156.0 loses its isolated tools and environments")
++    func coldResumeFailsClosed() throws {
++        let driver = FakeCodexAppServerDriver()
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++
++        #expect(throws: CodexAppServerError.resumeIsolationUnavailable) {
++            try adapter.resume(sessionRequest(
++                sessionID: sessionID,
++                providerSessionID: "thread-1"
++            ))
++        }
++        #expect(driver.calls.isEmpty)
++    }
++
++    @Test("an inherited instruction source rejects the runtime before a turn")
++    func inheritedPersonalConfigurationIsRejected() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.inheritedInstructionSources = ["/Users/person/.codex/AGENTS.md"]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(!driver.calls.contains(where: { $0.method == "turn/start" }))
++        #expect(codexTerminals(events) == [.failed])
++    }
++
++    @Test("cancellation closes the bounded process and drops late provider events")
++    func cancellationDropsLateEvents() async throws {
++        let driver = FakeCodexAppServerDriver()
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Wait")])
++        let stream = try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        ))
++        await Task.yield()
++        adapter.cancel(sessionID: sessionID)
++        driver.emit(.notification(method: "item/agentMessage/delta", params: [
++            "threadId": "thread-1",
++            "turnId": "provider-turn-1",
++            "itemId": "late",
++            "delta": "late",
++        ]))
++        let events = await collectCodexEvents(stream)
++
++        #expect(codexTerminals(events) == [.cancelled])
++        #expect(!events.map(\.event).contains(.text(messageID: "late", value: "late", isDelta: true)))
++    }
++
++    private func makeAdapter(_ driver: FakeCodexAppServerDriver) -> CodexAppServerRuntimeAdapter {
++        CodexAppServerRuntimeAdapter(
++            driverFactory: { driver },
++            runtimeLocations: { session in
++                (
++                    URL(fileURLWithPath: "/tmp/ngv-codex-home"),
++                    URL(fileURLWithPath: "/tmp/ngv-codex-scratch-\(session.runtimeGenerationID)")
++                )
++            }
++        )
++    }
++
++    private func sessionRequest(
++        sessionID: UUID,
++        providerSessionID: String? = nil,
++        executeTool: @escaping AgentRuntimeToolExecutor = { _, _, _ in .ok("ok") }
++    ) -> AgentRuntimeSessionRequest {
++        let schema = AgentRuntimeToolSchema(
++            name: "host_tool",
++            description: "A harmless host tool",
++            inputSchema: [
++                "type": "object",
++                "properties": ["value": ["type": "string"]],
++                "additionalProperties": false,
++            ]
++        )
++        let context = AgentRuntimeHostContext(
++            interfaceLanguage: .init(identifier: "de-DE", displayName: "German"),
++            baseInstructions: "HOST INSTRUCTIONS",
++            pack: .init(id: "musicvideo", version: "1", projectSchema: "1", currentPhase: "story"),
++            phaseInstructions: "PHASE INSTRUCTIONS",
++            toolSchemas: [schema],
++            authority: [.toolSchemas, .toolExecution, .structuredDialogs, .outputApprovals, .gateRefusals]
++        )
++        return AgentRuntimeSessionRequest(
++            sessionID: sessionID,
++            runtimeGenerationID: UUID(),
++            providerSessionID: providerSessionID,
++            priorMessages: [],
++            hostContext: context,
++            workingDirectory: nil,
++            pluginDirectories: [],
++            providerExtensions: [],
++            mcpPort: 0,
++            executeTool: executeTool
++        )
++    }
++}
++
++@MainActor
++private func collectCodexEvents(
++    _ stream: AsyncStream<AgentRuntimeEventEnvelope>
++) async -> [AgentRuntimeEventEnvelope] {
++    var events: [AgentRuntimeEventEnvelope] = []
++    for await event in stream { events.append(event) }
++    return events
++}
++
++private func codexTerminals(_ events: [AgentRuntimeEventEnvelope]) -> [AgentRuntimeTerminal] {
++    events.compactMap {
++        guard case .terminal(let value) = $0.event else { return nil }
++        return value
++    }
++}
+diff --git a/docs/CODEX_APP_SERVER_CONTRACT.md b/docs/CODEX_APP_SERVER_CONTRACT.md
+new file mode 100644
+index 00000000..167ef445
+--- /dev/null
++++ b/docs/CODEX_APP_SERVER_CONTRACT.md
+@@ -0,0 +1,64 @@
++# Codex App Server runtime contract
++
++Status: implementation candidate; CLI 0.156.0 is explicitly incompatible for production until both the model-visible tool inventory and a safe cold-resume contract exist and pass dedicated Actions acceptance.
++
++## Pinned runtime and protocol
++
++- CLI package: `@openai/codex` `0.156.0`.
++- Source revision: [`rust-v0.156.0`](https://github.com/openai/codex/tree/rust-v0.156.0).
++- Transport: one bounded native Mach-O `codex app-server --strict-config` subprocess using JSONL over stdin/stdout. The official npm launcher is resolved to its packaged arm64 binary; an unresolved script/wrapper is rejected so cancellation owns the actual process.
++- Default combined schema SHA-256: `eb1ba91bd0fab656523092f6ed7de3ea7aef278921a650f14dc871ae7dcfaf84`.
++- Default v2 schema SHA-256: `995fc3b8f8c469f6787e8fc5be4038c4f31359025edd8480b862e83355f3bf3b`.
++- Experimental initialization is required because `thread/start.dynamicTools`, `thread/start.environments`, and `thread/start.runtimeWorkspaceRoots` are experimental in this revision.
++
++The hashes were produced from the installed package with:
++
++```text
++codex app-server generate-json-schema --out <temporary-directory>
++```
++
++This export does not start App Server, authenticate, query models, or prove runtime compatibility. The default export intentionally omits experimental request fields; their contract is bound to the pinned source for [`ThreadStartParams`](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs) and the upstream [App Server protocol guide](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/app-server/README.md).
++
++## Isolation boundary
++
++NexGenVideo supplies a dedicated `CODEX_HOME` under Application Support and a per-runtime scratch directory under Caches. It points `HOME` and all XDG roots into those host-owned locations, uses a system-only `PATH`, writes a complete strict configuration, and passes only an allowlisted environment. It never reads or copies `~/.codex`, auth files, personal MCP servers, plugins, skills, hooks, project instructions, or Desktop conversations.
++
++The isolated home uses the supported `cli_auth_credentials_store = "keyring"` mechanism. The upstream keyring key is derived from the canonical Codex home, so a personal CLI login is deliberately not visible. A missing isolated login stops after `account/read`; it does not call `model/list`, start a thread, probe a model, or select a paid fallback.
++
++For each new thread the host sends:
++
++- `ephemeral: true`, so the incompatible cold-resume format is not persisted as usable provider session state;
++- `environments: []` and `runtimeWorkspaceRoots: []`, which remove local execution environments and their shell/patch tools;
++- `allowProviderModelFallback: false`, so the runtime cannot silently change provider or billing path;
++- `sandbox: "read-only"` and `approvalPolicy: "never"` as defense in depth;
++- one `nexgen` dynamic-tool namespace containing only host-owned JSON schemas;
++- the complete localized host instructions, pack identity, current phase, and packaged phase instructions;
++- explicit feature/config disablement for shell, image view/generation, web, apps, plugins, skills, hooks, collaboration, browser/computer use, plan, and provider dialogs.
++
++`instructionSources` and runtime workspace roots in every start response must be empty. Any unknown server request, notification, thread-item capability, namespace, tool, thread id, turn id, runtime generation, project generation, or chat id fails closed. Tool results preserve typed text and image blocks. Audio and video remain host-inspected assets, not claimed native model inputs.
++
++## Why 0.156.0 is still pending
++
++The pinned source has an internal `ToolPolicy` startup ceiling, but the public App Server start API does not expose its `allowed_tools` field. The known configuration plus empty environments removes the dangerous local surfaces in source, but that is not evidence of the final model-visible request. Compatibility therefore remains disabled in normal app runs. `NGV_CODEX_APP_SERVER_ACCEPTANCE=1` is reserved for the dedicated approved Actions run.
++
++That acceptance must capture the actual provider request and prove that the advertised tool surface contains only the intended `nexgen` namespace. A version or model that advertises any other callable capability is incompatible even if the sandbox would later deny execution.
++
++This check cannot be replaced by configuration inspection. In the pinned [tool planner](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/core/src/tools/spec_plan.rs), model catalog metadata can independently enable the built-in async-user-message and clock tools even when their feature flags are false. The adapter rejects every non-`item/tool/call` request and every non-`nexgen` namespace, but rejection after advertisement is not a sufficient isolation proof.
++
++There is also a confirmed cold-resume incompatibility. In the pinned [`thread/resume` processor](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/app-server/src/request_processors/thread_processor.rs), a cold thread is restored through `resume_thread_with_history`; the pinned [`ThreadManager`](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/core/src/thread_manager.rs) then uses `StartThreadOptions::new`, which defaults `dynamic_tools` to empty and `environments` to `None`. That discards the host namespace and can reattach the default local environment. Passing empty `runtimeWorkspaceRoots`, read-only sandboxing, and current instructions does not restore the missing environment/tool selection. NexGenVideo therefore rejects cold/native resume before launching App Server and does not advertise `resumeNativeSession` for this backend. Multi-turn dialogue is supported only while the original bounded process and thread remain live.
++
++This is a version incompatibility, not an acceptance item that can be waived. A later pinned CLI must expose a resume contract that reasserts both the dynamic-tool namespace and empty environment selection before the backend can become selectable. The Codex picker and durable backend preference remain out of scope and disabled.
++
++## Required acceptance evidence
++
++The approved Actions run must retain redacted evidence for:
++
++1. exact CLI/package version, generated schema hashes, initialize/initialized, isolated `codexHome`, and strict-config success;
++2. isolated account status and billing mode before any model or model-list request;
++3. the actual model catalog and input modalities used by the later discovery contract;
++4. complete model-visible tool inventory, including negative adversarial personal config fixtures;
++5. text, actual image data, `nexgen` tool call/result with typed image output, dialog/spend suspension, and localized phase instructions;
++6. two chats and projects, warm dialogue continuity, explicit cold-resume rejection, cancel/resend with a late old response, wrong runtime identity, EOF, timeout, crash, offline/auth expiry, unknown events, and reconnect/reinitialization joining the existing host phase job;
++7. process-tree exit and absence of secrets, prompts, tokens, or raw tool payloads in Actions logs.
++
++The real LLM smoke is a separately approved paid step. Normal CI covers only deterministic protocol/consumer fixtures.

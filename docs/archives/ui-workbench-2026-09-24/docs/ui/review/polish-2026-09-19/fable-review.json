@@ -1,0 +1,171 @@
+{
+  "reviewer": "claude/fable-5.1",
+  "summary": "Gesamteinschätzung: Panelrahmen, fünf Arbeitsbereiche, getrennte KI-/Export-Anzeigen, ungerahmter Pack-Status und die Trennung von Vorschlag, Freigabe und Kostenfreigabe sind tragfähig und näher an FCP/Resolve als an einer Web-App. Geprüft habe ich spec.html, UI_PARITY_CONTRACT, die drei Übersichten, sieben Einzel-Screens, before-geometry.json, beide CSS-Dateien, gezielte JS-Stellen, das TSV (nur partial/proposal), Storyboard.swift und EditorViewModel.WorkspaceFocus. Ich habe nichts interaktiv geklickt und keine native App gestartet. Text-Fallback-Icons sind nicht bewertet.\n\nDrei Defekte sind erheblich:\n1. Die Freigabeleiste nennt immer die laufende Phase, ihre Aktion wirkt aber auf die betrachtete Phase.\n2. Die Shotplanung ändert still das freigegebene Storyboard-Timing samt Sketch-Momenten.\n3. Deaktivierte Trim-Buttons verdecken in der Postproduction die Clip-Labels.\n\nRaster: Die Pane-Köpfe haben keine gemeinsame Linie. Die Mitte springt zwischen 36 und 37 px, der Inspector-Kopf misst 60,7 px, der Sidebar-Kopf hat drei Bauformen. Die Inspector-Breite springt durch den Scrollbalken zwischen 232 und 217 px. Die Labelachse ist in der Produktion durch ein versehentliches display:block gestapelt, in Schnitt und Export zweispaltig. Alles ist mit wenigen CSS-Regeln ohne zusätzliche Reihen behebbar. Nebenbefund: approve() setzt beim Übergang in den Schnitt S.left=240 (js:220) und verändert damit eine Nutzer-Panelbreite.\n\nBenchmarks:\n- FCP: Die gemeinsame Browser/Viewer-Kopflinie, direkte Panel-Schalter und eine einzige Filterzeile sind im Medienbereich noch nicht erreicht (vier Kopfzeilen).\n- Resolve: Bins, clipgebundener Inspector und die Timeline sind gut getroffen. Resolve zeigt die Inspector-Tabs einzeilig als Icons. Der Render-Start sitzt dort am Settings-Panel, nicht in der Statusleiste.\n- LTX: Takes und Retakes am Clip sind korrekt übernommen; Gen-Space wurde zu Recht nicht adaptiert.\n- Ohne Benchmark-Gegenstück und NGV-eigen zu führen: Storyboard-Momente, Shotplanung vor References, Render-Review, FilmFlow-Snapshot und das Export-Vorschaubild.\n\nNative Etappen (Verifikation ausschließlich über GitHub Actions):\n- E0: Dummy-Korrekturen aus den Findings.\n- E1: Shell ohne Engine-Änderung. WorkspaceFocus wird um media und post/export statt finish erweitert, mit Migration gespeicherter Ansichten. Dazu Panel-Schalter in der Titelleiste, ein gemeinsamer PaneHeader mit einem AppTheme-Höhen-Token und ein einheitliches Inspector-Labelgrid.\n- E2: Medien-Arbeitsbereich aus MediaPanelView/MediaTab plus kompakte Picker. Postproduction aus den vorhandenen Inspector-Tabs und SequenceReview. Export aus der Export-Hälfte von FinishReviewPane.\n- E3: Produktionsflächen auf der unveränderten Harness-Reihenfolge (init→analysis→brief→production_design→treatment→storyboard→bible→shotlist→sanity→frames→render). References zeigt Bible und Frames als zwei Gates in einer Fläche, Render-Review entspricht sanity. Die Gate-Leiste leitet sich aus dem gemeinsamen Structural Gate ab.\n- E4: Je eine eigene versionierte, additive Vertragsentscheidung für NEW-01 bis NEW-03 und die Vorschaubild-Zuordnung. Keine ABI-Struct-Erweiterung, keine optische Umbenennung von Phasen.",
+  "findings": [
+    {
+      "title": "Freigabeleiste benennt die laufende Phase, die Aktion wirkt auf die betrachtete Phase",
+      "severity": "high",
+      "confidence": "high",
+      "category": "workflow-correctness",
+      "file": "docs/ui/desktop-production-workbench.js",
+      "line": 195,
+      "evidence": "Der Titel entsteht aus `labels[S.current]+' · '+(S.done[S.current]?'abgeschlossen':'aktueller Schritt')`. Aktion (Zeile 193: `S.done[S.view] → B('revise','Revision beginnen')`) und Hinweistext (`reason()` Zeile 78, bezogen auf S.view) gelten der betrachteten Phase. before-brief, before-script und before-treatment zeigen jeweils 'Storyboard · aktueller Schritt / Freigegebene Revision · zum Ändern gezielt wieder öffnen' neben 'Revision beginnen', während Briefing, Skript oder Treatment offen ist.",
+      "impact": "Der Nutzer liest 'Storyboard' und löst eine Revision von Briefing oder Skript aus, die alle Folgefreigaben aufhebt. Freigabe und Start bleiben getrennt, aber das Ziel der destruktivsten Aktion im Workflow ist falsch beschriftet.",
+      "recommendation": "Der Titel folgt immer der betrachteten Phase: `${labels[S.view]} · ${S.done[S.view]?'freigegeben':S.view===S.current?'aktueller Schritt':'noch offen'}`. Die laufende Phase steht nur im small-Text ('Aktueller Schritt: Storyboard'). Button-Label konkretisieren: 'Revision ab Skript beginnen…'. Keine neue Zeile nötig. Nativ leitet die Gate-Leiste Titel und Enabled-State der betrachteten Phase aus demselben Structural Gate ab."
+    },
+    {
+      "title": "Shotplanung ändert still freigegebenes Storyboard-Timing und skaliert Sketch-Momente um",
+      "severity": "high",
+      "confidence": "high",
+      "category": "workflow-correctness",
+      "file": "docs/ui/desktop-production-workbench.js",
+      "line": 315,
+      "evidence": "Zeile 179 rendert in `plan` dieselben editierbaren Felder `duration` und `action` wie im Storyboard, mit dem Hinweis 'Ein Zeitwert für Storyboard, Animatic und Shotplanung'. Zeile 315 skaliert bei `key==='duration'` alle Momente um (`moments(i).forEach(m=>m.time=…*ratio)`) und schreibt S.shots. `changed()` löst weder `invalidate('board')` aus noch löscht es `S.done.board`. Nativ besitzt Storyboard.Step keine Dauer (Storyboard.swift:24-41); nur Section hat timeStart/timeEnd.",
+      "impact": "Das widerspricht spec.html Zeile 21 ('Änderungen genehmigter Artefakte benötigen Revision') und der Harness-Regel 'editing an approved phase requires explicit rewind'. Das freigegebene Animatic-Timing ändert sich ohne Revision. Außerdem suggeriert der Dummy eine gemeinsame Dauerquelle, die nativ nicht existiert (NEW-01).",
+      "recommendation": "Klein: In `plan` Dauer und Handlung als read-only `prop()` anzeigen, dazu ein Control 'Im Storyboard ändern…', das den vorhandenen `rewind`-Dialog für board öffnet. Kamera, Blocking und Quelle bleiben editierbar. Für die native Umsetzung vorab entscheiden, wer die Shotdauer besitzt: heute die Shot List, im Zielkonzept das Storyboard-Timing. Das braucht eine versionierte Zusatzvertragsentscheidung, kein stilles Doppel-Editing."
+    },
+    {
+      "title": "Deaktivierte Trim-Buttons verdecken Clip-Labels in der Postproduction-Timeline",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "ui-defect",
+      "file": "docs/ui/desktop-production-workbench.studio.js",
+      "line": 31,
+      "evidence": "Die Trim-Buttons werden mit `${track?.lock||S.view!=='edit'?'disabled':''}` gerendert. Die globale Regel `#ngv-desk button:disabled{…background:#27282d…}` (CSS Zeile 2) plus `opacity:1` (Zeile 10) schlägt `.nle-trim{background:transparent}` (Zeile 113) durch die höhere Spezifität. So liegen 8 px opake Balken bei left:2px und right:2px über jedem Clip. before-post.png zeigt 'IA · Take 1', 'IB', 'IC' und ein angeschnittenes 'Claude-mouse.wav'. before-edit.png zeigt die Labels vollständig.",
+      "impact": "Die zentrale Timeline wirkt in der Postproduction fehlerhaft. Dasselbe tritt im Schnitt bei gesperrten Spuren auf. Der deaktivierte Zustand erscheint als Bildfehler statt als klar deaktiviertes Control.",
+      "recommendation": "Trim-Griffe außerhalb des Schnitts gar nicht rendern: `S.view==='edit'&&!track?.lock ? … : ''`. Alternativ per CSS: `#ngv-desk .nle-trim:disabled{background:transparent;pointer-events:none}`. Nativ bleiben die Trim-Handles eine reine Schnitt-Affordanz. In der Postproduction bleiben nur Auswahl und Playhead."
+    },
+    {
+      "title": "Pane-Köpfe ohne gemeinsame Fluchtlinie: Mitte 36/37 px, Inspector 60,7 px, Sidebar mit drei Bauformen",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "layout-grid",
+      "file": "docs/ui/desktop-production-workbench.css",
+      "line": 2,
+      "evidence": "before-geometry.json zeigt toolbar.h=37 (media, brief, storyboard, animatic, planning, references, review, edit, preview, album) gegen 36 (intake, audio, treatment, script, takes, post, export). inspector.h ist überall 60.6875, also bottom 116.94 gegen toolbar bottom 92.25/93.25. Ursache im CSS: `.surface-toolbar{min-height:36px;padding:4px 9px}` mit 28-px-Buttons ergibt 37, ohne Buttons 36. `.inspector-header{padding:11px 12px;min-height:54px}` ist zweizeilig. Der Sidebar-Kopf ist in Medien `.library-nav-head{min-height:37px}`, in der Produktion `.sidebar-tabs` im nav-padding von 10 px, in Schnitt/Post/Export eine Caps-`.group-label` (js:106-110).",
+      "impact": "Beim Wechsel zwischen Tabs und Phasen springt die Kopfkante um 1 px. Der Inspector-Kopf liegt 24 px tiefer als der Viewer-Kopf. Der FCP-Benchmark (gemeinsame Browser/Viewer-Linie) und Resolve (Bins-Pfad, Viewer-Info und Inspector-Clipname auf einer Linie) sind damit verfehlt.",
+      "recommendation": "Ein Token `--nd-head:37px` einführen. `.surface-toolbar`, `.library-nav-head`, die Sidebar-Kopfzeile und `.inspector-header` erhalten `height:var(--nd-head);min-height:0;padding-block:0`. Im Inspector-Kopf stehen Titel und Meta einzeilig: `<b>` plus gedämpftes `<small>` inline mit Ellipsis, der volle Text im Tooltip. Schnitt, Postproduction und Export bekommen denselben Kopf wie Medien ('Sequenzen', 'Postproduction', 'Export') statt einer Caps-Group-Label. Nativ wird daraus ein PaneHeader mit einem AppTheme-Höhen-Token."
+    },
+    {
+      "title": "Inspector-Breite und Labelachse springen um 15 px, der Kopf scrollt mit",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "layout-grid",
+      "file": "docs/ui/desktop-production-workbench.css",
+      "line": 2,
+      "evidence": "Die Geometrie zeigt inspector.w=232 in audio, brief, storyboard, references, review, preview und album. In planning, takes, edit, post und export sind es 217, bei 768 px auch in storyboard und animatic. Ursache ist `#ngv-desk aside{min-width:0;overflow:auto}`, mit `.inspector-header` als erstem Kind im Scrollcontainer. Sobald der Inhalt überläuft, nimmt der klassische Scrollbalken 15 px weg, und der Kopf samt Tabzeile scrollt aus dem Bild.",
+      "impact": "Wertespalte und rechte Kante verschieben sich zwischen Zuständen. In langen Inspectors (Planung, Export) verschwindet beim Scrollen der Objektkontext 'welcher Shot oder Clip'.",
+      "recommendation": "`aside{display:flex;flex-direction:column;overflow:hidden}` setzen. Kopf und Tabzeile bekommen `flex:none`, die Gruppen kommen in einen Wrapper mit `overflow:auto;scrollbar-gutter:stable`. Nativ bleibt der Kopf außerhalb der NSScrollView, und Overlay-Scroller erzeugen keinen Breitensprung."
+    },
+    {
+      "title": "Inspector-Labelachse uneinheitlich: Produktionsfelder gestapelt, Schnitt und Export zweispaltig",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "layout-grid",
+      "file": "docs/ui/desktop-production-workbench.css",
+      "line": 246,
+      "evidence": "`field()` und `selectField()` erzeugen `<label class=\"property\">` (js:30-31). `#ngv-desk .group-content label{…display:block}` (CSS Zeile 2, Spezifität 1,1,1) überstimmt `#ngv-desk .property{display:grid;grid-template-columns:minmax(68px,40%) minmax(0,1fr)}` (1,1,0). before-planning.png zeigt 'Bildausschnitt', 'Brennweite' und 'Kamera X/Y' deshalb gestapelt in voller Breite. `prop()`-Zeilen mit `<div>` im selben Inspector sind zweispaltig. Schnitt nutzt ein drittes Raster (Zeile 246: `minmax(80px,1fr) minmax(0,88px)`), Export ein viertes (Zeile 297).",
+      "impact": "Innerhalb eines Inspectors wechselt die Labelachse. Die Planung braucht rund 50 px pro Feld statt 34 px, sodass 'Produktion/Quelle' unter den Falz rutscht. Die gemeinsame Labelachse aus der spec (Upstream #327/#567) ist nicht eingehalten.",
+      "recommendation": "Eine Regel ergänzen: `#ngv-desk .group-content label.property{display:grid}`. Dazu ein einziges Template für alle Arbeitsbereiche, `minmax(84px,40%) minmax(0,1fr)`. Zahlfelder rechtsbündig mit `max-width:88px;justify-self:end`. Die Sonderraster in den Zeilen 246 und 297 entfernen. Nativ wird daraus ein InspectorRow-Baustein mit AppTheme-Spaltenbreite."
+    },
+    {
+      "title": "Shotstreifen mit laufendem Timecode außerhalb des Animatic; in der Shotliste eine zweite Auswahl derselben Shots",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "workflow-clarity",
+      "file": "docs/ui/desktop-production-workbench.js",
+      "line": 167,
+      "evidence": "`bottom()` zeigt `sequence()` für `['plan','refs','takes']`. `sequence()` (Zeile 166) rendert dort 'SHOT-AUSWAHL', die Playhead-Linie und `tc(S.position) / tc(total())`. spec.html Zeile 27 verlangt dagegen: 'Die Animatic-Steuerung einschließlich Shotstreifen, Wiedergabe, Zeitcode und Scrubber erscheint ausschließlich im gewählten Animatic-Tab.' before-planning.png zeigt die Shotliste 1A–1F und direkt darunter denselben Streifen 1A–1F mit 00:00:00:00 / 00:00:20:00.",
+      "impact": "Das widerspricht der normativen Spec und der Owner-Vorgabe. In der Shotliste wird die Auswahl redundant, und etwa 84 px Höhe gehen verloren. Ein Timecode mit Playhead ohne Wiedergabe suggeriert eine Transportfunktion, die es dort nicht gibt.",
+      "recommendation": "In `plan` mit `S.mode!=='blocking'` keinen Streifen rendern. In Blocking, References und Takes bleibt der Streifen als reine Shotwahl, aber ohne `.playhead` und ohne Positions-Timecode, rechts nur die Gesamtdauer '20.0 s'. Die Spec-Zeile 27 entsprechend präzisieren: 'Shotwahl ja, Transport nein'."
+    },
+    {
+      "title": "Export-Primäraktion sitzt in der globalen Statusleiste neben der Export-Aktivitätsanzeige",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "ux-consistency",
+      "file": "docs/ui/desktop-production-workbench.studio.js",
+      "line": 76,
+      "evidence": "Die Statusleiste rendert `B('finish:export','Exportieren…',{primary:true,…})` zwischen dem Budget-Button und `#nd-bg-buttons`. before-export.png zeigt 'Exportieren…' unmittelbar neben 'KI' und 'Export'. `button.primary{min-height:32px}` vergrößert den Footer, sodass sidebar.bottom im Export 820 misst, in Preview und Album 822. In der Produktion sitzt die Primäraktion dagegen im `.phase-dock` über der Statusleiste.",
+      "impact": "Zwei 'Export'-Elemente mit verschiedener Bedeutung (Start und Aktivität) stehen nebeneinander. Die Primäraktion wechselt je Arbeitsbereich den Ort, und die Statusleiste springt in der Höhe. Bei Resolve Deliver sitzt der Start am Settings-Panel, nicht in der Statuszeile.",
+      "recommendation": "Das vorhandene `#nd-gate`/`.phase-dock` auch im Export nutzen, über `finishGate()`. Links steht 'Ausgabe · H.264 · Master · ≈ 26 MB' mit small 'Review: Noch nicht geprüft', rechts 'Exportieren…'. Die Statusleiste bleibt reine Status- und Aktivitätszeile mit fester Höhe. Das erfordert keine neue permanente Reihe, weil das Dock bereits existiert."
+    },
+    {
+      "title": "Postproduction-Sidebar mischt Werkzeugmodus und Clipliste mit gleicher Akzentauswahl und dupliziert die Timeline",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "ux-context",
+      "file": "docs/ui/desktop-production-workbench.studio.js",
+      "line": 68,
+      "evidence": "Dieselbe `tree-row`-Klasse mit `aria-pressed` dient den Modi (Farbe … Endkontrolle) und unter 'SEQUENZ 01' der Clipliste. Laut CSS Zeile 17 erhalten beide `--nd-accent-fill`. before-post.png zeigt 'Farbe' und '1A · Take 1' beide voll magenta in einer Spalte, dazu den Workspace-Reiter und das Clip-Label in der Timeline. Das sind vier Akzentflächen. Die Clipliste wiederholt die darunter voll sichtbare Timeline.",
+      "impact": "Die Hierarchie wird unklar: Was ist der Modus, was das Objekt? Der Pack-Akzent verliert seine Signalwirkung. Rund 220 px Sidebar gehen für eine Dublette drauf.",
+      "recommendation": "Die Akzentfüllung gilt nur für genau eine Navigationsauswahl je Spalte, hier den Modus. Die Clipzeilen bekommen eine neutrale Auswahl (`background:var(--nd-selected)`). Die Clipliste nur in 'Endkontrolle' zeigen, dort als Befund- und Übergangsliste, sonst weglassen. Bei Resolve Color gibt es den Clipstreifen nur, weil dort keine volle Timeline sichtbar ist."
+    },
+    {
+      "title": "Inspector-Tabs brechen in zwei unregelmäßige Zeilen um",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "layout-density",
+      "file": "docs/ui/desktop-production-workbench.studio.css",
+      "line": 6,
+      "evidence": "`.studio-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 8px}` mit Textbuttons. before-edit.png zeigt 'Video Farbe Ton Titel' über 'Untertitel KI'. before-post.png zeigt 'Basis Kurven Farbräder LUT' über 'Effekte Chroma-Key'. Bei 217–232 px Breite belegen Kopf und Tabs zusammen etwa 110 px.",
+      "impact": "Die zweite Zeile ist faktisch eine zusätzliche permanente Reihe mit ausgefranster Kante. Resolve zeigt dieselbe Funktion als eine Zeile mit Icon-Tabs. Die Owner-Vorgabe lautet 'kompakte Icon-Toolbars'.",
+      "recommendation": "Eine Zeile mit 28-px-Icon-Tabs bauen (`flex-wrap:nowrap`, gleich breite Zellen). Jeder Tab erhält `aria-label` und Tooltip, der aktive Tab zeigt sein Label als Gruppenüberschrift darunter. Nativ die vorhandenen Inspector-Tab-SF-Symbols wiederverwenden. Es entfällt kein Tab."
+    },
+    {
+      "title": "Medien-Arbeitsfläche: vier permanente Kopfzeilen vor dem ersten Thumbnail",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "layout-density",
+      "file": "docs/ui/desktop-production-workbench.css",
+      "line": 211,
+      "evidence": "before-media.png zeigt vier Zeilen: (1) 'Medien' mit drei Icons, (2) Dateiname/Bildinhalt/Transkript und 'Suchindex bereit', (3) `.library-filters` mit Suche, Typ, KI-generiert und Ansicht, (4) `.library-path` 'Alle Projektmedien' mit Sortierung. Der Inhalt beginnt bei y≈205 von 850. Der FCP-Browser kommt mit einer Kopf-/Filterzeile aus, LTX Assets mit zwei.",
+      "impact": "Knapp ein Viertel der Höhe des zentralen visuellen Werkzeugs ist Chrome. Das widerspricht der Vorgabe 'keine zusätzlichen permanenten Reihen'.",
+      "recommendation": "Auf zwei Zeilen reduzieren. Kopf: 'Medien › <Ordnerpfad>' links, rechts der Suchindex-Status mit Regler und die drei Aktionsicons. Filterzeile: Suchfeld mit Scope-Menü im Feld (Dateiname, Bildinhalt, Transkript, nativ als NSSearchField-Menü), dann Typ, KI-Filter, Sortierung und Ansicht. `.library-path` entfällt. Es verschwindet keine Funktion."
+    },
+    {
+      "title": "Storyboard-Übersicht: Inspector zeigt 1E, die sichtbare Auswahl fehlt",
+      "severity": "low",
+      "confidence": "medium",
+      "category": "ux-context",
+      "file": "docs/ui/desktop-production-workbench.js",
+      "line": 41,
+      "evidence": "Das Fixture setzt `if(phase==='board'){S.selected=[4];…}`. before-storyboard.png zeigt im Inspector '1E · Die Maschine erwacht', in der Übersicht aber nur 1A–1D ohne Auswahlmarkierung. `scrollIntoView` kommt nur in media.js vor (Grep: 1 Treffer), nicht in der Board-Ansicht.",
+      "impact": "Objektkontext und Arbeitsfläche widersprechen sich. Inspector-Änderungen wie die Dauer wirken auf einen Shot, den der Nutzer gerade nicht sieht.",
+      "recommendation": "Nach `canvas()` in board, plan und takes aufrufen: `$('.shot-tile[aria-pressed=true],.plan-row[aria-pressed=true]')?.scrollIntoView({block:'nearest'})`. Nativ per ScrollViewReader.scrollTo(selectedShotID) bei Auswahl- und Phasenwechsel."
+    },
+    {
+      "title": "Export-Filmstreifen: Clipnamen brechen dreizeilig um",
+      "severity": "low",
+      "confidence": "high",
+      "category": "ui-defect",
+      "file": "docs/ui/desktop-production-workbench.css",
+      "line": 280,
+      "evidence": "`.finish-filmstrip button{width:92px;flex:0 0 92px}` trifft auf `.finish-filmstrip span{display:flex;justify-content:space-between;gap:5px}`. Name und Timecode stehen nebeneinander. before-export.png zeigt '1A ·', 'Take' und '1' untereinander neben '00:00:00:00'.",
+      "impact": "Der Streifen ist unruhig und schwer scanbar, die Kachelhöhen wirken zufällig.",
+      "recommendation": "`span{flex-direction:column;gap:1px}` setzen. Der Name bekommt `white-space:nowrap;overflow:hidden;text-overflow:ellipsis`, der Timecode rückt als `small.mono` darunter. Kachelbreite auf 112 px erhöhen."
+    },
+    {
+      "title": "Modellprofile: Der Dummy kennt nur einen Bild-Slot. Das Single-Select darf nicht zur nativen Vorlage werden",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "native-parity",
+      "file": "docs/ui/desktop-production-workbench.generate.js",
+      "line": 32,
+      "evidence": "Der Generator rendert ausschließlich `m.reference` ('Startbild · erforderlich' oder 'Bildreferenz · optional') als ein `<select data-generation=\"reference\">`. Das TSV führt GEN-03 (First/Last Frames, Referenzmodus mit Bild-, Video- und Audio-Slots; GenerationView.swift@framesRefsMode, GenerationPackageInputs.swift) und GEN-04 (Quellvideo, Trim, Referenz-Tags) ausdrücklich als `partial`.",
+      "impact": "Wird der Dialog 1:1 nachgebaut, gehen exklusive Frame- und Referenzmodi, Rollen, Limits und Quellvideo-Trim verloren. Umgekehrt dürfen im Dummy keine erfundenen Slots für Modelle auftauchen, die sie nicht bieten. Genau das wurde dort bereits einmal entfernt.",
+      "recommendation": "Den partial-Status beibehalten. Als kleine Dummy-Verbesserung den Slot-Bereich datengetrieben aus `m.slots=[{role,required,max}]` rendern, mit genau zwei ehrlich als Demo gekennzeichneten Profilen: nur Startbild, und First+Last exklusiv zu Referenzen. Nativ den Slot-Teil von GenerationView samt Validatoren unverändert einbetten und nur die Rahmung (Typ, Kostenfreigabe, Ausgabeziel) neu setzen. Der Erhaltungsnachweis für GEN-03/04 ist vor der Ablösung der alten Fläche zu erbringen."
+    },
+    {
+      "title": "spec.html ist gegenüber Dummy und Inventar veraltet",
+      "severity": "info",
+      "confidence": "high",
+      "category": "documentation",
+      "file": "docs/ui/desktop-production-workbench.spec.html",
+      "line": 10,
+      "evidence": "Zeile 4 nennt '119 Funktionsgruppen', das aktuelle Inventar laut Auftrag 121 (114 simuliert, 2 partial, 5 proposal). Zeile 10 verlangt links 'Workflow / Quellen beziehungsweise Master / Quellen' als Reiter. before-post.png und before-export.png zeigen keine Reiter, und Zeile 24 sagt selbst 'Export … benötigt keine eigene Medienorganisation'. In js:110 existiert das Label 'Master' noch. Zeile 27 kollidiert mit dem Shotstreifen in Planung, References und Takes.",
+      "impact": "Die normative Spec ist die Grundlage der nativen Etappen. Widersprüche laden zu stillen Reinterpretationen ein.",
+      "recommendation": "Die Spec in einem Zug mit den E0-Korrekturen nachziehen: Zahl der Funktionsgruppen, Sidebar-Köpfe je Arbeitsbereich, die Regel für den Shotstreifen, der Besitzer der Shotdauer als offene Vertragsentscheidung, die Statusleiste ohne Primäraktion. Den toten 'Master'-Zweig in js:110 entfernen."
+    }
+  ]
+}

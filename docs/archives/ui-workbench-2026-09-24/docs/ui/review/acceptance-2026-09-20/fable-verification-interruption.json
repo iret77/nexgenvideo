@@ -1,0 +1,7 @@
+{
+  "exit_code": 143,
+  "result_bytes": 0,
+  "status": "terminated_without_result",
+  "retry": "single bounded-input retry; tools disabled",
+  "counts_as_review": false
+}

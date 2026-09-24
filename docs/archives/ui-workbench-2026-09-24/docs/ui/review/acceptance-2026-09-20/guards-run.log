@@ -1,0 +1,33 @@
+PASS Take click opens review rather than selecting
+PASS Creative exception requires a reason in handler
+PASS No provider yields usable empty catalog
+PASS Model disable removes the model from generator
+PASS Manual generation prepares bound costs
+PASS Generated asset persists provenance
+PASS Rerun preserves provider model identity and intent
+PASS Video preparation rejects an unapproved earlier phase
+PASS Batch excludes completed shots
+PASS Empty batch cannot be accepted
+PASS Stopping batch preserves completed results
+PASS Resume creates only outstanding results
+PASS Timeline change invalidates pending task
+PASS Audio clip changes invalidate full sequence review
+PASS Track state invalidates full sequence review
+PASS Locked track resists split and delete
+PASS Split uses independent effect data
+PASS Thirty fps steps by one frame
+PASS Postproduction transport advances
+PASS Postproduction advances its own review cursor
+PASS Blockout scrubbing is numeric
+PASS Settings preserve explicit MCP trust
+PASS Unknown pack does not silently become generic
+PASS Postproduction state survives reload
+PASS Widget state persists below host size limit
+PASS Compressed snapshot was delivered
+PASS Compressed restore preserves postproduction
+PASS Restored snapshot retains title
+PASS Audio profiles expose appropriate fields
+PASS Music profile exposes lyrics and instrumental
+PASS Export can be cancelled
+PASS Cancelled export is not reported as complete
+{"passed":32,"failed":[]}

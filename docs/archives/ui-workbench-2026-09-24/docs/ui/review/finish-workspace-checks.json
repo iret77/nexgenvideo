@@ -1,0 +1,67 @@
+[
+  {
+    "name": "Finishing the cut opens the sequence directly",
+    "pass": true
+  },
+  {
+    "name": "Finding reveals the correct cut pair",
+    "pass": true
+  },
+  {
+    "name": "Sighted checkboxes retain keyboard focus and normal tab order",
+    "pass": true
+  },
+  {
+    "name": "Explicit sighting records a current review",
+    "pass": true
+  },
+  {
+    "name": "Film playback works after leaving cut comparison",
+    "pass": true
+  },
+  {
+    "name": "Codec and resolution can be selected with keyboard",
+    "pass": true
+  },
+  {
+    "name": "Finish layout 1024",
+    "pass": true,
+    "height": 850
+  },
+  {
+    "name": "Finish layout 736",
+    "pass": true,
+    "height": 850
+  },
+  {
+    "name": "Finish layout 500",
+    "pass": true,
+    "height": 1293
+  },
+  {
+    "name": "Finish layout 320",
+    "pass": true,
+    "height": 1677
+  },
+  {
+    "name": "Stopping an export records cancellation without output",
+    "pass": true
+  },
+  {
+    "name": "New output succeeds and has the selected native codec",
+    "pass": true
+  },
+  {
+    "name": "Cancelled and completed output details remain individually inspectable",
+    "pass": true
+  },
+  {
+    "name": "Persisted demo remains within widget snapshot budget",
+    "pass": true,
+    "bytes": 9318
+  },
+  {
+    "name": "Left panel hides independently",
+    "pass": true
+  }
+]

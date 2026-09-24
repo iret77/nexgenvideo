@@ -1,0 +1,474 @@
+{
+  "surface": "Standalone mock only; no native build or app execution",
+  "viewport": "1024 \u00d7 960; earlier full flow also passed at 500 \u00d7 1100",
+  "checks": [
+    {
+      "name": "Embedded surface keeps usable height",
+      "pass": true
+    },
+    {
+      "name": "Audio exposes 40 beats plus playhead",
+      "pass": true
+    },
+    {
+      "name": "Audio section width represents duration",
+      "pass": true
+    },
+    {
+      "name": "Audio selection drives inspector",
+      "pass": true
+    },
+    {
+      "name": "Valid data does not require ritual AI-review click",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-measurement]",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "Unresolved measurement blocks approval",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-measurement]",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "No measured grid cannot approve",
+      "pass": true
+    },
+    {
+      "name": "No beat grid does not fabricate BPM",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-measurement]",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "Supplied hierarchy visible",
+      "pass": true
+    },
+    {
+      "name": "Action available: new",
+      "pass": true
+    },
+    {
+      "name": "Fresh music project starts with Track",
+      "pass": true
+    },
+    {
+      "name": "Action available: assign-track",
+      "pass": true
+    },
+    {
+      "name": "Action available: skip-lyrics",
+      "pass": true
+    },
+    {
+      "name": "Action available: init",
+      "pass": true
+    },
+    {
+      "name": "Analysis before story intake",
+      "pass": true
+    },
+    {
+      "name": "Action available: approve",
+      "pass": true
+    },
+    {
+      "name": "Story intake follows approved analysis",
+      "pass": true
+    },
+    {
+      "name": "Action available: skip-material",
+      "pass": true
+    },
+    {
+      "name": "Action available: skip-material",
+      "pass": true
+    },
+    {
+      "name": "Action available: skip-material",
+      "pass": true
+    },
+    {
+      "name": "Action available: skip-material",
+      "pass": true
+    },
+    {
+      "name": "Greenfield reaches brief",
+      "pass": true
+    },
+    {
+      "name": "Brief is a selectable visual sequence",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-field=\"direction\"]",
+      "pass": true
+    },
+    {
+      "name": "Action available: save-direction",
+      "pass": true
+    },
+    {
+      "name": "Scoped direction persists",
+      "pass": true
+    },
+    {
+      "name": "Action available: suggest",
+      "pass": true
+    },
+    {
+      "name": "Scoped suggestion compares before and after",
+      "pass": true
+    },
+    {
+      "name": "Action available: apply-proposal",
+      "pass": true
+    },
+    {
+      "name": "Action available: approve",
+      "pass": true
+    },
+    {
+      "name": "Approved brief advances one phase",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-fixture]",
+      "pass": true
+    },
+    {
+      "name": "Action available: load-fixture",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-field=\"duration\"]",
+      "pass": true
+    },
+    {
+      "name": "Action available: save-shot",
+      "pass": true
+    },
+    {
+      "name": "Action available: animatic",
+      "pass": true
+    },
+    {
+      "name": "Animatic uses edited shared timing",
+      "pass": true
+    },
+    {
+      "name": "Action available: play",
+      "pass": true
+    },
+    {
+      "name": "Animatic advances with real elapsed time",
+      "pass": true
+    },
+    {
+      "name": "Action available: play",
+      "pass": true
+    },
+    {
+      "name": "Action available: board",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-fixture]",
+      "pass": true
+    },
+    {
+      "name": "Action available: load-fixture",
+      "pass": true
+    },
+    {
+      "name": "Shot List compares sketch and production reference",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-field=\"source\"]",
+      "pass": true
+    },
+    {
+      "name": "Action available: save-route",
+      "pass": true
+    },
+    {
+      "name": "Imported mode needs assigned source",
+      "pass": true
+    },
+    {
+      "name": "Action available: assign-source",
+      "pass": true
+    },
+    {
+      "name": "Explicit source assignment satisfies mock route gate",
+      "pass": true
+    },
+    {
+      "name": "Action available: blocking",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-field=\"cameraY\"]",
+      "pass": true
+    },
+    {
+      "name": "Action available: camera-save",
+      "pass": true
+    },
+    {
+      "name": "Camera placement updates visible continuity",
+      "pass": true
+    },
+    {
+      "name": "Action available: board",
+      "pass": true
+    },
+    {
+      "name": "Action available: approve",
+      "pass": true
+    },
+    {
+      "name": "Action available: approve",
+      "pass": true
+    },
+    {
+      "name": "Frames follows production check",
+      "pass": true
+    },
+    {
+      "name": "Imported first shot has no frame slot",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-frame",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-frame",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-frame",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-frame",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-frame",
+      "pass": true
+    },
+    {
+      "name": "Only actually required frames gate approval",
+      "pass": true
+    },
+    {
+      "name": "Action available: approve",
+      "pass": true
+    },
+    {
+      "name": "Render has one workflow destination",
+      "pass": true
+    },
+    {
+      "name": "No duplicate Generate workspace",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "Action available: spend",
+      "pass": true
+    },
+    {
+      "name": "Explicit spending consent required",
+      "pass": true
+    },
+    {
+      "name": "Action available: start-job",
+      "pass": true
+    },
+    {
+      "name": "No rewind while generation is running",
+      "pass": true
+    },
+    {
+      "name": "Failed job retains completed output",
+      "pass": true
+    },
+    {
+      "name": "Action available: spend",
+      "pass": true
+    },
+    {
+      "name": "Action available: start-job",
+      "pass": true
+    },
+    {
+      "name": "Unreviewed takes cannot advance to Edit",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: keep-take",
+      "pass": true
+    },
+    {
+      "name": "Action available: accept-sequence",
+      "pass": true
+    },
+    {
+      "name": "Accepted sequence opens Edit",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-field=\"trim\"]",
+      "pass": true
+    },
+    {
+      "name": "Action available: trim",
+      "pass": true
+    },
+    {
+      "name": "Action available: export",
+      "pass": true
+    },
+    {
+      "name": "Finish export simulation records result",
+      "pass": true
+    },
+    {
+      "name": "Action available: reopen",
+      "pass": true
+    },
+    {
+      "name": "Action available: confirm-reopen",
+      "pass": true
+    },
+    {
+      "name": "Rewind invalidates delivery eligibility",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-fixture]",
+      "pass": true
+    },
+    {
+      "name": "Action available: load-fixture",
+      "pass": true
+    },
+    {
+      "name": "Reference category changes inspector entity",
+      "pass": true
+    },
+    {
+      "name": "References never use sketch sprite",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-pack]",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "Generic workflow excludes pack audio phase",
+      "pass": true
+    },
+    {
+      "name": "Generic palette differs visibly",
+      "pass": true
+    },
+    {
+      "name": "Action available: demo",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-pack]",
+      "pass": true
+    },
+    {
+      "name": "Action available: test-apply",
+      "pass": true
+    },
+    {
+      "name": "Field exists: [data-fixture]",
+      "pass": true
+    },
+    {
+      "name": "Action available: load-fixture",
+      "pass": true
+    },
+    {
+      "name": "Budget and gate dock remain inside root",
+      "pass": true
+    },
+    {
+      "name": "PASS",
+      "pass": true
+    }
+  ]
+}

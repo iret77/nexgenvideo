@@ -1,0 +1,1 @@
+(()=>{const params=new URLSearchParams(location.search),root=document.getElementById('ngv-desk');if(params.get('view')){root.ngvTest.fixture(params.get('view'));document.getElementById('spec').hidden=true;}})();

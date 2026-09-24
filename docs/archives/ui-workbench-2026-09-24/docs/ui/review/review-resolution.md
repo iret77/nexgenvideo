@@ -1,0 +1,14 @@
+# Review synthesis and disposition
+
+2026-09-13. Requested Claude CLI run: claude-fable-5-1, effort medium; result success, permission_denials empty. Main review model confirmed in modelUsage (CLI also reports ancillary haiku usage). No native app execution. Review payload preserved separately.
+
+1. Audio regression: accepted. Native beat/downbeat visualization, proportional bands, timing selection and evidence states form the new analysis canvas. Data explicitly illustrative; no invented waveform or energy. Missing beat grid cannot display a tempo as measured. Optional hierarchy must be marked supplied, not inferred.
+2. Storyboard vs Shot List: accepted in substance. Different primary representations with same shot IDs and durations. Production adds source modes, reference inputs, continuation, extension and project source assignment. Imported/enhanced/reference-only/chained shots have no start-frame requirement. Timing remains one shared record; ownership changes require native contract design, not a second mock timing store.
+3. Ritual AI-review gate: accepted. Structural readiness derives from current data; AI review is optional advice. Revise approved phase shows downstream invalidation before mutation. Job locks hold. Technical schema/hash details are in the spec rather than a permanent filmmaker-facing checklist.
+4. Recycled asset roles: partially accepted. Fable incorrectly calls the existing colored references recolored sketches: the old CSS binds two distinct JPEG sheets. However, the entity cards really reuse scene studies rather than identity sheets, and take posters are not video results. New mock explicitly labels the missing asset and never claims a take poster is a newly rendered video. Authentic demo identity sheets/video samples remain a limitation, not fabricated provenance.
+5. Required prose forms: accepted. Supplied draft opens visually; one selected beat/decision has a short editable direction. Example refinement compares scoped before/after, does not pretend its image changed.
+6. Labels: accept one name per phase; reject reverting References to Bible (explicit owner decision). Audio Analysis remains a musicvideo addition to generic workflow. Display labels do not change canonical phase IDs. Production Check maps to sanity, Production Frames maps to frames.
+7. Render duplicate: accepted. Three top-level workspaces Preproduction / Edit / Finish. Render is the final pipeline phase in Preproduction; no duplicate Generate tab.
+8. Inspector: accepted. Selection consistently drives section, beat, shot, reference, camera, frame and take context. Optional provenance rather than general process essays.
+
+This is a new review candidate, not approval to change locked native contracts or to rewrite the engine. Upstream #506 chrome, #507 inspector consistency, #508 media identity/provenance are retained in scope. Existing native components are the implementation floor.

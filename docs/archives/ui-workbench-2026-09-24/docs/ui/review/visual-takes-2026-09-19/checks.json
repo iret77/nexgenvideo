@@ -1,0 +1,78 @@
+[
+  {
+    "name": "Empty project preserves truth and offers one actual current-phase action",
+    "pass": true
+  },
+  {
+    "name": "Model research stays inside settings",
+    "pass": true
+  },
+  {
+    "name": "Research is not accepted before explicit review",
+    "pass": true
+  },
+  {
+    "name": "Acceptance returns to models and does not alter pipeline",
+    "pass": true
+  },
+  {
+    "name": "Legacy research task is hidden after restoring a project",
+    "pass": true
+  },
+  {
+    "name": "Future takes show existing sketches without pretending they are anchors",
+    "pass": true
+  },
+  {
+    "name": "Every shot offers source and its own takes",
+    "pass": true
+  },
+  {
+    "name": "Take review opens the clicked shot without selecting it as final",
+    "pass": true
+  },
+  {
+    "name": "Batch selection is attached to visual shots",
+    "pass": true
+  },
+  {
+    "name": "Batch preparation has only one action area",
+    "pass": true
+  },
+  {
+    "name": "Starting before cost review is rejected",
+    "pass": true
+  },
+  {
+    "name": "Costs follow selected shots and reviewed selection is locked",
+    "pass": true
+  },
+  {
+    "name": "Stale batch surfaces a recovery action",
+    "pass": true
+  },
+  {
+    "name": "Completed take appears while other shots are still running",
+    "pass": true
+  },
+  {
+    "name": "Stopped batch keeps finished results",
+    "pass": true
+  },
+  {
+    "name": "Settings research preserves the paused production order",
+    "pass": true
+  },
+  {
+    "name": "Completion preserves omitted shot and hides completed interaction",
+    "pass": true
+  },
+  {
+    "name": "Cancelling preparation restores current-phase action",
+    "pass": true
+  },
+  {
+    "name": "Take board fits central canvas at enlarged scale",
+    "pass": true
+  }
+]

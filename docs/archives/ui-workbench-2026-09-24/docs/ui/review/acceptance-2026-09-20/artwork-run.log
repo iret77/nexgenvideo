@@ -1,0 +1,41 @@
+PASS Vorschaubild reachable without album artwork
+PASS Optional by default
+PASS Slider stays mounted during frame scrubbing
+PASS Frame selection is captured explicitly
+PASS Export save sheet includes image sidecar
+PASS Export keeps its own image snapshot
+PASS Changing image requires renewed selection
+PASS Unapplied changes block only opted-in video preview
+PASS Subsequent export cannot overwrite prior image
+PASS Existing media can be assigned as export preview
+PASS Album artist and title are not inferred
+PASS No sketch offered as rendered album reference
+PASS Album generation opens cost confirmation before running
+PASS Amending album quote returns to contextual inspector
+PASS Artwork generation appears as KI activity
+PASS Generated album is separate project media
+PASS Clean album variant retained for typography
+PASS Typography requires explicit artist and title
+PASS Typography preserves clean image and phase approvals
+PASS Skipped format is visible and cannot run accidentally
+PASS Cancelled image job creates no asset or cost
+PASS Album retains native post-pipeline gate
+PASS Generic project has preview but no album entry
+PASS Typing and clicking costs works without a lost blur click
+PASS Generic preview generation does not need a music workflow
+PASS Generated preview is assigned only through explicit apply
+PASS Generated media keeps no transient cost-approval context
+PASS Saved export image selection survives reopening
+PASS XML handoff is independent of unapplied video preview
+PASS Preview ratio and pane fit 1440 16:9
+PASS Preview ratio and pane fit 1440 1:1
+PASS Preview ratio and pane fit 1440 9:16
+PASS Preview ratio and pane fit 1048 16:9
+PASS Preview ratio and pane fit 1048 1:1
+PASS Preview ratio and pane fit 1048 9:16
+PASS Preview ratio and pane fit 768 16:9
+PASS Preview ratio and pane fit 768 1:1
+PASS Preview ratio and pane fit 768 9:16
+PASS Preview ratio and pane fit 390 16:9
+PASS Preview ratio and pane fit 390 1:1
+PASS Preview ratio and pane fit 390 9:16

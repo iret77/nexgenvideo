@@ -1,0 +1,279 @@
+[
+  {
+    "name": "Systemmenüleiste liegt außerhalb des Projektfensters",
+    "pass": true
+  },
+  {
+    "name": "Schnittbefehle und Standardbearbeitung sind vorhanden",
+    "pass": true
+  },
+  {
+    "name": "Teilen aus dem Menü erstellt echte Timeline-Instanz",
+    "pass": true
+  },
+  {
+    "name": "Ausschneiden entfernt die Auswahl und erhält sie in der Zwischenablage",
+    "pass": true
+  },
+  {
+    "name": "Einsetzen erstellt Clip mit neuer Instanz-ID",
+    "pass": true
+  },
+  {
+    "name": "Gesperrte Spur blockiert Ausschneiden, Einsetzen und Teilen",
+    "pass": true
+  },
+  {
+    "name": "Postproduction bietet keine aktiven Montagebefehle",
+    "pass": true
+  },
+  {
+    "name": "Kopieren aus Textfeld verändert keinen Projektinhalt",
+    "pass": true
+  },
+  {
+    "name": "Einsetzen im Textfeld ersetzt exakt die Textauswahl",
+    "pass": true
+  },
+  {
+    "name": "Fenstermenü öffnet vorhandene KI-Aktivitätsanzeige",
+    "pass": true
+  },
+  {
+    "name": "Abbrechen eines Projektdialogs gibt Fokus an Ablage zurück",
+    "pass": true
+  },
+  {
+    "name": "Medien: Sidebar enthält keine App- oder Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Medien: App-Menü öffnet Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Medien: Projektname ist Text, Projektaktionen liegen unter Ablage",
+    "pass": true
+  },
+  {
+    "name": "Medien: Fenster zeigt Projekt und Aktivitäten",
+    "pass": true
+  },
+  {
+    "name": "Produktion: Sidebar enthält keine App- oder Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Produktion: App-Menü öffnet Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Produktion: Projektname ist Text, Projektaktionen liegen unter Ablage",
+    "pass": true
+  },
+  {
+    "name": "Produktion: Fenster zeigt Projekt und Aktivitäten",
+    "pass": true
+  },
+  {
+    "name": "Schnitt: Sidebar enthält keine App- oder Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Schnitt: App-Menü öffnet Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Schnitt: Projektname ist Text, Projektaktionen liegen unter Ablage",
+    "pass": true
+  },
+  {
+    "name": "Schnitt: Fenster zeigt Projekt und Aktivitäten",
+    "pass": true
+  },
+  {
+    "name": "Postproduction: Sidebar enthält keine App- oder Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Postproduction: App-Menü öffnet Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Postproduction: Projektname ist Text, Projektaktionen liegen unter Ablage",
+    "pass": true
+  },
+  {
+    "name": "Postproduction: Fenster zeigt Projekt und Aktivitäten",
+    "pass": true
+  },
+  {
+    "name": "Export: Sidebar enthält keine App- oder Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Export: App-Menü öffnet Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Export: Projektname ist Text, Projektaktionen liegen unter Ablage",
+    "pass": true
+  },
+  {
+    "name": "Export: Fenster zeigt Projekt und Aktivitäten",
+    "pass": true
+  },
+  {
+    "name": "App-Menü liegt vollständig über der Arbeitsfläche",
+    "pass": true
+  },
+  {
+    "name": "Offene Dialoge werden nicht durch Menüwechsel verworfen",
+    "pass": true
+  },
+  {
+    "name": "Menü ist mit Pfeiltasten erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Escape schließt Menü und stellt den Fokus wieder her",
+    "pass": true
+  },
+  {
+    "name": "⌘, öffnet App-Einstellungen",
+    "pass": true
+  },
+  {
+    "name": "Darstellungsmenü schaltet denselben Inspector wie das Pane-Icon",
+    "pass": true
+  },
+  {
+    "name": "Pane-Icon stellt Inspector ohne Arbeitsraumwechsel wieder her",
+    "pass": true
+  },
+  {
+    "name": "Bearbeiten-Menü zeigt Undo und Redo mit korrekter Verfügbarkeit",
+    "pass": true
+  },
+  {
+    "name": "Nach Undo wird Redo verfügbar",
+    "pass": true
+  },
+  {
+    "name": "Redo stellt denselben Inhalt wieder her",
+    "pass": true
+  },
+  {
+    "name": "Neues Projekt setzt App-Anbieter nicht zurück",
+    "pass": true
+  },
+  {
+    "name": "Projekt-Undo setzt App-Einstellungen nicht zurück",
+    "pass": true
+  },
+  {
+    "name": "App-Packverwaltung enthält keine Projektmigration",
+    "pass": true
+  },
+  {
+    "name": "Katalogprüfung verändert keine Projektversion",
+    "pass": true
+  },
+  {
+    "name": "Projektmigration ist ausdrücklich in Projekteinstellungen erreichbar",
+    "pass": true
+  },
+  {
+    "name": "App-Speicher enthält keine projektbezogene Index-Schaltung",
+    "pass": true
+  },
+  {
+    "name": "Inhaltssuche führt zur geöffneten Projekteinstellung",
+    "pass": true
+  },
+  {
+    "name": "KI-Auftrag erscheint beim zuständigen Arbeitsraum",
+    "pass": true
+  },
+  {
+    "name": "Schnittauftrag erscheint nicht in Produktion",
+    "pass": true
+  },
+  {
+    "name": "Rückkehr erhält den unbestätigten Auftrag",
+    "pass": true
+  },
+  {
+    "name": "Farbauftrag erscheint nicht beim Tonwerkzeug",
+    "pass": true
+  },
+  {
+    "name": "Farbauftrag bleibt beim zuständigen Werkzeug erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Verlauf verspricht keine erneute Ausführung",
+    "pass": true
+  },
+  {
+    "name": "Verlauf zeigt Arbeitsbereich ohne neuen KI-Auftrag",
+    "pass": true
+  },
+  {
+    "name": "Leerer Take-Inspector enthält keine Projektverwaltung",
+    "pass": true
+  },
+  {
+    "name": "Untertitel-Korrektur ist ohne Untertitel deaktiviert",
+    "pass": true
+  },
+  {
+    "name": "Untertitelbearbeitung zeigt keine Film-Titel",
+    "pass": true
+  },
+  {
+    "name": "Untertitel bleibt bei Untertiteln und verändert keinen Film-Titel",
+    "pass": true
+  },
+  {
+    "name": "Titelbereich zeigt nur Film-Titel",
+    "pass": true
+  },
+  {
+    "name": "Montageauftrag ist aus der Produktionsfläche entfernt",
+    "pass": true
+  },
+  {
+    "name": "Montagefunktion bleibt im Schnitt bedienbar",
+    "pass": true
+  },
+  {
+    "name": "Montage erhält bestehende Clips und legt zusätzliche Spur an",
+    "pass": true
+  },
+  {
+    "name": "Menüleiste passt bei 1440 px",
+    "pass": true
+  },
+  {
+    "name": "Menüleiste passt bei 1048 px",
+    "pass": true
+  },
+  {
+    "name": "Menüleiste passt bei 768 px",
+    "pass": true
+  },
+  {
+    "name": "Menüleiste passt bei 390 px",
+    "pass": true
+  },
+  {
+    "name": "Menüleiste passt bei 320 px",
+    "pass": true
+  },
+  {
+    "name": "Keine unbehandelten Browserfehler",
+    "pass": true,
+    "errors": []
+  }
+]

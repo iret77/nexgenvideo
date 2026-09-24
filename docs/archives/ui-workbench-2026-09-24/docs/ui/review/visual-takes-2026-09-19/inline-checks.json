@@ -1,0 +1,22 @@
+[
+  {
+    "name": "empty",
+    "ready": true,
+    "width": 1016,
+    "height": 850,
+    "canvasOverflow": false,
+    "taskHidden": true,
+    "rows": 0,
+    "icons": 7
+  },
+  {
+    "name": "populated",
+    "ready": true,
+    "width": 1016,
+    "height": 850,
+    "canvasOverflow": false,
+    "taskHidden": true,
+    "rows": 6,
+    "icons": 10
+  }
+]

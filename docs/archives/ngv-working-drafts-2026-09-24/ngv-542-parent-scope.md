@@ -1,0 +1,5 @@
+# #542 — current contract dependency
+
+Live issue read2026-09-24 05:55 UTC. Requires persistent versioned .blend geometry truth, stable entities/cameras, expected-base atomic transactions, manual/agent edits preserve committed revisions, Undo/Redo/recovery, portability, exact derived invalidation, boundedMeshImport/noautoruns, oldpacksABI. Runtime541 candidate1324ba02 is not released or runtimeverified.
+
+Concrete canonical scene ownership/paths/capabilities are already part of reviewed proposal #546 commit0bd18fae60711767042cf0dd0503d973e0587532, docs/CLAY_PROVENANCE_CONTRACT_PROPOSAL.md. Approvalquestion10 pending. Proposal explicitly ProductionDesign scene index+immutablemanifest (noBibleIDs), Bibleearlybindings, Shotlistfinalderivations, fiveSchemas; changes3lockedspecs. Cannot autonomously implement these canonical paths/phases or call proposal approved. Preserve current Scene3D/CameraSetupPlan public stored layouts. Parent has reread proposal ownership/path section, no new productworktree/leaf for542. Once ownerdecision arrives, coordinate546contract+541runtime dependencies, then542producer—no parallel incompatible scene writer.

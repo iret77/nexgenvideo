@@ -1,0 +1,105 @@
+{
+  "results": [
+    {
+      "name": "Viewer caption is a description, not a workspace switch",
+      "pass": true
+    },
+    {
+      "name": "Selecting a medium names its source role in Viewer and Inspector",
+      "pass": true
+    },
+    {
+      "name": "Source selection preserves the montage and Timeline cursor",
+      "pass": true
+    },
+    {
+      "name": "Clicking a Timeline clip shows the film and that instance’s editing tools",
+      "pass": true
+    },
+    {
+      "name": "Timeline selection keeps the sources sidebar, filters and source choice in place",
+      "pass": true
+    },
+    {
+      "name": "Retained source selection has a neutral fill while Timeline is active",
+      "pass": true
+    },
+    {
+      "name": "Returning to the same medium keeps source In/Out and cursor",
+      "pass": true
+    },
+    {
+      "name": "Typing a search changes only results; viewed medium and Inspector stay stable",
+      "pass": true
+    },
+    {
+      "name": "Type filter does not select an unrelated medium or switch the Viewer",
+      "pass": true
+    },
+    {
+      "name": "Folder navigation also leaves the viewed object untouched",
+      "pass": true
+    },
+    {
+      "name": "Clicking the caption has no effect on selection or panels",
+      "pass": true
+    },
+    {
+      "name": "Source playback controls leave Timeline time and playhead unchanged",
+      "pass": true
+    },
+    {
+      "name": "Insert transfers the selected range and selects the new Timeline instance",
+      "pass": true
+    },
+    {
+      "name": "Undo retains the earlier clip edit while removing only insertion",
+      "pass": true
+    },
+    {
+      "name": "Using Timeline ruler activates film preview without altering browser selection",
+      "pass": true
+    },
+    {
+      "name": "Context menu on a retained Timeline selection establishes the same visible target",
+      "pass": true
+    },
+    {
+      "name": "Context menu on a retained source selects the source, not the previous clip",
+      "pass": true
+    },
+    {
+      "name": "A locked retained Timeline clip does not disable source In/Out",
+      "pass": true
+    },
+    {
+      "name": "Source selection does not inherit selected title or its overlays",
+      "pass": true
+    },
+    {
+      "name": "Clicking the title directly restores its own Inspector and film preview",
+      "pass": true
+    },
+    {
+      "name": "Source capture retains correct media provenance",
+      "pass": true
+    },
+    {
+      "name": "Workspace round trip restores actual object selection without a mode toggle",
+      "pass": true
+    },
+    {
+      "name": "Source operations are visible before metadata at 130 percent",
+      "pass": true
+    },
+    {
+      "name": "Narrow Viewer keeps the role readable and the filename visible",
+      "pass": true
+    },
+    {
+      "name": "Long names do not push background indicators away from bottom right",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

@@ -1,0 +1,2419 @@
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift
+index 9b5692dc..11240182 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift
+@@ -783,6 +783,7 @@ extension ToolExecutor {
+         selectionScope: SpendSelectionScope,
+         pipelineTool: ToolName,
+         origin: ToolCallOrigin,
++        forceApproval: Bool = false,
+         currentIsCompatible: Bool = true,
+         noCompatibleModelReason: String? = nil,
+         alternatives: @escaping @MainActor () -> [SpendModelCandidate],
+@@ -864,7 +865,7 @@ extension ToolExecutor {
+             batch.packages.append(value.package)
+             return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
+         }
+-        guard CostGuard.needsApproval(credits: recommended.credits) else {
++        guard forceApproval || CostGuard.needsApproval(credits: recommended.credits) else {
+             do {
+                 var selected = recommended
+                 if prepare != nil { selected.generationPackage = try await prepareSelected(editor, selected) }
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
+index d86a2c5a..e1a93405 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
+@@ -7,6 +7,97 @@ typealias MireloResultDownload = @Sendable (
+     _ timeout: TimeInterval
+ ) async throws -> RemoteMediaDownloader.Download
+ 
++private actor MireloToolExecutionCoalescer {
++    static let shared = MireloToolExecutionCoalescer()
++
++    private struct Flight {
++        let id: UUID
++        let task: Task<Void, Never>
++        var waiters: [UUID: CheckedContinuation<ToolResult, Error>]
++    }
++
++    private struct RetiringFlight {
++        let id: UUID
++        let task: Task<Void, Never>
++    }
++
++    private var flights: [String: Flight] = [:]
++    private var retiring: [String: RetiringFlight] = [:]
++
++    func run(
++        authorityID: String,
++        operation: @escaping @MainActor @Sendable () async throws -> ToolResult
++    ) async throws -> ToolResult {
++        try Task.checkCancellation()
++        if let retiring = retiring[authorityID] {
++            await retiring.task.value
++            try Task.checkCancellation()
++        }
++        let waiterID = UUID()
++        return try await withTaskCancellationHandler {
++            try await withCheckedThrowingContinuation { continuation in
++                if Task.isCancelled {
++                    continuation.resume(throwing: CancellationError())
++                    return
++                }
++                if var flight = flights[authorityID] {
++                    flight.waiters[waiterID] = continuation
++                    flights[authorityID] = flight
++                    return
++                }
++                let flightID = UUID()
++                let task = Task {
++                    let result: Result<ToolResult, Error>
++                    do {
++                        result = .success(try await operation())
++                    } catch {
++                        result = .failure(error)
++                    }
++                    self.finish(authorityID: authorityID, flightID: flightID, result: result)
++                }
++                flights[authorityID] = Flight(
++                    id: flightID,
++                    task: task,
++                    waiters: [waiterID: continuation]
++                )
++            }
++        } onCancel: {
++            Task { await self.cancel(waiterID: waiterID, authorityID: authorityID) }
++        }
++    }
++
++    private func cancel(waiterID: UUID, authorityID: String) {
++        guard var flight = flights[authorityID],
++              let waiter = flight.waiters.removeValue(forKey: waiterID) else { return }
++        waiter.resume(throwing: CancellationError())
++        if flight.waiters.isEmpty {
++            flights.removeValue(forKey: authorityID)
++            retiring[authorityID] = RetiringFlight(
++                id: flight.id,
++                task: flight.task
++            )
++            flight.task.cancel()
++        } else {
++            flights[authorityID] = flight
++        }
++    }
++
++    private func finish(
++        authorityID: String,
++        flightID: UUID,
++        result: Result<ToolResult, Error>
++    ) {
++        if retiring[authorityID]?.id == flightID {
++            retiring.removeValue(forKey: authorityID)
++        }
++        guard let flight = flights[authorityID], flight.id == flightID else { return }
++        flights.removeValue(forKey: authorityID)
++        for waiter in flight.waiters.values {
++            waiter.resume(with: result)
++        }
++    }
++}
++
+ extension ToolExecutor {
+     func runMireloAudio(
+         _ editor: EditorViewModel,
+@@ -79,6 +170,21 @@ extension ToolExecutor {
+                 modelID: try mireloModelID(existing),
+                 endpoint: existing.operation.createPath
+             )
++            if existing.state == .prepared, existing.providerJobID == nil {
++                return try await resumePreparedMireloRecord(
++                    existing,
++                    store: store,
++                    client: client,
++                    transactionID: transactionID,
++                    target: target,
++                    origin: origin,
++                    editor: editor,
++                    folderID: try resolveFolderId(args, editor: editor),
++                    workingRoot: workingRoot,
++                    workingCopyKey: workingCopyKey,
++                    mutationScope: mutationScope
++                )
++            }
+             let authorization = try mireloExistingAuthorization(
+                 transactionID: transactionID,
+                 target: target,
+@@ -436,6 +542,158 @@ extension ToolExecutor {
+         )
+     }
+ 
++    private func resumePreparedMireloRecord(
++        _ record: MireloExecutionRecord,
++        store: MireloExecutionStore,
++        client: MireloClient,
++        transactionID: String,
++        target: ResolvedGenerationTarget,
++        origin: ToolCallOrigin,
++        editor: EditorViewModel,
++        folderID: String?,
++        workingRoot: URL,
++        workingCopyKey: String,
++        mutationScope: GenerationProjectMutationScope
++    ) async throws -> ToolResult {
++        let durationMS = try await mireloStoredPreflightDuration(
++            record,
++            workingRoot: workingRoot
++        )
++        try mutationScope.requireCurrent(editor: editor)
++        let currentPreflight: MireloPreflight
++        let currentAccount: MireloAccount
++        do {
++            async let quoted = client.preflight(
++                operation: record.operation,
++                body: record.requestBody,
++                durationMS: durationMS
++            )
++            async let account = client.account()
++            (currentPreflight, currentAccount) = try await (quoted, account)
++        } catch let error as MireloHTTPError {
++            throw ToolError(mireloActionableError(error))
++        }
++        try mutationScope.requireCurrent(editor: editor)
++        try requireMireloFunding(currentPreflight, account: currentAccount)
++
++        if currentPreflight.credits == record.preflight.credits {
++            let refreshed = try store.refreshApprovedPreflight(
++                record,
++                with: currentPreflight,
++                creditChangeApproved: false
++            )
++            let authorization = try mireloExistingAuthorization(
++                transactionID: transactionID,
++                target: target,
++                record: refreshed,
++                editor: editor,
++                mutationScope: mutationScope
++            )
++            return try await executeMireloRecord(
++                refreshed,
++                store: store,
++                client: client,
++                authorization: authorization,
++                editor: editor,
++                folderID: folderID,
++                workingRoot: workingRoot,
++                workingCopyKey: workingCopyKey
++            )
++        }
++
++        let modelID = try mireloModelID(record)
++        let option = SpendOption(
++            modelId: modelID,
++            modelName: record.operation == .audioToMIDI
++                ? "Mirelo Audio-to-MIDI Pro"
++                : "Mirelo \(modelID.replacingOccurrences(of: "mirelo/", with: ""))",
++            target: target,
++            credits: currentPreflight.credits,
++            requiresCatalogAvailability: false
++        )
++        return try await withSpendApproval(
++            editor,
++            currentModelId: modelID,
++            currentModelName: option.modelName,
++            credits: currentPreflight.credits,
++            actionLabel: "Approve changed Mirelo cost",
++            selectionScope: .audio,
++            pipelineTool: .runMireloAudio,
++            origin: origin,
++            forceApproval: true,
++            alternatives: { [] },
++            exactOptions: { [option] },
++            recommendedTarget: target,
++            execute: { editor, reviewed in
++                try mutationScope.requireCurrent(editor: editor)
++                let verifiedPreflight: MireloPreflight
++                let verifiedAccount: MireloAccount
++                do {
++                    async let quoted = client.preflight(
++                        operation: record.operation,
++                        body: record.requestBody,
++                        durationMS: durationMS
++                    )
++                    async let account = client.account()
++                    (verifiedPreflight, verifiedAccount) = try await (quoted, account)
++                } catch let error as MireloHTTPError {
++                    throw ToolError(self.mireloActionableError(error))
++                }
++                try mutationScope.requireCurrent(editor: editor)
++                try self.requireMireloFunding(
++                    verifiedPreflight,
++                    account: verifiedAccount
++                )
++                guard verifiedPreflight.credits == reviewed.credits else {
++                    throw ToolError(
++                        "Mirelo's current preflight changed again to \(verifiedPreflight.credits) credits. Review the updated cost; no provider request was submitted."
++                    )
++                }
++                let refreshed = try store.refreshApprovedPreflight(
++                    record,
++                    with: verifiedPreflight,
++                    creditChangeApproved: true
++                )
++                let authorization = try self.mireloExistingAuthorization(
++                    transactionID: transactionID,
++                    target: target,
++                    record: refreshed,
++                    editor: editor,
++                    mutationScope: mutationScope
++                )
++                return try await self.executeMireloRecord(
++                    refreshed,
++                    store: store,
++                    client: client,
++                    authorization: authorization,
++                    editor: editor,
++                    folderID: folderID,
++                    workingRoot: workingRoot,
++                    workingCopyKey: workingCopyKey
++                )
++            }
++        )
++    }
++
++    private func mireloStoredPreflightDuration(
++        _ record: MireloExecutionRecord,
++        workingRoot: URL
++    ) async throws -> Int? {
++        guard record.operation == .audioToMIDI else { return nil }
++        guard let source = record.sources.first else {
++            throw ToolError("The saved Mirelo Audio-to-MIDI request has no source receipt.")
++        }
++        let url = workingRoot.appendingPathComponent(source.projectPath)
++        guard try mireloProjectPath(url, root: workingRoot) == source.projectPath,
++              FileManager.default.fileExists(atPath: url.path),
++              try FileDigest.sha256(of: url) == source.sha256 else {
++            throw ToolError(
++                "Restore the exact saved audio source before checking the first Audio-to-MIDI submission."
++            )
++        }
++        return try await mireloDurationMS(frozenURL: url)
++    }
++
+     private struct MireloSource {
+         let role: String
+         let asset: MediaAsset
+@@ -757,10 +1015,9 @@ extension ToolExecutor {
+         workingRoot: URL,
+         workingCopyKey: String
+     ) async throws -> ToolResult {
+-        if let task = Self.mireloExecutionTasks[record.authorityID] {
+-            return try await task.value
+-        }
+-        let task = Task { @MainActor in
++        try await MireloToolExecutionCoalescer.shared.run(
++            authorityID: record.authorityID
++        ) { @MainActor in
+             try await self.executeMireloRecordOwned(
+                 record,
+                 store: store,
+@@ -772,9 +1029,6 @@ extension ToolExecutor {
+                 workingCopyKey: workingCopyKey
+             )
+         }
+-        Self.mireloExecutionTasks[record.authorityID] = task
+-        defer { Self.mireloExecutionTasks.removeValue(forKey: record.authorityID) }
+-        return try await task.value
+     }
+ 
+     private func executeMireloRecordOwned(
+@@ -793,7 +1047,15 @@ extension ToolExecutor {
+                 store: store,
+                 projectKey: record.projectKey,
+                 logicalJobID: record.logicalJobID,
+-                client: client
++                client: client,
++                onAccepted: { accepted in
++                    try authorization.projectMutationScope?.requireCurrent(editor: editor)
++                    try self.mireloRecordSubmittedIfNeeded(
++                        accepted,
++                        authorization: authorization,
++                        editor: editor
++                    )
++                }
+             )
+             try mireloRecordSubmittedIfNeeded(
+                 outcome.record,
+@@ -842,6 +1104,7 @@ extension ToolExecutor {
+                 record: outcome.record,
+                 artifacts: artifacts
+             )
++            try authorization.projectMutationScope?.requireCurrent(editor: editor)
+             return try mireloCompletedResult(completed, editor: editor)
+         } catch {
+             if let current = try? store.load(
+@@ -898,6 +1161,7 @@ extension ToolExecutor {
+         var stagedResults: [(MireloResultDescriptor, URL, String)] = []
+         do {
+             for descriptor in descriptors {
++                try Task.checkCancellation()
+                 let staged: URL
+                 if let embedded = descriptor.embeddedData {
+                     staged = stagingRoot.appendingPathComponent(descriptor.filename)
+@@ -918,6 +1182,7 @@ extension ToolExecutor {
+                                 timeout: Self.importDownloadTimeout
+                             )
+                         }
++                        try Task.checkCancellation()
+                         staged = stagingRoot.appendingPathComponent(descriptor.filename)
+                         try FileManager.default.moveItem(
+                             at: result.temporaryURL,
+@@ -937,6 +1202,7 @@ extension ToolExecutor {
+                     throw ToolError("Mirelo result descriptor has no payload.")
+                 }
+                 try await validateMireloArtifact(staged, kind: descriptor.kind)
++                try Task.checkCancellation()
+                 let digest: String
+                 do {
+                     digest = try FileDigest.sha256(of: staged)
+@@ -957,6 +1223,7 @@ extension ToolExecutor {
+             throw error
+         }
+ 
++        try Task.checkCancellation()
+         try mutationScope?.requireCurrent(editor: editor)
+         let artifactFolderPath = "\(Project.mediaDirectoryName)/Mirelo/\(logicalJobID)"
+         let artifactFolder = workingRoot.appendingPathComponent(
+@@ -984,6 +1251,7 @@ extension ToolExecutor {
+         )
+ 
+         for (descriptor, staged, digest) in stagedResults {
++            try Task.checkCancellation()
+             try mutationScope?.requireCurrent(editor: editor)
+             let destination = artifactFolder.appendingPathComponent(
+                 descriptor.filename,
+@@ -1004,6 +1272,7 @@ extension ToolExecutor {
+                 try FileManager.default.copyItem(at: staged, to: partial)
+                 try FileManager.default.moveItem(at: partial, to: destination)
+             }
++            try Task.checkCancellation()
+             if descriptor.kind == .audio {
+                 try mutationScope?.requireCurrent(editor: editor)
+                 let asset: MediaAsset
+@@ -1167,10 +1436,18 @@ extension ToolExecutor {
+         editor: EditorViewModel
+     ) throws {
+         guard let requestID = record.providerJobID,
+-              let transactionID = authorization.transactionId,
+-              !editor.generationLog.spendEvents.contains(where: {
+-                  $0.transactionId == transactionID && $0.kind == .submitted
+-              }) else { return }
++              let transactionID = authorization.transactionId else { return }
++        if let submitted = editor.generationLog.spendEvents.first(where: {
++            $0.transactionId == transactionID && $0.kind == .submitted
++        }) {
++            guard submitted.providerRequestId == requestID else {
++                throw ToolError(
++                    "The Mirelo provider job does not match the project spend record."
++                )
++            }
++            return
++        }
++        try authorization.projectMutationScope?.requireCurrent(editor: editor)
+         try editor.recordSpendEvent(
+             authorization: authorization,
+             kind: .submitted,
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+index 9f6052e5..a1f629a7 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+@@ -57,7 +57,6 @@ final class ToolExecutor {
+     private var agentUndoStack: [String] = []
+     var feedbackState = FeedbackState()
+     let imageObservations = ImageObservationCache()
+-    static var mireloExecutionTasks: [String: Task<ToolResult, Error>] = [:]
+ 
+     func requirePhaseIdle(
+         _ editor: EditorViewModel,
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
+index d0e6b8c6..10e07e09 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+MediaLibrary.swift
+@@ -508,6 +508,16 @@ extension EditorViewModel {
+         onPipelineChanged?()
+     }
+ 
++    func persistMediaAsset(_ asset: MediaAsset) {
++        let entry = asset.toManifestEntry(projectURL: workingRoot)
++        if let index = mediaManifest.entries.firstIndex(where: { $0.id == asset.id }) {
++            mediaManifest.entries[index] = entry
++        } else {
++            mediaManifest.entries.append(entry)
++        }
++        onPipelineChanged?()
++    }
++
+     /// Resolve a drag pasteboard payload (one `nexgen-asset://<id>` per line).
+     func assetsFromDragPayload(_ payload: String) -> [MediaAsset] {
+         payload.split(separator: "\n").compactMap { line in
+diff --git a/Sources/NexGenVideo/Generation/Edit/AIEditMenu.swift b/Sources/NexGenVideo/Generation/Edit/AIEditMenu.swift
+index 5cdb5021..b89cf1cb 100644
+--- a/Sources/NexGenVideo/Generation/Edit/AIEditMenu.swift
++++ b/Sources/NexGenVideo/Generation/Edit/AIEditMenu.swift
+@@ -27,7 +27,7 @@ struct AIEditMenu: View {
+                     Button("\(VideoToAudioEditKind.sfx.title)…") { videoAudio(kind: .sfx) }
+                 }
+                 if availableActions.contains(.rerun) {
+-                    Button("Rerun") { rerun() }
++                    Button(isMireloGeneration ? "New Variation…" : "Rerun") { rerun() }
+                 }
+                 if availableActions.contains(.createVideo) {
+                     Menu("Create Video") {
+@@ -43,6 +43,14 @@ struct AIEditMenu: View {
+         EditAction.available(for: asset)
+     }
+ 
++    private var isMireloGeneration: Bool {
++        if asset.generationInput?.model.hasPrefix("mirelo/") == true { return true }
++        guard let transactionID = asset.generationInput?.spendTransactionId else { return false }
++        return editor.generationLog.spendEvents.contains {
++            $0.transactionId == transactionID && $0.provider == .mirelo
++        }
++    }
++
+     private func runUpscale(_ model: UpscaleModelConfig) {
+         Task { @MainActor in
+             _ = await EditSubmitter.submitUpscale(asset: asset, model: model, editor: editor)
+diff --git a/Sources/NexGenVideo/Generation/GenerationService.swift b/Sources/NexGenVideo/Generation/GenerationService.swift
+index fd68eb5f..edcd07db 100644
+--- a/Sources/NexGenVideo/Generation/GenerationService.swift
++++ b/Sources/NexGenVideo/Generation/GenerationService.swift
+@@ -1,3 +1,4 @@
++import AppKit
+ import AVFoundation
+ import Foundation
+ import ImageIO
+@@ -2143,90 +2144,35 @@ final class GenerationService {
+             )
+             executionWasApproved = true
+             try mutationScope.requireCurrent(editor: editor)
++            placeholder.mireloResumeAvailable = true
++            editor.persistMediaAsset(placeholder)
+             var outcome = try await MireloExecutionCoordinator.shared.execute(
+                 store: store,
+                 projectKey: projectKey,
+                 logicalJobID: transactionID,
+-                client: client
+-            )
+-            try mutationScope.requireCurrent(editor: editor)
+-            guard let providerJobID = outcome.record.providerJobID else {
+-                throw GenerationRequestError.storage(
+-                    "Mirelo accepted the request without a durable job identifier."
+-                )
+-            }
+-            markSubmitted(
+-                authorization: authorization,
+-                providerRequestId: providerJobID,
+-                resumable: true,
+-                editor: editor
+-            )
+-
+-            var descriptor = try Self.singleMireloAudioDescriptor(outcome)
+-            let staged: URL
+-            do {
+-                staged = try await Self.downloadMireloAudio(descriptor)
+-            } catch RemoteMediaPolicy.PolicyError.httpStatus(let status)
+-                where [403, 404, 410].contains(status) {
+-                outcome = try await MireloExecutionCoordinator.shared.refreshResult(
+-                    store: store,
+-                    record: outcome.record,
+-                    client: client
+-                )
+-                descriptor = try Self.singleMireloAudioDescriptor(outcome)
+-                do {
+-                    staged = try await Self.downloadMireloAudio(descriptor)
+-                } catch RemoteMediaPolicy.PolicyError.httpStatus(let refreshedStatus)
+-                    where [403, 404, 410].contains(refreshedStatus) {
+-                    throw GenerationRequestError.gate(
+-                        "Mirelo refreshed the result link, but it is already unavailable. Retry this same generation later; it was not resubmitted."
+-                    )
+-                }
+-            }
+-            defer { try? FileManager.default.removeItem(at: staged) }
+-            try await RemoteMediaPayloadValidator.validate(staged, expectedType: .audio)
+-            try mutationScope.requireCurrent(editor: editor)
+-            let returnedExtension = URL(fileURLWithPath: descriptor.filename).pathExtension
+-            let extensionValue = returnedExtension.isEmpty ? "wav" : returnedExtension
+-            let destination = placeholder.url.deletingPathExtension()
+-                .appendingPathExtension(extensionValue)
+-            let digest = try FileDigest.sha256(of: staged)
+-            if FileManager.default.fileExists(atPath: destination.path) {
+-                guard try FileDigest.sha256(of: destination) == digest else {
+-                    throw GenerationRequestError.storage(
+-                        "The Mirelo destination already contains different bytes. Restore or reconcile this generation before retrying."
++                client: client,
++                onAccepted: { accepted in
++                    try mutationScope.requireCurrent(editor: editor)
++                    try self.recordMireloSubmittedIfNeeded(
++                        accepted,
++                        authorization: authorization,
++                        editor: editor
+                     )
+                 }
+-            } else {
+-                try ProjectWorkingCopy.markDirty(key: workingCopyKey)
+-                let partial = destination.deletingLastPathComponent()
+-                    .appendingPathComponent(".mirelo-\(UUID().uuidString).partial")
+-                defer { try? FileManager.default.removeItem(at: partial) }
+-                try FileManager.default.copyItem(at: staged, to: partial)
+-                try FileManager.default.moveItem(at: partial, to: destination)
+-            }
+-            try mutationScope.requireCurrent(editor: editor)
+-            placeholder.url = destination
+-            placeholder.pendingDownloadURL = nil
+-            placeholder.generationStatus = .none
+-            editor.importMediaAsset(placeholder, skipAppend: true)
+-            editor.appendGenerationLog(for: placeholder)
+-            try await editor.finalizeImportedAsset(
+-                placeholder,
+-                mutationScope: mutationScope
+             )
+-            let artifact = MireloArtifact(
+-                kind: .audio,
+-                projectPath: try Self.mireloProjectPath(destination, root: workingRoot),
+-                sha256: digest,
+-                mediaAssetID: placeholder.id,
+-                sourceURLExpiresAt: descriptor.sourceURLExpiresAt
+-            )
+-            _ = try await MireloExecutionCoordinator.shared.complete(
++            try mutationScope.requireCurrent(editor: editor)
++            _ = try await finalizeNativeMireloOutcome(
++                &outcome,
+                 store: store,
+-                record: outcome.record,
+-                artifacts: [artifact]
++                client: client,
++                asset: placeholder,
++                editor: editor,
++                workingRoot: workingRoot,
++                workingCopyKey: workingCopyKey,
++                mutationScope: mutationScope
+             )
++            try mutationScope.requireCurrent(editor: editor)
++            placeholder.mireloResumeAvailable = false
+             onComplete?(placeholder)
+             AppNotifications.generationComplete(
+                 assetId: placeholder.id,
+@@ -2237,20 +2183,25 @@ final class GenerationService {
+             )
+             markCharged(authorization: authorization, editor: editor)
+         } catch {
++            do {
++                try mutationScope.requireCurrent(editor: editor)
++            } catch {
++                return
++            }
+             let current = try? store.load(
+                 projectKey: projectKey,
+                 logicalJobID: transactionID
+             )
+-            if let providerJobID = current?.providerJobID {
+-                markSubmitted(
++            if let current, current.providerJobID != nil {
++                try? recordMireloSubmittedIfNeeded(
++                    current,
+                     authorization: authorization,
+-                    providerRequestId: providerJobID,
+-                    resumable: true,
+                     editor: editor
+                 )
+             }
+             if !executionWasApproved
+                 || (current?.state == .failed && current?.providerJobID == nil) {
++                placeholder.mireloResumeAvailable = false
+                 failBeforeSubmission(
+                     placeholders,
+                     error.localizedDescription,
+@@ -2259,11 +2210,548 @@ final class GenerationService {
+                     onFailure: onFailure
+                 )
+             } else {
++                placeholder.mireloResumeAvailable = current.map(Self.mireloCanResume) ?? false
+                 failJob(placeholders, error.localizedDescription, onFailure)
+             }
+         }
+     }
+ 
++    typealias NativeMireloDownload = @Sendable (MireloResultDescriptor) async throws -> URL
++
++    func resumeMireloGeneration(asset: MediaAsset, editor: EditorViewModel) {
++        guard asset.mireloResumeAvailable,
++              generationTasks[asset.id] == nil,
++              let workingRoot = editor.workingRoot,
++              let resumeScope = try? GenerationProjectMutationScope(
++                projectHome: workingRoot,
++                editor: editor
++              ) else { return }
++        asset.generationStatus = .generating
++        let task = Task { @MainActor [weak self, weak editor, weak asset] in
++            guard let self, let editor, let asset else { return }
++            defer { self.generationTasks.removeValue(forKey: asset.id) }
++            do {
++                guard let apiKey = ProviderKeychain.load(.mirelo), !apiKey.isEmpty else {
++                    throw GenerationRequestError.gate(
++                        "Add a Mirelo API key in Settings → Providers and wait for connection verification."
++                    )
++                }
++                try await self.performNativeMireloResume(
++                    asset: asset,
++                    editor: editor,
++                    store: try MireloExecutionStore.live(),
++                    client: MireloClient(apiKey: apiKey),
++                    approveCreditChange: { previous, current in
++                        Self.confirmMireloCreditChange(previous: previous, current: current)
++                    }
++                )
++                AppNotifications.generationComplete(
++                    assetId: asset.id,
++                    projectURL: editor.projectURL,
++                    assetName: asset.name,
++                    assetType: asset.type,
++                    count: 1
++                )
++            } catch {
++                do {
++                    try resumeScope.requireCurrent(editor: editor)
++                } catch {
++                    return
++                }
++                guard editor.mediaAssets.contains(where: { $0 === asset }) else { return }
++                asset.generationStatus = .failed(error.localizedDescription)
++                if let projectKey = editor.projectId,
++                   let transactionID = asset.generationInput?.spendTransactionId,
++                   let store = try? MireloExecutionStore.live() {
++                    let record = try? store.load(
++                        projectKey: projectKey,
++                        logicalJobID: transactionID
++                    )
++                    if let record {
++                        try? self.releaseNativeMireloReservationIfRejected(
++                            record,
++                            asset: asset,
++                            editor: editor
++                        )
++                    }
++                    asset.mireloResumeAvailable = record.map(Self.mireloCanResume) ?? false
++                }
++            }
++        }
++        generationTasks[asset.id] = task
++    }
++
++    func performNativeMireloResume(
++        asset: MediaAsset,
++        editor: EditorViewModel,
++        store: MireloExecutionStore,
++        client: MireloClient,
++        approveCreditChange: @MainActor (Int, Int) -> Bool,
++        download: NativeMireloDownload? = nil
++    ) async throws {
++        guard let projectKey = editor.projectId,
++              let workingRoot = editor.workingRoot,
++              let workingCopyKey = editor.openWorkingCopyKey,
++              let transactionID = asset.generationInput?.spendTransactionId else {
++            throw GenerationRequestError.storage(
++                "This media item has no saved Mirelo recovery identity."
++            )
++        }
++        let mutationScope = try GenerationProjectMutationScope(
++            projectHome: workingRoot,
++            editor: editor
++        )
++        guard var record = try store.load(
++            projectKey: projectKey,
++            logicalJobID: transactionID
++        ), record.spendTransactionID == transactionID,
++           Self.mireloCanResume(record),
++           record.operation == .textToSFX || record.operation == .videoToSFX else {
++            throw GenerationRequestError.gate(
++                "This Mirelo generation has no resumable native job. Start a new variation only if you intend a new paid request."
++            )
++        }
++        let authorization = try nativeMireloAuthorization(
++            record: record,
++            asset: asset,
++            editor: editor,
++            mutationScope: mutationScope
++        )
++
++        if record.state == .prepared, record.providerJobID == nil {
++            let currentPreflight: MireloPreflight
++            let currentAccount: MireloAccount
++            async let quoted = client.preflight(
++                operation: record.operation,
++                body: record.requestBody
++            )
++            async let account = client.account()
++            (currentPreflight, currentAccount) = try await (quoted, account)
++            try mutationScope.requireCurrent(editor: editor)
++            try Self.validateMireloFunding(currentPreflight, account: currentAccount)
++            let changed = currentPreflight.credits != record.preflight.credits
++            if changed {
++                guard approveCreditChange(
++                    record.preflight.credits,
++                    currentPreflight.credits
++                ) else {
++                    throw GenerationRequestError.gate(
++                        "The changed Mirelo cost was not approved. No provider request was submitted."
++                    )
++                }
++            }
++            try mutationScope.requireCurrent(editor: editor)
++            record = try store.refreshApprovedPreflight(
++                record,
++                with: currentPreflight,
++                creditChangeApproved: changed
++            )
++        }
++
++        try mutationScope.requireCurrent(editor: editor)
++        asset.mireloResumeAvailable = true
++        asset.generationStatus = .generating
++        editor.persistMediaAsset(asset)
++        var outcome = try await MireloExecutionCoordinator.shared.execute(
++            store: store,
++            projectKey: projectKey,
++            logicalJobID: transactionID,
++            client: client,
++            onAccepted: { accepted in
++                try mutationScope.requireCurrent(editor: editor)
++                try self.recordMireloSubmittedIfNeeded(
++                    accepted,
++                    authorization: authorization,
++                    editor: editor
++                )
++            }
++        )
++        try mutationScope.requireCurrent(editor: editor)
++        _ = try await finalizeNativeMireloOutcome(
++            &outcome,
++            store: store,
++            client: client,
++            asset: asset,
++            editor: editor,
++            workingRoot: workingRoot,
++            workingCopyKey: workingCopyKey,
++            mutationScope: mutationScope,
++            download: download
++        )
++        try mutationScope.requireCurrent(editor: editor)
++        asset.mireloResumeAvailable = false
++        markCharged(authorization: authorization, editor: editor)
++    }
++
++    func restoreMireloRecoveryState(
++        asset: MediaAsset,
++        editor: EditorViewModel,
++        store suppliedStore: MireloExecutionStore? = nil
++    ) {
++        guard let transactionID = asset.generationInput?.spendTransactionId,
++              let projectKey = editor.projectId,
++              let workingRoot = editor.workingRoot else { return }
++        do {
++            let store: MireloExecutionStore
++            if let suppliedStore {
++                store = suppliedStore
++            } else {
++                store = try MireloExecutionStore.live()
++            }
++            guard let record = try store.load(
++                projectKey: projectKey,
++                logicalJobID: transactionID
++            ), record.spendTransactionID == transactionID,
++               record.operation == .textToSFX || record.operation == .videoToSFX else { return }
++            let scope = try GenerationProjectMutationScope(
++                projectHome: workingRoot,
++                editor: editor
++            )
++            let authorization = try nativeMireloAuthorization(
++                record: record,
++                asset: asset,
++                editor: editor,
++                mutationScope: scope
++            )
++            if record.providerJobID != nil {
++                try recordMireloSubmittedIfNeeded(
++                    record,
++                    authorization: authorization,
++                    editor: editor
++                )
++            }
++            if record.state == .failed, record.providerJobID == nil {
++                try releaseNativeMireloReservationIfRejected(
++                    record,
++                    asset: asset,
++                    editor: editor
++                )
++                asset.mireloResumeAvailable = false
++                asset.generationStatus = .failed(
++                    record.lastError ?? "Mirelo rejected this request before creating a job."
++                )
++                return
++            }
++            if record.state == .completed,
++               try nativeMireloArtifactIsInstalled(
++                record,
++                asset: asset,
++                workingRoot: workingRoot
++               ) {
++                asset.mireloResumeAvailable = false
++                asset.generationStatus = .none
++                return
++            }
++            guard Self.mireloCanResume(record) else { return }
++            asset.mireloResumeAvailable = true
++            asset.generationStatus = .failed(
++                record.lastError ?? Self.mireloResumeMessage(record)
++            )
++        } catch {
++            asset.mireloResumeAvailable = false
++            asset.generationStatus = .failed(
++                "Mirelo recovery data could not be reconciled: \(error.localizedDescription)"
++            )
++        }
++    }
++
++    private func finalizeNativeMireloOutcome(
++        _ outcome: inout MireloExecutionOutcome,
++        store: MireloExecutionStore,
++        client: MireloClient,
++        asset: MediaAsset,
++        editor: EditorViewModel,
++        workingRoot: URL,
++        workingCopyKey: String,
++        mutationScope: GenerationProjectMutationScope,
++        download: NativeMireloDownload? = nil
++    ) async throws -> MireloExecutionRecord {
++        let persistedArtifact = outcome.record.state == .completed
++            ? outcome.record.artifacts.first(where: {
++                $0.kind == .audio && $0.mediaAssetID == asset.id
++            })
++            : nil
++        if outcome.record.state == .completed,
++           try nativeMireloArtifactIsInstalled(
++            outcome.record,
++            asset: asset,
++            workingRoot: workingRoot
++           ), let artifact = persistedArtifact {
++            try mutationScope.requireCurrent(editor: editor)
++            asset.url = workingRoot.appendingPathComponent(artifact.projectPath)
++            asset.pendingDownloadURL = nil
++            asset.generationStatus = .none
++            editor.persistMediaAsset(asset)
++            return outcome.record
++        }
++
++        var descriptor = try Self.singleMireloAudioDescriptor(outcome)
++        let staged: URL
++        do {
++            if let download {
++                staged = try await download(descriptor)
++            } else {
++                staged = try await Self.downloadMireloAudio(descriptor)
++            }
++        } catch RemoteMediaPolicy.PolicyError.httpStatus(let status)
++            where [403, 404, 410].contains(status) {
++            outcome = try await MireloExecutionCoordinator.shared.refreshResult(
++                store: store,
++                record: outcome.record,
++                client: client
++            )
++            try mutationScope.requireCurrent(editor: editor)
++            descriptor = try Self.singleMireloAudioDescriptor(outcome)
++            do {
++                if let download {
++                    staged = try await download(descriptor)
++                } else {
++                    staged = try await Self.downloadMireloAudio(descriptor)
++                }
++            } catch RemoteMediaPolicy.PolicyError.httpStatus(let refreshedStatus)
++                where [403, 404, 410].contains(refreshedStatus) {
++                throw GenerationRequestError.gate(
++                    "Mirelo refreshed the result link, but it is already unavailable. Use Resume Mirelo Job later; no new request was submitted."
++                )
++            }
++        }
++        defer { try? FileManager.default.removeItem(at: staged) }
++        try Task.checkCancellation()
++        try await RemoteMediaPayloadValidator.validate(staged, expectedType: .audio)
++        try Task.checkCancellation()
++        try mutationScope.requireCurrent(editor: editor)
++        let returnedExtension = URL(fileURLWithPath: descriptor.filename).pathExtension
++        let extensionValue = returnedExtension.isEmpty ? "wav" : returnedExtension
++        let destination = persistedArtifact.map {
++            workingRoot.appendingPathComponent($0.projectPath)
++        } ?? asset.url.deletingPathExtension().appendingPathExtension(extensionValue)
++        let digest = try FileDigest.sha256(of: staged)
++        if let persistedArtifact {
++            guard persistedArtifact.sha256 == digest,
++                  try Self.mireloProjectPath(destination, root: workingRoot)
++                    == persistedArtifact.projectPath else {
++                throw GenerationRequestError.storage(
++                    "The restored Mirelo result does not match its completed project artifact."
++                )
++            }
++        }
++        if FileManager.default.fileExists(atPath: destination.path) {
++            guard try FileDigest.sha256(of: destination) == digest else {
++                throw GenerationRequestError.storage(
++                    "The Mirelo destination already contains different bytes. Restore or reconcile this generation before resuming."
++                )
++            }
++        } else {
++            try ProjectWorkingCopy.markDirty(key: workingCopyKey)
++            let partial = destination.deletingLastPathComponent()
++                .appendingPathComponent(".mirelo-\(UUID().uuidString).partial")
++            defer { try? FileManager.default.removeItem(at: partial) }
++            try FileManager.default.copyItem(at: staged, to: partial)
++            try FileManager.default.moveItem(at: partial, to: destination)
++        }
++        try Task.checkCancellation()
++        try mutationScope.requireCurrent(editor: editor)
++        asset.url = destination
++        asset.pendingDownloadURL = nil
++        asset.generationStatus = .none
++        editor.persistMediaAsset(asset)
++        if !editor.generationLog.entries.contains(where: {
++            $0.spendTransactionId == asset.generationInput?.spendTransactionId
++        }) {
++            editor.appendGenerationLog(for: asset)
++        }
++        try await editor.finalizeImportedAsset(asset, mutationScope: mutationScope)
++        let artifact = MireloArtifact(
++            kind: .audio,
++            projectPath: try Self.mireloProjectPath(destination, root: workingRoot),
++            sha256: digest,
++            mediaAssetID: asset.id,
++            sourceURLExpiresAt: descriptor.sourceURLExpiresAt
++        )
++        if let persistedArtifact {
++            guard artifact.kind == persistedArtifact.kind,
++                  artifact.projectPath == persistedArtifact.projectPath,
++                  artifact.sha256 == persistedArtifact.sha256,
++                  artifact.mediaAssetID == persistedArtifact.mediaAssetID else {
++                throw GenerationRequestError.storage(
++                    "The restored Mirelo artifact does not match its execution record."
++                )
++            }
++            return outcome.record
++        }
++        return try await MireloExecutionCoordinator.shared.complete(
++            store: store,
++            record: outcome.record,
++            artifacts: [artifact]
++        )
++    }
++
++    private func nativeMireloAuthorization(
++        record: MireloExecutionRecord,
++        asset: MediaAsset,
++        editor: EditorViewModel,
++        mutationScope: GenerationProjectMutationScope
++    ) throws -> GenerationAuthorization {
++        guard let transactionID = asset.generationInput?.spendTransactionId,
++              transactionID == record.spendTransactionID else {
++            throw GenerationRequestError.storage(
++                "The media item does not match its Mirelo spend transaction."
++            )
++        }
++        _ = try GenerationBudgetGuard.verifiedSpend(
++            log: editor.generationLog,
++            generatedAssets: editor.mediaAssets,
++            requireCompleteMoney: false
++        )
++        let events = editor.generationLog.spendEvents.filter {
++            $0.transactionId == transactionID
++        }
++        guard let first = events.first,
++              let last = events.last,
++              first.kind == .reserved,
++              first.model == asset.generationInput?.model,
++              first.provider == .mirelo,
++              first.transport == .api,
++              last.kind != .released,
++              events.allSatisfy({
++                  $0.model == first.model
++                      && $0.provider == first.provider
++                      && $0.transport == first.transport
++                      && $0.endpoint == first.endpoint
++              }),
++              last.kind != .submitted
++                || (record.providerJobID != nil
++                    && last.providerRequestId == record.providerJobID) else {
++            throw GenerationRequestError.gate(
++                "The saved Mirelo job has no matching active project spend record. Reconcile the project copy before resuming it."
++            )
++        }
++        try mutationScope.requireCurrent(editor: editor)
++        return GenerationAuthorization(
++            transactionId: transactionID,
++            target: ResolvedGenerationTarget(
++                modelId: first.model,
++                provider: .mirelo,
++                endpoint: first.endpoint,
++                binding: ProviderBinding(
++                    provider: .mirelo,
++                    transport: .api,
++                    kind: .generation,
++                    providerRef: first.endpoint,
++                    billing: .perCall
++                )
++            ),
++            estimate: first.money,
++            projectMutationScope: mutationScope
++        )
++    }
++
++    private func recordMireloSubmittedIfNeeded(
++        _ record: MireloExecutionRecord,
++        authorization: GenerationAuthorization,
++        editor: EditorViewModel
++    ) throws {
++        guard let providerJobID = record.providerJobID,
++              let transactionID = authorization.transactionId else { return }
++        if let submitted = editor.generationLog.spendEvents.first(where: {
++            $0.transactionId == transactionID && $0.kind == .submitted
++        }) {
++            guard submitted.providerRequestId == providerJobID else {
++                throw GenerationRequestError.storage(
++                    "The Mirelo provider job does not match the project spend record."
++                )
++            }
++            return
++        }
++        try authorization.projectMutationScope?.requireCurrent(editor: editor)
++        try editor.recordSpendEvent(
++            authorization: authorization,
++            kind: .submitted,
++            providerRequestId: providerJobID,
++            providerRequestResumable: true,
++            money: authorization.estimate,
++            note: "Mirelo preflight: \(record.preflight.credits) credits. Monetary conversion is not published."
++        )
++    }
++
++    private func releaseNativeMireloReservationIfRejected(
++        _ record: MireloExecutionRecord,
++        asset: MediaAsset,
++        editor: EditorViewModel
++    ) throws {
++        guard record.state == .failed,
++              record.providerJobID == nil,
++              let workingRoot = editor.workingRoot else { return }
++        let transactionID = record.spendTransactionID ?? ""
++        guard editor.generationLog.spendEvents.last(where: {
++            $0.transactionId == transactionID
++        })?.kind == .reserved else { return }
++        let scope = try GenerationProjectMutationScope(
++            projectHome: workingRoot,
++            editor: editor
++        )
++        let authorization = try nativeMireloAuthorization(
++            record: record,
++            asset: asset,
++            editor: editor,
++            mutationScope: scope
++        )
++        try editor.recordSpendEvent(
++            authorization: authorization,
++            kind: .released,
++            note: record.lastError
++        )
++    }
++
++    private func nativeMireloArtifactIsInstalled(
++        _ record: MireloExecutionRecord,
++        asset: MediaAsset,
++        workingRoot: URL
++    ) throws -> Bool {
++        guard let artifact = record.artifacts.first(where: {
++            $0.kind == .audio && $0.mediaAssetID == asset.id
++        }) else { return false }
++        let url = workingRoot.appendingPathComponent(artifact.projectPath)
++        return FileManager.default.fileExists(atPath: url.path)
++            && (try FileDigest.sha256(of: url)) == artifact.sha256
++    }
++
++    private static func mireloCanResume(_ record: MireloExecutionRecord) -> Bool {
++        guard record.approvedAt != nil, record.spendTransactionID != nil else { return false }
++        switch record.state {
++        case .prepared, .submitting, .accepted, .acceptanceUnknown,
++             .pollingInterrupted, .providerSucceeded, .completed:
++            true
++        case .failed:
++            false
++        }
++    }
++
++    private static func mireloResumeMessage(_ record: MireloExecutionRecord) -> String {
++        switch record.state {
++        case .prepared:
++            "Mirelo has not received this approved request. Resume checks current cost and funding before the first submission."
++        case .submitting, .acceptanceUnknown:
++            "Mirelo acceptance is unresolved. Resume reuses the saved idempotency key; it does not create a variation."
++        case .accepted, .pollingInterrupted:
++            "Mirelo accepted this job. Resume continues polling the same provider job."
++        case .providerSucceeded, .completed:
++            "Mirelo completed this job. Resume restores its project-local result."
++        case .failed:
++            record.lastError ?? "Mirelo reported a terminal failure."
++        }
++    }
++
++    private static func confirmMireloCreditChange(previous: Int, current: Int) -> Bool {
++        let alert = NSAlert()
++        alert.alertStyle = .informational
++        alert.messageText = "Approve updated Mirelo cost?"
++        alert.informativeText = "The saved request changed from \(previous) to \(current) credits. It has not been submitted to Mirelo."
++        alert.addButton(withTitle: "Approve \(current) Credits")
++        alert.addButton(withTitle: "Cancel")
++        return alert.runModal() == .alertFirstButtonReturn
++    }
++
+     private static func singleMireloAudioDescriptor(
+         _ outcome: MireloExecutionOutcome
+     ) throws -> MireloResultDescriptor {
+diff --git a/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift b/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
+index 8fb39383..803d55fc 100644
+--- a/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
++++ b/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
+@@ -7,7 +7,25 @@ struct MireloExecutionOutcome: Sendable, Equatable {
+ 
+ actor MireloExecutionCoordinator {
+     static let shared = MireloExecutionCoordinator()
+-    private var inFlight: [String: Task<MireloExecutionOutcome, Error>] = [:]
++    typealias AcceptanceHandler = @MainActor @Sendable (MireloExecutionRecord) async throws -> Void
++
++    private struct Waiter {
++        let continuation: CheckedContinuation<MireloExecutionOutcome, Error>
++    }
++
++    private struct Flight {
++        let id: UUID
++        let task: Task<Void, Never>
++        var waiters: [UUID: Waiter]
++    }
++
++    private struct RetiringFlight {
++        let id: UUID
++        let task: Task<Void, Never>
++    }
++
++    private var inFlight: [String: Flight] = [:]
++    private var retiring: [String: RetiringFlight] = [:]
+ 
+     func prepare(
+         store: MireloExecutionStore,
+@@ -87,33 +105,120 @@ actor MireloExecutionCoordinator {
+         store: MireloExecutionStore,
+         projectKey: String,
+         logicalJobID: String,
+-        client: MireloClient
++        client: MireloClient,
++        onAccepted: AcceptanceHandler? = nil
+     ) async throws -> MireloExecutionOutcome {
++        try Task.checkCancellation()
+         let authorityID = try store.authorityID(
+             projectKey: projectKey,
+             logicalJobID: logicalJobID
+         )
+-        if let task = inFlight[authorityID] {
+-            return try await task.value
++        if let retiring = retiring[authorityID] {
++            await retiring.task.value
++            try Task.checkCancellation()
++        }
++        let waiterID = UUID()
++        return try await withTaskCancellationHandler {
++            try await withCheckedThrowingContinuation { continuation in
++                if Task.isCancelled {
++                    continuation.resume(throwing: CancellationError())
++                    return
++                }
++                register(
++                    waiterID: waiterID,
++                    authorityID: authorityID,
++                    store: store,
++                    projectKey: projectKey,
++                    logicalJobID: logicalJobID,
++                    client: client,
++                    onAccepted: onAccepted,
++                    continuation: continuation
++                )
++            }
++        } onCancel: {
++            Task { await self.cancelWaiter(waiterID, authorityID: authorityID) }
+         }
++    }
++
++    private func register(
++        waiterID: UUID,
++        authorityID: String,
++        store: MireloExecutionStore,
++        projectKey: String,
++        logicalJobID: String,
++        client: MireloClient,
++        onAccepted: AcceptanceHandler?,
++        continuation: CheckedContinuation<MireloExecutionOutcome, Error>
++    ) {
++        if var flight = inFlight[authorityID] {
++            flight.waiters[waiterID] = Waiter(continuation: continuation)
++            inFlight[authorityID] = flight
++            return
++        }
++        let flightID = UUID()
+         let task = Task {
+-            try await self.executeOwned(
+-                store: store,
+-                projectKey: projectKey,
+-                logicalJobID: logicalJobID,
+-                client: client
++            let result: Result<MireloExecutionOutcome, Error>
++            do {
++                result = .success(try await self.executeOwned(
++                    store: store,
++                    projectKey: projectKey,
++                    logicalJobID: logicalJobID,
++                    client: client,
++                    onAccepted: onAccepted
++                ))
++            } catch {
++                result = .failure(error)
++            }
++            self.finishFlight(
++                authorityID: authorityID,
++                flightID: flightID,
++                result: result
++            )
++        }
++        inFlight[authorityID] = Flight(
++            id: flightID,
++            task: task,
++            waiters: [waiterID: Waiter(continuation: continuation)]
++        )
++    }
++
++    private func cancelWaiter(_ waiterID: UUID, authorityID: String) {
++        guard var flight = inFlight[authorityID],
++              let waiter = flight.waiters.removeValue(forKey: waiterID) else { return }
++        waiter.continuation.resume(throwing: CancellationError())
++        if flight.waiters.isEmpty {
++            inFlight.removeValue(forKey: authorityID)
++            retiring[authorityID] = RetiringFlight(
++                id: flight.id,
++                task: flight.task
+             )
++            flight.task.cancel()
++        } else {
++            inFlight[authorityID] = flight
++        }
++    }
++
++    private func finishFlight(
++        authorityID: String,
++        flightID: UUID,
++        result: Result<MireloExecutionOutcome, Error>
++    ) {
++        if retiring[authorityID]?.id == flightID {
++            retiring.removeValue(forKey: authorityID)
++        }
++        guard let flight = inFlight[authorityID], flight.id == flightID else { return }
++        inFlight.removeValue(forKey: authorityID)
++        for waiter in flight.waiters.values {
++            waiter.continuation.resume(with: result)
+         }
+-        inFlight[authorityID] = task
+-        defer { inFlight.removeValue(forKey: authorityID) }
+-        return try await task.value
+     }
+ 
+     private func executeOwned(
+         store: MireloExecutionStore,
+         projectKey: String,
+         logicalJobID: String,
+-        client: MireloClient
++        client: MireloClient,
++        onAccepted: AcceptanceHandler?
+     ) async throws -> MireloExecutionOutcome {
+         guard var record = try store.load(
+             projectKey: projectKey,
+@@ -136,6 +241,9 @@ actor MireloExecutionCoordinator {
+                     "The completed Mirelo job has no terminal response."
+                 )
+             }
++            if record.providerJobID != nil, let onAccepted {
++                try await onAccepted(record)
++            }
+             return MireloExecutionOutcome(record: record, terminalResponse: terminal)
+         case .failed:
+             throw GenerationRequestError.gate(
+@@ -163,6 +271,9 @@ actor MireloExecutionCoordinator {
+                 "Mirelo accepted the request without a durable job identifier."
+             )
+         }
++        if let onAccepted {
++            try await onAccepted(record)
++        }
+         return try await poll(record, store: store, client: client)
+     }
+ 
+@@ -196,7 +307,7 @@ actor MireloExecutionCoordinator {
+         record: MireloExecutionRecord,
+         client: MireloClient
+     ) async throws -> MireloExecutionOutcome {
+-        guard record.state == .providerSucceeded,
++        guard record.state == .providerSucceeded || record.state == .completed,
+               let jobID = record.providerJobID else {
+             throw GenerationRequestError.storage(
+                 "Only a succeeded Mirelo job can refresh temporary result URLs."
+@@ -223,6 +334,20 @@ actor MireloExecutionCoordinator {
+         store: MireloExecutionStore,
+         client: MireloClient
+     ) async throws -> MireloExecutionRecord {
++        let replaysUnknownAcceptance = expected.state == .submitting
++            || expected.state == .acceptanceUnknown
++        do {
++            try Task.checkCancellation()
++        } catch {
++            let message = replaysUnknownAcceptance
++                ? "Recovery stopped locally before replaying the persisted Mirelo idempotency key. The earlier submission may still have been accepted."
++                : "Mirelo submission was cancelled before any provider request was sent."
++            _ = try? store.update(expected) {
++                $0.state = replaysUnknownAcceptance ? .acceptanceUnknown : .failed
++                $0.lastError = message
++            }
++            throw CancellationError()
++        }
+         var submitting = expected
+         if submitting.state != .submitting {
+             submitting = try store.update(submitting) {
+@@ -230,7 +355,21 @@ actor MireloExecutionCoordinator {
+                 $0.lastError = nil
+             }
+         }
++        var createStarted = false
+         do {
++            do {
++                try Task.checkCancellation()
++            } catch {
++                let message = replaysUnknownAcceptance
++                    ? "Recovery stopped locally before replaying the persisted Mirelo idempotency key. The earlier submission may still have been accepted."
++                    : "Mirelo submission was cancelled before any provider request was sent."
++                _ = try? store.update(submitting) {
++                    $0.state = replaysUnknownAcceptance ? .acceptanceUnknown : .failed
++                    $0.lastError = message
++                }
++                throw CancellationError()
++            }
++            createStarted = true
+             let receipt = try await client.create(
+                 operation: submitting.operation,
+                 body: submitting.requestBody,
+@@ -266,6 +405,9 @@ actor MireloExecutionCoordinator {
+                 }
+             }
+         } catch is CancellationError {
++            if !createStarted {
++                throw CancellationError()
++            }
+             let message = submitting.operation.usesIdempotencyKey
+                 ? "Submission was interrupted. NexGenVideo will recover the same Mirelo v3 job with its persisted idempotency key; cancellation does not claim the server stopped."
+                 : Self.unknownAcceptanceMessage
+@@ -275,7 +417,7 @@ actor MireloExecutionCoordinator {
+             }
+             throw GenerationRequestError.gate(message)
+         } catch let error as MireloHTTPError {
+-            if Self.definitivelyRejected(error) {
++            if !replaysUnknownAcceptance && Self.definitivelyRejected(error) {
+                 let failed = try store.update(submitting) {
+                     $0.state = .failed
+                     $0.lastError = error.localizedDescription
+@@ -323,6 +465,7 @@ actor MireloExecutionCoordinator {
+             do {
+                 try Task.checkCancellation()
+                 let response = try await client.job(operation: record.operation, id: jobID)
++                try Task.checkCancellation()
+                 let snapshot = try Self.status(
+                     from: response.data,
+                     operation: record.operation
+diff --git a/Sources/NexGenVideo/Generation/MireloExecutionStore.swift b/Sources/NexGenVideo/Generation/MireloExecutionStore.swift
+index d776c82b..4954513d 100644
+--- a/Sources/NexGenVideo/Generation/MireloExecutionStore.swift
++++ b/Sources/NexGenVideo/Generation/MireloExecutionStore.swift
+@@ -194,8 +194,8 @@ struct MireloExecutionStore: Sendable {
+                 || (allowPreflightRefresh
+                     && expected.state == .prepared
+                     && current.state == .prepared
+-                    && expected.approvedAt == nil
+-                    && current.approvedAt == nil)),
++                    && expected.providerJobID == nil
++                    && current.providerJobID == nil)),
+               current.createdAt == expected.createdAt,
+               (expected.approvedAt == nil || current.approvedAt == expected.approvedAt),
+               (expected.spendTransactionID == nil
+@@ -227,6 +227,29 @@ struct MireloExecutionStore: Sendable {
+         }
+     }
+ 
++    func refreshApprovedPreflight(
++        _ expected: MireloExecutionRecord,
++        with preflight: MireloPreflight,
++        creditChangeApproved: Bool
++    ) throws -> MireloExecutionRecord {
++        guard expected.state == .prepared,
++              expected.approvedAt != nil,
++              expected.spendTransactionID != nil,
++              expected.providerJobID == nil else {
++            throw GenerationRequestError.gate(
++                "Only an approved Mirelo request that has never been submitted can refresh its preflight."
++            )
++        }
++        guard preflight.credits == expected.preflight.credits || creditChangeApproved else {
++            throw GenerationRequestError.gate(
++                "Mirelo's current preflight is \(preflight.credits) credits, not the approved \(expected.preflight.credits). Review the changed price before submitting this saved request."
++            )
++        }
++        return try update(expected, allowPreflightRefresh: true) {
++            $0.preflight = preflight
++        }
++    }
++
+     private func write(_ record: MireloExecutionRecord) throws {
+         try validate(record)
+         let file = try recordURL(
+@@ -293,10 +316,12 @@ struct MireloExecutionStore: Sendable {
+         switch (from, to) {
+         case (.prepared, .prepared),
+              (.prepared, .submitting),
++             (.prepared, .failed),
+              (.submitting, .accepted),
+              (.submitting, .acceptanceUnknown),
+              (.submitting, .failed),
+              (.acceptanceUnknown, .accepted),
++             (.acceptanceUnknown, .acceptanceUnknown),
+              (.acceptanceUnknown, .submitting),
+              (.accepted, .accepted),
+              (.accepted, .pollingInterrupted),
+diff --git a/Sources/NexGenVideo/Generation/Providers/MireloClient.swift b/Sources/NexGenVideo/Generation/Providers/MireloClient.swift
+index 499ff005..f9bc3463 100644
+--- a/Sources/NexGenVideo/Generation/Providers/MireloClient.swift
++++ b/Sources/NexGenVideo/Generation/Providers/MireloClient.swift
+@@ -546,8 +546,12 @@ final class MireloClient: Sendable {
+                 throw Self.httpError(data: data, response: http)
+             }
+             return (data, http)
++        } catch is CancellationError {
++            throw CancellationError()
+         } catch let error as MireloHTTPError {
+             throw error
++        } catch let error as URLError where error.code == .cancelled && Task.isCancelled {
++            throw CancellationError()
+         } catch {
+             throw MireloHTTPError(status: nil, code: "transport_interrupted", message: error.localizedDescription, retryAfterSeconds: nil, requestID: nil, retryable: true, creditRecovery: nil)
+         }
+diff --git a/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift b/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
+index 2164d859..53e7b488 100644
+--- a/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
++++ b/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
+@@ -43,7 +43,7 @@ struct AIEditTab: View {
+                     actionRow(
+                         action: .rerun,
+                         icon: "arrow.clockwise",
+-                        title: "Rerun",
++                        title: isMireloGeneration ? "New Variation" : "Rerun",
+                         description: rerunDescription
+                     )
+                     if asset.type == .image {
+@@ -70,7 +70,7 @@ struct AIEditTab: View {
+             .padding(.vertical, AppTheme.Spacing.md)
+             .frame(maxWidth: .infinity, alignment: .leading)
+         }
+-        .alert("Rerun failed", isPresented: Binding(
++        .alert(isMireloGeneration ? "New variation failed" : "Rerun failed", isPresented: Binding(
+             get: { rerunError != nil },
+             set: { if !$0 { rerunError = nil } }
+         )) {
+@@ -89,6 +89,9 @@ struct AIEditTab: View {
+     }
+ 
+     private var rerunDescription: String {
++        if isMireloGeneration {
++            return "Start a new paid Mirelo request"
++        }
+         guard let gen = asset.generationInput,
+               let cost = CostEstimator.cost(for: gen) else {
+             return "Regenerate with the same parameters"
+@@ -96,6 +99,14 @@ struct AIEditTab: View {
+         return "Regenerate · \(CostEstimator.format(cost))"
+     }
+ 
++    private var isMireloGeneration: Bool {
++        if asset.generationInput?.model.hasPrefix("mirelo/") == true { return true }
++        guard let transactionID = asset.generationInput?.spendTransactionId else { return false }
++        return editor.generationLog.spendEvents.contains {
++            $0.transactionId == transactionID && $0.provider == .mirelo
++        }
++    }
++
+     private func aiSection<Content: View>(
+         title: String,
+         @ViewBuilder content: () -> Content
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift b/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
+index 03357ee8..26916cf5 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaTab/AssetThumbnailView.swift
+@@ -81,6 +81,15 @@ struct AssetThumbnailView: View {
+             Divider() // app-theme: native-menu-divider
+         }
+         if ids.count == 1, ids.first == asset.id {
++            if asset.mireloResumeAvailable {
++                Button("Resume Mirelo Job") {
++                    editor.generationService.resumeMireloGeneration(
++                        asset: asset,
++                        editor: editor
++                    )
++                }
++                Divider() // app-theme: native-menu-divider
++            }
+             if isMissing {
+                 Button("Relink…") { relinkFile() }
+                 Divider() // app-theme: native-menu-divider
+diff --git a/Sources/NexGenVideo/Models/MediaAsset.swift b/Sources/NexGenVideo/Models/MediaAsset.swift
+index 2cd437fb..083edf16 100644
+--- a/Sources/NexGenVideo/Models/MediaAsset.swift
++++ b/Sources/NexGenVideo/Models/MediaAsset.swift
+@@ -73,6 +73,7 @@ final class MediaAsset: Identifiable {
+     var cachedRemoteURL: String?
+     var cachedRemoteURLExpiresAt: Date?
+     var originalFilename: String?
++    var mireloResumeAvailable = false
+ 
+     /// Returns the cached URL if it's set AND not expired; else nil.
+     var freshRemoteURL: String? {
+diff --git a/Sources/NexGenVideo/Preview/PreviewContainerView.swift b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+index a7d2f6eb..8109ca29 100644
+--- a/Sources/NexGenVideo/Preview/PreviewContainerView.swift
++++ b/Sources/NexGenVideo/Preview/PreviewContainerView.swift
+@@ -419,7 +419,35 @@ struct PreviewContainerView: View {
+                 }
+                 .frame(maxWidth: AppTheme.ComponentSize.previewErrorMaxWidth, maxHeight: AppTheme.ComponentSize.previewErrorMaxHeight)
+                 .fixedSize(horizontal: false, vertical: true)
+-                if let asset = activeMediaAsset, asset.pendingDownloadURL != nil {
++                if let asset = activeMediaAsset, asset.mireloResumeAvailable {
++                    Button {
++                        editor.generationService.resumeMireloGeneration(
++                            asset: asset,
++                            editor: editor
++                        )
++                    } label: {
++                        HStack(spacing: AppTheme.Spacing.xs) {
++                            Image(systemName: "play.fill")
++                            Text("Resume Mirelo Job")
++                        }
++                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                        .foregroundStyle(AppTheme.Text.primaryColor)
++                        .padding(.horizontal, AppTheme.Spacing.md)
++                        .padding(.vertical, AppTheme.Spacing.sm)
++                    }
++                    .buttonStyle(.plain)
++                    .background(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft), in: .capsule)
++                    .overlay(
++                        Capsule().strokeBorder(
++                            AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted),
++                            lineWidth: AppTheme.BorderWidth.hairline
++                        )
++                    )
++                    Text("Continues the saved paid job without creating a variation.")
++                        .interfaceFont(size: AppTheme.Typography.metadata)
++                        .foregroundStyle(AppTheme.Text.mutedColor)
++                        .multilineTextAlignment(.center)
++                } else if let asset = activeMediaAsset, asset.pendingDownloadURL != nil {
+                     Button {
+                         editor.generationService.retryDownload(asset: asset, editor: editor)
+                     } label: {
+diff --git a/Sources/NexGenVideo/Project/VideoProject.swift b/Sources/NexGenVideo/Project/VideoProject.swift
+index bea45ec6..3eca1009 100644
+--- a/Sources/NexGenVideo/Project/VideoProject.swift
++++ b/Sources/NexGenVideo/Project/VideoProject.swift
+@@ -735,15 +735,17 @@ final class VideoProject: NSDocument {
+ 
+         AppState.shared.showEditor(for: self)
+ 
++        let loadedPersistedGenerationLog = loadedGenerationLog != nil
++        if let log = loadedGenerationLog {
++            editorViewModel.generationLog = log
++            loadedGenerationLog = nil
++        }
+         if let manifest = loadedManifest {
+             editorViewModel.mediaManifest = manifest
+             loadedManifest = nil
+             restoreAssetsFromManifest()
+         }
+-        if let log = loadedGenerationLog {
+-            editorViewModel.generationLog = log
+-            loadedGenerationLog = nil
+-        } else {
++        if !loadedPersistedGenerationLog {
+             editorViewModel.seedGenerationLogFromAssets()
+         }
+         editorViewModel.searchIndex.projectOpened()
+@@ -872,6 +874,10 @@ final class VideoProject: NSDocument {
+             }
+             let asset = MediaAsset(entry: entry, resolvedURL: url)
+             editorViewModel.mediaAssets.append(asset)
++            editorViewModel.generationService.restoreMireloRecoveryState(
++                asset: asset,
++                editor: editorViewModel
++            )
+             guard FileManager.default.fileExists(atPath: url.path) else {
+                 Log.project.warning("restore: media file missing id=\(entry.id) name=\(entry.name) path=\(url.path)")
+                 missing += 1
+diff --git a/Sources/NexGenVideo/Timeline/TimelineView+AIEditMenu.swift b/Sources/NexGenVideo/Timeline/TimelineView+AIEditMenu.swift
+index 778bdbb9..bc18e81f 100644
+--- a/Sources/NexGenVideo/Timeline/TimelineView+AIEditMenu.swift
++++ b/Sources/NexGenVideo/Timeline/TimelineView+AIEditMenu.swift
+@@ -39,7 +39,19 @@ extension TimelineView {
+                 item.isEnabled = aiAllowed
+                 submenu.addItem(item)
+             case .rerun:
+-                let item = NSMenuItem(title: "Rerun", action: #selector(performAIEditRerun(_:)), keyEquivalent: "")
++                let asset = editor.clipFor(id: clipId).flatMap { clip in
++                    editor.mediaAssets.first(where: { $0.id == clip.mediaRef })
++                }
++                let transactionID = asset?.generationInput?.spendTransactionId
++                let ledgerMirelo = transactionID.map { transactionID in
++                    editor.generationLog.spendEvents.contains {
++                        $0.transactionId == transactionID && $0.provider == .mirelo
++                    }
++                } ?? false
++                let isMirelo = asset?.generationInput?.model.hasPrefix("mirelo/") == true
++                    || ledgerMirelo
++                let title = isMirelo ? "New Variation…" : "Rerun"
++                let item = NSMenuItem(title: title, action: #selector(performAIEditRerun(_:)), keyEquivalent: "")
+                 item.target = self
+                 item.representedObject = clipId
+                 item.isEnabled = aiAllowed
+diff --git a/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift b/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
+index 2b51be88..c6d43b7a 100644
+--- a/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
++++ b/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
+@@ -33,6 +33,18 @@ struct MireloProviderTests {
+         }
+     }
+ 
++    private actor AcceptanceProbe {
++        private(set) var records: [MireloExecutionRecord] = []
++
++        func record(_ value: MireloExecutionRecord) {
++            records.append(value)
++        }
++
++        func snapshot() -> [MireloExecutionRecord] {
++            records
++        }
++    }
++
+     private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
+         struct Fixture: Sendable {
+             let status: Int
+@@ -176,12 +188,12 @@ struct MireloProviderTests {
+         return (MireloExecutionStore(authority: authority), root)
+     }
+ 
+-    private func affordablePreflight() -> MireloPreflight {
++    private func affordablePreflight(credits: Int = 50) -> MireloPreflight {
+         MireloPreflight(
+-            credits: 50,
++            credits: credits,
+             estimatedMs: 9_000,
+             creditRecovery: MireloCreditRecovery(
+-                creditsRequired: 50,
++                creditsRequired: credits,
+                 creditsAvailable: 1_100,
+                 creditShortfall: 0,
+                 recoveryAction: nil,
+@@ -192,6 +204,133 @@ struct MireloProviderTests {
+         )
+     }
+ 
++    @MainActor
++    private struct NativeContext {
++        let editor: EditorViewModel
++        let asset: MediaAsset
++        let store: MireloExecutionStore
++        let storeRoot: URL
++        let project: URL
++        let workingRoot: URL
++        let workingCopyKey: String
++        let projectKey: String
++        let logicalID: String
++    }
++
++    @MainActor
++    private func nativeContext(
++        logicalID: String,
++        preflight: MireloPreflight
++    ) async throws -> NativeContext {
++        let project = FileManager.default.temporaryDirectory
++            .appendingPathComponent("mirelo-native-\(UUID().uuidString).ngv", isDirectory: true)
++        try Fixtures.prepareProjectPackage(at: project)
++        let editor = EditorViewModel()
++        editor.projectURL = project
++        let workingRoot = try #require(editor.workingRoot)
++        let workingCopyKey = try #require(editor.openWorkingCopyKey)
++        let projectKey = try #require(editor.projectId)
++        let media = workingRoot.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
++        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
++        var input = GenerationInput(
++            prompt: "A dry camera shutter",
++            model: "mirelo/sfx-1.6",
++            duration: 5,
++            aspectRatio: ""
++        )
++        input.spendTransactionId = logicalID
++        let asset = MediaAsset(
++            id: "native-sfx-\(logicalID.prefix(8))",
++            url: media.appendingPathComponent("native-sfx.wav"),
++            type: .audio,
++            name: "Native SFX",
++            duration: 5,
++            generationInput: input
++        )
++        editor.mediaAssets.append(asset)
++        editor.persistMediaAsset(asset)
++        editor.generationLog.spendEvents = [GenerationSpendEvent(
++            transactionId: logicalID,
++            kind: .reserved,
++            model: input.model,
++            provider: .mirelo,
++            transport: .api,
++            endpoint: "sfx-1.6",
++            note: "Mirelo credits"
++        )]
++        try editor.persistGenerationLog()
++
++        let body = try MireloRequestBuilder.textToSFX(
++            model: "sfx-1.6",
++            prompt: input.prompt,
++            durationMS: 5_000,
++            numVariants: 1,
++            loop: false,
++            outputFormat: "wav"
++        )
++        let (executionStore, storeRoot) = try store()
++        let prepared = try await MireloExecutionCoordinator.shared.prepare(
++            store: executionStore,
++            projectKey: projectKey,
++            logicalJobID: logicalID,
++            operation: .textToSFX,
++            intentBody: body,
++            requestBody: body,
++            sources: [],
++            preflight: preflight
++        )
++        _ = try await MireloExecutionCoordinator.shared.approve(
++            store: executionStore,
++            record: prepared,
++            spendTransactionID: logicalID
++        )
++        return NativeContext(
++            editor: editor,
++            asset: asset,
++            store: executionStore,
++            storeRoot: storeRoot,
++            project: project,
++            workingRoot: workingRoot,
++            workingCopyKey: workingCopyKey,
++            projectKey: projectKey,
++            logicalID: logicalID
++        )
++    }
++
++    private func wavFixture() -> Data {
++        Data([
++            0x52, 0x49, 0x46, 0x46, 0x34, 0x00, 0x00, 0x00,
++            0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
++            0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
++            0x40, 0x1F, 0x00, 0x00, 0x80, 0x3E, 0x00, 0x00,
++            0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61,
++            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
++            0x20, 0x00, 0x10, 0x00, 0x00, 0x00, 0xF0, 0xFF,
++            0xE0, 0xFF, 0xF0, 0xFF,
++        ])
++    }
++
++    private func waitForState(
++        _ state: MireloExecutionRecord.State,
++        store: MireloExecutionStore,
++        projectKey: String,
++        logicalID: String
++    ) async throws -> MireloExecutionRecord {
++        for _ in 0..<500 {
++            if let record = try store.load(
++                projectKey: projectKey,
++                logicalJobID: logicalID
++            ), record.state == state {
++                return record
++            }
++            await Task.yield()
++        }
++        return try #require(store.load(
++            projectKey: projectKey,
++            logicalJobID: logicalID
++        ))
++    }
++
+     @Test("authenticated account and model discovery decode the current v3 contract")
+     @MainActor
+     func discoveryContract() async throws {
+@@ -540,6 +679,146 @@ struct MireloProviderTests {
+         #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 2)
+     }
+ 
++    @Test("unknown v3 acceptance survives later account and rate-limit responses")
++    func unknownAcceptanceReplayPreservesReservation() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let cases = [
++            (401, "12121212-1212-4212-8212-121212121212"),
++            (402, "13131313-1313-4313-8313-131313131313"),
++            (429, "14141414-1414-4414-8414-141414141414"),
++        ]
++        for (status, logicalID) in cases {
++            FixtureURLProtocol.install([
++                createURL: [
++                    .init(error: .timedOut),
++                    .init(
++                        status: status,
++                        data: Data(#"{"error":{"code":"current_account_state","message":"Current account cannot submit","retryable":false}}"#.utf8)
++                    ),
++                ],
++            ])
++            let testSession = session()
++            let client = MireloClient(
++                apiKey: "fixture-key",
++                baseURL: baseURL,
++                session: testSession
++            )
++            let (executionStore, root) = try store()
++            let coordinator = MireloExecutionCoordinator()
++            let body = try MireloRequestBuilder.textToSFX(
++                model: "sfx-1.6",
++                prompt: "One durable request",
++                durationMS: 5_000,
++                numVariants: 1,
++                loop: false,
++                outputFormat: "wav"
++            )
++            let prepared = try await coordinator.prepare(
++                store: executionStore,
++                projectKey: "project-fixture",
++                logicalJobID: logicalID,
++                operation: .textToSFX,
++                requestBody: body,
++                sources: [],
++                preflight: affordablePreflight()
++            )
++            _ = try await coordinator.approve(
++                store: executionStore,
++                record: prepared,
++                spendTransactionID: "reserved-\(status)"
++            )
++
++            for _ in 0..<2 {
++                await #expect(throws: (any Error).self) {
++                    _ = try await coordinator.execute(
++                        store: executionStore,
++                        projectKey: "project-fixture",
++                        logicalJobID: logicalID,
++                        client: client
++                    )
++                }
++            }
++            let record = try #require(executionStore.load(
++                projectKey: "project-fixture",
++                logicalJobID: logicalID
++            ))
++            #expect(record.state == .acceptanceUnknown)
++            #expect(record.providerJobID == nil)
++            #expect(record.spendTransactionID == "reserved-\(status)")
++            let creates = FixtureURLProtocol.requests().filter { $0.url == createURL }
++            #expect(creates.count == 2)
++            #expect(creates[0].idempotencyKey == creates[1].idempotencyKey)
++            testSession.invalidateAndCancel()
++            try? FileManager.default.removeItem(at: root)
++        }
++    }
++
++    @Test("acceptance is observable before a gated terminal poll")
++    @MainActor
++    func acceptanceCallbackPrecedesPolling() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-accepted")
++        let pollGate = FixtureGate()
++        FixtureURLProtocol.install([
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"job-accepted","status":"queued"}"#.utf8)
++            )],
++            pollURL: [.init(data: try fixture("v3-succeeded"), gate: pollGate)],
++        ])
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let (executionStore, root) = try store()
++        defer { try? FileManager.default.removeItem(at: root) }
++        let coordinator = MireloExecutionCoordinator()
++        let logicalID = "15151515-1515-4515-8515-151515151515"
++        let body = try MireloRequestBuilder.textToSFX(
++            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
++            numVariants: 1, loop: false, outputFormat: "wav"
++        )
++        let prepared = try await coordinator.prepare(
++            store: executionStore, projectKey: "project-fixture",
++            logicalJobID: logicalID, operation: .textToSFX,
++            requestBody: body, sources: [], preflight: affordablePreflight()
++        )
++        _ = try await coordinator.approve(
++            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
++        )
++        let probe = AcceptanceProbe()
++        let execution = Task {
++            try await coordinator.execute(
++                store: executionStore,
++                projectKey: "project-fixture",
++                logicalJobID: logicalID,
++                client: client,
++                onAccepted: { record in await probe.record(record) }
++            )
++        }
++        await pollGate.waitUntilStarted()
++        let accepted = await probe.snapshot()
++        #expect(accepted.count == 1)
++        #expect(accepted.first?.providerJobID == "job-accepted")
++        #expect(try executionStore.load(
++            projectKey: "project-fixture",
++            logicalJobID: logicalID
++        )?.state == .accepted)
++        execution.cancel()
++        do {
++            _ = try await execution.value
++            Issue.record("Expected the only waiter to cancel")
++        } catch {
++            #expect(error is CancellationError)
++        }
++        await pollGate.open()
++        _ = try await waitForState(
++            .pollingInterrupted,
++            store: executionStore,
++            projectKey: "project-fixture",
++            logicalID: logicalID
++        )
++    }
++
+     @Test("interrupted polling resumes the accepted job without another create")
+     func interruptedPollingResume() async throws {
+         let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+@@ -732,6 +1011,184 @@ struct MireloProviderTests {
+         #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 1)
+     }
+ 
++    @Test("canceling one coalesced waiter leaves the other waiter running")
++    func oneCanceledWaiterDoesNotCancelSharedJob() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
++        let pollGate = FixtureGate()
++        FixtureURLProtocol.install([
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
++            )],
++            pollURL: [.init(data: try fixture("v3-succeeded"), gate: pollGate)],
++        ])
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let (executionStore, root) = try store()
++        defer { try? FileManager.default.removeItem(at: root) }
++        let coordinator = MireloExecutionCoordinator()
++        let logicalID = "16161616-1616-4616-8616-161616161616"
++        let body = try MireloRequestBuilder.textToSFX(
++            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
++            numVariants: 1, loop: false, outputFormat: "wav"
++        )
++        let prepared = try await coordinator.prepare(
++            store: executionStore, projectKey: "project-fixture",
++            logicalJobID: logicalID, operation: .textToSFX,
++            requestBody: body, sources: [], preflight: affordablePreflight()
++        )
++        _ = try await coordinator.approve(
++            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
++        )
++        let first = Task {
++            try await coordinator.execute(
++                store: executionStore, projectKey: "project-fixture",
++                logicalJobID: logicalID, client: client
++            )
++        }
++        await pollGate.waitUntilStarted()
++        let second = Task {
++            try await coordinator.execute(
++                store: executionStore, projectKey: "project-fixture",
++                logicalJobID: logicalID, client: client
++            )
++        }
++        for _ in 0..<20 { await Task.yield() }
++        first.cancel()
++        do {
++            _ = try await first.value
++            Issue.record("Expected the first waiter to cancel")
++        } catch {
++            #expect(error is CancellationError)
++        }
++        await pollGate.open()
++        let outcome = try await second.value
++
++        #expect(outcome.record.state == .providerSucceeded)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 1)
++    }
++
++    @Test("canceling the final polling waiter persists an interrupted job that resumes")
++    func finalCanceledWaiterResumesWithoutCreate() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
++        let pollGate = FixtureGate()
++        FixtureURLProtocol.install([
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
++            )],
++            pollURL: [
++                .init(data: try fixture("v3-succeeded"), gate: pollGate),
++                .init(data: try fixture("v3-succeeded")),
++            ],
++        ])
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let (executionStore, root) = try store()
++        defer { try? FileManager.default.removeItem(at: root) }
++        let coordinator = MireloExecutionCoordinator()
++        let logicalID = "17171717-1717-4717-8717-171717171717"
++        let body = try MireloRequestBuilder.textToSFX(
++            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
++            numVariants: 1, loop: false, outputFormat: "wav"
++        )
++        let prepared = try await coordinator.prepare(
++            store: executionStore, projectKey: "project-fixture",
++            logicalJobID: logicalID, operation: .textToSFX,
++            requestBody: body, sources: [], preflight: affordablePreflight()
++        )
++        _ = try await coordinator.approve(
++            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
++        )
++        let execution = Task {
++            try await coordinator.execute(
++                store: executionStore, projectKey: "project-fixture",
++                logicalJobID: logicalID, client: client
++            )
++        }
++        await pollGate.waitUntilStarted()
++        execution.cancel()
++        do {
++            _ = try await execution.value
++            Issue.record("Expected the final waiter to cancel")
++        } catch {
++            #expect(error is CancellationError)
++        }
++        await pollGate.open()
++        let interrupted = try await waitForState(
++            .pollingInterrupted,
++            store: executionStore,
++            projectKey: "project-fixture",
++            logicalID: logicalID
++        )
++        #expect(interrupted.state == .pollingInterrupted)
++        #expect(interrupted.providerJobID == "job-v3")
++
++        let resumed = try await coordinator.execute(
++            store: executionStore, projectKey: "project-fixture",
++            logicalJobID: logicalID, client: client
++        )
++        #expect(resumed.record.state == .providerSucceeded)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 2)
++    }
++
++    @Test("cancellation before coordinator entry sends no paid request")
++    func cancelBeforeSubmissionSendsNothing() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        FixtureURLProtocol.install([
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
++            )],
++        ])
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let (executionStore, root) = try store()
++        defer { try? FileManager.default.removeItem(at: root) }
++        let coordinator = MireloExecutionCoordinator()
++        let logicalID = "18181818-1818-4818-8818-181818181818"
++        let body = try MireloRequestBuilder.textToSFX(
++            model: "sfx-1.6", prompt: "One request", durationMS: 5_000,
++            numVariants: 1, loop: false, outputFormat: "wav"
++        )
++        let prepared = try await coordinator.prepare(
++            store: executionStore, projectKey: "project-fixture",
++            logicalJobID: logicalID, operation: .textToSFX,
++            requestBody: body, sources: [], preflight: affordablePreflight()
++        )
++        _ = try await coordinator.approve(
++            store: executionStore, record: prepared, spendTransactionID: "spend-fixture"
++        )
++        let startGate = FixtureGate()
++        let execution = Task {
++            await startGate.wait()
++            return try await coordinator.execute(
++                store: executionStore, projectKey: "project-fixture",
++                logicalJobID: logicalID, client: client
++            )
++        }
++        await startGate.waitUntilStarted()
++        execution.cancel()
++        await startGate.open()
++        do {
++            _ = try await execution.value
++            Issue.record("Expected cancellation before submission")
++        } catch {
++            #expect(error is CancellationError)
++        }
++        #expect(FixtureURLProtocol.requests().isEmpty)
++        #expect(try executionStore.load(
++            projectKey: "project-fixture", logicalJobID: logicalID
++        )?.state == .prepared)
++    }
++
+     @Test("concurrent MIDI execute callers preserve one accepted provider job")
+     func concurrentMIDIExecuteCoalesces() async throws {
+         let createURL = baseURL.appendingPathComponent("v2/audio-to-midi/v1.0/jobs")
+@@ -1042,6 +1499,209 @@ struct MireloProviderTests {
+         #expect(Set(first.map(\.kind)) == [.midi, .noteJSON, .scoreManifest])
+     }
+ 
++    @Test("approved native job requotes before its first provider submission")
++    @MainActor
++    func preparedNativeResumeRequiresFreshQuote() async throws {
++        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
++        let accountURL = baseURL.appendingPathComponent("v3/me")
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        FixtureURLProtocol.install([
++            preflightURL: [.init(data: try fixture("preflight-v3"))],
++            accountURL: [.init(data: try fixture("account"))],
++        ])
++        let context = try await nativeContext(
++            logicalID: "19191919-1919-4919-8919-191919191919",
++            preflight: affordablePreflight(credits: 40)
++        )
++        defer {
++            context.editor.releaseWorkingCopy()
++            ProjectWorkingCopy.discard(key: context.workingCopyKey)
++            try? FileManager.default.removeItem(at: context.project)
++            try? FileManager.default.removeItem(at: context.storeRoot)
++        }
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let service = GenerationService()
++        var reviewedChange: (Int, Int)?
++
++        await #expect(throws: (any Error).self) {
++            try await service.performNativeMireloResume(
++                asset: context.asset,
++                editor: context.editor,
++                store: context.store,
++                client: client,
++                approveCreditChange: { previous, current in
++                    reviewedChange = (previous, current)
++                    return false
++                }
++            )
++        }
++        #expect(reviewedChange?.0 == 40)
++        #expect(reviewedChange?.1 == 50)
++        #expect(FixtureURLProtocol.requests().contains { $0.url == preflightURL })
++        #expect(FixtureURLProtocol.requests().contains { $0.url == accountURL })
++        #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
++        let saved = try #require(context.store.load(
++            projectKey: context.projectKey,
++            logicalJobID: context.logicalID
++        ))
++        #expect(saved.state == .prepared)
++        #expect(saved.preflight.credits == 40)
++    }
++
++    @Test("native SFX restoration resumes one accepted job and installs after URL expiry")
++    @MainActor
++    func nativeSFXRestoresAndResumesWithoutSecondCreate() async throws {
++        let preflightURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/preflight")
++        let accountURL = baseURL.appendingPathComponent("v3/me")
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let pollURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations/job-v3")
++        FixtureURLProtocol.install([
++            preflightURL: [.init(data: try fixture("preflight-v3"))],
++            accountURL: [.init(data: try fixture("account"))],
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"job-v3","status":"queued"}"#.utf8)
++            )],
++            pollURL: [
++                .init(
++                    status: 503,
++                    data: Data(#"{"error":{"code":"temporarily_unavailable","message":"Retry later","retryable":false}}"#.utf8)
++                ),
++                .init(data: try fixture("v3-succeeded")),
++                .init(data: try fixture("v3-succeeded")),
++            ],
++        ])
++        let context = try await nativeContext(
++            logicalID: "20202020-2020-4020-8020-202020202020",
++            preflight: affordablePreflight()
++        )
++        defer {
++            context.editor.releaseWorkingCopy()
++            ProjectWorkingCopy.discard(key: context.workingCopyKey)
++            try? FileManager.default.removeItem(at: context.project)
++            try? FileManager.default.removeItem(at: context.storeRoot)
++        }
++        let testSession = session()
++        defer { testSession.invalidateAndCancel() }
++        let client = MireloClient(apiKey: "fixture-key", baseURL: baseURL, session: testSession)
++        let service = GenerationService()
++
++        await #expect(throws: (any Error).self) {
++            try await service.performNativeMireloResume(
++                asset: context.asset,
++                editor: context.editor,
++                store: context.store,
++                client: client,
++                approveCreditChange: { _, _ in
++                    Issue.record("The unchanged fresh quote must not ask again")
++                    return false
++                }
++            )
++        }
++        let interrupted = try #require(context.store.load(
++            projectKey: context.projectKey,
++            logicalJobID: context.logicalID
++        ))
++        #expect(interrupted.state == .pollingInterrupted)
++        #expect(interrupted.providerJobID == "job-v3")
++        #expect(context.editor.generationLog.spendEvents.filter {
++            $0.transactionId == context.logicalID && $0.kind == .submitted
++        }.count == 1)
++
++        let manifestBytes = try JSONEncoder().encode(context.editor.mediaManifest)
++        try manifestBytes.write(
++            to: context.workingRoot.appendingPathComponent(Project.manifestFilename),
++            options: .atomic
++        )
++        let restoredManifest = try JSONDecoder().decode(
++            MediaManifest.self,
++            from: Data(contentsOf: context.workingRoot.appendingPathComponent(Project.manifestFilename))
++        )
++        let restoredLog = try JSONDecoder().decode(
++            GenerationLog.self,
++            from: Data(contentsOf: context.workingRoot.appendingPathComponent(Project.generationLogFilename))
++        )
++        let restoredEntry = try #require(restoredManifest.entries.first(where: {
++            $0.id == context.asset.id
++        }))
++        let restoredAsset = MediaAsset(entry: restoredEntry, resolvedURL: context.asset.url)
++        context.editor.mediaManifest = restoredManifest
++        context.editor.generationLog = restoredLog
++        context.editor.mediaAssets = [restoredAsset]
++        #expect(!FileManager.default.fileExists(atPath: restoredAsset.url.path))
++        service.restoreMireloRecoveryState(
++            asset: restoredAsset,
++            editor: context.editor,
++            store: context.store
++        )
++        #expect(restoredAsset.mireloResumeAvailable)
++        guard case .failed = restoredAsset.generationStatus else {
++            Issue.record("Expected the restored placeholder to expose resume")
++            return
++        }
++
++        await #expect(throws: (any Error).self) {
++            try await service.performNativeMireloResume(
++                asset: restoredAsset,
++                editor: context.editor,
++                store: context.store,
++                client: client,
++                approveCreditChange: { _, _ in false },
++                download: { _ in
++                    throw RemoteMediaPolicy.PolicyError.httpStatus(403)
++                }
++            )
++        }
++        let succeeded = try #require(context.store.load(
++            projectKey: context.projectKey,
++            logicalJobID: context.logicalID
++        ))
++        #expect(succeeded.state == .providerSucceeded)
++        service.restoreMireloRecoveryState(
++            asset: restoredAsset,
++            editor: context.editor,
++            store: context.store
++        )
++        #expect(restoredAsset.mireloResumeAvailable)
++
++        let wav = wavFixture()
++        try await service.performNativeMireloResume(
++            asset: restoredAsset,
++            editor: context.editor,
++            store: context.store,
++            client: client,
++            approveCreditChange: { _, _ in false },
++            download: { _ in
++                let file = FileManager.default.temporaryDirectory
++                    .appendingPathComponent("native-mirelo-\(UUID().uuidString).wav")
++                try wav.write(to: file, options: .atomic)
++                return file
++            }
++        )
++
++        let completed = try #require(context.store.load(
++            projectKey: context.projectKey,
++            logicalJobID: context.logicalID
++        ))
++        #expect(completed.state == .completed)
++        #expect(completed.providerJobID == "job-v3")
++        #expect(FileManager.default.fileExists(atPath: restoredAsset.url.path))
++        #expect(!restoredAsset.mireloResumeAvailable)
++        #expect(context.editor.mediaManifest.entries.filter {
++            $0.id == restoredAsset.id
++        }.count == 1)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
++        #expect(FixtureURLProtocol.requests().filter { $0.url == pollURL }.count == 3)
++        let events = context.editor.generationLog.spendEvents.filter {
++            $0.transactionId == context.logicalID
++        }
++        #expect(events.filter { $0.kind == .reserved }.count == 1)
++        #expect(events.filter { $0.kind == .submitted }.count == 1)
++        #expect(Set(events.map(\.transactionId)) == Set([context.logicalID]))
++    }
++
+     @Test("project switch during a suspended result download performs no project write")
+     @MainActor
+     func projectSwitchDuringDownload() async throws {

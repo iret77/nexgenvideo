@@ -1,0 +1,387 @@
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index bd80f395..9d5cbbdd 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -482,6 +482,19 @@ enum WorkspaceUIAcceptance {
+                       }) else {
+                     fail("inspector \(item.family) keyframes did not open", scale: scale)
+                 }
++                let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
++                    ? [.volume]
++                    : [.position, .scale, .rotation, .opacity, .crop]
++                guard let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
++                      expectedLaneProperties.allSatisfy({ property in
++                          visibleProbe(
++                              identifier: "inspector.keyframes.lane.\(property.rawValue).label",
++                              in: window,
++                              containedBy: inspectorFrame
++                          )
++                      }) else {
++                    fail("inspector \(item.family) keyframe lane labels were not visible", scale: scale)
++                }
+                 try? await Task.sleep(for: .milliseconds(300))
+                 host.layoutSubtreeIfNeeded()
+                 let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
+@@ -494,6 +507,7 @@ enum WorkspaceUIAcceptance {
+                     fields: [
+                         "family": item.family,
+                         "keyframes": "open",
++                        "laneLabels": expectedLaneProperties.map(\.rawValue),
+                         "screenshot": openName,
+                     ]
+                 )
+diff --git a/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift b/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
+index 0766f5a6..0189517d 100644
+--- a/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
++++ b/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
+@@ -145,6 +145,25 @@ struct InspectorAdaptiveControlPair<First: View, Second: View>: View {
+     }
+ }
+ 
++struct InspectorCropAspectLabel: View {
++    let label: String
++
++    var body: some View {
++        HStack(spacing: AppTheme.Spacing.xs) {
++            Text(label)
++                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
++                .monospacedDigit()
++                .foregroundStyle(AppTheme.Text.secondaryColor)
++            Image(systemName: "chevron.down")
++                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++                .foregroundStyle(AppTheme.Text.tertiaryColor)
++        }
++        .padding(.horizontal, AppTheme.Spacing.sm)
++        .padding(.vertical, AppTheme.Spacing.xxs)
++        .contentShape(Rectangle())
++    }
++}
++
+ private struct InspectorControlChrome: ViewModifier {
+     var focused = false
+     var mixed = false
+diff --git a/Sources/NexGenVideo/Inspector/InspectorView.swift b/Sources/NexGenVideo/Inspector/InspectorView.swift
+index d0c65049..1a60da0e 100644
+--- a/Sources/NexGenVideo/Inspector/InspectorView.swift
++++ b/Sources/NexGenVideo/Inspector/InspectorView.swift
+@@ -1215,17 +1215,7 @@ struct InspectorView: View {
+                 }
+             }
+         } label: {
+-            HStack(spacing: AppTheme.Spacing.xs) {
+-                Text(active.label)
+-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
+-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+-                Image(systemName: "chevron.down")
+-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+-            }
+-            .padding(.horizontal, AppTheme.Spacing.sm)
+-            .padding(.vertical, AppTheme.Spacing.xxs)
+-            .contentShape(Rectangle())
++            InspectorCropAspectLabel(label: active.label)
+         }
+         .menuStyle(.borderlessButton)
+         .menuIndicator(.hidden)
+diff --git a/Sources/NexGenVideo/Inspector/Keyframes/KeyframesLane.swift b/Sources/NexGenVideo/Inspector/Keyframes/KeyframesLane.swift
+index bdcb038b..97e8e3fa 100644
+--- a/Sources/NexGenVideo/Inspector/Keyframes/KeyframesLane.swift
++++ b/Sources/NexGenVideo/Inspector/Keyframes/KeyframesLane.swift
+@@ -60,6 +60,7 @@ struct ClipRulerBlock: View {
+ struct KeyframesLaneRow: View {
+     let clip: Clip
+     let property: AnimatableProperty
++    let accessibilityName: String
+     let frames: [Int]
+     let tint: Color
+     @Binding var snapX: CGFloat?
+@@ -114,6 +115,8 @@ struct KeyframesLaneRow: View {
+             .contentShape(Rectangle())
+             .gesture(dragGesture(width: proxy.size.width))
+         }
++        .accessibilityElement(children: .contain)
++        .accessibilityLabel(accessibilityName)
+     }
+ 
+     private func displayedFrames() -> [Int] {
+@@ -259,43 +262,77 @@ struct KeyframesLaneRow: View {
+ struct KeyframesPanel: View {
+     let clip: Clip
+     @Environment(EditorViewModel.self) private var editor
++    @Environment(\.interfaceScale) private var interfaceScale
+     @State private var snapX: CGFloat?
+ 
+-    private static let videoRows: [(AnimatableProperty, String)] = [
+-        (.position, "Position"),
+-        (.scale,    "Scale"),
+-        (.rotation, "Rotation"),
+-        (.opacity,  "Opacity"),
+-        (.crop,     "Crop"),
+-    ]
+-    private static let audioRows: [(AnimatableProperty, String)] = [
+-        (.volume, "Volume"),
++    private static let videoRows: [AnimatableProperty] = [
++        .position, .scale, .rotation, .opacity, .crop,
+     ]
++    private static let audioRows: [AnimatableProperty] = [.volume]
+ 
+-    private var rows: [(AnimatableProperty, String)] {
++    private var rows: [AnimatableProperty] {
+         clip.mediaType == .audio ? Self.audioRows : Self.videoRows
+     }
+ 
+     private var tint: Color { Color(nsColor: clip.sourceClipType.themeColor) }
+     private var span: Int { max(1, clip.endFrame - clip.startFrame) }
++    private var timelineLeadingInset: CGFloat {
++        AppTheme.Timeline.keyframeLaneLabelWidth + AppTheme.Spacing.sm
++    }
+ 
+     var body: some View {
+         ZStack(alignment: .topLeading) {
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+-                ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
+-                ForEach(rows, id: \.0) { row in
+-                    KeyframesLaneRow(
+-                        clip: clip,
+-                        property: row.0,
+-                        frames: editor.keyframeFrames(clipId: clip.id, property: row.0),
+-                        tint: tint,
+-                        snapX: $snapX
+-                    )
+-                    .frame(height: AppTheme.Timeline.keyframeRowHeight)
++                HStack(spacing: AppTheme.Spacing.sm) {
++                    AppTheme.Background.clearColor
++                        .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth)
++                    ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
++                        .background {
++                            AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
++                        }
++                }
++                ForEach(rows, id: \.self) { property in
++                    HStack(spacing: AppTheme.Spacing.sm) {
++                        Text(property.displayName)
++                            .interfaceFont(
++                                size: AppTheme.Typography.metadata,
++                                weight: AppTheme.FontWeight.medium
++                            )
++                            .foregroundStyle(AppTheme.Text.secondaryColor)
++                            .lineLimit(1)
++                            .minimumScaleFactor(CGFloat(1 / max(1, interfaceScale)))
++                            .allowsTightening(true)
++                            .frame(
++                                width: AppTheme.Timeline.keyframeLaneLabelWidth,
++                                alignment: .trailing
++                            )
++                            .accessibilityHidden(true)
++                            .background {
++                                AppRelaunchClickProbe(
++                                    identifier: "inspector.keyframes.lane.\(property.rawValue).label"
++                                )
++                            }
++                        KeyframesLaneRow(
++                            clip: clip,
++                            property: property,
++                            accessibilityName: property.displayName,
++                            frames: editor.keyframeFrames(clipId: clip.id, property: property),
++                            tint: tint,
++                            snapX: $snapX
++                        )
++                        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++                        .background {
++                            AppRelaunchClickProbe(
++                                identifier: "inspector.keyframes.lane.\(property.rawValue).track"
++                            )
++                        }
++                    }
+                 }
+             }
+             playheadOverlay
++                .padding(.leading, timelineLeadingInset)
+             snapOverlay
++                .padding(.leading, timelineLeadingInset)
+         }
+     }
+ 
+diff --git a/Sources/NexGenVideo/Models/Keyframe.swift b/Sources/NexGenVideo/Models/Keyframe.swift
+index ea1e93cd..f6a198ca 100644
+--- a/Sources/NexGenVideo/Models/Keyframe.swift
++++ b/Sources/NexGenVideo/Models/Keyframe.swift
+@@ -79,12 +79,18 @@ enum AnimatableProperty: String, CaseIterable, Sendable {
+ 
+     var displayName: String {
+         switch self {
+-        case .opacity:  "Opacity"
+-        case .position: "Position"
+-        case .scale:    "Scale"
+-        case .rotation: "Rotation"
+-        case .crop:     "Crop"
+-        case .volume:   "Volume"
++        case .opacity:
++            String(localized: "inspector.keyframes.opacity", defaultValue: "Opacity", comment: "Keyframe lane")
++        case .position:
++            String(localized: "inspector.keyframes.position", defaultValue: "Position", comment: "Keyframe lane")
++        case .scale:
++            String(localized: "inspector.keyframes.scale", defaultValue: "Scale", comment: "Keyframe lane")
++        case .rotation:
++            String(localized: "inspector.keyframes.rotation", defaultValue: "Rotation", comment: "Keyframe lane")
++        case .crop:
++            String(localized: "inspector.keyframes.crop", defaultValue: "Crop", comment: "Keyframe lane")
++        case .volume:
++            String(localized: "inspector.keyframes.volume", defaultValue: "Volume", comment: "Keyframe lane")
+         }
+     }
+ }
+diff --git a/Sources/NexGenVideo/UI/AppTheme.swift b/Sources/NexGenVideo/UI/AppTheme.swift
+index 7100012c..66cb4f11 100644
+--- a/Sources/NexGenVideo/UI/AppTheme.swift
++++ b/Sources/NexGenVideo/UI/AppTheme.swift
+@@ -500,6 +500,7 @@ enum AppTheme {
+         static let keyframeStripHeight: CGFloat = 14
+         static let keyframeHeaderHeight: CGFloat = keyframeRulerHeight + keyframeStripHeight
+         static let keyframeRowHeight: CGFloat = 22
++        static let keyframeLaneLabelWidth: CGFloat = 72
+         static let keyframeStampButtonWidth: CGFloat = 22
+         static let keyframeNavigationButtonWidth: CGFloat = 6
+         static let keyframeControlsColumnWidth: CGFloat =
+diff --git a/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift b/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift
+index 3080c3c9..3532b184 100644
+--- a/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift
++++ b/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift
+@@ -43,6 +43,7 @@ struct InspectorFormLayoutTests {
+                     }
+                     let volumeKeyframe = try frame("volume-keyframe", in: host)
+                     let positionKeyframe = try frame("position-keyframe", in: host)
++                    let cropKeyframe = try frame("crop-keyframe", in: host)
+                     #expect(isContained(volumeKeyframe, in: rows[1]))
+                     #expect(isContained(positionKeyframe, in: rows[0]))
+ 
+@@ -50,6 +51,21 @@ struct InspectorFormLayoutTests {
+                     for control in controls.dropFirst() {
+                         #expect(abs(control.maxX - expectedAxis) < 1)
+                     }
++                    let accessories = [positionKeyframe, volumeKeyframe, cropKeyframe]
++                    let expectedAccessoryAxis = accessories[0].maxX
++                    for accessory in accessories.dropFirst() {
++                        #expect(abs(accessory.maxX - expectedAccessoryAxis) < 1)
++                    }
++                    for (control, accessory) in zip(
++                        [controls[0], controls[1], controls[3]],
++                        accessories
++                    ) {
++                        let horizontallySeparated = accessory.minX
++                            >= control.maxX + AppTheme.Spacing.sm - 1
++                        let verticallySeparated = accessory.minY
++                            >= control.maxY + AppTheme.Spacing.sm - 1
++                        #expect(horizontallySeparated || verticallySeparated)
++                    }
+ 
+                     if keyframesPanelVisible {
+                         let controlsPane = try frame("controls-pane", in: host)
+@@ -67,6 +83,81 @@ struct InspectorFormLayoutTests {
+         }
+     }
+ 
++    @Test func everyCropAspectLabelFitsAtMinimumWidthAndLargestScale() throws {
++        for aspect in CropAspectLock.allCases {
++            let totalWidth = AppTheme.Layout.inspectorMin
++            let fixture = InspectorAxisFixture(
++                keyframesPanelVisible: true,
++                cropAspect: aspect
++            )
++            .environment(\.interfaceScale, 1.5)
++            .padding(AppTheme.Spacing.lg)
++            .frame(width: totalWidth)
++            let host = NSHostingView(rootView: fixture)
++            host.setFrameSize(.init(width: totalWidth, height: AppTheme.Window.projectMin.height))
++            host.layoutSubtreeIfNeeded()
++            _ = host.fittingSize
++            host.layoutSubtreeIfNeeded()
++
++            let label = try frame("crop-menu-label", in: host)
++            let menu = try frame("crop-menu", in: host)
++            let control = try frame("crop-control", in: host)
++            let row = try frame("crop-row", in: host)
++            #expect(label.width > 0)
++            #expect(label.height > 0)
++            #expect(isContained(label, in: menu))
++            #expect(isContained(menu, in: control))
++            #expect(isContained(control, in: row))
++        }
++    }
++
++    @Test func realAudioAndVideoPanelsExposeVisibleNamedAlignedLanes() throws {
++        let video = Fixtures.clip(id: "video", mediaType: .video, start: 0, duration: 90)
++        let audio = Fixtures.clip(id: "audio", mediaType: .audio, start: 0, duration: 90)
++        for (clip, properties) in [
++            (video, [AnimatableProperty.position, .scale, .rotation, .opacity, .crop]),
++            (audio, [AnimatableProperty.volume]),
++        ] {
++            let editor = EditorViewModel()
++            let track = clip.mediaType == .audio
++                ? Fixtures.audioTrack(clips: [clip])
++                : Fixtures.videoTrack(clips: [clip])
++            editor.timeline = Fixtures.timeline(tracks: [track])
++            let panelWidth = AppTheme.Layout.inspectorDefault - AppTheme.Spacing.lg * 2
++            let fixture = KeyframesPanel(clip: clip)
++                .environment(editor)
++                .environment(\.interfaceScale, 1.5)
++                .frame(width: panelWidth)
++                .background(InspectorGeometryProbe(name: "keyframes-panel"))
++            let host = NSHostingView(rootView: fixture)
++            host.setFrameSize(.init(width: panelWidth, height: AppTheme.Window.projectMin.height))
++            host.layoutSubtreeIfNeeded()
++            _ = host.fittingSize
++            host.layoutSubtreeIfNeeded()
++
++            let panel = try frame("keyframes-panel", in: host)
++            let ruler = try frame("inspector.keyframes.ruler", in: host)
++            #expect(isContained(ruler, in: panel))
++            for property in properties {
++                let label = try frame(
++                    "inspector.keyframes.lane.\(property.rawValue).label",
++                    in: host
++                )
++                let track = try frame(
++                    "inspector.keyframes.lane.\(property.rawValue).track",
++                    in: host
++                )
++                #expect(label.width > 0)
++                #expect(label.height > 0)
++                #expect(isContained(label, in: panel))
++                #expect(isContained(track, in: panel))
++                #expect(label.maxX + AppTheme.Spacing.sm <= track.minX + 1)
++                #expect(abs(track.minX - ruler.minX) < 1)
++                #expect(abs(track.maxX - ruler.maxX) < 1)
++            }
++        }
++    }
++
+     @Test func selectionAndTextRowsDoNotReserveAnEmptyAccessorySlot() throws {
+         for totalWidth: CGFloat in [AppTheme.Layout.inspectorMin, 184, 260, 360] {
+             for scale in [1.0, 1.3, 1.5] {
+@@ -115,6 +206,7 @@ struct InspectorFormLayoutTests {
+ 
+ private struct InspectorAxisFixture: View {
+     let keyframesPanelVisible: Bool
++    var cropAspect: CropAspectLock = .original
+ 
+     var body: some View {
+         InspectorKeyframesContent(isPresented: keyframesPanelVisible) {
+@@ -170,15 +262,8 @@ private struct InspectorAxisFixture: View {
+                     Menu {
+                         Button("Custom") {}
+                     } label: {
+-                        HStack(spacing: AppTheme.Spacing.xs) {
+-                            Text("Original")
+-                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+-                            Image(systemName: "chevron.down")
+-                                .interfaceFont(
+-                                    size: AppTheme.Typography.metadata,
+-                                    weight: AppTheme.FontWeight.semibold
+-                                )
+-                        }
++                        InspectorCropAspectLabel(label: cropAspect.label)
++                            .background(InspectorGeometryProbe(name: "crop-menu-label"))
+                     }
+                     .menuStyle(.borderlessButton)
+                     .menuIndicator(.hidden)

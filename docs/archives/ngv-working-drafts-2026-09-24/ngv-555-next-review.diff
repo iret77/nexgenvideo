@@ -1,0 +1,587 @@
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index cc4c748f..98444c59 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -884,8 +884,8 @@ enum WorkspaceUIAcceptance {
+                   in: window
+               ) == nil,
+               await waitUntil(timeout: .seconds(5), {
+-                  window.attachedSheet?.contentView.flatMap {
+-                      findView(in: $0, accessibilityIdentifier: "production.render.take-picker")
++                  window.attachedSheet.flatMap {
++                      findAccessibilityElement(identifier: "production.render.take-picker", in: $0)
+                   } != nil
+               }), let reviewWindow = window.attachedSheet,
+               nativeControlState(
+@@ -901,10 +901,27 @@ enum WorkspaceUIAcceptance {
+         pressKey(keyCode: 125, characters: "\u{f701}")
+         pressKey(keyCode: 36, characters: "\r")
+         guard await waitUntil(timeout: .seconds(5), {
+-            reviewWindow.contentView.flatMap {
+-                findView(in: $0, accessibilityIdentifier: "production.render.player")
+-            } != nil
+-        }), clickControl(
++            findAccessibilityElement(identifier: "production.render.player", in: reviewWindow) != nil
++                && Double(probeValue(identifier: "production.render.playback-seconds", in: reviewWindow) ?? "") != nil
++        }), scrollControlToVisible(
++            identifier: "production.render.use-take",
++            in: reviewWindow
++        ), nativeControlState(
++            identifier: "production.render.use-take",
++            in: reviewWindow
++        ) == .disabled, clickControl(
++            identifier: "production.render.use-take",
++            in: reviewWindow
++        ) == nil, scrollControlToVisible(
++            identifier: "production.render.record-pass",
++            in: reviewWindow
++        ), nativeControlState(
++            identifier: "production.render.record-pass",
++            in: reviewWindow
++        ) == .disabled, clickControl(
++            identifier: "production.render.record-pass",
++            in: reviewWindow
++        ) == nil, clickControlRevealing(
+             identifier: "production.render.references",
+             in: reviewWindow
+         ) == nil,
+@@ -919,6 +936,38 @@ enum WorkspaceUIAcceptance {
+             _ = await running.value
+             fail("the recorded Render take did not expose its player and references", scale: scale)
+         }
++        guard let initialPlayback = Double(probeValue(
++            identifier: "production.render.playback-seconds",
++            in: reviewWindow
++        ) ?? ""), clickControlRevealing(
++            identifier: "production.render.player",
++            in: reviewWindow
++        ) == nil else {
++            runnerGate.signal()
++            _ = await running.value
++            fail("the recorded Render player could not receive a native click", scale: scale)
++        }
++        let progressedAfterClick = await waitUntil(timeout: .seconds(2), {
++            guard let current = Double(probeValue(
++                identifier: "production.render.playback-seconds",
++                in: reviewWindow
++            ) ?? "") else { return false }
++            return current > initialPlayback + 0.15
++        })
++        if !progressedAfterClick {
++            pressKey(keyCode: 49, characters: " ")
++            guard await waitUntil(timeout: .seconds(5), {
++                guard let current = Double(probeValue(
++                    identifier: "production.render.playback-seconds",
++                    in: reviewWindow
++                ) ?? "") else { return false }
++                return current > initialPlayback + 0.15
++            }) else {
++                runnerGate.signal()
++                _ = await running.value
++                fail("the recorded Render player did not advance after native Play input", scale: scale)
++            }
++        }
+         let readOnlyName = "scale-\(scaleLabel(scale))-production-read-only.png"
+         guard let reviewContent = reviewWindow.contentView,
+               snapshot(reviewContent, at: evidenceURL.appendingPathComponent(readOnlyName)) else {
+@@ -933,12 +982,13 @@ enum WorkspaceUIAcceptance {
+                 "inspectedPhase": "frames,render",
+                 "mutationsDisabled": true,
+                 "nativeInspectionWorked": true,
++                "playerAdvancedAfterNativeInput": true,
+                 "popoverClosedOnReadinessChange": true,
+                 "runningPhase": "frames",
+                 "screenshot": readOnlyName,
+             ]
+         )
+-        guard clickControl(
++        guard clickControlRevealing(
+             identifier: "production.render.review-close",
+             in: reviewWindow
+         ) == nil,
+@@ -2013,28 +2063,14 @@ enum WorkspaceUIAcceptance {
+     }
+ 
+     private static func clickControl(identifier: String, in window: NSWindow) -> String? {
+-        guard let root = window.contentView,
+-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+-            return "native control unavailable"
+-        }
+-        return postClick(on: control, in: window)
++        postClick(onAccessibilityElement: identifier, in: window, revealing: false)
+     }
+ 
+     private static func clickControlRevealing(
+         identifier: String,
+         in window: NSWindow
+     ) -> String? {
+-        guard let root = window.contentView,
+-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+-            return "native control unavailable"
+-        }
+-        if let scrollView = enclosingScrollView(for: control),
+-           let documentView = scrollView.documentView {
+-            documentView.scrollToVisible(control.convert(control.bounds, to: documentView))
+-            scrollView.reflectScrolledClipView(scrollView.contentView)
+-            root.layoutSubtreeIfNeeded()
+-        }
+-        return postClick(on: control, in: window)
++        postClick(onAccessibilityElement: identifier, in: window, revealing: true)
+     }
+ 
+     private static func postClick(on view: NSView, in window: NSWindow) -> String? {
+@@ -2052,6 +2088,10 @@ enum WorkspaceUIAcceptance {
+         guard root.bounds.contains(root.convert(location, from: nil)) else {
+             return "control is outside the window"
+         }
++        return postClick(at: location, in: window)
++    }
++
++    private static func postClick(at location: NSPoint, in window: NSWindow) -> String? {
+         let timestamp = ProcessInfo.processInfo.systemUptime
+         guard let down = NSEvent.mouseEvent(
+             with: .leftMouseDown,
+@@ -2085,62 +2125,112 @@ enum WorkspaceUIAcceptance {
+         identifier: String,
+         in window: NSWindow
+     ) -> NativeControlState? {
+-        guard let root = window.contentView,
+-              let control = identifiedNativeControl(identifier: identifier, in: root) else {
+-            return nil
+-        }
+-        let frame = control.convert(control.bounds, to: root)
+-        guard control.window === window,
+-              !control.isHiddenOrHasHiddenAncestor,
+-              frame.width > 0,
+-              frame.height > 0,
+-              root.bounds.intersects(frame) else { return nil }
+-        return control.isEnabled && control.accessibilityEnabled()
+-            ? .enabled
+-            : .disabled
++        guard let element = findAccessibilityElement(identifier: identifier, in: window),
++              visibleAccessibilityFrame(of: element, in: window) != nil else { return nil }
++        return element.isAccessibilityEnabled() ? .enabled : .disabled
+     }
+ 
+     private static func scrollControlToVisible(
+         identifier: String,
+         in window: NSWindow
+     ) -> Bool {
+-        guard let root = window.contentView,
+-              let view = findView(in: root, accessibilityIdentifier: identifier),
+-              let scrollView = enclosingScrollView(for: view),
+-              let documentView = scrollView.documentView else { return false }
+-        documentView.scrollToVisible(view.convert(view.bounds, to: documentView))
+-        scrollView.reflectScrolledClipView(scrollView.contentView)
+-        root.layoutSubtreeIfNeeded()
+-        let frame = view.convert(view.bounds, to: scrollView.contentView)
+-        return scrollView.contentView.bounds.insetBy(
+-            dx: -AppTheme.BorderWidth.thin,
+-            dy: -AppTheme.BorderWidth.thin
+-        ).contains(frame)
++        guard let element = findAccessibilityElement(identifier: identifier, in: window) else {
++            return false
++        }
++        revealAccessibilityElement(element, in: window)
++        window.contentView?.layoutSubtreeIfNeeded()
++        return visibleAccessibilityFrame(of: element, in: window) != nil
+     }
+ 
+-    private static func identifiedNativeControl(
++    private static func findAccessibilityElement(
+         identifier: String,
+-        in root: NSView
+-    ) -> NSControl? {
+-        guard let identified = findView(
+-            in: root,
+-            accessibilityIdentifier: identifier
+-        ) else { return nil }
+-        if let control = identified as? NSControl { return control }
+-        func descendant(in view: NSView) -> NSControl? {
+-            for child in view.subviews {
+-                if let control = child as? NSControl { return control }
+-                if let control = descendant(in: child) { return control }
++        in window: NSWindow
++    ) -> (any NSAccessibilityProtocol)? {
++        guard let root = window.contentView else { return nil }
++        var visited = Set<ObjectIdentifier>()
++        var matches: [any NSAccessibilityProtocol] = []
++        func visit(_ element: any NSAccessibilityProtocol) {
++            guard visited.insert(ObjectIdentifier(element)).inserted else { return }
++            if element.isAccessibilityElement(), element.accessibilityIdentifier() == identifier {
++                matches.append(element)
++            }
++            for child in element.accessibilityChildren() ?? [] {
++                if let accessible = child as? any NSAccessibilityProtocol { visit(accessible) }
+             }
+-            return nil
+         }
+-        if let control = descendant(in: identified) { return control }
+-        var ancestor = identified.superview
+-        while let view = ancestor {
+-            if let control = view as? NSControl { return control }
+-            ancestor = view.superview
++        visit(root)
++        return matches.count == 1 ? matches[0] : nil
++    }
++
++    private static func visibleAccessibilityFrame(
++        of element: any NSAccessibilityProtocol,
++        in window: NSWindow
++    ) -> NSRect? {
++        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
++              (element.accessibilityWindow() as? NSWindow) === window,
++              let root = window.contentView else { return nil }
++        if let view = element as? NSView,
++           (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
++        let frame = element.accessibilityFrame()
++        guard frame.origin.x.isFinite, frame.origin.y.isFinite,
++              frame.width.isFinite, frame.height.isFinite,
++              frame.width > 0, frame.height > 0 else { return nil }
++        var visible = frame.intersection(window.convertToScreen(root.convert(root.bounds, to: nil)))
++        var ancestor = element.accessibilityParent()
++        var visited = Set<ObjectIdentifier>()
++        while let accessible = ancestor as? any NSAccessibilityProtocol {
++            guard visited.insert(ObjectIdentifier(accessible)).inserted else { return nil }
++            if let view = accessible as? NSView,
++               (view.window !== window || view.isHiddenOrHasHiddenAncestor) { return nil }
++            if let scrollView = accessible as? NSScrollView {
++                let clip = scrollView.contentView
++                visible = visible.intersection(window.convertToScreen(clip.convert(clip.bounds, to: nil)))
++            }
++            ancestor = accessible.accessibilityParent()
++        }
++        guard visible.origin.x.isFinite, visible.origin.y.isFinite,
++              visible.width.isFinite, visible.height.isFinite,
++              visible.width > 0, visible.height > 0 else { return nil }
++        return visible
++    }
++
++    private static func postClick(
++        onAccessibilityElement identifier: String,
++        in window: NSWindow,
++        revealing: Bool
++    ) -> String? {
++        guard let element = findAccessibilityElement(identifier: identifier, in: window) else {
++            return "native accessibility element unavailable"
++        }
++        if revealing {
++            revealAccessibilityElement(element, in: window)
++            window.contentView?.layoutSubtreeIfNeeded()
++        }
++        guard let frame = visibleAccessibilityFrame(of: element, in: window) else {
++            return "native accessibility element is outside the visible window"
++        }
++        let point = window.convertFromScreen(NSRect(x: frame.midX, y: frame.midY, width: 0, height: 0)).origin
++        return postClick(at: point, in: window)
++    }
++
++    private static func revealAccessibilityElement(
++        _ element: any NSAccessibilityProtocol,
++        in window: NSWindow
++    ) {
++        let screenFrame = element.accessibilityFrame()
++        var ancestor = element.accessibilityParent()
++        var visited = Set<ObjectIdentifier>()
++        while let accessible = ancestor as? any NSAccessibilityProtocol {
++            guard visited.insert(ObjectIdentifier(accessible)).inserted else { return }
++            if let scrollView = accessible as? NSScrollView,
++               let documentView = scrollView.documentView,
++               scrollView.window === window {
++                let target = documentView.convert(window.convertFromScreen(screenFrame), from: nil)
++                documentView.scrollToVisible(target)
++                scrollView.reflectScrolledClipView(scrollView.contentView)
++            }
++            ancestor = accessible.accessibilityParent()
+         }
+-        return nil
+     }
+ 
+     private static func clickRevealing(
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+index 997f4a73..6a3b2755 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+@@ -159,7 +159,8 @@ struct PipelineReadinessPresentation: Equatable {
+         phaseLabel: String,
+         approval: NativeGateApprovalReadiness,
+         mutations: NativeGateApprovalReadiness,
+-        hostDecisionRequirement: String?
++        hostDecisionRequirement: String?,
++        checking: Bool = false
+     ) -> Self {
+         if let hostDecisionRequirement {
+             return Self(
+@@ -168,14 +169,14 @@ struct PipelineReadinessPresentation: Equatable {
+                 action: .openDecision
+             )
+         }
++        if checking {
++            return Self(
++                message: "Checking \(phaseLabel) editing access.",
++                diagnostic: nil,
++                action: .none
++            )
++        }
+         if let blocker = mutations.blocker {
+-            if blocker.localizedCaseInsensitiveContains("checking") {
+-                return Self(
+-                    message: "Checking \(phaseLabel) editing access.",
+-                    diagnostic: nil,
+-                    action: .none
+-                )
+-            }
+             return Self(
+                 message: userMessage(
+                     for: blocker,
+@@ -203,13 +204,6 @@ struct PipelineReadinessPresentation: Equatable {
+                 action: .none
+             )
+         }
+-        if blocker.localizedCaseInsensitiveContains("checking") {
+-            return Self(
+-                message: "Checking \(phaseLabel) approval requirements.",
+-                diagnostic: nil,
+-                action: .none
+-            )
+-        }
+         return Self(
+             message: userMessage(
+                 for: blocker,
+@@ -227,9 +221,6 @@ struct PipelineReadinessPresentation: Equatable {
+         phaseLabel: String
+     ) -> String {
+         let lower = blocker.lowercased()
+-        if lower.contains("checking") {
+-            return "Checking \(phaseLabel) approval requirements."
+-        }
+         if let card = hostOwnedCard(in: blocker) {
+             return "Complete the \(card) card before approving \(phaseLabel)."
+         }
+@@ -314,6 +305,7 @@ struct PipelinePanelView: View {
+     @State private var readinessToken = 0
+     @State private var readinessTask: Task<Void, Never>?
+     @State private var readinessRefreshQueued = false
++    @State private var readinessChecking = false
+     @State private var approvalPhase: String?
+     @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
+         "The pipeline state is unavailable."
+@@ -945,7 +937,8 @@ struct PipelinePanelView: View {
+             hostDecisionRequirement: editor.agentService.composerBlockerDescription
+                 ?? (editor.agentService.isComposerBlocked
+                     ? "Resolve the open Agent decision before approving \(label)."
+-                    : nil)
++                    : nil),
++            checking: readinessChecking
+         )
+         let layout = compact
+             ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.smMd))
+@@ -1064,7 +1057,8 @@ struct PipelinePanelView: View {
+                 phaseLabel: phaseLabel(selected.phase, contract: contract),
+                 approval: approvalReadiness,
+                 mutations: mutationReadiness,
+-                hostDecisionRequirement: nil
++                hostDecisionRequirement: nil,
++                checking: readinessChecking
+             ).message
+         }
+         return nil
+@@ -1217,11 +1211,13 @@ struct PipelinePanelView: View {
+               let data = navigation.state,
+               editor.workingRoot != nil else {
+             approvalPhase = nil
++            readinessChecking = false
+             approvalReadiness = .blocked("The pipeline state is unavailable.")
+             mutationReadiness = .blocked("The pipeline state is unavailable.")
+             return
+         }
+         approvalPhase = data.nextPhaseName
++        readinessChecking = true
+         approvalReadiness = .blocked("Checking approval readiness.")
+         mutationReadiness = .blocked("Checking gate controls.")
+         readinessRefreshQueued = true
+@@ -1246,6 +1242,7 @@ struct PipelinePanelView: View {
+                       editor.workingRoot == currentDir else { continue }
+                 mutationReadiness = readiness.mutations
+                 approvalReadiness = readiness.approval
++                readinessChecking = false
+             } while readinessRefreshQueued
+             readinessTask = nil
+         }
+@@ -1283,6 +1280,7 @@ struct PipelinePanelView: View {
+             refreshApprovalReadiness()
+         case .failure(let error):
+             approvalPhase = nil
++            readinessChecking = false
+             approvalReadiness = .blocked("The pipeline state is unavailable.")
+             mutationReadiness = .blocked("The pipeline state is unavailable.")
+             state = .failed(error)
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift b/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
+index 1436681e..c0bea038 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift
+@@ -213,12 +213,16 @@ struct ProjectSettingsView: View {
+     }
+ 
+     private func spendWarning(_ state: ProjectStateData) -> String? {
+-        if !state.spendComplete { return "Spend incomplete" }
+-        if let remaining = state.hardStopRemainingEur, remaining <= 0 {
+-            return "Hard stop reached"
++        let incomplete = !state.spendComplete
++        if let stop = state.budgetStopEur, state.budgetSpentEur >= stop {
++            return incomplete ? "Hard stop reached · Spend incomplete" : "Hard stop reached"
+         }
++        if state.budgetSpentEur >= state.budgetEur {
++            return incomplete ? "Over budget · Spend incomplete" : "Over budget"
++        }
++        if incomplete { return "Spend incomplete" }
+         guard state.budgetWarning else { return nil }
+-        return (state.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget"
++        return "Low budget"
+     }
+ 
+     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic
+diff --git a/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift b/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
+index ec67af92..e71c605d 100644
+--- a/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
++++ b/Sources/NexGenVideo/Inspector/Cockpit/TakeReviewView.swift
+@@ -11,6 +11,7 @@ struct TakeReviewView: View {
+     @State private var selectedID = ""
+     @State private var snapshot: TakeReview.Snapshot?
+     @State private var player: AVPlayer?
++    @State private var playbackSeconds = 0.0
+     @State private var findings: [TakeReview.Finding] = []
+     @State private var verdict = TakeReview.Verdict.conforms
+     @State private var observation = ""
+@@ -26,6 +27,16 @@ struct TakeReviewView: View {
+             .buttonStyle(InlineActionButtonStyle())
+             .accessibilityIdentifier("production.render.review-takes")
+             .sheet(isPresented: $presented) { reviewSheet }
++            .task(id: editor.engineStateRevision) { await load() }
++            .onChange(of: editor.workingRoot) { _, _ in
++                presented = false
++                takes = []
++                selectedID = ""
++                snapshot = nil
++                player?.pause()
++                player = nil
++                Task { await load() }
++            }
+             .overlay(alignment: .topLeading) {
+                 if let take = takes.first {
+                     AppRelaunchClickProbe(
+@@ -62,6 +73,12 @@ struct TakeReviewView: View {
+                     VideoPlayer(player: player)
+                         .frame(minHeight: AppTheme.Layout.previewMinHeight)
+                         .accessibilityIdentifier("production.render.player")
++                    AppRelaunchClickProbe(
++                        identifier: "production.render.playback-seconds",
++                        acceptanceValue: String(format: "%.3f", playbackSeconds)
++                    )
++                    .frame(width: AppTheme.BorderWidth.hairline, height: AppTheme.BorderWidth.hairline)
++                    .allowsHitTesting(false)
+                     TakeRangeReviewView(
+                         snapshot: snapshot,
+                         wholeTakePlayer: player,
+@@ -99,6 +116,7 @@ struct TakeReviewView: View {
+                     }
+                     .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                     .disabled(busy || !canSelect || !canWrite || !allowsMutation)
++                    .accessibilityIdentifier("production.render.use-take")
+                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
+                         let pass = TakeReview.Pass.allCases[findings.count]
+                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
+@@ -127,6 +145,7 @@ struct TakeReviewView: View {
+                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                         .disabled(!allowsMutation || busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                             || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
++                        .accessibilityIdentifier("production.render.record-pass")
+                     } else {
+                         ForEach(findings, id: \.pass) { finding in
+                             Text("\(finding.pass.label): \(finding.verdict.rawValue) — \(finding.observation)")
+@@ -144,6 +163,7 @@ struct TakeReviewView: View {
+                         }
+                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                         .disabled(busy || !canWrite || !allowsMutation)
++                        .accessibilityIdentifier("production.render.save-review")
+                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
+                             .buttonStyle(InlineActionButtonStyle())
+                             .disabled(busy || !allowsMutation)
+@@ -161,15 +181,22 @@ struct TakeReviewView: View {
+         .frame(minWidth: AppTheme.Layout.takeReviewWidth)
+         .frame(maxHeight: AppTheme.Layout.takeReviewMaxHeight)
+         .interfaceFont(size: AppTheme.Typography.ui)
+-        .task(id: editor.engineStateRevision) { await load() }
+-        .task(id: selectedID) { await select() }
++        .task(id: selectedID) {
++            await select()
++            guard WorkspaceUIAcceptance.isRequested else { return }
++            while !Task.isCancelled {
++                let seconds = player?.currentTime().seconds ?? 0
++                playbackSeconds = seconds.isFinite ? seconds : 0
++                try? await Task.sleep(for: .milliseconds(100))
++            }
++        }
+         .onDisappear { player?.pause() }
+-        .onChange(of: editor.workingRoot) { _, _ in presented = false; snapshot = nil; player?.pause(); player = nil }
+     }
+ 
+     private var effectiveCanWrite: Bool { canWrite && allowsMutation }
+ 
+     private func load() async {
++        takes = []
+         canWrite = false
+         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
+         canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
+@@ -189,7 +216,7 @@ struct TakeReviewView: View {
+     }
+ 
+     private func select() async {
+-        player?.pause(); player = nil; snapshot = nil; findings = []; observation = ""; message = nil; canSelect = false
++        player?.pause(); player = nil; playbackSeconds = 0; snapshot = nil; findings = []; observation = ""; message = nil; canSelect = false
+         guard !selectedID.isEmpty, let home = editor.workingRoot else { return }
+         let id = selectedID
+         busy = true
+diff --git a/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift b/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
+index 7b8bf6c8..12cf6284 100644
+--- a/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
++++ b/Tests/NexGenVideoTests/Cockpit/PackSurfaceTests.swift
+@@ -392,12 +392,25 @@ struct PackSurfaceTests {
+             phaseLabel: "Frames",
+             approval: .blocked("Checking approval readiness."),
+             mutations: .blocked("Checking gate controls."),
+-            hostDecisionRequirement: nil
++            hostDecisionRequirement: nil,
++            checking: true
+         )
+         #expect(checking.message == "Checking Frames editing access.")
+         #expect(checking.diagnostic == nil)
+         #expect(checking.action == .none)
+ 
++        let substantive = "Checking frame findings requires an accepted observation."
++        let actualBlocker = PipelineReadinessPresentation.current(
++            selector: "host.frames_manifest",
++            phaseLabel: "Frames",
++            approval: .blocked(substantive),
++            mutations: .ready,
++            hostDecisionRequirement: nil
++        )
++        #expect(actualBlocker.message == "Resolve or explicitly accept the current frame findings before approval.")
++        #expect(actualBlocker.diagnostic == substantive)
++        #expect(actualBlocker.action == .askAgent(substantive))
++
+         let intake = PipelineReadinessPresentation.current(
+             selector: "host.project_track",
+             phaseLabel: "Project Init",
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index d30078ba..9fc5cffc 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -301,6 +301,7 @@ def run_scale(executable, output, scale):
+         and production_read_only[0].get("runningPhase") == "frames"
+         and production_read_only[0].get("mutationsDisabled") is True
+         and production_read_only[0].get("nativeInspectionWorked") is True
++        and production_read_only[0].get("playerAdvancedAfterNativeInput") is True
+         and production_read_only[0].get("popoverClosedOnReadinessChange") is True
+         and valid_production_layout(narrow[0])
+         and invariants[0].get("liveStateUnchanged") is True

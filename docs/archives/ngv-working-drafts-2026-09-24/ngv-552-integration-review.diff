@@ -1,0 +1,493 @@
+commit 1f6070d16d82d89ff6b33d01a44be8b76104485c
+Merge: 76a6eaec 3eff3e98
+Author:     Christian Wendler <<redacted email>>
+AuthorDate: Thu Sep 24 04:34:27 2026 +0200
+Commit:     Christian Wendler <<redacted email>>
+CommitDate: Thu Sep 24 04:34:27 2026 +0200
+
+    Merge commit '3eff3e98f2cfd28e50a8b0ab9e6cb713fc777105' into codex/issue-552
+    
+    # Conflicts:
+    #       .github/workflows/workspace-ui-acceptance.yml
+    #       Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+    #       Sources/NexGenVideo/Inspector/InspectorView.swift
+    #       scripts/workspace_ui_acceptance.py
+
+diff --cc .github/workflows/workspace-ui-acceptance.yml
+index d0d5e448,42fd7efe..aaa9b99e
+--- a/.github/workflows/workspace-ui-acceptance.yml
++++ b/.github/workflows/workspace-ui-acceptance.yml
+@@@ -9,11 -9,13 +9,17 @@@ on
+        - 'Sources/NexGenVideo/App/main.swift'
+        - 'Sources/NexGenVideo/Agent/AgentService.swift'
+        - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
+ +      - 'Sources/NexGenVideo/Inspector/**'
+ +      - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
+ +      - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
+ +      - 'Sources/NexGenVideo/UI/AppTheme.swift'
+ +      - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
++       - 'Sources/NexGenVideo/Editor/EditorWindowController.swift'
++       - 'Sources/NexGenVideo/Editor/ViewModel/**'
+ -      - 'Sources/NexGenVideo/Inspector/InspectorView.swift'
++       - 'Sources/NexGenVideo/MediaPanel/MediaTab/**'
++       - 'Sources/NexGenVideo/Preview/PreviewContainerView.swift'
++       - 'Sources/NexGenVideo/Preview/SourcePreviewState.swift'
++       - 'Sources/NexGenVideo/Timeline/**'
+  
+  concurrency:
+    group: workspace-ui-acceptance-${{ github.ref }}
+diff --cc Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 762973b9,b0ae36d9..0dd0f33d
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@@ -386,210 -1190,7 +1203,210 @@@ enum WorkspaceUIAcceptance 
+          exit(1)
+      }
+  
+ +    private static func captureInspectorCases(
+ +        editor: EditorViewModel,
+ +        window: NSWindow,
+ +        host: NSView,
+ +        evidenceURL: URL,
+ +        scale: Double
+ +    ) async {
+ +        let originalAssets = editor.mediaAssets
+ +        let originalClipIDs = editor.selectedClipIds
+ +        let originalObject = editor.inspectedObject
+ +        let originalMediaTab = editor.mediaPanelTab(for: .edit)
+ +        let image = MediaAsset(
+ +            id: "inspector-image",
+ +            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
+ +            type: .image,
+ +            name: "Inspector reference"
+ +        )
+ +        let audio = MediaAsset(
+ +            id: "inspector-audio",
+ +            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.wav"),
+ +            type: .audio,
+ +            name: "Inspector audio"
+ +        )
+ +        editor.mediaAssets.append(contentsOf: [image, audio])
+ +
+ +        let cases: [(family: String, clipIDs: Set<String>, tab: String?)] = [
+ +            ("text", ["inspector-text"], nil),
+ +            ("video", ["inspector-image-1"], "Video"),
+ +            ("effects", ["inspector-image-1"], "Adjust"),
+ +            ("ai", ["inspector-image-1"], "AI Edit"),
+ +            ("audio", ["inspector-audio-clip"], nil),
+ +            ("mixed", ["inspector-image-1", "inspector-image-2"], nil),
+ +            ("asset", [], nil),
+ +        ]
+ +        for item in cases {
+ +            editor.selectedClipIds = item.clipIDs
+ +            if item.family == "asset" {
+ +                guard await waitUntil(timeout: .seconds(5), {
+ +                    host.layoutSubtreeIfNeeded()
+ +                    return editor.selectedClipIds.isEmpty && editor.inspectedObject == nil
+ +                }) else {
+ +                    fail("could not clear the clip inspection before asset inspection", scale: scale)
+ +                }
+ +                editor.inspectedObject = .mediaAsset(image.id)
+ +            } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
+ +                editor.inspectedObject = .clip(clipID)
+ +            } else {
+ +                editor.inspectedObject = nil
+ +            }
+ +            guard await waitUntil(timeout: .seconds(5), {
+ +                host.layoutSubtreeIfNeeded()
+ +                return visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+ +                    && editor.selectedClipIds == item.clipIDs
+ +                    && (item.family != "asset" || editor.inspectedObject == .mediaAsset(image.id))
+ +            }) else {
+ +                fail("inspector \(item.family) did not settle", scale: scale)
+ +            }
+ +            if let tab = item.tab {
+ +                let identifier = "inspector.tab.\(tab)"
+ +                if probeState(identifier: identifier, in: window) != true {
+ +                    guard click(identifier: identifier, in: window) == nil,
+ +                          await waitUntil(timeout: .seconds(5), {
+ +                              host.layoutSubtreeIfNeeded()
+ +                              return probeState(identifier: identifier, in: window) == true
+ +                          }) else {
+ +                        fail("inspector tab \(tab) did not activate", scale: scale)
+ +                    }
+ +                }
+ +            }
+ +            let capturesKeyframes = item.family == "video" || item.family == "audio"
+ +            if capturesKeyframes, probeState(identifier: "inspector.keyframes", in: window) != false {
+ +                guard click(identifier: "inspector.keyframes", in: window) == nil,
+ +                      await waitUntil(timeout: .seconds(5), {
+ +                          host.layoutSubtreeIfNeeded()
+ +                          return probeState(identifier: "inspector.keyframes", in: window) == false
+ +                      }) else {
+ +                    fail("inspector \(item.family) keyframes did not close", scale: scale)
+ +                }
+ +            }
+ +            try? await Task.sleep(for: .milliseconds(300))
+ +            host.layoutSubtreeIfNeeded()
+ +            let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
+ +            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+ +                fail("could not capture inspector \(item.family)", scale: scale)
+ +            }
+ +            var fields: [String: Any] = ["family": item.family, "screenshot": name]
+ +            if capturesKeyframes { fields["keyframes"] = "closed" }
+ +            emit("inspector", scale: scale, fields: fields)
+ +            if capturesKeyframes {
+ +                guard click(identifier: "inspector.keyframes", in: window) == nil,
+ +                      await waitUntil(timeout: .seconds(5), {
+ +                          host.layoutSubtreeIfNeeded()
+ +                          return probeState(identifier: "inspector.keyframes", in: window) == true
+ +                      }) else {
+ +                    fail("inspector \(item.family) keyframes did not open", scale: scale)
+ +                }
+ +                let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
+ +                    ? [.volume]
+ +                    : [.position, .scale, .rotation, .opacity, .crop]
+ +                guard let root = window.contentView else {
+ +                    fail("inspector \(item.family) window content was unavailable", scale: scale)
+ +                }
+ +                let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
+ +                let sideEvidence = await captureKeyframeLayoutEvidence(
+ +                    family: item.family,
+ +                    properties: expectedLaneProperties,
+ +                    window: window,
+ +                    host: host,
+ +                    evidenceURL: evidenceURL,
+ +                    screenshotName: openName,
+ +                    inspectorWidthTarget: nil,
+ +                    scale: scale
+ +                )
+ +                guard let splitState = inspectorSplitState(in: root),
+ +                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+ +                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
+ +                }
+ +                splitState.splitView.setPosition(
+ +                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+ +                    ofDividerAt: splitState.dividerIndex
+ +                )
+ +                guard await waitUntil(timeout: .seconds(5), {
+ +                    host.layoutSubtreeIfNeeded()
+ +                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+ +                        return false
+ +                    }
+ +                    return abs(frame.width - AppTheme.Layout.inspectorMin)
+ +                        <= AppTheme.BorderWidth.thin
+ +                }) else {
+ +                    fail("inspector \(item.family) did not reach minimum width", scale: scale)
+ +                }
+ +                let stackedName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open-stacked.png"
+ +                let stackedEvidence = await captureKeyframeLayoutEvidence(
+ +                    family: item.family,
+ +                    properties: expectedLaneProperties,
+ +                    window: window,
+ +                    host: host,
+ +                    evidenceURL: evidenceURL,
+ +                    screenshotName: stackedName,
+ +                    inspectorWidthTarget: AppTheme.Layout.inspectorMin,
+ +                    scale: scale
+ +                )
+ +                splitState.splitView.setPosition(
+ +                    splitState.originalPosition,
+ +                    ofDividerAt: splitState.dividerIndex
+ +                )
+ +                guard await waitUntil(timeout: .seconds(5), {
+ +                    host.layoutSubtreeIfNeeded()
+ +                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+ +                        return false
+ +                    }
+ +                    return abs(frame.width - originalInspectorFrame.width)
+ +                        <= AppTheme.BorderWidth.thin
+ +                }) else {
+ +                    fail("inspector \(item.family) width did not restore", scale: scale)
+ +                }
+ +                let layoutEvidence = [sideEvidence, stackedEvidence]
+ +                guard layoutEvidence.compactMap({ $0["mode"] as? String }) == ["side", "stacked"] else {
+ +                    fail("inspector \(item.family) did not exercise both keyframe layouts", scale: scale)
+ +                }
+ +                emit(
+ +                    "inspector",
+ +                    scale: scale,
+ +                    fields: [
+ +                        "family": item.family,
+ +                        "keyframes": "open",
+ +                        "laneLayoutEvidence": layoutEvidence,
+ +                        "screenshot": openName,
+ +                    ]
+ +                )
+ +                guard click(identifier: "inspector.keyframes", in: window) == nil,
+ +                      await waitUntil(timeout: .seconds(5), {
+ +                          host.layoutSubtreeIfNeeded()
+ +                          return probeState(identifier: "inspector.keyframes", in: window) == false
+ +                      }) else {
+ +                    fail("inspector \(item.family) keyframes did not close again", scale: scale)
+ +                }
+ +            }
+ +        }
+ +        let captionIdentifier = "media.tab.Captions"
+ +        if probeState(identifier: captionIdentifier, in: window) != true {
+ +            guard click(identifier: captionIdentifier, in: window) == nil,
+ +                  await waitUntil(timeout: .seconds(5), {
+ +                      host.layoutSubtreeIfNeeded()
+ +                      return editor.mediaPanelTab(for: .edit) == .captions
+ +                          && probeState(identifier: captionIdentifier, in: window) == true
+ +                  }) else {
+ +                fail("caption form did not activate", scale: scale)
+ +            }
+ +        }
+ +        try? await Task.sleep(for: .milliseconds(300))
+ +        host.layoutSubtreeIfNeeded()
+ +        let captionName = "scale-\(scaleLabel(scale))-inspector-caption.png"
+ +        guard snapshot(host, at: evidenceURL.appendingPathComponent(captionName)) else {
+ +            fail("could not capture caption form", scale: scale)
+ +        }
+ +        emit("inspector", scale: scale, fields: ["family": "caption", "screenshot": captionName])
+ +        editor.setMediaPanelTab(originalMediaTab, for: .edit)
+ +        editor.selectedClipIds = originalClipIDs
+ +        editor.inspectedObject = originalObject
+ +        editor.mediaAssets = originalAssets
+ +    }
+ +
+-     private static func makeProjectFixture(scale: Double) throws -> URL {
++     private static func makeProjectFixture(scale: Double) async throws -> URL {
+          let title = scale == 1.25
+              ? "An exceptionally long project name for the final picture lock"
+              : "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt"
+@@@ -601,39 -1202,67 +1418,99 @@@
+              at: projectURL,
+              withIntermediateDirectories: true
+          )
++         let mediaDirectory = projectURL.appendingPathComponent(
++             Project.mediaDirectoryName,
++             isDirectory: true
++         )
++         try FileManager.default.createDirectory(
++             at: mediaDirectory,
++             withIntermediateDirectories: true
++         )
++         let generatedVideo = try await ImageVideoGenerator.blackVideo(
++             size: CGSize(width: 640, height: 360)
++         )
++         let sourceURL = mediaDirectory.appendingPathComponent("selection-source.mov")
++         try FileManager.default.copyItem(at: generatedVideo, to: sourceURL)
++ 
++         var clip = Clip(
++             mediaRef: "selection-source",
++             mediaType: .video,
++             sourceClipType: .video,
++             startFrame: 0,
++             durationFrames: 120
++         )
++         clip.id = "selection-clip"
++         var linkedVideo = Clip(
++             mediaRef: "selection-source",
++             mediaType: .video,
++             sourceClipType: .video,
++             startFrame: 150,
++             durationFrames: 30
++         )
++         linkedVideo.id = "selection-linked-video"
++         linkedVideo.linkGroupId = "selection-linked-pair"
++         var linkedAudio = Clip(
++             mediaRef: "selection-source",
++             mediaType: .audio,
++             sourceClipType: .video,
++             startFrame: 150,
++             durationFrames: 30
++         )
++         linkedAudio.id = "selection-linked-audio"
++         linkedAudio.linkGroupId = "selection-linked-pair"
++         var title = Clip(
++             mediaRef: "",
++             mediaType: .text,
++             sourceClipType: .text,
++             startFrame: 0,
++             durationFrames: 30
++         )
++         title.id = "selection-title"
++         title.textContent = "Picture Lock"
+          var timeline = Timeline()
++         timeline.fps = 30
++         timeline.width = 640
++         timeline.height = 360
++         timeline.settingsConfigured = true
++         var track = Track(type: .video, clips: [clip, linkedVideo])
++         track.id = "selection-track"
++         var titleTrack = Track(type: .video, clips: [title])
++         titleTrack.id = "selection-title-track"
++         var linkedAudioTrack = Track(type: .audio, clips: [linkedAudio])
++         linkedAudioTrack.id = "selection-linked-audio-track"
++         timeline.tracks = [track, titleTrack, linkedAudioTrack]
+ +        if inspectorRequested {
+ +            var textClip = Clip(mediaRef: "inspector-title", startFrame: 0, durationFrames: 90)
+ +            textClip.id = "inspector-text"
+ +            textClip.mediaType = .text
+ +            textClip.sourceClipType = .text
+ +            textClip.textContent = "Inspector title"
+ +
+ +            var firstImage = Clip(mediaRef: "inspector-image", startFrame: 100, durationFrames: 90)
+ +            firstImage.id = "inspector-image-1"
+ +            firstImage.mediaType = .image
+ +            firstImage.sourceClipType = .image
+ +
+ +            var secondImage = Clip(mediaRef: "inspector-image", startFrame: 200, durationFrames: 90)
+ +            secondImage.id = "inspector-image-2"
+ +            secondImage.mediaType = .image
+ +            secondImage.sourceClipType = .image
+ +            secondImage.speed = 1.5
+ +            secondImage.transform.centerX = 0.6
+ +            secondImage.transform.rotation = 30
+ +            secondImage.opacity = 0.5
+ +
+ +            var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
+ +            audioClip.id = "inspector-audio-clip"
+ +            audioClip.mediaType = .audio
+ +            audioClip.sourceClipType = .audio
+ +
+-             timeline.tracks = [
+++            timeline.tracks.append(contentsOf: [
+ +                Track(type: .text, clips: [textClip]),
+ +                Track(type: .image, clips: [firstImage, secondImage]),
+ +                Track(type: .audio, clips: [audioClip]),
+-             ]
+++            ])
+ +        }
+          try JSONEncoder().encode(timeline).write(
+              to: projectURL.appendingPathComponent(Project.timelineFilename),
+              options: .atomic
+diff --cc Sources/NexGenVideo/Inspector/InspectorView.swift
+index 1a60da0e,6c7132e3..0eaad4d6
+--- a/Sources/NexGenVideo/Inspector/InspectorView.swift
++++ b/Sources/NexGenVideo/Inspector/InspectorView.swift
+@@@ -751,17 -793,26 +786,37 @@@ struct InspectorView: View 
+                      }
+                  }
+              }
++             .disabled(editor.inspectedTimelineClipsAreEditLocked)
++             .background {
++                 if WorkspaceUIAcceptance.isRequested {
++                     ZStack {
++                         AppRelaunchClickProbe(
++                             identifier: "inspector.clipMutation",
++                             acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
++                         )
++                         if editor.timelineInspectorClipIDs.count == 1,
++                            let clipID = editor.timelineInspectorClipIDs.first {
++                             AppRelaunchClickProbe(
++                                 identifier: "inspector.clipMutation.\(clipID)",
++                                 acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
++                             )
++                         }
++                     }
++                     .frame(maxWidth: .infinity, maxHeight: .infinity)
++                     .allowsHitTesting(false)
++                 }
++             }
+ +            if activeTab == .video || activeTab == .audio {
+ +                keyframesToggleBar(
+ +                    enabled: activeTab == .video
+ +                        ? nonTextVisualClips.count == 1
+ +                        : selectedAudioClips.count == 1
+ +                )
+ +                    .padding(.horizontal, AppTheme.Spacing.lg)
+ +                    .padding(.vertical, AppTheme.Spacing.xs)
+ +                    .frame(maxWidth: .infinity, alignment: .trailing)
+ +                    .background(AppTheme.Background.surfaceColor)
+ +            }
+          }
+      }
+  
+diff --cc scripts/workspace_ui_acceptance.py
+index de88db67,56b5e8cc..933e4a42
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@@ -165,24 -59,13 +165,26 @@@ def run_scale(executable, output, scale
+      hidden = [row for row in rows if row.get("event") == "panels-hidden"]
+      narrow = [row for row in rows if row.get("event") == "narrow-production"]
+      pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
++     selection_source = [row for row in rows if row.get("event") == "selection-source"]
++     selection_timeline = [row for row in rows if row.get("event") == "selection-timeline"]
+      invariants = [row for row in rows if row.get("event") == "invariants"]
+ +    inspector = [row for row in rows if row.get("event") == "inspector"]
+ +    open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
+      screenshots = [
+          row.get("screenshot")
+-         for row in workspace_rows + hidden + narrow + pinned
++         for row in workspace_rows + hidden + narrow + pinned + selection_source + selection_timeline
+      ]
+ +    screenshots += [
+ +        row.get("screenshot")
+ +        for row in inspector
+ +        if row.get("keyframes") != "open"
+ +    ]
+ +    screenshots += [
+ +        layout.get("screenshot")
+ +        for row in open_keyframes
+ +        for layout in row.get("laneLayoutEvidence", [])
+ +        if isinstance(layout, dict)
+ +    ]
+      valid_images = all(
+          isinstance(name, str)
+          and (output / name).is_file()
+@@@ -198,18 -81,54 +200,60 @@@
+          and len(hidden) == 1
+          and len(narrow) == 1
+          and len(pinned) == 1
++         and len(selection_source) == 1
++         and selection_source[0].get("activeAsset") == "selection-source"
++         and selection_source[0].get("sourceFrame") == 42
++         and selection_source[0].get("sourceIn") == 18
++         and selection_source[0].get("sourceOut") == 72
++         and selection_source[0].get("timelineFrame") == 96
++         and selection_source[0].get("rememberedClip") is True
++         and selection_source[0].get("rangeEnabled") is True
++         and selection_source[0].get("placementEnabled") is True
++         and selection_source[0].get("insertEnabled") is False
++         and selection_source[0].get("overwriteEnabled") is True
++         and selection_source[0].get("insertUndoVerified") is True
++         and selection_source[0].get("overwriteUndoVerified") is True
++         and selection_source[0].get("nativeSourceCommands") is True
++         and selection_source[0].get("nativeSourceScrub") is True
++         and selection_source[0].get("nativeSourceStepAndArrow") is True
++         and selection_source[0].get("nativeMultiselectDeselect") is True
++         and selection_source[0].get("sameSourceReactivationPreservedPlayback") is True
++         and selection_source[0].get("nativeSearchPreservedPlayback") is True
++         and selection_source[0].get("sortAndFilterPreservedPlayback") is True
++         and selection_source[0].get("listModePreserved") is True
++         and selection_source[0].get("contextClickRoutingVerified") is True
++         and selection_source[0].get("offlineSourceHandled") is True
++         and selection_source[0].get("nativeActiveDeleteUndo") is True
++         and len(selection_timeline) == 1
++         and selection_timeline[0].get("activeClip") == "selection-clip"
++         and selection_timeline[0].get("clipMutationEnabled") is False
++         and selection_timeline[0].get("lockedMutationBlocked") is True
++         and selection_timeline[0].get("rememberedAsset") is True
++         and selection_timeline[0].get("nativeClipSelection") is True
++         and selection_timeline[0].get("nativeTrackLock") is True
++         and selection_timeline[0].get("nativeLockedDeleteBlocked") is True
++         and selection_timeline[0].get("nativeTimelineRuler") is True
++         and selection_timeline[0].get("nativeTimelineTrim") is True
++         and selection_timeline[0].get("nativeTitleSelection") is True
++         and selection_timeline[0].get("nativeEmptySelection") is True
++         and selection_timeline[0].get("nativeLinkedAVSelection") is True
++         and selection_timeline[0].get("nativeContextTarget") is True
++         and selection_timeline[0].get("headerInspectorTargetMatched") is True
++         and selection_timeline[0].get("nativeTimelineUndoRedoAfterSourceSwitch") is True
++         and selection_timeline[0].get("nativeDisabledPaste") is True
++         and selection_timeline[0].get("sourceStatePreserved") is True
+          and len(invariants) == 1
+ +        and {(row.get("family"), row.get("keyframes")) for row in inspector}
+ +        == EXPECTED_INSPECTOR_CASES
+ +        and len(inspector) == len(EXPECTED_INSPECTOR_CASES)
+ +        and len(open_keyframes) == len(EXPECTED_KEYFRAME_LANES)
+ +        and all(valid_keyframe_lane_evidence(row) for row in open_keyframes)
+          and invariants[0].get("liveStateUnchanged") is True
+          and invariants[0].get("projectBytesUnchanged") is True
+          and invariants[0].get("undoUnchanged") is True
+          and invariants[0].get("workingCopyUnchanged") is True
+ -        and len(screenshots) == 10
+ +        and len(screenshots)
+-         == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+++        == 10 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+          and valid_images
+      )
+      return {

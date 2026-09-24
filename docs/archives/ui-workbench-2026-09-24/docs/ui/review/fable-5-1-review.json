@@ -1,0 +1,94 @@
+{
+  "reviewer": "claude/fable-5.1",
+  "summary": "Der Clickdummy modelliert Gate-Lineage, Rewind, Budget-Freigabe und Job-Bindung sauber, visualisiert aber mehrere Phasen schlechter oder anders als der bestehende native Code: Die Audioanalyse ist auf drei gleich breite Story-Textkacheln reduziert, obwohl BeatTimeline, StatRow, StructureHierarchyList und drei Diagnosezustände existieren. Storyboard und Shot List rendern dieselbe Ansicht statt Sketch+Timing vs. Produktionsentscheidungen mit Source-Mode. References, Frames und Takes recyceln umgefärbte Sketch-Bilder und erzeugen so falsche Erwartungen. Der Approve-Pfad hängt an einem erfundenen Review-Klick statt am deterministischen Struktur-Gate mit Needs-revision/Rewind-Menü. Die Dokumentphasen sind formularlastig und widersprechen dem Ziel, dass die KI Entwürfe schreibt und Filmemacher sichten. Alle Findings betreffen die nächste Mockup-Version, nicht die Engine.",
+  "findings": [
+    {
+      "title": "Audioanalyse: Mockup unterschreitet die native Oberfläche und versteckt das Analyse-Gate",
+      "severity": "high",
+      "confidence": "high",
+      "category": "correctness",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 239,
+      "evidence": "phaseSummary('Audio Analysis') rendert nur '<div class=\"analysis-strip\"><span>0–5 s · Intro</span><span>5–12 s · Confrontation</span>…' (Zeile 239); im Intake setzt xb('analysis-review','Review analysis') lediglich demo.analysis=true (Zeilen 111, 127). CSS: .analysis-strip span{background:#5b254a;flex:1} – alle Sektionen gleich breit, hardcodierte Farbe. Native dagegen: BeatTimeline mit proportionalen Sektionsbändern, Beat-Ticks, betonten Downbeats und 5-Punkt-Ruler (PackSurfacePrimitives.swift:131-186), StatRow mit BPM/Key/Duration (AnalysisPanelView.swift:126-128, 184-217), StructureHierarchyList mit Sections/Segments/Phrases in Zentisekunden (PackSurfacePrimitives.swift:188-273), Banner für unresolved/review_required/reduced evidence/rubato plus Remeasurement-Overlay (AnalysisPanelView.swift:219-431).",
+      "impact": "Filmemacher sehen im Mockup weniger Wahrheit als in der App. Sektionslabels wie 'Confrontation' sind Story-Interpretation, nicht Messung, und verwischen die Kontraktregel 'Lyrics may label measured sections but never replace measured timing'. Die Analyse-Freigabe wirkt wie ein Ein-Klick-Ritual, obwohl der Kontrakt ein echtes Artefakt plus Interpretation verlangt. Das Mockup verleitet dazu, die stärkere native Fläche zurückzubauen.",
+      "recommendation": "Reale Codefähigkeit übernehmen: Analyse-Workspace als großes Zeitdokument bauen. Oben Canvas mit proportionalen Sektionsbändern, Beat-Ticks, Downbeats und mm:ss-Ruler; darüber Stat-Kacheln Duration, BPM (perceived), Key, Beats/Downbeats, Downbeat-Source. Darunter die Struktur-Hierarchie als selektierbare Liste; Auswahl einer Sektion füllt den Inspector (Start/Ende, Quelle, Kandidaten-Boundaries, Interpretation). Interpretation als getrennte Spalte 'Interpretation' mit eigener Farbe, nie als Label im Messband. Drei Szenario-Schalter für unresolved, review required, reduced evidence plus Rubato-Fall ohne Beatgrid. Approve nur aktiv, wenn Artefakt geladen und Interpretation vorhanden. Fehlendes Demo-Asset: eine echte analysis.json mit Beats-Array und structure_resolution für den Clickdummy erzeugen."
+    },
+    {
+      "title": "Storyboard und Shot List sind dieselbe Ansicht; Produktionsentscheidungen und Source-Mode fehlen",
+      "severity": "high",
+      "confidence": "high",
+      "category": "correctness",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 112,
+      "evidence": "phaseDocument: if(p==='Storyboard')return board(); if(p==='Shot preparation')return board(); (Zeile 112). Einziges Produktionsfeld: select data-frame-mode mit nur 'start' und 'references' (Zeile 278). Native ShotlistPanelView zeigt pro Shot Section, Chips (Typ/Framing/Dauer) und Source-Mode-Badge generated/imported/ai_enhanced mit Filterleiste (ShotlistPanelView.swift:56-63, 102-179; ShotlistPanelModel.swift:105-119). CLAUDE.md verlangt für gechainte Shots explizit 'frame continuation' vs. 'native video extension', keyframe_strategy und für AI-enhanced Shots einen source_path; imported/AI-enhanced Shots betreten Frames nie.",
+      "impact": "Der Unterschied Storyboard (Sketches, Timing) vs. Shot List (gleiche Shot-Identitäten, Render-Referenzen, Source-Mode, Chaining) ist im Mockup nicht erkennbar. Die Frames-Ansicht des Mockups gibt jedem nicht-'references'-Shot einen Start-Frame-Slot, was für importierte oder AI-enhanced Shots falsch ist. Gate-Logik wird so falsch vorvisualisiert.",
+      "recommendation": "Storyboard als Sketch-Raster plus Timing-Strip, der über dem Analyse-Zeitband liegt (Sektionen sichtbar, Shotlängen als Balken, Animatic mit Ton statt 'silent example'). Shot List als Tabelle mit identischen Shot-IDs und Spalten: Section, Source-Mode-Badge (generated/imported/AI-enhanced), Execution route (start frame, references only, continue from last frame of 1B, native extension of 1B), gebundene References, Render-Referenzen, Dauer read-only aus dem Storyboard. Segmented Filter wie nativ bei hybriden Listen. Frames zeigt nur Shots mit tatsächlichem Frame-Slot; importierte und AI-enhanced Shots erscheinen dort als 'kein Frame nötig'. Timing-Änderung in der Shot List nicht anbieten oder klar als Rückschreiben ins Storyboard mit Rewind markieren."
+    },
+    {
+      "title": "Erfundener 'Review artifact'-Klick statt sichtbarem deterministischen Gate; Needs revision fehlt",
+      "severity": "high",
+      "confidence": "high",
+      "category": "correctness",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 152,
+      "evidence": "reviewedNow(): contract.reviews[p]=contract.versions[p]; demo.phaseReview=true (Zeile 152) – ein reiner Klick ohne Prüfung. approvePhase verlangt reviewed(p) (Zeile 150). Sanity-Checks werden nur nach dem Klick angezeigt: reviewed('Sanity Check')?detail:'Awaiting the current review run.' (Zeile 246). Native: Approve-Button hängt an readiness.isReady und mutationReadiness, Gate-Menü bietet Approve, Needs revision, Rewind (PipelinePanelView.swift:384-393, 426-489); PIPELINE_AGENT_HARNESS.md: 'a structural gate requirement for the canonical artifact' und 'deterministic host code owns … approval eligibility'.",
+      "impact": "Für Filmemacher entsteht ein ritueller Zwischenklick ohne Informationswert, während das echte, deterministische Gate unsichtbar bleibt. 'Needs revision' (eine bestehende native Aktion) fehlt komplett; nur Reopen/Rewind existiert. Das ist ein verstecktes Gate und ein Kontrollverlust gegenüber dem realen Code.",
+      "recommendation": "Review-Klick entfernen. Pro Phase eine automatisch berechnete Gate-Leiste im Footer: Artefakt vorhanden, Schema gültig, Lineage aktuell, Referenzen aufgelöst, Job nicht laufend; jede Zeile grün oder rot mit Klartext. Approve leitet sich ausschließlich daraus ab. AI-Review als separate, optionale Aktion, die Findings mit Deep-Link zum betroffenen Objekt liefert, aber nie das Gate beeinflusst. Gate-Menü wie nativ: Approve, Needs revision (abgeschlossene Phase zurück auf Draft), Rewind (mit Invalidierungsvorschau, die das Mockup schon hat). Während eines Jobs sind alle drei gesperrt und der Grund steht daneben."
+    },
+    {
+      "title": "References, Frames und Takes zeigen umgefärbte Sketches als gerenderte Assets",
+      "severity": "high",
+      "confidence": "high",
+      "category": "correctness",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 190,
+      "evidence": "referencesNew: art(r.image).replace(/class=\"image[^\"]*\"/,'class=\"image production-image\"') (Zeile 190); Frames: art(i).replace(…'production-image') (Zeile 192); takeView und take-detail identisch (Zeilen 118, 285); Look-Kategorie zeigt Shot-Bilder 0 und 5 (Zeile 189). Native BibleEntityCard hat eigene Reference-Sheet-Thumbnails pro Entity (BiblePanelView.swift:4-5, 218), Look ist ein Key/Value-Block (BiblePanelView.swift:123-155); CLAUDE.md: generierte Bible-Sheets tragen host-recorded exakte Prompt/Model-Provenance. Mockup-Inspector: 'Rendered example · provider and model not recorded' (Zeile 201).",
+      "impact": "Dieselben sechs Sketch-Bilder erscheinen als Identity-Reference, Production-Image, Start-Frame und Take. Betrachter können Sketch-, Referenz- und Render-Rolle visuell nicht auseinanderhalten; genau die Rollentrennung, die das Produkt fordert, wird vom Mockup unterlaufen. Fehlende Provenance verschweigt eine reale Codefähigkeit.",
+      "recommendation": "Fehlende Demo-Assets erzeugen: pro Entity ein eigenes Referenz-Sheet (Frontal/Profil/Prop-Turnaround), pro Shot ein unterscheidbares Frame- und Take-Platzhalterbild, jeweils mit sichtbarem Badge 'Beispiel-Asset'. Look als Key/Value-Board mit Palette, nicht als Shot-Bild. Jedes gerenderte Asset bekommt einen Provenance-Block (Provider, Modell, Prompt-Hash, Datum) als reale Codefähigkeit. In Frames und Takes eine dreispaltige Vergleichsansicht Sketch | Frame | Take für den gewählten Shot, damit Sichtung statt Lesen passiert."
+    },
+    {
+      "title": "Dokumentphasen sind Formulare mit Pflichtfeldern statt KI-Entwürfe zur Sichtung",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "ux",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 237,
+      "evidence": "phaseFields rendert jedes Modellfeld als <textarea> (Zeile 237); doc-save blockiert mit 'Complete every field before saving.' wenn ein Feld leer ist (Zeile 252). Harness: Brief/Production Design/Treatment werden vom Agenten über write_brief, write_production_design, write_treatment geschrieben (PIPELINE_AGENT_HARNESS.md:27-29). MUSICVIDEO_START_CONTRACT.md: ohne Story-Material 'the agent starts at zero using the approved song analysis'.",
+      "impact": "Der Nutzer, ein visueller Filmemacher, soll Prämisse, Protagonist, Kamera-Grammatik usw. selbst tippen. Das ist das 'endlose Schreiben', das ausgeschlossen wurde, und es widerspricht dem nativen Ablauf, in dem der Agent den Entwurf liefert und der Nutzer sichtet.",
+      "recommendation": "Umdrehen: Phase öffnet mit einem agentengenerierten Entwurf (Simulation klar beschriftet). Nutzer markiert Absätze oder Felder und gibt kurze Regie-Notizen ('knapper', 'mehr Bedrohung', 'Straßenachse beibehalten'); der Vorschlag erscheint als Vorher/Nachher wie phase-suggestion (Zeile 301) und wird pro Feld akzeptiert. Freitext bleibt als Inline-Edit pro Feld, ohne Pflichtfeld-Sperre. Treatment-Beats auf dem Analyse-Zeitband positionieren, Production Design als Moodboard mit realer Datei-Staging-Fähigkeit (Harness: 'File staging is restricted to image-asset paths in Production Design and Bible')."
+    },
+    {
+      "title": "Phasen-Namen weichen von der nativen App ab und werden nicht als Vorschlag markiert",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "consistency",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 16,
+      "evidence": "phases(): ['Project Init', 'Audio Analysis', 'Brief', 'Production Design', 'Treatment', 'Storyboard', 'References', 'Shot preparation', 'Sanity Check', 'Frames', 'Render'] (Zeile 16); Footer-Label 'Shot planning' (Zeile 81). Native PhaseDisplay: 'Bible', 'Shot List' (PhaseDisplay.swift:21-22); Cockpit-Tabs 'Bible', 'Shotlist' (ProjectCockpitView.swift:11-12). Audio Analysis wird als 'Music Video extension' betitelt (Zeile 243), obwohl analysis in der kanonischen Reihenfolge des Harness steht.",
+      "impact": "Mockup und App verwenden für dieselbe Phase drei Begriffe (Shot preparation, Shot planning, Shot List). Reviewer können nicht erkennen, ob eine Umbenennung beabsichtigt ist. Da PhaseContractRuntime.displayLabel Pack-Labels erlaubt, wäre eine Umbenennung technisch möglich, muss aber als Entscheidung ausgewiesen werden.",
+      "recommendation": "Native Labels verwenden (Bible, Shot List) oder die Umbenennung in einer sichtbaren Legende als offenen Vorschlag markieren, mit Begründung. Genau ein Begriff pro Phase über Navigator, Footer, Heading und Inspector. Audio Analysis als Pack-Phase mit Pack-Akzentfarbe im Navigator markieren, nicht mit dem Wort 'extension'; die Generic-Variante zeigt dieselbe Leiste ohne diese Phase."
+    },
+    {
+      "title": "Render existiert doppelt: als Phase und als Workspace 'Generate' mit identischem Inhalt",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "ux",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 245,
+      "evidence": "phaseView: if(p==='Render')return generationView().replace('<h1>Generate</h1>','<h1>Render</h1>') (Zeile 245); Header-Nav hat data-work plan/generate/edit/finish (production-workbench.html:176); frames-approve springt automatisch nach state.work='generate' (Zeile 175). Native: Render ist eine Pipeline-Phase mit run_phase/record_render/assemble_timeline (PIPELINE_AGENT_HARNESS.md:35); es gibt keinen separaten Generate-Workspace.",
+      "impact": "Zwei Navigationsorte für denselben Zustand, dazu ein Sprung zwischen Navigator und Header-Tabs. Für Final-Cut-gewohnte Nutzer bricht das mentale Modell 'eine Phase, ein Ort'. Die Paket-Freigabe (Kostendeckel, Bindung an Revision) ist gut, gehört aber in die Render-Phase.",
+      "recommendation": "Workspace-Tabs auf 'Preproduction · Edit · Finish' reduzieren; Render-Phase im Navigator enthält Paketprüfung, Kostendeckel, Job-Fortschritt, Takes und Repair. Frames-Approve bleibt im Navigator und springt zur Render-Phase. Ein einziger persistenter Job-Dock im Footer zeigt den laufenden Job in allen Workspaces (das Mockup hat das bereits, Zeile 213)."
+    },
+    {
+      "title": "Inspector zeigt generische Prosa statt des ausgewählten Objekts; Auswahl ist nicht die Ordnungseinheit",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "ux",
+      "file": "docs/ui/review/prior-workbench.js",
+      "line": 275,
+      "evidence": "Dokumentphasen-Inspector: group('Source',…) + group('Review focus', 'The protagonist, transformation and protected intent agree.') + group('Revision',…) (Zeile 275) – unabhängig von jeder Auswahl. Analyse-Sektionen und Treatment-Beats sind nicht anklickbar (Zeilen 239, 241). Native InspectorView schaltet auf inspectedObject (clip, mediaAsset, entity, look, shot, shotUse) mit usageSection 'Used in shots' und ledgerSection 'Intent' (InspectorView.swift:83-109, 288-311, 347-350).",
+      "impact": "Die rechte Spalte wird zur Lesehilfe statt zum Werkzeug. Für Sektion, Beat, Kamera-Setup, Frame oder Take gibt es keine konsistente 'Auswahl → Kontext → Aktion'-Mechanik, obwohl die App genau dieses Muster bereits besitzt.",
+      "recommendation": "Reale Codefähigkeit spiegeln: Jede Phase definiert selektierbare Objekte (Analyse: Sektion/Segment; Treatment: Beat; Bible: Entity; Storyboard/Shot List: Shot; Blocking: Setup; Frames: Frame; Render: Take). Inspector zeigt für das gewählte Objekt Identität, 'Used in shots', Intent-Ledger und die phasenbezogenen Aktionen. Ohne Auswahl ein einzeiliger Leerzustand wie nativ ('Select a clip or asset to inspect it'), keine Absätze."
+    }
+  ]
+}

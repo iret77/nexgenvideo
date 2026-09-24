@@ -1,0 +1,17 @@
+MULTIMODEL_REVIEW_LEAF_V1
+Du bist ein Leaf-Reviewer. Keine Agents, Delegation, weiteren AI-CLIs oder Änderungen. Nur Read/Glob/Grep im autorisierten Repository <local NexGenVideo checkout>. Keine Secrets, .env, Home-Daten, fremden Projekte, Betriebsbefehle. Antworte nur im übergebenen JSON-Schema.
+
+Gezielte Abschlussprüfung der korrigierten Abnahmeblocker des statischen UI-Clickdummys, kein erneuter Gesamtaudit. Dateien: docs/ui/desktop-production-workbench.workflow.js, .clay.js, .js, .studio.js, .media.js und check-desktop-production-acceptance.mjs. Nur wenn notwendig andere Module desselben Präfixes. Keine generierte HTML lesen, keine native App testen.
+
+Dein erster Review fable-result.json fand insbesondere: Take-ID/Signatur-Kollisionen nach Revision, Clay-Reset bei neuen Shots, Phantom-Anker bei Teilrender, falsche hardcodierte Zustandsbefunde und unsaubere Teilkorrektur, Aneignung von KI-Befunden als User-Checkbox, falsche Animatic-Zeitachsen. Diese wurden überarbeitet:
+- projektweit monotone Takes je stabiler Shot-ID, immutable Archiv, Eingabesignatur bei tatsächlicher Generierung;
+- Kamera neuer Shots ohne Scene-Reset, splitClay teilt Trajektorien/Posen, Löschen entfernt Kamera;
+- hasAnchor pro Shot; Teilrender zeigt nur vorhandene Anker, Undo-Barriere vor Auftrag;
+- stateIn/stateOut pro Shot, Prüfung in worldOrder, Korrektur genau am Zielshot;
+- Bildbefund 1E/Take2 bleibt auch bei bewusster Abweichung bestehen, Note bleibt erhalten;
+- Song+Shots im gemeinsamen gescrollten/zoombaren Zeitcontainer, Track-Ende/Songoffset, synthetische Tonvorschau;
+- Freigabe übergibt die Take-Auswahl an eine leere Timeline, vorhandene Montage bleibt erhalten.
+
+Prüfe konkret, ob diese Korrekturen noch erhebliche Zustands- oder Interaktionsfehler enthalten. Denke echte Kombinationen durch, nicht nur Fixtures. Keine stilistischen Wunschlisten und kein hypothetischer Native-API-Code: Live-Provider, echte Videoplayer, bpy, MCP und semantische AI-Prüfungen sind ausdrücklich Simulationen. Rückverwendbarkeit ist ein Dummy-Abgleich, kein nativer exact-byte Nachweis. Kein native Rewrite/Vertragsänderung autorisiert.
+
+Ergänzend, wenn hilfreich: aktuelle Screenshots in docs/ui/review/acceptance-2026-09-20/*.png. Deine erste Bewertung war keine Freigabe. Jetzt ausschließlich konkrete verbleibende High/Medium-Blocker, oder explizit keine solchen in diesem geprüften Scope. Gib Reproduktion und eng begrenzte Korrektur an. UI-Kriterium: verlässliche kreative Mac-Arbeitsfläche, keine Chat-Pflichten oder Web-Wizards. Keine Null-Findings erzwingen.

@@ -1,0 +1,36 @@
+PASS Timeline has visible clips and nonzero width
+PASS Empty project permits free editing
+PASS All supported source types imported
+PASS Insert free video
+PASS Insert free image
+PASS Insert free lottie
+PASS Insert free audio
+PASS Free export without pipeline approval
+PASS Free export completes
+PASS Separate Postproduction workspace
+PASS Grade is shared with timeline
+PASS Curves retain editable points
+PASS Color wheels retain hue
+PASS Undo restores prior grade
+PASS Per-clip audio fade
+PASS Keyframe insertion
+PASS Captions become editable timeline titles
+PASS Sequence review remains in Postproduction
+PASS Review follows the same montage
+PASS Project geometry shared with output
+PASS Export reflects fps and aspect
+PASS Media content search exposes time segments
+PASS Independent panels
+PASS References have all native entity types
+PASS Take review shows machine findings without mandatory checkboxes
+PASS Take review records exact revision
+PASS Blocking preserves shot
+PASS Settings expose provider/model/pack management
+PASS Settings agent
+PASS Settings providers
+PASS Settings models
+PASS Settings packs
+PASS Settings storage
+PASS Pack mismatch is explicit
+PASS Recovery creates a distinct project
+{"passed":35,"failed":[],"layoutFailures":[]}

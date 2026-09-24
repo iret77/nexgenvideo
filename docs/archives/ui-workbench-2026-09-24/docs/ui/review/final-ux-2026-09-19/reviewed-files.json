@@ -1,0 +1,21 @@
+{
+  "reviewed_at": "2026-09-19T18:22:56.535237+00:00",
+  "files": {
+    "docs/ui/desktop-production-workbench.background.js": "eb37a8225b209e7d38cca3774f6c5343b22792f78c3fb607a5415404c620360f",
+    "docs/ui/desktop-production-workbench.clay.css": "cc1688b6a01484793a4429f337d9c38cbcda44ded76bf88b84a418c36cdaa0fc",
+    "docs/ui/desktop-production-workbench.clay.js": "0cdb9aabee591b0e04c1d7ec5dfd9c7e24137bf0aeb844ccc6eecc0f61f4179e",
+    "docs/ui/desktop-production-workbench.cover.js": "fb54ee8fef7ab2225d984ed91ef5baadff3f0fd6e6d1dbc988f81f39658b1d82",
+    "docs/ui/desktop-production-workbench.css": "ea21edf2a59ad0fcdd0e2260bb9d2e0e1c58c82b473902fbf656d550bbb93394",
+    "docs/ui/desktop-production-workbench.edit.js": "9fd90d36df6561bbd94378eaf0e07dfde69006f35287ee6a919f4a39965db2b5",
+    "docs/ui/desktop-production-workbench.finish.js": "c22b7027dbc3933d7a180df864be21e0523da80f1b2f197149cd1d1dff0aacfb",
+    "docs/ui/desktop-production-workbench.fragment.html": "18618a292b4b6153ddffdecf0dec7ba072f5d744b497b91184e5a0534d1077d8",
+    "docs/ui/desktop-production-workbench.generate.js": "50cb5ca5b0f057da560e88fbbc5b6122193d07e06a50037e8e432bac21f08af0",
+    "docs/ui/desktop-production-workbench.html": "5e36f2d1b1e0789392d7f76d35c8d5e30dd249ce9a1287c63b4eba7d77a8c4ec",
+    "docs/ui/desktop-production-workbench.js": "7800c8529a40414afedbbbfaa37c77dc9c259fd58c34fa91545f7a65551017ff",
+    "docs/ui/desktop-production-workbench.media.js": "da6cb1984b26ad4c1be97991d2ce4209bcf542a7d85b1d1b21e6e77f967de6d0",
+    "docs/ui/desktop-production-workbench.spec.html": "dc48d123816220b774503da9fadab9352b2c42d3f0279ff2f405354fbcadfc4c",
+    "docs/ui/desktop-production-workbench.studio.css": "3d8aba302a273f0e53c62413caf09b4bf270f01493410b1d6b1dcbbb55b67f5f",
+    "docs/ui/desktop-production-workbench.studio.js": "4ec250cef53a90a1fe97825002a098e710042c3b5e23738c0b7915de7300ada3",
+    "docs/ui/desktop-production-workbench.test.js": "7269dbbd31606ef103191722cf70b03eeb0efab600682dc4824bb8cda3c0c5f1"
+  }
+}

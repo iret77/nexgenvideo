@@ -1,0 +1,75 @@
+{
+  "results": [
+    {
+      "name": "Physical timeline click seeks selected clip",
+      "pass": true
+    },
+    {
+      "name": "Ctrl+K splits the selected clip at playhead",
+      "pass": true
+    },
+    {
+      "name": "Undo restores split through titlebar action",
+      "pass": true
+    },
+    {
+      "name": "Physical edge drag trims without moving next clip",
+      "pass": true
+    },
+    {
+      "name": "Horizontal divider resizes the whole timeline",
+      "pass": true
+    },
+    {
+      "name": "Playback retains focused play button for Space to pause",
+      "pass": true
+    }
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "overflow": 0,
+      "ratio": 1.7778233337888933,
+      "timelineWidth": 1414,
+      "appWidth": 1414,
+      "mainHeight": 468,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "overflow": 0,
+      "ratio": 1.7777777777777777,
+      "timelineWidth": 998,
+      "appWidth": 998,
+      "mainHeight": 468,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "overflow": 0,
+      "ratio": 1.7777777777777777,
+      "timelineWidth": 710,
+      "appWidth": 710,
+      "mainHeight": 468,
+      "height": 850
+    },
+    {
+      "width": 500,
+      "overflow": 0,
+      "ratio": 1.7777777777777777,
+      "timelineWidth": 474,
+      "appWidth": 474,
+      "mainHeight": 340,
+      "height": 1039
+    },
+    {
+      "width": 320,
+      "overflow": 1,
+      "ratio": 1.7777777777777777,
+      "timelineWidth": 294,
+      "appWidth": 294,
+      "mainHeight": 330,
+      "height": 1263
+    }
+  ]
+}

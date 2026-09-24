@@ -1,0 +1,58 @@
+{
+  "recorded_at": "2026-09-20T11:48:06.929773+00:00",
+  "surface": "static mockup only",
+  "groups": {
+    "interaction": {
+      "passed": 47,
+      "failed": 0,
+      "evidence": "checks.json"
+    },
+    "workflow_regression": {
+      "passed": 88,
+      "failed": 0,
+      "evidence": "regression/checks.json"
+    },
+    "full_ui_path": {
+      "passed": 12,
+      "failed": 0,
+      "evidence": "walkthrough/checks.json"
+    },
+    "guards": {
+      "passed": 32,
+      "failed": 0,
+      "evidence": "legacy-studio-guard-checks.json"
+    },
+    "workspaces": {
+      "passed": 35,
+      "failed": 0,
+      "evidence": "legacy-studio-workspace-checks.json"
+    },
+    "background": {
+      "passed": 25,
+      "failed": 0,
+      "evidence": "legacy-background-checks.json"
+    },
+    "artwork": {
+      "passed": 41,
+      "failed": 0,
+      "evidence": "legacy-artwork-checks.json"
+    },
+    "polish": {
+      "passed": 32,
+      "failed": 0,
+      "evidence": "legacy-polish.log"
+    }
+  },
+  "passed": 312,
+  "failed": 0,
+  "artifacts": {
+    "<local NexGenVideo checkout>/docs/ui/desktop-production-workbench.html": {
+      "sha256": "e65cc469c2ce539043951297a6a288ea370df954a6a35605922c635127582b59",
+      "bytes": 1246548
+    },
+    "<local home>/.codex/visualizations/2026/09/12/01a0956c-ab36-7ed3-b838-cf38a6f4b3b7/nexgenvideo-desktop-workbench.html": {
+      "sha256": "4a7e5d1a36afbdb87f1b70ff4722b09babed597704ea4c6476244d1f718c31a7",
+      "bytes": 947861
+    }
+  }
+}

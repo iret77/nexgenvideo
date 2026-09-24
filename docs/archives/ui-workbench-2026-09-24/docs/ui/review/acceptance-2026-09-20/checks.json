@@ -1,0 +1,355 @@
+[
+  {
+    "name": "Ankerdialog abbrechen bewahrt Medien, Kosten und Sichtungen",
+    "pass": true
+  },
+  {
+    "name": "Unveränderter Skip verlangt keine neuen Anker",
+    "pass": true
+  },
+  {
+    "name": "Revision bewahrt alle zwölf Takes als Projektmedien",
+    "pass": true
+  },
+  {
+    "name": "Passende frühere Takes können erneut gewählt werden",
+    "pass": true
+  },
+  {
+    "name": "Geänderte Shotvorgabe schließt alte Takes dieses Shots aus",
+    "pass": true
+  },
+  {
+    "name": "Befundauswahl synchronisiert Bildpaar und Inspector",
+    "pass": true
+  },
+  {
+    "name": "Evidenz besteht aus Ergebnissen statt Checkboxen",
+    "pass": true
+  },
+  {
+    "name": "Take ohne Befund lässt sich direkt auswählen",
+    "pass": true
+  },
+  {
+    "name": "Take lässt sich ohne sechs Prüfbestätigungen ablehnen",
+    "pass": true
+  },
+  {
+    "name": "Take-Befund braucht ausdrückliche Begründung zur Übernahme",
+    "pass": true
+  },
+  {
+    "name": "Shot einfügen erzeugt stabile ID und leeren Sketch",
+    "pass": true
+  },
+  {
+    "name": "Shot teilen bewahrt Gesamtdauer und Moments",
+    "pass": true
+  },
+  {
+    "name": "Shot umordnen bewahrt ID und Motivzuordnung",
+    "pass": true
+  },
+  {
+    "name": "Löschen ist abbrechbar und rückgängig machbar",
+    "pass": true
+  },
+  {
+    "name": "Shared Location bewahrt unterschiedliche Figurenpositionen",
+    "pass": true
+  },
+  {
+    "name": "Gemeinsames festes Objekt bleibt Location-Geometrie",
+    "pass": true
+  },
+  {
+    "name": "Nur gezielt benötigte Shots bekommen standardmäßig Clay-Vorlagen",
+    "pass": true
+  },
+  {
+    "name": "Location-Kopie hängt bestehenden Shot nicht still um",
+    "pass": true
+  },
+  {
+    "name": "Draufsicht besitzt direkte Objekt- und Kamera-Griffe",
+    "pass": true
+  },
+  {
+    "name": "Draufsicht-Griffe sind an die sichtbare Bühne gebunden",
+    "pass": true
+  },
+  {
+    "name": "Ziehen eines Objekts verändert seine Shot-Position",
+    "pass": true
+  },
+  {
+    "name": "Kamera und Sketch lassen sich im selben Raum vergleichen",
+    "pass": true
+  },
+  {
+    "name": "References vergleicht Clay und Rendering",
+    "pass": true
+  },
+  {
+    "name": "Anker-Kontaktbogen erlaubt Mehrfachsichtung",
+    "pass": true
+  },
+  {
+    "name": "96 Shots lassen die Blocking-Bühne sichtbar",
+    "pass": true
+  },
+  {
+    "name": "Gestaltung ist als eigene Phase sichtbar",
+    "pass": true
+  },
+  {
+    "name": "Animatic zeigt Songabschnitte und Ausschnittzuordnung",
+    "pass": true
+  },
+  {
+    "name": "Storyboard-Übersicht hat keinen Animatic-Transport",
+    "pass": true
+  },
+  {
+    "name": "Audioanalyse bietet Abhören, Seek und Abschnittsloop",
+    "pass": true
+  },
+  {
+    "name": "Audio-Abhören startet und stoppt",
+    "pass": true
+  },
+  {
+    "name": "Shot-Grid bietet tatsächliche Drag-Ziele",
+    "pass": true
+  },
+  {
+    "name": "Alle Shots löschen bleibt ein bedienbarer Leerzustand",
+    "pass": true
+  },
+  {
+    "name": "Gelöschte Shotbilder bleiben im Medienbestand",
+    "pass": true
+  },
+  {
+    "name": "Umordnung erhält den Rückblendenhinweis am richtigen Shot",
+    "pass": true
+  },
+  {
+    "name": "Audio stoppt beim Wechsel des Arbeitsraums",
+    "pass": true
+  },
+  {
+    "name": "Draufsicht hält die Kamera im sichtbaren Bereich",
+    "pass": true
+  },
+  {
+    "name": "Kameragriff ist tatsächlich sichtbar",
+    "pass": true
+  },
+  {
+    "name": "Statische Kamera mit Figurenbewegung bietet Wiedergabe",
+    "pass": true
+  },
+  {
+    "name": "Anfang und Ende enthalten unterschiedliche Inszenierungen",
+    "pass": true
+  },
+  {
+    "name": "Erneute Planfreigabe behält Blocking-Skip ohne Rückfrage",
+    "pass": true
+  },
+  {
+    "name": "Greenfield erstellt Anker und gelangt zum Render-Review",
+    "pass": true
+  },
+  {
+    "name": "Shot-Umordnung bewahrt Medienordner und Timeline-Quellen",
+    "pass": true
+  },
+  {
+    "name": "Neue Bildvariante macht frühere Takes dieses Shots unpassend",
+    "pass": true
+  },
+  {
+    "name": "Videobatch legt Modelle, Dauer und Eingaben offen",
+    "pass": true
+  },
+  {
+    "name": "Freigegebener Batch erzeugt sechs Takes",
+    "pass": true
+  },
+  {
+    "name": "Ausgewählte Takes gehen in den bestehenden Schnitt über",
+    "pass": true
+  },
+  {
+    "name": "Fable: Beim neuen Shot bleibt die vorhandene Clay-Szene erhalten",
+    "pass": true
+  },
+  {
+    "name": "Fable: Shot teilen setzt Kamera und Figuren am Schnittpunkt fort",
+    "pass": true
+  },
+  {
+    "name": "Fable: Daueränderung erfordert neue Takes, keine statischen Anker",
+    "pass": true
+  },
+  {
+    "name": "Fable: Passende Takes bleiben bei teilweise gefüllter Auswahl erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Fable: Neugenerierung bekommt neue Take-Kennungen",
+    "pass": true
+  },
+  {
+    "name": "Fable: Zweite Revision bewahrt beide Generierungsläufe",
+    "pass": true
+  },
+  {
+    "name": "Fable: Wiederverwendung bleibt nach teilweiser Zuweisung erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Fable: Gelöschte Shots entfernen ihre Clay-Kameras",
+    "pass": true
+  },
+  {
+    "name": "Fable: Neue Shots erben den Zustand ihres Story-Vorgängers",
+    "pass": true
+  },
+  {
+    "name": "Fable: Nur der korrigierte Shot verliert seine Ankersichtung",
+    "pass": true
+  },
+  {
+    "name": "Fable: Ein entfernter Befundshot erzeugt keinen Phantom-Befund",
+    "pass": true
+  },
+  {
+    "name": "Fable: Zustandsänderung in der Planung wirkt im Review",
+    "pass": true
+  },
+  {
+    "name": "Fable: Akzeptierte Abweichung bleibt als Befund sichtbar",
+    "pass": true
+  },
+  {
+    "name": "Fable: Unbeteiligter Take 2 hat keinen erfundenen Handbefund",
+    "pass": true
+  },
+  {
+    "name": "Fable: Abgebrochener Ankerlauf erfindet keine fehlenden Bilder",
+    "pass": true
+  },
+  {
+    "name": "Fable: Generierte Anker und Kosten können nicht rückgängig verschwinden",
+    "pass": true
+  },
+  {
+    "name": "Fable: Neuer Shot kann direkt einen Sketch erzeugen",
+    "pass": true
+  },
+  {
+    "name": "Fable: Fehlende Handlung bekommt passende Gate-Erklärung",
+    "pass": true
+  },
+  {
+    "name": "Fable: Animatic verwendet für Song und Shots dieselbe Zeitskala",
+    "pass": true
+  },
+  {
+    "name": "Fable: Animatic streckt den Track bei langen Projekten nicht",
+    "pass": true
+  },
+  {
+    "name": "Fable: Songversatz verschiebt das Beat-Raster",
+    "pass": true
+  },
+  {
+    "name": "Fable: Abschnittsabhören hält am Abschnittsende an",
+    "pass": true
+  },
+  {
+    "name": "Fable: Gespeicherter Zustand startet keine Phantom-Wiedergabe",
+    "pass": true
+  },
+  {
+    "name": "Einzelner neuer Anker wird mit aktuellen Eingaben gebunden",
+    "pass": true
+  },
+  {
+    "name": "Einzelgenerierung bewahrt den alten Anker und bezahlten Auftrag",
+    "pass": true
+  },
+  {
+    "name": "Archivierte Takes behalten Ordner- und Namensänderungen",
+    "pass": true
+  },
+  {
+    "name": "Entfernte Archivmedien werden nicht erneut vorgeschlagen",
+    "pass": true
+  },
+  {
+    "name": "Frühere Take-Ansicht folgt der Shot-Umordnung",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Einfügen zwischen geteilten Shots bewahrt Story-Zeit",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Viele Einfügungen bleiben vor dem Story-Nachfolger",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Loser Quellclip blendet archivierte Anker nicht aus",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Importierte Shots bekommen keine Phantom-Anker",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Gemischte Auswahl blockiert die Ankersichtung nicht",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Quellwechsel archiviert vorherigen KI-Anker",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Freigegebener Songversatz ist schreibgeschützt",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Songversatz besitzt Revision und Undo",
+    "pass": true
+  },
+  {
+    "name": "Fable-Nachprüfung: Alte Sichtung kann veralteten Anker nicht freigeben",
+    "pass": true
+  },
+  {
+    "name": "Clay-Checkbox ändert die tatsächliche Shot-Zuordnung",
+    "pass": true
+  },
+  {
+    "name": "Clay-Checkbox schaltet die Kamerafahrt tatsächlich um",
+    "pass": true
+  },
+  {
+    "name": "Rewind bewahrt auflösbare Bildquellen der bestehenden Timeline",
+    "pass": true
+  },
+  {
+    "name": "Wiederverwendung erhält dieselbe Medienidentität in der Timeline",
+    "pass": true
+  },
+  {
+    "name": "Keine unbehandelten Browserfehler",
+    "pass": true,
+    "errors": []
+  }
+]

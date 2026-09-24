@@ -1,0 +1,85 @@
+Browser starting 1434123
+[1434123:1434123:0920/143129.636503:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.UPower was not provided by any .service files
+[1434236:1434244:0920/143132.123318:ERROR:third_party/blink/renderer/platform/disk_data_allocator.cc:198] DISK: Cannot write to disk. written = 0 FILE_ERROR_FAILED
+[1434236:1434242:0920/143132.123823:ERROR:third_party/blink/renderer/platform/disk_data_allocator.cc:198] DISK: Cannot write to disk. written = 0 FILE_ERROR_FAILED
+CHECK Export: Sidebar enthält keine App- oder Projektverwaltung
+PASS Export: Sidebar enthält keine App- oder Projektverwaltung
+CHECK Export: App-Menü öffnet Einstellungen
+PASS Export: App-Menü öffnet Einstellungen
+CHECK Export: Projektname ist Text, Projektaktionen liegen unter Ablage
+PASS Export: Projektname ist Text, Projektaktionen liegen unter Ablage
+CHECK App-Menü liegt vollständig über der Arbeitsfläche
+PASS App-Menü liegt vollständig über der Arbeitsfläche
+CHECK Offene Dialoge werden nicht durch Menüwechsel verworfen
+PASS Offene Dialoge werden nicht durch Menüwechsel verworfen
+CHECK Menü ist mit Pfeiltasten erreichbar
+PASS Menü ist mit Pfeiltasten erreichbar
+CHECK Escape schließt Menü und stellt den Fokus wieder her
+PASS Escape schließt Menü und stellt den Fokus wieder her
+CHECK ⌘, öffnet App-Einstellungen
+PASS ⌘, öffnet App-Einstellungen
+CHECK Fenstermenü schaltet denselben Inspector wie das Pane-Icon
+PASS Fenstermenü schaltet denselben Inspector wie das Pane-Icon
+CHECK Pane-Icon stellt Inspector ohne Arbeitsraumwechsel wieder her
+PASS Pane-Icon stellt Inspector ohne Arbeitsraumwechsel wieder her
+CHECK Bearbeiten-Menü zeigt Undo und Redo mit korrekter Verfügbarkeit
+PASS Bearbeiten-Menü zeigt Undo und Redo mit korrekter Verfügbarkeit
+CHECK Nach Undo wird Redo verfügbar
+PASS Nach Undo wird Redo verfügbar
+CHECK Redo stellt denselben Inhalt wieder her
+PASS Redo stellt denselben Inhalt wieder her
+CHECK Neues Projekt setzt App-Anbieter nicht zurück
+PASS Neues Projekt setzt App-Anbieter nicht zurück
+CHECK Projekt-Undo setzt App-Einstellungen nicht zurück
+PASS Projekt-Undo setzt App-Einstellungen nicht zurück
+CHECK App-Packverwaltung enthält keine Projektmigration
+PASS App-Packverwaltung enthält keine Projektmigration
+CHECK Katalogprüfung verändert keine Projektversion
+PASS Katalogprüfung verändert keine Projektversion
+CHECK Projektmigration ist ausdrücklich in Projekteinstellungen erreichbar
+PASS Projektmigration ist ausdrücklich in Projekteinstellungen erreichbar
+CHECK App-Speicher enthält keine projektbezogene Index-Schaltung
+PASS App-Speicher enthält keine projektbezogene Index-Schaltung
+CHECK Inhaltssuche führt zur geöffneten Projekteinstellung
+PASS Inhaltssuche führt zur geöffneten Projekteinstellung
+CHECK KI-Auftrag erscheint beim zuständigen Arbeitsraum
+PASS KI-Auftrag erscheint beim zuständigen Arbeitsraum
+CHECK Schnittauftrag erscheint nicht in Produktion
+PASS Schnittauftrag erscheint nicht in Produktion
+CHECK Rückkehr erhält den unbestätigten Auftrag
+PASS Rückkehr erhält den unbestätigten Auftrag
+CHECK Farbauftrag erscheint nicht beim Tonwerkzeug
+PASS Farbauftrag erscheint nicht beim Tonwerkzeug
+CHECK Farbauftrag bleibt beim zuständigen Werkzeug erreichbar
+PASS Farbauftrag bleibt beim zuständigen Werkzeug erreichbar
+CHECK Verlauf verspricht keine erneute Ausführung
+PASS Verlauf verspricht keine erneute Ausführung
+CHECK Verlauf zeigt Arbeitsbereich ohne neuen KI-Auftrag
+PASS Verlauf zeigt Arbeitsbereich ohne neuen KI-Auftrag
+CHECK Leerer Take-Inspector enthält keine Projektverwaltung
+PASS Leerer Take-Inspector enthält keine Projektverwaltung
+CHECK Untertitel-Korrektur ist ohne Untertitel deaktiviert
+PASS Untertitel-Korrektur ist ohne Untertitel deaktiviert
+CHECK Untertitelbearbeitung zeigt keine Film-Titel
+PASS Untertitelbearbeitung zeigt keine Film-Titel
+CHECK Untertitel bleibt bei Untertiteln und verändert keinen Film-Titel
+PASS Untertitel bleibt bei Untertiteln und verändert keinen Film-Titel
+CHECK Titelbereich zeigt nur Film-Titel
+PASS Titelbereich zeigt nur Film-Titel
+CHECK Montageauftrag ist aus der Produktionsfläche entfernt
+PASS Montageauftrag ist aus der Produktionsfläche entfernt
+CHECK Montagefunktion bleibt im Schnitt bedienbar
+PASS Montagefunktion bleibt im Schnitt bedienbar
+CHECK Montage erhält bestehende Clips und legt zusätzliche Spur an
+PASS Montage erhält bestehende Clips und legt zusätzliche Spur an
+CHECK Menüleiste passt bei 1440 px
+PASS Menüleiste passt bei 1440 px
+CHECK Menüleiste passt bei 1048 px
+PASS Menüleiste passt bei 1048 px
+CHECK Menüleiste passt bei 768 px
+PASS Menüleiste passt bei 768 px
+CHECK Menüleiste passt bei 390 px
+PASS Menüleiste passt bei 390 px
+CHECK Menüleiste passt bei 320 px
+PASS Menüleiste passt bei 320 px
+{"passed":54,"total":54}

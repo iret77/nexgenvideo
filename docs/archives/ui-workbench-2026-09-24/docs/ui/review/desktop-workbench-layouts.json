@@ -1,0 +1,272 @@
+[
+  {
+    "width": 1440,
+    "view": "Medien",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 932,
+    "gateVisible": false
+  },
+  {
+    "width": 1440,
+    "view": "Storyboard",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 972,
+    "gateVisible": true
+  },
+  {
+    "width": 1440,
+    "view": "Moments",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 972,
+    "gateVisible": true
+  },
+  {
+    "width": 1440,
+    "view": "Media",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 972,
+    "gateVisible": true
+  },
+  {
+    "width": 1440,
+    "view": "Schnitt",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 932,
+    "gateVisible": true
+  },
+  {
+    "width": 1440,
+    "view": "Finish",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 972,
+    "gateVisible": false
+  },
+  {
+    "width": 1024,
+    "view": "Medien",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 516,
+    "gateVisible": false
+  },
+  {
+    "width": 1024,
+    "view": "Storyboard",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 556,
+    "gateVisible": true
+  },
+  {
+    "width": 1024,
+    "view": "Moments",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 556,
+    "gateVisible": true
+  },
+  {
+    "width": 1024,
+    "view": "Media",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 556,
+    "gateVisible": true
+  },
+  {
+    "width": 1024,
+    "view": "Schnitt",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 516,
+    "gateVisible": true
+  },
+  {
+    "width": 1024,
+    "view": "Finish",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 556,
+    "gateVisible": false
+  },
+  {
+    "width": 736,
+    "view": "Medien",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 228,
+    "gateVisible": false
+  },
+  {
+    "width": 736,
+    "view": "Storyboard",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 268,
+    "gateVisible": true
+  },
+  {
+    "width": 736,
+    "view": "Moments",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 268,
+    "gateVisible": true
+  },
+  {
+    "width": 736,
+    "view": "Media",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 268,
+    "gateVisible": true
+  },
+  {
+    "width": 736,
+    "view": "Schnitt",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 228,
+    "gateVisible": true
+  },
+  {
+    "width": 736,
+    "view": "Finish",
+    "height": 850,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 268,
+    "gateVisible": false
+  },
+  {
+    "width": 500,
+    "view": "Medien",
+    "height": 1120,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 275,
+    "gateVisible": false
+  },
+  {
+    "width": 500,
+    "view": "Storyboard",
+    "height": 1181.265625,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 275,
+    "gateVisible": true
+  },
+  {
+    "width": 500,
+    "view": "Moments",
+    "height": 1181.265625,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 275,
+    "gateVisible": true
+  },
+  {
+    "width": 500,
+    "view": "Media",
+    "height": 1181.265625,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 275,
+    "gateVisible": true
+  },
+  {
+    "width": 500,
+    "view": "Schnitt",
+    "height": 1039,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 284,
+    "gateVisible": true
+  },
+  {
+    "width": 500,
+    "view": "Finish",
+    "height": 1120,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 275,
+    "gateVisible": false
+  },
+  {
+    "width": 320,
+    "view": "Medien",
+    "height": 1325,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": false
+  },
+  {
+    "width": 320,
+    "view": "Storyboard",
+    "height": 1459.328125,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": true
+  },
+  {
+    "width": 320,
+    "view": "Moments",
+    "height": 1459.328125,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": true
+  },
+  {
+    "width": 320,
+    "view": "Media",
+    "height": 1519.328125,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": true
+  },
+  {
+    "width": 320,
+    "view": "Schnitt",
+    "height": 1363,
+    "overflow": 1,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": true
+  },
+  {
+    "width": 320,
+    "view": "Finish",
+    "height": 1461.65625,
+    "overflow": 0,
+    "canvasOverflow": 0,
+    "mainWidth": 279,
+    "gateVisible": false
+  }
+]

@@ -1,0 +1,26 @@
+#ngv-desk{background:transparent;border:0;border-radius:0;overflow:visible}
+#ngv-desk .app-window{display:flex;flex-direction:column;flex:1;min-height:0;margin-top:8px;background:var(--nd-base);border:1px solid var(--nd-line);border-radius:8px;overflow:hidden}
+#ngv-desk #nd-menubar{display:flex;align-items:center;flex:none;gap:0;min-height:25px;padding:0 10px;background:var(--nd-panel);border-bottom:1px solid var(--nd-line);font-size:12px}
+#ngv-desk #nd-menubar button{min-height:24px;padding:2px 9px;font-size:inherit;border-radius:3px}
+#ngv-desk #nd-menubar button:first-child{font-weight:600}
+#ngv-desk #nd-menubar button[aria-expanded=true]{background:var(--nd-selected)}
+#ngv-desk .native-menu{position:absolute;z-index:40;width:310px;max-width:calc(100% - 8px);min-width:0;margin:0;padding:5px;background:var(--nd-raised);border:1px solid var(--nd-line);border-radius:6px;box-shadow:0 8px 22px #0007}
+#ngv-desk .native-menu button{display:flex;width:100%;justify-content:space-between;min-height:27px;padding:4px 9px;text-align:left;font-size:12px}
+#ngv-desk .native-menu kbd{font:inherit;color:var(--nd-muted)}
+#ngv-desk .native-menu hr{margin:5px 7px;border:0;border-top:1px solid var(--nd-line)}
+#ngv-desk .native-menu button:disabled{background:transparent}
+#ngv-desk .settings-form>details{grid-column:1/-1}
+@media(max-width:500px){#ngv-desk #nd-menubar{padding:0 3px;font-size:11px}#ngv-desk #nd-menubar button{padding:2px 6px}}
+@media(max-width:500px){#ngv-desk #nd-menubar{flex-wrap:wrap}#ngv-desk #nd-menubar button{padding:2px 5px}}
+
+#ngv-desk .native-menu button:focus-visible{outline:none;background:var(--nd-accent-fill);color:#fff}
+#ngv-desk .object-menu{width:max-content;min-width:220px;padding:5px;background:var(--nd-raised);border-color:var(--nd-line);border-radius:6px;overflow-y:auto;overscroll-behavior:contain}
+#ngv-desk .object-menu button{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:8px;min-height:27px;padding:4px 9px;text-align:left;font-size:calc(12px * var(--nd-ui-scale,1));line-height:1.35}
+#ngv-desk .object-menu .menu-check{text-align:center}
+#ngv-desk .object-menu .menu-label{min-width:0}
+#ngv-desk .object-menu kbd{font:inherit;color:inherit;opacity:.8;margin-left:16px}
+#ngv-desk .object-menu button:focus{outline:none;background:var(--nd-accent-fill);color:#fff}
+#ngv-desk .object-menu button:disabled{background:transparent;color:var(--nd-muted);opacity:.6}
+#ngv-desk .native-menu{overflow-y:auto;overscroll-behavior:contain}
+#ngv-desk .native-menu button{font-size:calc(12px * var(--nd-ui-scale,1));line-height:1.35;gap:18px}
+#ngv-desk .native-menu-check{display:inline-block;width:20px}

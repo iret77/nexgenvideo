@@ -1,0 +1,229 @@
+{
+  "results": [
+    {
+      "name": "Medien contextual actions: [data-do^=\"asset:\"]",
+      "pass": true
+    },
+    {
+      "name": "Medien contextual actions: [data-do^=\"pool:folder-\"]:not([data-do=\"pool:folder-all\"])",
+      "pass": true
+    },
+    {
+      "name": "Storyboard contextual actions: .shot-tile",
+      "pass": true
+    },
+    {
+      "name": "Storyboard contextual actions: [data-do=\"moment:0\"]",
+      "pass": true
+    },
+    {
+      "name": "Shotplanung contextual actions: [data-shot]",
+      "pass": true
+    },
+    {
+      "name": "References contextual actions: [data-do=\"studio:entity-0\"]",
+      "pass": true
+    },
+    {
+      "name": "Takes contextual actions: [data-take]",
+      "pass": true
+    },
+    {
+      "name": "Blocking contextual actions: [data-do^=\"clay:object-\"]",
+      "pass": true
+    },
+    {
+      "name": "Blocking contextual actions: [data-do^=\"clay:shot-\"]",
+      "pass": true
+    },
+    {
+      "name": "Blocking contextual actions: .clay-stage canvas",
+      "pass": true
+    },
+    {
+      "name": "Audio contextual actions: [data-section]",
+      "pass": true
+    },
+    {
+      "name": "Schnitt contextual actions: [data-sx-clip]",
+      "pass": true
+    },
+    {
+      "name": "Schnitt contextual actions: [data-do=\"studio:track-V1\"]",
+      "pass": true
+    },
+    {
+      "name": "Postproduction contextual actions: [data-sx-clip]",
+      "pass": true
+    },
+    {
+      "name": "Media context preserves multi-selection; single-file commands disabled",
+      "pass": true
+    },
+    {
+      "name": "Media move opens the folder chooser for the same selection",
+      "pass": true
+    },
+    {
+      "name": "Workflow-owned assets cannot be removed through library context",
+      "pass": true
+    },
+    {
+      "name": "Storyboard multi-selection retains shared reorder and undo",
+      "pass": true
+    },
+    {
+      "name": "Timeline right-click keeps both clips; only applicable actions enabled",
+      "pass": true
+    },
+    {
+      "name": "Copy command acts on the whole timeline selection",
+      "pass": true
+    },
+    {
+      "name": "Locked track disables destructive and partial edits",
+      "pass": true
+    },
+    {
+      "name": "Track check state reflects lock; occupied track cannot be removed",
+      "pass": true
+    },
+    {
+      "name": "Unlock through context updates the selected track",
+      "pass": true
+    },
+    {
+      "name": "Title has title actions, not clip commands",
+      "pass": true
+    },
+    {
+      "name": "Approved board exposes explicit revision, keeps edits locked",
+      "pass": true
+    },
+    {
+      "name": "Escape restores object focus; arrow keys stay in menu",
+      "pass": true
+    },
+    {
+      "name": "Keyboard context-menu key works",
+      "pass": true
+    },
+    {
+      "name": "Control-click works for folders too",
+      "pass": true
+    },
+    {
+      "name": "Menu bar uses the same commands without duplicate entries",
+      "pass": true
+    },
+    {
+      "name": "Menu bar reorders the intended shot",
+      "pass": true
+    },
+    {
+      "name": "Menus fit visible window at 130 percent and scroll when needed",
+      "pass": true
+    },
+    {
+      "name": "Text fields retain the system context menu",
+      "pass": true
+    },
+    {
+      "name": "Anchor context compares the clicked shot without approving it",
+      "pass": true
+    },
+    {
+      "name": "Take context opens exact shot and variant without a decision",
+      "pass": true
+    },
+    {
+      "name": "Clay output menu binds confirmation to the clicked shot",
+      "pass": true
+    },
+    {
+      "name": "Clay confirmation preserves other outputs",
+      "pass": true
+    },
+    {
+      "name": "Keyframe delete removes only that key, undo restores it",
+      "pass": true
+    },
+    {
+      "name": "Compact source picker offers placement, not library management",
+      "pass": true
+    },
+    {
+      "name": "Reveal command preserves exact source in the library",
+      "pass": true
+    },
+    {
+      "name": "Review finding menu keeps acceptance behind an explicit decision",
+      "pass": true
+    },
+    {
+      "name": "Export setup is reachable for history verification",
+      "pass": true
+    },
+    {
+      "name": "Finished export context has details and new output, no fake Finder or cancel",
+      "pass": true
+    },
+    {
+      "name": "Folder rename dialog operates on the clicked folder",
+      "pass": true
+    },
+    {
+      "name": "Select-all shortcut selects the storyboard, not browser text",
+      "pass": true
+    },
+    {
+      "name": "Empty timeline menu offers sequence actions without clip deletion",
+      "pass": true
+    },
+    {
+      "name": "Menu dismissal consumes the click without activating workspace underneath",
+      "pass": true
+    },
+    {
+      "name": "Disabled commands cannot mutate state even if dispatched directly",
+      "pass": true
+    },
+    {
+      "name": "No menu overlays survive a workspace change",
+      "pass": true
+    },
+    {
+      "name": "Real mouse right-click selects the target and opens its menu",
+      "pass": true
+    },
+    {
+      "name": "Real Escape closes menu and returns keyboard focus",
+      "pass": true
+    },
+    {
+      "name": "Filmstrip context reveals the exact timeline clip",
+      "pass": true
+    },
+    {
+      "name": "Content search results use media commands for the matched asset",
+      "pass": true
+    },
+    {
+      "name": "Control-click in 3D does not start a drag or change geometry",
+      "pass": true
+    },
+    {
+      "name": "Real drag still displays the insertion marker",
+      "pass": true
+    },
+    {
+      "name": "Real drag keeps its exact destination after menu refactoring",
+      "pass": true
+    },
+    {
+      "name": "Inspector layout remains a single scroller with no orphan sections",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

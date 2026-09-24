@@ -1,0 +1,5027 @@
+[
+  {
+    "name": "export",
+    "state": {
+      "workspace": "finish",
+      "current": "edit",
+      "fixture": "Export"
+    },
+    "text": "1A · Take 1\nStandbildsimulation · kein Audio\n00:00:00:00\n00:00:20:00\n1A · Take 1\n00:00:00:00\n1B · Take 1\n00:00:03:00\n1C · Take 1\n00:00:05:00\n1D · Take 1\n00:00:09:00\n1E · Take 1\n00:00:12:00\n1F · Take 1\n00:00:17:00",
+    "inspector": "Ausgabe\nAktuelle Sequenz · 00:00:20:00\nAusgabeart\nTyp\nVideodatei\nTimeline-XML\nNGV-Projekt\nVideo\nZiel\nMaster\nAbleitung\nCodec\nH.264\nH.265\nProRes\nAuflösung\nWie Timeline\n720p\n1080p\n2K\n4K\nBildgröße\n1920 × 1080\nBildrate\n24 fps\nGeschätzt\n≈ 26 MB\nSeitenverhältnis und Bildrate folgen dem Schnitt.\nFreigabe\nAktuellen Sequenzreview voraussetzen\nReview\nNoch nicht geprüft\nTon\nA1\nAktiv\nDatei\n\nClaude-Mouse-Master.mp4\n\nSpeicherort im nächsten Schritt.\nVorschaubild\nVorschaubild beilegen\nBild\nOhne Vorschaubild\nBild auswählen…",
+    "gate": "Ausgabe · H.264 · Master\nSequenzreview: Noch nicht geprüft\nExportieren…",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Ausgabe",
+        "aria": null,
+        "action": "finish-section:delivery",
+        "disabled": false
+      },
+      {
+        "text": "Vorschaubild",
+        "aria": null,
+        "action": "finish-section:preview",
+        "disabled": false
+      },
+      {
+        "text": "Album-Cover",
+        "aria": null,
+        "action": "finish-section:album",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Verlauf",
+        "aria": null,
+        "action": "finish-section:history",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Anfang",
+        "action": "finish:start",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild zurück",
+        "action": "finish:prev",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Wiedergabe simulieren",
+        "action": "finish:play",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild vor",
+        "action": "finish:next",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Ende",
+        "action": "finish:end",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1\n00:00:00:00",
+        "aria": null,
+        "action": "finish:clip-0",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "finish:clip-1",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1\n00:00:05:00",
+        "aria": null,
+        "action": "finish:clip-2",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1\n00:00:09:00",
+        "aria": null,
+        "action": "finish:clip-3",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1\n00:00:12:00",
+        "aria": null,
+        "action": "finish:clip-4",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1\n00:00:17:00",
+        "aria": null,
+        "action": "finish:clip-5",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Bild auswählen…",
+        "aria": null,
+        "action": "finish-section:preview",
+        "disabled": false
+      },
+      {
+        "text": "Exportieren…",
+        "aria": null,
+        "action": "finish:export",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "media",
+    "state": {
+      "workspace": "media",
+      "current": "edit",
+      "fixture": "Medien"
+    },
+    "text": "Dateiname\nBildinhalt\nTranskript\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\nKI-generiert\nSortieren\nName\nTyp\nDauer\n1A · Einstellung\nSketches\n1A · Shot-Anker\nReferences\n1A · Take 1\n00:00:03:00\n1A · Take 2\n00:00:03:00\n1B · Einstellung\nSketches\n1B · Shot-Anker\nReferences\n1B · Take 1\n00:00:02:00\n1B · Take 2\n00:00:02:00\n1C · Einstellung\nSketches\n1C · Shot-Anker\nReferences\n1C · Take 1\n00:00:04:00\n1C · Take 2\n00:00:04:00\n1D · Einstellung\nSketches\n1D · Shot-Anker\nReferences\n1D · Take 1\n00:00:03:00\n1D · Take 2\n00:00:03:00\n1E · Hebel greifen\nSketches\n1E · Hebel herunterziehen\nSketches\n1E · Maschine läuft an\nSketches\n1E · Shot-Anker\nReferences\n1E · Take 1\n00:00:05:00\n1E · Take 2\n00:00:05:00\n1F · Einstellung\nSketches\n1F · Shot-Anker\nReferences\n1F · Take 1\n00:00:03:00\n1F · Take 2\n00:00:03:00\nAI Cat\nReferences\nBriefing.md\nMD\nClaude Mouse\nReferences\n▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio\nComfort Engine\nReferences\nSkript.fountain\nFOUNTAIN\nStraße\nReferences\nTreatment.md\nMD\n34 Medien · 1 ausgewählt\nVerschieben…",
+    "inspector": "1A · Take 1\nVideos\nBeispielvorschau\nDatei\nOrdner\nVideo-Takes / Szene 01\nHerkunft\nAusgewählter Take · Standbild-Demo\nDauer\n00:00:03:00\nIn Ordner verschieben…\nDateiaktionen\nUmbenennen…\nAuswahl löschen…\nNeu verknüpfen…\nDateiort anzeigen\nVerwendung\nClips\n1A · Take 1",
+    "gate": "",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Alle Medien\n34",
+        "aria": null,
+        "action": "pool:folder-all",
+        "disabled": false
+      },
+      {
+        "text": "Texte\n3",
+        "aria": null,
+        "action": "pool:folder-documents",
+        "disabled": false
+      },
+      {
+        "text": "Ton\n1",
+        "aria": null,
+        "action": "pool:folder-sound",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: Storyboard",
+        "action": "pool:toggle-sketches",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n8",
+        "aria": null,
+        "action": "pool:folder-sketches",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: References",
+        "action": "pool:toggle-references",
+        "disabled": false
+      },
+      {
+        "text": "References\n10",
+        "aria": null,
+        "action": "pool:folder-references",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: Video-Takes",
+        "action": "pool:toggle-footage",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n12",
+        "aria": null,
+        "action": "pool:folder-footage",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ordner anlegen",
+        "action": "pool:new",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ordner umbenennen",
+        "action": "pool:rename",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": "Ordner entfernen",
+        "action": "studio:folder-delete",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Suchindex verwalten · bereit",
+        "action": "studio:index",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien importieren",
+        "action": "media-import",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien generieren",
+        "action": "gen:open",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien nach Typ ordnen",
+        "action": "studio:organize",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Sortierrichtung ändern",
+        "action": "pool:sort",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Listenansicht",
+        "action": "pool:view-list",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Miniaturansicht",
+        "action": "pool:view-grid",
+        "disabled": false
+      },
+      {
+        "text": "1A · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-0-0",
+        "disabled": false
+      },
+      {
+        "text": "1A · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-0",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-0-1",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-0-2",
+        "disabled": false
+      },
+      {
+        "text": "1B · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-1-0",
+        "disabled": false
+      },
+      {
+        "text": "1B · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1\n00:00:02:00",
+        "aria": null,
+        "action": "asset:take-1-1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 2\n00:00:02:00",
+        "aria": null,
+        "action": "asset:take-1-2",
+        "disabled": false
+      },
+      {
+        "text": "1C · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-2-0",
+        "disabled": false
+      },
+      {
+        "text": "1C · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-2",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1\n00:00:04:00",
+        "aria": null,
+        "action": "asset:take-2-1",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 2\n00:00:04:00",
+        "aria": null,
+        "action": "asset:take-2-2",
+        "disabled": false
+      },
+      {
+        "text": "1D · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-3-0",
+        "disabled": false
+      },
+      {
+        "text": "1D · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-3",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-3-1",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-3-2",
+        "disabled": false
+      },
+      {
+        "text": "1E · Hebel greifen\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-0",
+        "disabled": false
+      },
+      {
+        "text": "1E · Hebel herunterziehen\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Maschine läuft an\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-2",
+        "disabled": false
+      },
+      {
+        "text": "1E · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-4",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1\n00:00:05:00",
+        "aria": null,
+        "action": "asset:take-4-1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 2\n00:00:05:00",
+        "aria": null,
+        "action": "asset:take-4-2",
+        "disabled": false
+      },
+      {
+        "text": "1F · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-5-0",
+        "disabled": false
+      },
+      {
+        "text": "1F · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-5",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-5-1",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-5-2",
+        "disabled": false
+      },
+      {
+        "text": "AI Cat\nReferences",
+        "aria": null,
+        "action": "asset:identity-1",
+        "disabled": false
+      },
+      {
+        "text": "Briefing.md\nMD",
+        "aria": null,
+        "action": "asset:document-brief",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse\nReferences",
+        "aria": null,
+        "action": "asset:identity-0",
+        "disabled": false
+      },
+      {
+        "text": "▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio",
+        "aria": null,
+        "action": "asset:track",
+        "disabled": false
+      },
+      {
+        "text": "Comfort Engine\nReferences",
+        "aria": null,
+        "action": "asset:identity-3",
+        "disabled": false
+      },
+      {
+        "text": "Skript.fountain\nFOUNTAIN",
+        "aria": null,
+        "action": "asset:document-script",
+        "disabled": false
+      },
+      {
+        "text": "Straße\nReferences",
+        "aria": null,
+        "action": "asset:identity-2",
+        "disabled": false
+      },
+      {
+        "text": "Treatment.md\nMD",
+        "aria": null,
+        "action": "asset:document-treatment",
+        "disabled": false
+      },
+      {
+        "text": "Verschieben…",
+        "aria": null,
+        "action": "pool:move",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "In Ordner verschieben…",
+        "aria": null,
+        "action": "pool:move",
+        "disabled": false
+      },
+      {
+        "text": "Umbenennen…",
+        "aria": null,
+        "action": "studio:asset-rename",
+        "disabled": false
+      },
+      {
+        "text": "Auswahl löschen…",
+        "aria": null,
+        "action": "studio:asset-delete",
+        "disabled": false
+      },
+      {
+        "text": "Neu verknüpfen…",
+        "aria": null,
+        "action": "studio:asset-relink",
+        "disabled": true
+      },
+      {
+        "text": "Dateiort anzeigen",
+        "aria": null,
+        "action": "studio:asset-path",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "audio",
+    "state": {
+      "workspace": "audio",
+      "current": "audio",
+      "fixture": "Audio"
+    },
+    "text": "03:19\nClaude-mouse.wav\n120\nBPM · 4/4\na-Moll\nTonart\nSongstruktur\nBeispiel-Messdaten\nIntro\n16 s\nVerse 1\n32 s\nChorus\n32 s\nVerse 2\n32 s\nBridge\n32 s\nFinale\n55 s\n00:00\n00:50\n01:40\n02:29\n03:19\n▸ Intro\n00:00–00:16\n▾ Verse 1\n00:16–00:48\nSegment A · Phrase 1 / 2\n4 + 4 Takte\nSegment B · Antwort\n16 s\n▸ Chorus\n00:48–01:20\n▸ Verse 2\n01:20–01:52\n▸ Bridge\n01:52–02:24\n▸ Finale\n02:24–03:19\nInterpretation · Verse 1\n\nDie Instrumentierung wird dichter. Eine Entscheidung kann vorbereitet werden.\n\nMusikalische Deutung; noch keine Geschichte und keine Shot-Vorgaben.\nVerse 1Abschnitt → Segment → Phrase → Takt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\nGemessen · Beat-/Akkord-/Transkript-Adapter · Demo-Messung",
+    "inspector": "Audioanalyse\nMessung, Songstruktur und Interpretation\nMessung\nTrack\nClaude-mouse.wav\nTempo\n120 BPM\nTakt\n4/4\nQuelle\nDemo-Messdaten\nInterpretation\nAbschnitt\nVerse 1\nTempo-Zuordnung prüfen\nMesswerte und Interpretation bleiben getrennt.\nMessqualität",
+    "gate": "Audioanalyse · aktueller Schritt\nMessung und Interpretation bereit\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n●",
+        "aria": "Audioanalyse · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n·",
+        "aria": "Briefing · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n·",
+        "aria": "Treatment · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n·",
+        "aria": "Skript · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n·",
+        "aria": "Storyboard · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Intro\n16 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Verse 1\n32 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Chorus\n32 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Verse 2\n32 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Bridge\n32 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Finale\n55 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▸ Intro\n00:00–00:16",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▾ Verse 1\n00:16–00:48",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▸ Chorus\n00:48–01:20",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▸ Verse 2\n01:20–01:52",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▸ Bridge\n01:52–02:24",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "▸ Finale\n02:24–03:19",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1",
+        "aria": null,
+        "action": "studio:beat-0",
+        "disabled": false
+      },
+      {
+        "text": "2",
+        "aria": null,
+        "action": "studio:beat-1",
+        "disabled": false
+      },
+      {
+        "text": "3",
+        "aria": null,
+        "action": "studio:beat-2",
+        "disabled": false
+      },
+      {
+        "text": "4",
+        "aria": null,
+        "action": "studio:beat-3",
+        "disabled": false
+      },
+      {
+        "text": "5",
+        "aria": null,
+        "action": "studio:beat-4",
+        "disabled": false
+      },
+      {
+        "text": "6",
+        "aria": null,
+        "action": "studio:beat-5",
+        "disabled": false
+      },
+      {
+        "text": "7",
+        "aria": null,
+        "action": "studio:beat-6",
+        "disabled": false
+      },
+      {
+        "text": "8",
+        "aria": null,
+        "action": "studio:beat-7",
+        "disabled": false
+      },
+      {
+        "text": "9",
+        "aria": null,
+        "action": "studio:beat-8",
+        "disabled": false
+      },
+      {
+        "text": "10",
+        "aria": null,
+        "action": "studio:beat-9",
+        "disabled": false
+      },
+      {
+        "text": "11",
+        "aria": null,
+        "action": "studio:beat-10",
+        "disabled": false
+      },
+      {
+        "text": "12",
+        "aria": null,
+        "action": "studio:beat-11",
+        "disabled": false
+      },
+      {
+        "text": "13",
+        "aria": null,
+        "action": "studio:beat-12",
+        "disabled": false
+      },
+      {
+        "text": "14",
+        "aria": null,
+        "action": "studio:beat-13",
+        "disabled": false
+      },
+      {
+        "text": "15",
+        "aria": null,
+        "action": "studio:beat-14",
+        "disabled": false
+      },
+      {
+        "text": "16",
+        "aria": null,
+        "action": "studio:beat-15",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Tempo-Zuordnung prüfen",
+        "aria": null,
+        "action": "tempo",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:remeasure",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:analysis-proof",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,04 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "brief-empty",
+    "state": {
+      "workspace": "brief",
+      "current": "brief",
+      "fixture": "Leer"
+    },
+    "text": "CREATIVE BRIEF\nEine Absicht. Noch keine Geschichte.\nWAS SOLL DER FILM VERMITTELN?\n\nRahmen und Ton rechts im Inspector. Die Geschichte entsteht im Treatment.",
+    "inspector": "Briefing\nZiel, Ton und Rahmen des Films\nRahmen\nZielgruppe\nTon\nHoffnungsvoll\nVerspielt\nDüster\nBeobachtend\nZiellänge\nEntwicklung\nEin kurzer Auftrag genügt als Start. Die KI entwickelt anschließend einen Treatment-Vorschlag.\nKreative Richtung",
+    "gate": "Briefing · aktueller Schritt\nFilmabsicht eingeben\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Unbenannter Film",
+        "aria": "Projektmenü: Unbenannter Film",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n●",
+        "aria": "Briefing · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n·",
+        "aria": "Treatment · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n·",
+        "aria": "Skript · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n·",
+        "aria": "Storyboard · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Auftrag",
+        "aria": null,
+        "action": "open:brief",
+        "disabled": false
+      },
+      {
+        "text": "Gestaltung",
+        "aria": null,
+        "action": "open:design",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:patterns",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": true
+      },
+      {
+        "text": "Budget 0,00 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "brief-populated",
+    "state": {
+      "workspace": "brief",
+      "current": "board",
+      "fixture": "Storyboard"
+    },
+    "text": "CREATIVE BRIEF\nClaude Mouse\nWAS SOLL DER FILM VERMITTELN?\n\nRahmen und Ton rechts im Inspector. Die Geschichte entsteht im Treatment.",
+    "inspector": "Briefing\nZiel, Ton und Rahmen des Films\nRahmen\nZielgruppe\nTon\nHoffnungsvoll\nVerspielt\nDüster\nBeobachtend\nZiellänge\nEntwicklung\nEin kurzer Auftrag genügt als Start. Die KI entwickelt anschließend einen Treatment-Vorschlag.\nKreative Richtung\nVorhandenes Material",
+    "gate": "Briefing · freigegeben\nFreigegebene Revision · zum Ändern gezielt wieder öffnen\nBriefing revidieren…",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n●",
+        "aria": "Storyboard · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Auftrag",
+        "aria": null,
+        "action": "open:brief",
+        "disabled": false
+      },
+      {
+        "text": "Gestaltung",
+        "aria": null,
+        "action": "open:design",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:patterns",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:intake",
+        "disabled": true
+      },
+      {
+        "text": "Briefing revidieren…",
+        "aria": null,
+        "action": "revise",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "treatment",
+    "state": {
+      "workspace": "treatment",
+      "current": "board",
+      "fixture": "Storyboard"
+    },
+    "text": "GESCHICHTE\nClaude Mouse\n01   Ausgangslage\n02   Entscheidung und Folge\n03   Auflösung",
+    "inspector": "Abschnitt 1\nUrsache und Wirkung\nBearbeitung\nAlternative vorschlagen\nVorschlag nur für diesen Abschnitt. Übernahme bleibt deine Entscheidung.\nVerknüpfung\nGrundlage\nBriefing / Gestaltung\nAusgabe\nErzählverlauf\nKreative Richtung",
+    "gate": "Treatment · freigegeben\nFreigegebene Revision · zum Ändern gezielt wieder öffnen\nTreatment revidieren…",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n●",
+        "aria": "Storyboard · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "01   Ausgangslage",
+        "aria": null,
+        "action": "segment:0",
+        "disabled": false
+      },
+      {
+        "text": "02   Entscheidung und Folge",
+        "aria": null,
+        "action": "segment:1",
+        "disabled": false
+      },
+      {
+        "text": "03   Auflösung",
+        "aria": null,
+        "action": "segment:2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Alternative vorschlagen",
+        "aria": null,
+        "action": "alternative",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:patterns",
+        "disabled": false
+      },
+      {
+        "text": "Treatment revidieren…",
+        "aria": null,
+        "action": "revise",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "script",
+    "state": {
+      "workspace": "script",
+      "current": "board",
+      "fixture": "Storyboard"
+    },
+    "text": "SZENENENTWURF\nClaude Mouse\n01   EXT. STRASSE — MORGEN\n02   EXT. VERANDA — SPÄTER\n03   EXT. STRASSE — DANACH",
+    "inspector": "Szene 1\nHandlung und Schauplatz\nBearbeitung\nAlternative vorschlagen\nVorschlag nur für diesen Abschnitt. Übernahme bleibt deine Entscheidung.\nVerknüpfung\nGrundlage\nTreatment\nAusgabe\nSzenenentwurf",
+    "gate": "Skript · freigegeben\nFreigegebene Revision · zum Ändern gezielt wieder öffnen\nSkript revidieren…",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n●",
+        "aria": "Storyboard · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "01   EXT. STRASSE — MORGEN",
+        "aria": null,
+        "action": "segment:0",
+        "disabled": false
+      },
+      {
+        "text": "02   EXT. VERANDA — SPÄTER",
+        "aria": null,
+        "action": "segment:1",
+        "disabled": false
+      },
+      {
+        "text": "03   EXT. STRASSE — DANACH",
+        "aria": null,
+        "action": "segment:2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Alternative vorschlagen",
+        "aria": null,
+        "action": "alternative",
+        "disabled": true
+      },
+      {
+        "text": "Skript revidieren…",
+        "aria": null,
+        "action": "revise",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "storyboard",
+    "state": {
+      "workspace": "board",
+      "current": "board",
+      "fixture": "Storyboard"
+    },
+    "text": "Szene 01 · 6 Shots · 8 Sketches\n20.0 s · 24 fps\n1A\nDie leere Straße\n3.0 s\nDie Stadt wartet. Die Maschine steht still.\n1B\nDas kleine Zahnrad\n2.0 s\nRückblende · früher in der Story\n1C\nDer versperrte Weg\n4.0 s\nDie Katze versperrt den Zugang zur Veranda.\n1D\nEine andere Lösung\n3.0 s\nDie Maus setzt das Zahnrad in die Straßenmaschine ein.\n1E\nDie Maschine erwacht\n5.0 s\n3 Sketches · eine Einstellung\n1F\nGemeinsamer Komfort\n3.0 s\nDie Bewohner kehren auf die Straße zurück.",
+    "inspector": "1E · Die Maschine erwacht\nSketch · Erzählung und Timing\nTiming\nDauer (s)\nGemeinsames Timing für Storyboard und Animatic.\nHandlung\nSketch-Momente\nInnerhalb des Shots\n3 Sketches\nSketches öffnen\nHandlungsmoment hinzufügen\nMomente sind keine Schnitte. Das Animatic nutzt ihre Zeitpunkte innerhalb derselben Shotdauer.\nBildquelle\nArt\nStoryboard-Sketch\nHerkunft\nDemo · Draw-Style\nEinsatz\nPlanung / Animatic",
+    "gate": "Storyboard · aktueller Schritt\nBereit zur Freigabe\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n●",
+        "aria": "Storyboard · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Übersicht",
+        "aria": null,
+        "action": "mode:board",
+        "disabled": false
+      },
+      {
+        "text": "Animatic",
+        "aria": null,
+        "action": "mode:animatic",
+        "disabled": false
+      },
+      {
+        "text": "1A\nDie leere Straße\n3.0 s\nDie Stadt wartet. Die Maschine steht still.",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1B\nDas kleine Zahnrad\n2.0 s\nRückblende · früher in der Story",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1C\nDer versperrte Weg\n4.0 s\nDie Katze versperrt den Zugang zur Veranda.",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1D\nEine andere Lösung\n3.0 s\nDie Maus setzt das Zahnrad in die Straßenmaschine ein.",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1E\nDie Maschine erwacht\n5.0 s\n3 Sketches · eine Einstellung",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1F\nGemeinsamer Komfort\n3.0 s\nDie Bewohner kehren auf die Straße zurück.",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Sketches öffnen",
+        "aria": null,
+        "action": "mode:moments",
+        "disabled": false
+      },
+      {
+        "text": "Handlungsmoment hinzufügen",
+        "aria": null,
+        "action": "add-moment",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "animatic",
+    "state": {
+      "workspace": "board",
+      "current": "board",
+      "fixture": "Storyboard"
+    },
+    "text": "Animatic · Sketches\nShot 1E · Moment 1/3\nHebel greifen · eine durchgehende Einstellung",
+    "inspector": "1E · Die Maschine erwacht\nSketch · Erzählung und Timing\nTiming\nDauer (s)\nGemeinsames Timing für Storyboard und Animatic.\nHandlung\nSketch-Momente\nInnerhalb des Shots\n3 Sketches\nSketches öffnen\nHandlungsmoment hinzufügen\nMomente sind keine Schnitte. Das Animatic nutzt ihre Zeitpunkte innerhalb derselben Shotdauer.\nBildquelle\nArt\nStoryboard-Sketch\nHerkunft\nDemo · Draw-Style\nEinsatz\nPlanung / Animatic",
+    "gate": "Storyboard · aktueller Schritt\nBereit zur Freigabe\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n●",
+        "aria": "Storyboard · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n·",
+        "aria": "Shotplanung · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Übersicht",
+        "aria": null,
+        "action": "mode:board",
+        "disabled": false
+      },
+      {
+        "text": "Animatic",
+        "aria": null,
+        "action": "mode:animatic",
+        "disabled": false
+      },
+      {
+        "text": "▶ Abspielen",
+        "aria": null,
+        "action": "play",
+        "disabled": false
+      },
+      {
+        "text": "1A\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1B\n2.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1C\n4.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1D\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1E\n5.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1F\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Sketches öffnen",
+        "aria": null,
+        "action": "mode:moments",
+        "disabled": false
+      },
+      {
+        "text": "Handlungsmoment hinzufügen",
+        "aria": null,
+        "action": "add-moment",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "plan",
+    "state": {
+      "workspace": "plan",
+      "current": "plan",
+      "fixture": "Shotplanung"
+    },
+    "text": "Dieselben Shots · Produktionsplanung\n20.0 s\n1A · Totale\nDie leere Straße\nKI-Video · Anker benötigt\n3.0 s\n28 mm\n1B · Halbnah\nDas kleine Zahnrad\nKI-Video · Anker benötigt\n2.0 s\n50 mm\n1C · Halbnah\nDer versperrte Weg\nKI-Video · Anker benötigt\n4.0 s\n50 mm\n1D · Halbnah\nEine andere Lösung\nKI-Video · Anker benötigt\n3.0 s\n50 mm\n1E · Halbnah\nDie Maschine erwacht\nKI-Video · Anker benötigt\n5.0 s\n50 mm\n1F · Totale\nGemeinsamer Komfort\nKI-Video · Anker benötigt\n3.0 s\n28 mm",
+    "inspector": "1A · Die leere Straße\nProduktionsplan · derselbe Shot\nTiming\nDauer\n3.0 s\nAus dem freigegebenen Storyboard.\nIm Storyboard ändern…\nHandlung\n\nDie Stadt wartet. Die Maschine steht still.\n\nKamera\nBildausschnitt\nTotale\nHalbnah\nNah\nDetail\nBrennweite\n28 mm\n35 mm\n50 mm\n85 mm\nProduktion\nQuelle\nKI-Video\nImportierter Clip\nKI-Bearbeitung\nBildbedarf\nIdentität + Shot-Anker\nAusgabe & Eingaben\nRäumlicher Plan\nMusic Video",
+    "gate": "Shotplanung · aktueller Schritt\nBereit zur Freigabe\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n●",
+        "aria": "Shotplanung · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n·",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "1A · Totale\nDie leere Straße\nKI-Video · Anker benötigt\n3.0 s\n28 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1B · Halbnah\nDas kleine Zahnrad\nKI-Video · Anker benötigt\n2.0 s\n50 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1C · Halbnah\nDer versperrte Weg\nKI-Video · Anker benötigt\n4.0 s\n50 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1D · Halbnah\nEine andere Lösung\nKI-Video · Anker benötigt\n3.0 s\n50 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1E · Halbnah\nDie Maschine erwacht\nKI-Video · Anker benötigt\n5.0 s\n50 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1F · Totale\nGemeinsamer Komfort\nKI-Video · Anker benötigt\n3.0 s\n28 mm",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Im Storyboard ändern…",
+        "aria": null,
+        "action": "revise-board",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:source-binding",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "open:blocking",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:performance",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:coverage",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "blocking-space",
+    "state": {
+      "workspace": "blocking",
+      "current": "blocking",
+      "fixture": "Blocking"
+    },
+    "text": "1A\n1B\n1C\n1D\n1E\n1F\nStraße & Veranda\nFreie Ansicht\nZiehen: Ansicht drehen · Scrollen: Zoom\nFreie Ansicht verändert keine Shot-Kamera.\nClay-Vorschau · Simulation",
+    "inspector": "Straße & Veranda\nRaum & Bewegung · optional\nLocation\nSzene\nMaus\nKatze\nStraßenmaschine\nKiste\nMaus\nX (m)\nZ (m)\nDrehung (°)\nMaßstab\nProjektquellen",
+    "gate": "Straße & Veranda\nRevision 1 · 6 Shot-Kameras\nÜberspringen\nVorlagen ableiten",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n✓",
+        "aria": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n●",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Raum",
+        "aria": null,
+        "action": "clay:view-space",
+        "disabled": false
+      },
+      {
+        "text": "Kamera",
+        "aria": null,
+        "action": "clay:view-camera",
+        "disabled": false
+      },
+      {
+        "text": "Vorlagen",
+        "aria": null,
+        "action": "clay:view-outputs",
+        "disabled": false
+      },
+      {
+        "text": "1A",
+        "aria": "Kamera für 1A · Die leere Straße",
+        "action": "clay:shot-0",
+        "disabled": false
+      },
+      {
+        "text": "1B",
+        "aria": "Kamera für 1B · Das kleine Zahnrad",
+        "action": "clay:shot-1",
+        "disabled": false
+      },
+      {
+        "text": "1C",
+        "aria": "Kamera für 1C · Der versperrte Weg",
+        "action": "clay:shot-2",
+        "disabled": false
+      },
+      {
+        "text": "1D",
+        "aria": "Kamera für 1D · Eine andere Lösung",
+        "action": "clay:shot-3",
+        "disabled": false
+      },
+      {
+        "text": "1E",
+        "aria": "Kamera für 1E · Die Maschine erwacht",
+        "action": "clay:shot-4",
+        "disabled": false
+      },
+      {
+        "text": "1F",
+        "aria": "Kamera für 1F · Gemeinsamer Komfort",
+        "action": "clay:shot-5",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Location duplizieren",
+        "action": "clay:duplicate-location",
+        "disabled": false
+      },
+      {
+        "text": "Maus",
+        "aria": null,
+        "action": "clay:object-mouse",
+        "disabled": false
+      },
+      {
+        "text": "Katze",
+        "aria": null,
+        "action": "clay:object-cat",
+        "disabled": false
+      },
+      {
+        "text": "Straßenmaschine",
+        "aria": null,
+        "action": "clay:object-engine",
+        "disabled": false
+      },
+      {
+        "text": "Kiste",
+        "aria": null,
+        "action": "clay:object-crate",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:blockout-import",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:pov",
+        "disabled": false
+      },
+      {
+        "text": "Überspringen",
+        "aria": null,
+        "action": "clay:skip",
+        "disabled": false
+      },
+      {
+        "text": "Vorlagen ableiten",
+        "aria": null,
+        "action": "clay:derive",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "blocking-camera",
+    "state": {
+      "workspace": "blocking",
+      "current": "blocking",
+      "fixture": "Blocking"
+    },
+    "text": "1A\n1B\n1C\n1D\n1E\n1F\nStraße & Veranda\nShot 1E · Die Maschine erwacht\nShot-Kamera · Kamerafahrt\n00:00:00:00\n5.0 s\nClay-Vorschau · Simulation",
+    "inspector": "Blocking\nRaum & Bewegung · optional\nLocation\nShot 1E\nClay-Vorlage verwenden\nDauer\n5.0 s · Storyboard\nKamerafahrt\nKamerafahrt\nStart\nEnde\nStartposition\nX (m)\nHöhe (m)\nZ (m)\nOptik\n50 mm · Shotplanung\nOptik ändern…\nBlickziel\nProjektquellen",
+    "gate": "Straße & Veranda\nRevision 1 · 6 Shot-Kameras\nÜberspringen\nVorlagen ableiten",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n✓",
+        "aria": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n●",
+        "aria": "Blocking · optional",
+        "disabled": false
+      },
+      {
+        "text": "References\n·",
+        "aria": "References · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Raum",
+        "aria": null,
+        "action": "clay:view-space",
+        "disabled": false
+      },
+      {
+        "text": "Kamera",
+        "aria": null,
+        "action": "clay:view-camera",
+        "disabled": false
+      },
+      {
+        "text": "Vorlagen",
+        "aria": null,
+        "action": "clay:view-outputs",
+        "disabled": false
+      },
+      {
+        "text": "1A",
+        "aria": "Kamera für 1A · Die leere Straße",
+        "action": "clay:shot-0",
+        "disabled": false
+      },
+      {
+        "text": "1B",
+        "aria": "Kamera für 1B · Das kleine Zahnrad",
+        "action": "clay:shot-1",
+        "disabled": false
+      },
+      {
+        "text": "1C",
+        "aria": "Kamera für 1C · Der versperrte Weg",
+        "action": "clay:shot-2",
+        "disabled": false
+      },
+      {
+        "text": "1D",
+        "aria": "Kamera für 1D · Eine andere Lösung",
+        "action": "clay:shot-3",
+        "disabled": false
+      },
+      {
+        "text": "1E",
+        "aria": "Kamera für 1E · Die Maschine erwacht",
+        "action": "clay:shot-4",
+        "disabled": false
+      },
+      {
+        "text": "1F",
+        "aria": "Kamera für 1F · Gemeinsamer Komfort",
+        "action": "clay:shot-5",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Kamerafahrt abspielen",
+        "action": "clay:play",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Location duplizieren",
+        "action": "clay:duplicate-location",
+        "disabled": false
+      },
+      {
+        "text": "Start",
+        "aria": null,
+        "action": "clay:endpoint-start",
+        "disabled": false
+      },
+      {
+        "text": "Ende",
+        "aria": null,
+        "action": "clay:endpoint-end",
+        "disabled": false
+      },
+      {
+        "text": "Optik ändern…",
+        "aria": null,
+        "action": "clay:revise-plan",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:blockout-import",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:pov",
+        "disabled": false
+      },
+      {
+        "text": "Überspringen",
+        "aria": null,
+        "action": "clay:skip",
+        "disabled": false
+      },
+      {
+        "text": "Vorlagen ableiten",
+        "aria": null,
+        "action": "clay:derive",
+        "disabled": false
+      },
+      {
+        "text": "Budget 0,26 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "references",
+    "state": {
+      "workspace": "refs",
+      "current": "refs",
+      "fixture": "References"
+    },
+    "text": "1A · Shot-Anker\nGesichtet",
+    "inspector": "Shot-Anker 1A\nGerenderte Produktionsvorlage\nSichtung\nTyp\nShot-Anker\n✓ Gesichtet\nHerkunft\nProvider\nIm Beispiel unbekannt\nModell\nIm Beispiel unbekannt\nDatei\nIllustratives Bestandsbild\nIm Produkt: exakte Quelle, Referenzversion und Bild-Audit. Hier keine erfundene Provenienz.\nRevision\nPlan\n1\nFreigabe\nOffen\nAnker bearbeiten",
+    "gate": "References · aktueller Schritt\nIdentitäten und Shot-Anker gesichtet\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n✓",
+        "aria": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n—",
+        "aria": "Blocking · übersprungen",
+        "disabled": false
+      },
+      {
+        "text": "References\n●",
+        "aria": "References · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n·",
+        "aria": "Render-Review · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Identitäten",
+        "aria": null,
+        "action": "ref:identities",
+        "disabled": false
+      },
+      {
+        "text": "Shot-Anker",
+        "aria": null,
+        "action": "ref:anchors",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Sketch vergleichen",
+        "action": "ref-compare",
+        "disabled": false
+      },
+      {
+        "text": "1A\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1B\n2.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1C\n4.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1D\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1E\n5.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1F\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "✓ Gesichtet",
+        "aria": null,
+        "action": "accept-anchor",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:frame-redo",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:frame-remix",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:frame-review",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 1,18 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "review",
+    "state": {
+      "workspace": "review",
+      "current": "review",
+      "fixture": "Review"
+    },
+    "text": "Story-Welt · früher → später\n1B ist eine Rückblende\n1B\nfrüher\n1A\n→\n1C\n→\n1D\n→\n1E\nPrüfen\n1F\n→\n\n1D · Eine andere Lösung\n\nAusgang: repariert, noch still\n\n1E · Die Maschine erwacht\n\nEingang: Mechanik läuft bereits\nBefund 1D → 1E · Mechanik startet zu früh\n\n1D endet mit einer reparierten, stillstehenden Maschine. 1E verlangt bereits eine laufende Maschine, obwohl der Start erst in 1E geschieht.\n\nKorrektur prüfen",
+    "inspector": "1E · Zustände\nPrüfung in der Zeit der Story\nEingang\nMechanik\nLäuft bereits\nTageszeit\nMorgen\nFiguren\nMaus / Katze\nAusgang\nMechanik\nLäuft\nUrsache\nStarthebel\nPrüfung\nStruktur\n6 Shots zugeordnet\nReferenzen\nBeispiel-Audit\nContinuity\nWiderspruch 1D → 1E\nErneut prüfen\nAlle Prüfungen",
+    "gate": "Render-Review · aktueller Schritt\n1 Widerspruch · Maschine startet zu früh\n✓ Freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n✓",
+        "aria": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n—",
+        "aria": "Blocking · übersprungen",
+        "disabled": false
+      },
+      {
+        "text": "References\n✓",
+        "aria": "References · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n●",
+        "aria": "Render-Review · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n·",
+        "aria": "Video-Takes · noch offen",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Story-Zeit",
+        "aria": null,
+        "action": "world",
+        "disabled": false
+      },
+      {
+        "text": "Filmfolge",
+        "aria": null,
+        "action": "film",
+        "disabled": false
+      },
+      {
+        "text": "1B\nfrüher",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1A\n→",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1C\n→",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1D\n→",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1E\nPrüfen",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "1F\n→",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "Korrektur prüfen",
+        "aria": null,
+        "action": "review-proposal",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Erneut prüfen",
+        "aria": null,
+        "action": "review-run",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:checks",
+        "disabled": false
+      },
+      {
+        "text": "✓ Freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": true
+      },
+      {
+        "text": "Budget 1,18 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "takes",
+    "state": {
+      "workspace": "takes",
+      "current": "takes",
+      "fixture": "Takes"
+    },
+    "text": "6 Shots · 12 Takes\nDemo-Standbilder\n1A\nDie leere Straße\n3.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2\n1B\nDas kleine Zahnrad\n2.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2\n1C\nDer versperrte Weg\n4.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2\n1D\nEine andere Lösung\n3.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2\n1E\nDie Maschine erwacht\n5.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2\n1F\nGemeinsamer Komfort\n3.0 s\nShot-Anker\n✓\nTake 1 · gewählt\nTake 2",
+    "inspector": "1A · Die leere Straße\nTake 1 ausgewählt\nProduktion\nQuelle\nKI-Video\nDauer\n3 s\nVorlage\nShot-Anker\nGenerierungsdetails\nVarianten\nWeiteren Take erzeugen…\nTake prüfen\nTake\nTake 1\nTake 2\nTake prüfen…\nNutzbaren Bereich retten…\nNächsten Versuch planen…\nMontage",
+    "gate": "6 / 6 ausgewählt\nFür Schnitt freigeben",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Workflow",
+        "aria": null,
+        "action": "sidebar:workflow",
+        "disabled": false
+      },
+      {
+        "text": "Quellen",
+        "aria": null,
+        "action": "sidebar:media",
+        "disabled": false
+      },
+      {
+        "text": "Audioanalyse\n✓",
+        "aria": "Audioanalyse · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Briefing\n✓",
+        "aria": "Briefing · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Treatment\n✓",
+        "aria": "Treatment · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Skript\n✓",
+        "aria": "Skript · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n✓",
+        "aria": "Storyboard · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Shotplanung\n✓",
+        "aria": "Shotplanung · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Blocking optional\n—",
+        "aria": "Blocking · übersprungen",
+        "disabled": false
+      },
+      {
+        "text": "References\n✓",
+        "aria": "References · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Render-Review\n✓",
+        "aria": "Render-Review · freigegeben",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n●",
+        "aria": "Video-Takes · Entwurf",
+        "disabled": false
+      },
+      {
+        "text": "Aufträge & Entscheidungen",
+        "aria": null,
+        "action": "studio:activity",
+        "disabled": false
+      },
+      {
+        "text": "Einstellungen…",
+        "aria": null,
+        "action": "studio:settings",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "1A\nDie leere Straße\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1A, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1A, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "1B\nDas kleine Zahnrad\n2.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1B, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1B, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "1C\nDer versperrte Weg\n4.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1C, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1C, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "1D\nEine andere Lösung\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1D, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1D, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "1E\nDie Maschine erwacht\n5.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1E, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1E, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "1F\nGemeinsamer Komfort\n3.0 s",
+        "aria": null,
+        "disabled": false
+      },
+      {
+        "text": "✓\nTake 1 · gewählt",
+        "aria": "Shot 1F, Take 1 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "Take 2",
+        "aria": "Shot 1F, Take 2 prüfen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Weiteren Take erzeugen…",
+        "aria": null,
+        "action": "retake-cost",
+        "disabled": false
+      },
+      {
+        "text": "Take prüfen…",
+        "aria": null,
+        "action": "studio:take-review",
+        "disabled": false
+      },
+      {
+        "text": "Nutzbaren Bereich retten…",
+        "aria": null,
+        "action": "studio:take-rescue",
+        "disabled": false
+      },
+      {
+        "text": "Nächsten Versuch planen…",
+        "aria": null,
+        "action": "studio:take-repair",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:assembly",
+        "disabled": false
+      },
+      {
+        "text": "Für Schnitt freigeben",
+        "aria": null,
+        "action": "approve",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "edit",
+    "state": {
+      "workspace": "edit",
+      "current": "edit",
+      "fixture": "Schnitt"
+    },
+    "text": "00:00:00:00\n1A · Take 1 · 16:9 · 24 fps · Standbildsimulation",
+    "inspector": "1A · Take 1\nV1 · 00:00:03:00\nTransformieren\nPosition X\nPosition Y\nSkalierung %\nRotation °\nDeckkraft %\nBeschnitt %\nIm Bild positionieren\nHorizontal spiegeln\nVertikal spiegeln\nClip\nIn (s)\nOut (s)\nTempo\nSpur\nV2\nV1\nQuelle\nKeyframes",
+    "gate": "",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Sequenz 01",
+        "aria": null,
+        "action": "sequence",
+        "disabled": false
+      },
+      {
+        "text": "In Medien zeigen",
+        "aria": null,
+        "action": "pool:reveal",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1",
+        "aria": null,
+        "action": "asset:take-0-1",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 2",
+        "aria": null,
+        "action": "asset:take-0-2",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1",
+        "aria": null,
+        "action": "asset:take-1-1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 2",
+        "aria": null,
+        "action": "asset:take-1-2",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1",
+        "aria": null,
+        "action": "asset:take-2-1",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 2",
+        "aria": null,
+        "action": "asset:take-2-2",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1",
+        "aria": null,
+        "action": "asset:take-3-1",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 2",
+        "aria": null,
+        "action": "asset:take-3-2",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1",
+        "aria": null,
+        "action": "asset:take-4-1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 2",
+        "aria": null,
+        "action": "asset:take-4-2",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1",
+        "aria": null,
+        "action": "asset:take-5-1",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 2",
+        "aria": null,
+        "action": "asset:take-5-2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "Timeline",
+        "aria": null,
+        "action": "sequence",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Anfang",
+        "action": "nle:start",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild zurück",
+        "action": "nle:prev",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Wiedergabe simulieren",
+        "action": "nle:play",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild vor",
+        "action": "nle:next",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Ende",
+        "action": "nle:end",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Vorschau vergrößern / einpassen",
+        "action": "studio:zoom",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Angezeigtes Frame als Medium sichern",
+        "action": "studio:capture",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Original vergleichen",
+        "action": "studio:compare",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Viewer maximieren",
+        "action": "studio:theater",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Video",
+        "action": "nle:tab-video",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Farbe",
+        "action": "nle:tab-adjust",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ton",
+        "action": "nle:tab-audio",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Titel",
+        "action": "nle:tab-titles",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Untertitel",
+        "action": "nle:tab-captions",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "KI-Bearbeitung",
+        "action": "nle:tab-ai",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:swap",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:save-media",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": null,
+        "action": "studio:key-add",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Timeline-Höhe ändern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Auswahl · V",
+        "action": "nle:tool-pointer",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Rasierklinge · C",
+        "action": "nle:tool-razor",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Am Abspielkopf teilen",
+        "action": "nle:split",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": "Einrasten",
+        "action": "studio:snapping",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Clip- und Bereichsaktionen",
+        "action": "studio:clip-menu",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Titel hinzufügen",
+        "action": "nle:text",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur hinzufügen",
+        "action": "studio:add-track",
+        "disabled": false
+      },
+      {
+        "text": "V2",
+        "aria": null,
+        "action": "studio:track-V2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V2 ein-/ausblenden",
+        "action": "studio:track-hide-V2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V2 sperren",
+        "action": "studio:track-lock-V2",
+        "disabled": false
+      },
+      {
+        "text": "V1",
+        "aria": null,
+        "action": "studio:track-V1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V1 ein-/ausblenden",
+        "action": "studio:track-hide-V1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V1 sperren",
+        "action": "studio:track-lock-V1",
+        "disabled": false
+      },
+      {
+        "text": "A1",
+        "aria": null,
+        "action": "studio:track-A1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur A1 stummschalten",
+        "action": "studio:track-hide-A1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur A1 sperren",
+        "action": "studio:track-lock-A1",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1",
+        "aria": "1A · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1",
+        "aria": "1B · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1",
+        "aria": "1C · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1",
+        "aria": "1D · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1",
+        "aria": "1E · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1",
+        "aria": "1F · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "▂▅▃▇▆▂▅▃▆▂▅▆▃▂▅▇▅▂▃▆▃▅▂\nClaude-mouse.wav",
+        "aria": "Claude-mouse.wav",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Anfang trimmen",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ende trimmen",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "post",
+    "state": {
+      "workspace": "post",
+      "current": "edit",
+      "fixture": "Postproduction"
+    },
+    "text": "00:00:00:00\n1A · Take 1 · 16:9 · 24 fps · Standbildsimulation",
+    "inspector": "1A · Take 1\nV1 · 00:00:03:00\nBildkorrektur\nBelichtung\n0\nKontrast\n0\nLichter\n0\nSchatten\n0\nSchwarz\n0\nWeiß\n0\nTemperatur\n0\nTint\n0\nVibrance\n0\nSättigung\n100\nVergleich\nKorrektur umgehen\nGruppe zurücksetzen\nAn Referenz angleichen…",
+    "gate": "Postproduction · noch offenAktueller Schritt: SchnittAktuellen Schritt öffnen",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Farbe",
+        "aria": null,
+        "action": "studio:post-color",
+        "disabled": false
+      },
+      {
+        "text": "Ton",
+        "aria": null,
+        "action": "studio:post-audio",
+        "disabled": false
+      },
+      {
+        "text": "Titel",
+        "aria": null,
+        "action": "studio:post-titles",
+        "disabled": false
+      },
+      {
+        "text": "Untertitel",
+        "aria": null,
+        "action": "studio:post-captions",
+        "disabled": false
+      },
+      {
+        "text": "KI-Bearbeitung",
+        "aria": null,
+        "action": "studio:post-ai",
+        "disabled": false
+      },
+      {
+        "text": "Endkontrolle",
+        "aria": null,
+        "action": "studio:post-review",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Anfang",
+        "action": "nle:start",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild zurück",
+        "action": "nle:prev",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Wiedergabe simulieren",
+        "action": "nle:play",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ein Bild vor",
+        "action": "nle:next",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Zum Ende",
+        "action": "nle:end",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Vorschau vergrößern / einpassen",
+        "action": "studio:zoom",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Angezeigtes Frame als Medium sichern",
+        "action": "studio:capture",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Original vergleichen",
+        "action": "studio:compare",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Viewer maximieren",
+        "action": "studio:theater",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Basis",
+        "action": "studio:grade-basic",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Kurven",
+        "action": "studio:grade-curves",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Farbräder",
+        "action": "studio:grade-wheels",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "LUT",
+        "action": "studio:grade-lut",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Effekte",
+        "action": "studio:grade-effects",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Chroma-Key",
+        "action": "studio:grade-key",
+        "disabled": false
+      },
+      {
+        "text": "Gruppe zurücksetzen",
+        "aria": null,
+        "action": "studio:grade-reset",
+        "disabled": false
+      },
+      {
+        "text": "An Referenz angleichen…",
+        "aria": null,
+        "action": "studio:color-match",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Timeline-Höhe ändern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Auswahl · V",
+        "action": "nle:tool-pointer",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Einrasten",
+        "action": "studio:snapping",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Clip- und Bereichsaktionen",
+        "action": "studio:clip-menu",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Titel hinzufügen",
+        "action": "nle:text",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur hinzufügen",
+        "action": "studio:add-track",
+        "disabled": false
+      },
+      {
+        "text": "V2",
+        "aria": null,
+        "action": "studio:track-V2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V2 ein-/ausblenden",
+        "action": "studio:track-hide-V2",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V2 sperren",
+        "action": "studio:track-lock-V2",
+        "disabled": false
+      },
+      {
+        "text": "V1",
+        "aria": null,
+        "action": "studio:track-V1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V1 ein-/ausblenden",
+        "action": "studio:track-hide-V1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur V1 sperren",
+        "action": "studio:track-lock-V1",
+        "disabled": false
+      },
+      {
+        "text": "A1",
+        "aria": null,
+        "action": "studio:track-A1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur A1 stummschalten",
+        "action": "studio:track-hide-A1",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Spur A1 sperren",
+        "action": "studio:track-lock-A1",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1",
+        "aria": "1A · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1",
+        "aria": "1B · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1",
+        "aria": "1C · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1",
+        "aria": "1D · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1",
+        "aria": "1E · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1",
+        "aria": "1F · Take 1",
+        "disabled": false
+      },
+      {
+        "text": "▂▅▃▇▆▂▅▃▆▂▅▆▃▂▅▇▅▂▃▆▃▅▂\nClaude-mouse.wav",
+        "aria": "Claude-mouse.wav",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "name": "generator",
+    "state": {
+      "workspace": "media",
+      "current": "edit",
+      "fixture": "Medien"
+    },
+    "text": "Dateiname\nBildinhalt\nTranskript\nMedientyp\nAlle Typen\nBilder\nVideos\nAudio\nTexte\nSketches\nReferences\nAnimationen\nKI-generiert\nSortieren\nName\nTyp\nDauer\n1A · Einstellung\nSketches\n1A · Shot-Anker\nReferences\n1A · Take 1\n00:00:03:00\n1A · Take 2\n00:00:03:00\n1B · Einstellung\nSketches\n1B · Shot-Anker\nReferences\n1B · Take 1\n00:00:02:00\n1B · Take 2\n00:00:02:00\n1C · Einstellung\nSketches\n1C · Shot-Anker\nReferences\n1C · Take 1\n00:00:04:00\n1C · Take 2\n00:00:04:00\n1D · Einstellung\nSketches\n1D · Shot-Anker\nReferences\n1D · Take 1\n00:00:03:00\n1D · Take 2\n00:00:03:00\n1E · Hebel greifen\nSketches\n1E · Hebel herunterziehen\nSketches\n1E · Maschine läuft an\nSketches\n1E · Shot-Anker\nReferences\n1E · Take 1\n00:00:05:00\n1E · Take 2\n00:00:05:00\n1F · Einstellung\nSketches\n1F · Shot-Anker\nReferences\n1F · Take 1\n00:00:03:00\n1F · Take 2\n00:00:03:00\nAI Cat\nReferences\nBriefing.md\nMD\nClaude Mouse\nReferences\n▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio\nComfort Engine\nReferences\nSkript.fountain\nFOUNTAIN\nStraße\nReferences\nTreatment.md\nMD\n34 Medien · 1 ausgewählt\nVerschieben…",
+    "inspector": "1A · Take 1\nVideos\nBeispielvorschau\nDatei\nOrdner\nVideo-Takes / Szene 01\nHerkunft\nAusgewählter Take · Standbild-Demo\nDauer\n00:00:03:00\nIn Ordner verschieben…\nDateiaktionen\nUmbenennen…\nAuswahl löschen…\nNeu verknüpfen…\nDateiort anzeigen\nVerwendung\nClips\n1A · Take 1",
+    "gate": "",
+    "controls": [
+      {
+        "text": "",
+        "aria": "Linke Seitenleiste ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse",
+        "aria": "Projektmenü: Claude Mouse",
+        "action": "project",
+        "disabled": false
+      },
+      {
+        "text": "Medien",
+        "aria": null,
+        "action": "workspace:media",
+        "disabled": false
+      },
+      {
+        "text": "Produktion",
+        "aria": null,
+        "action": "workspace:production",
+        "disabled": false
+      },
+      {
+        "text": "Schnitt",
+        "aria": null,
+        "action": "workspace:edit",
+        "disabled": false
+      },
+      {
+        "text": "Postproduction",
+        "aria": null,
+        "action": "workspace:post",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": null,
+        "action": "workspace:finish",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector ausblenden",
+        "disabled": false
+      },
+      {
+        "text": "Alle Medien\n34",
+        "aria": null,
+        "action": "pool:folder-all",
+        "disabled": false
+      },
+      {
+        "text": "Texte\n3",
+        "aria": null,
+        "action": "pool:folder-documents",
+        "disabled": false
+      },
+      {
+        "text": "Ton\n1",
+        "aria": null,
+        "action": "pool:folder-sound",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: Storyboard",
+        "action": "pool:toggle-sketches",
+        "disabled": false
+      },
+      {
+        "text": "Storyboard\n8",
+        "aria": null,
+        "action": "pool:folder-sketches",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: References",
+        "action": "pool:toggle-references",
+        "disabled": false
+      },
+      {
+        "text": "References\n10",
+        "aria": null,
+        "action": "pool:folder-references",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Öffnen: Video-Takes",
+        "action": "pool:toggle-footage",
+        "disabled": false
+      },
+      {
+        "text": "Video-Takes\n12",
+        "aria": null,
+        "action": "pool:folder-footage",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ordner anlegen",
+        "action": "pool:new",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Ordner umbenennen",
+        "action": "pool:rename",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": "Ordner entfernen",
+        "action": "studio:folder-delete",
+        "disabled": true
+      },
+      {
+        "text": "",
+        "aria": "Projektbrowser vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Suchindex verwalten · bereit",
+        "action": "studio:index",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien importieren",
+        "action": "media-import",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien generieren",
+        "action": "gen:open",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Medien nach Typ ordnen",
+        "action": "studio:organize",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Sortierrichtung ändern",
+        "action": "pool:sort",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Listenansicht",
+        "action": "pool:view-list",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Miniaturansicht",
+        "action": "pool:view-grid",
+        "disabled": false
+      },
+      {
+        "text": "1A · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-0-0",
+        "disabled": false
+      },
+      {
+        "text": "1A · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-0",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-0-1",
+        "disabled": false
+      },
+      {
+        "text": "1A · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-0-2",
+        "disabled": false
+      },
+      {
+        "text": "1B · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-1-0",
+        "disabled": false
+      },
+      {
+        "text": "1B · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 1\n00:00:02:00",
+        "aria": null,
+        "action": "asset:take-1-1",
+        "disabled": false
+      },
+      {
+        "text": "1B · Take 2\n00:00:02:00",
+        "aria": null,
+        "action": "asset:take-1-2",
+        "disabled": false
+      },
+      {
+        "text": "1C · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-2-0",
+        "disabled": false
+      },
+      {
+        "text": "1C · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-2",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 1\n00:00:04:00",
+        "aria": null,
+        "action": "asset:take-2-1",
+        "disabled": false
+      },
+      {
+        "text": "1C · Take 2\n00:00:04:00",
+        "aria": null,
+        "action": "asset:take-2-2",
+        "disabled": false
+      },
+      {
+        "text": "1D · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-3-0",
+        "disabled": false
+      },
+      {
+        "text": "1D · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-3",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-3-1",
+        "disabled": false
+      },
+      {
+        "text": "1D · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-3-2",
+        "disabled": false
+      },
+      {
+        "text": "1E · Hebel greifen\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-0",
+        "disabled": false
+      },
+      {
+        "text": "1E · Hebel herunterziehen\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Maschine läuft an\nSketches",
+        "aria": null,
+        "action": "asset:sketch-4-2",
+        "disabled": false
+      },
+      {
+        "text": "1E · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-4",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 1\n00:00:05:00",
+        "aria": null,
+        "action": "asset:take-4-1",
+        "disabled": false
+      },
+      {
+        "text": "1E · Take 2\n00:00:05:00",
+        "aria": null,
+        "action": "asset:take-4-2",
+        "disabled": false
+      },
+      {
+        "text": "1F · Einstellung\nSketches",
+        "aria": null,
+        "action": "asset:sketch-5-0",
+        "disabled": false
+      },
+      {
+        "text": "1F · Shot-Anker\nReferences",
+        "aria": null,
+        "action": "asset:anchor-5",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 1\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-5-1",
+        "disabled": false
+      },
+      {
+        "text": "1F · Take 2\n00:00:03:00",
+        "aria": null,
+        "action": "asset:take-5-2",
+        "disabled": false
+      },
+      {
+        "text": "AI Cat\nReferences",
+        "aria": null,
+        "action": "asset:identity-1",
+        "disabled": false
+      },
+      {
+        "text": "Briefing.md\nMD",
+        "aria": null,
+        "action": "asset:document-brief",
+        "disabled": false
+      },
+      {
+        "text": "Claude Mouse\nReferences",
+        "aria": null,
+        "action": "asset:identity-0",
+        "disabled": false
+      },
+      {
+        "text": "▂▅▃▇▅▂▆▃▅▂\nClaude-mouse.wav\nAudio",
+        "aria": null,
+        "action": "asset:track",
+        "disabled": false
+      },
+      {
+        "text": "Comfort Engine\nReferences",
+        "aria": null,
+        "action": "asset:identity-3",
+        "disabled": false
+      },
+      {
+        "text": "Skript.fountain\nFOUNTAIN",
+        "aria": null,
+        "action": "asset:document-script",
+        "disabled": false
+      },
+      {
+        "text": "Straße\nReferences",
+        "aria": null,
+        "action": "asset:identity-2",
+        "disabled": false
+      },
+      {
+        "text": "Treatment.md\nMD",
+        "aria": null,
+        "action": "asset:document-treatment",
+        "disabled": false
+      },
+      {
+        "text": "Verschieben…",
+        "aria": null,
+        "action": "pool:move",
+        "disabled": false
+      },
+      {
+        "text": "",
+        "aria": "Inspector vergrößern oder verkleinern",
+        "disabled": false
+      },
+      {
+        "text": "In Ordner verschieben…",
+        "aria": null,
+        "action": "pool:move",
+        "disabled": false
+      },
+      {
+        "text": "Umbenennen…",
+        "aria": null,
+        "action": "studio:asset-rename",
+        "disabled": false
+      },
+      {
+        "text": "Auswahl löschen…",
+        "aria": null,
+        "action": "studio:asset-delete",
+        "disabled": false
+      },
+      {
+        "text": "Neu verknüpfen…",
+        "aria": null,
+        "action": "studio:asset-relink",
+        "disabled": true
+      },
+      {
+        "text": "Dateiort anzeigen",
+        "aria": null,
+        "action": "studio:asset-path",
+        "disabled": false
+      },
+      {
+        "text": "Budget 5,98 € / 50,00 €",
+        "aria": null,
+        "action": "budget",
+        "disabled": false
+      },
+      {
+        "text": "KI",
+        "aria": "KI-Aktivität: Keine laufenden Aufträge",
+        "action": "background:ai",
+        "disabled": false
+      },
+      {
+        "text": "Export",
+        "aria": "Exporte: Keine laufenden Aufträge",
+        "action": "background:export",
+        "disabled": false
+      },
+      {
+        "text": "Bild",
+        "aria": null,
+        "action": "gen:type-image",
+        "disabled": false
+      },
+      {
+        "text": "Video",
+        "aria": null,
+        "action": "gen:type-video",
+        "disabled": false
+      },
+      {
+        "text": "Audio",
+        "aria": null,
+        "action": "gen:type-audio",
+        "disabled": false
+      },
+      {
+        "text": "Schließen",
+        "aria": null,
+        "action": "close",
+        "disabled": false
+      },
+      {
+        "text": "Kosten prüfen…",
+        "aria": null,
+        "action": "gen:review",
+        "disabled": true
+      }
+    ],
+    "overflow": false
+  }
+]

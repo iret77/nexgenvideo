@@ -1,0 +1,57 @@
+{
+  "date": "2026-09-20",
+  "acceptance": {
+    "passed": 88,
+    "total": 88
+  },
+  "regressions": [
+    {
+      "suite": "workbench",
+      "exit": 0,
+      "passes": 35,
+      "failures": []
+    },
+    {
+      "suite": "polish",
+      "exit": 0,
+      "passes": 32,
+      "failures": []
+    },
+    {
+      "suite": "artwork",
+      "exit": 0,
+      "passes": 41,
+      "failures": []
+    },
+    {
+      "suite": "guards",
+      "exit": 0,
+      "passes": 32,
+      "failures": []
+    },
+    {
+      "suite": "background",
+      "exit": 0,
+      "passes": 25,
+      "failures": []
+    }
+  ],
+  "inline": [
+    {
+      "name": "Inline-Fragment lädt und nutzt die volle Arbeitshöhe",
+      "pass": true
+    },
+    {
+      "name": "Inline wechselt Arbeitsräume ohne leere Hauptfläche",
+      "pass": true
+    }
+  ],
+  "total_passed": 255,
+  "native_build_test_launch": false,
+  "dev_server": false,
+  "external_review": {
+    "first": "completed; 15 findings verified",
+    "followup_repo_read": "SIGTERM; no result",
+    "single_bounded_retry": "completed; four medium findings fixed and verified; low suspicion disproven by full code and browser check"
+  }
+}

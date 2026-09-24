@@ -1,0 +1,1341 @@
+diff --git a/Engine/Sources/NexGenEngine/Artifacts/MusicAffectEvidenceV1.swift b/Engine/Sources/NexGenEngine/Artifacts/MusicAffectEvidenceV1.swift
+new file mode 100644
+index 00000000..59957e5a
+--- /dev/null
++++ b/Engine/Sources/NexGenEngine/Artifacts/MusicAffectEvidenceV1.swift
+@@ -0,0 +1,361 @@
++import CoreFoundation
++import Foundation
++
++public enum MusicAffectEvidenceV1 {
++    public static let schema = "music-affect-evidence/v1"
++    public static let path = "analysis/affect.json"
++    public static let key = "harmonic_evidence"
++    public static let tags = [
++        "aggressive", "anthemic", "cinematic", "confrontational", "dark", "dreamy", "euphoric",
++        "fragile", "high_energy", "humorous", "intimate", "introspective", "ironic", "melancholic",
++        "meditative", "narrative", "playful", "poetic", "rebellious", "romantic", "surreal", "tense",
++        "triumphant", "urgent", "warm",
++    ]
++    public static let signalNames = ["harmony", "key", "rhythm", "energy", "lyrics", "instrumentation", "onsets", "provider", "context"]
++
++    public static func materialize(_ draft: [String: Any], dataRoot: URL) throws -> [String: Any] {
++        try keys(draft, allowed: ["schema", "summary", "confidence", "sections"], at: key)
++        var evidence = draft
++        evidence["source"] = try sourceSnapshot(dataRoot: dataRoot)
++        try validateEvidence(evidence)
++        return evidence
++    }
++
++    public static func read(dataRoot: URL) throws -> [String: Any]? {
++        let url = PipelineLayout.url(path, in: dataRoot)
++        guard FileManager.default.fileExists(atPath: url.path)
++            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil else { return nil }
++        let profile = try object(at: path, dataRoot: dataRoot)
++        if profile[key] != nil { try validateProfile(profile, dataRoot: dataRoot) }
++        return profile
++    }
++
++    public static func validateProfile(_ profile: [String: Any], dataRoot: URL) throws {
++        guard let evidence = profile[key] as? [String: Any] else {
++            throw GateBlocked("Affect evidence is missing or invalid. Use record_affect in Brief.")
++        }
++        try validateEvidence(evidence)
++        guard let source = evidence["source"] as? [String: Any],
++              try canonical(source) == canonical(sourceSnapshot(dataRoot: dataRoot)) else {
++            throw GateBlocked("Affect evidence is stale. Rewind Brief and record it against the approved analysis.")
++        }
++        try weights(profile["detected"], at: "detected")
++        if profile["override"] != nil {
++            try weights(profile["override"], at: "override")
++            guard !(profile["override"] as? [[String: Any]] ?? []).isEmpty else {
++                throw GateBlocked("An affect override must contain a desired affect.")
++            }
++            try text(profile["override_reason"], at: "override_reason")
++        }
++        guard profile["basis"] as? String == "inferred" else {
++            throw GateBlocked("Emotional meaning is inferred; signal measurements are separate evidence.")
++        }
++        let sections = evidence["sections"] as? [[String: Any]] ?? []
++        for section in sections {
++            let desired = tagText(profile["override"] ?? section["detected"])
++            guard let direction = section["visual_direction"] as? String, direction.hasPrefix(desired + ": ") else {
++                throw GateBlocked("Section visual_direction must begin with '\(desired): ' and implement that effective desired affect.")
++            }
++        }
++        let detected = profile["detected"] as? [[String: Any]] ?? []
++        if detected.isEmpty, number(evidence["confidence"]) != 0 {
++            throw GateBlocked("An undetermined track affect must have zero confidence.")
++        }
++        let sectionTags = Set(sections.flatMap { ($0["detected"] as? [[String: Any]] ?? []).compactMap { $0["value"] as? String } })
++        guard Set(detected.compactMap { $0["value"] as? String }).isSubset(of: sectionTags),
++              !sectionTags.isEmpty || detected.isEmpty else {
++            throw GateBlocked("Track affect must be supported by the section interpretations; abstention cannot invent a track mood.")
++        }
++    }
++
++    public static func requiresEvidence(dataRoot: URL) -> Bool {
++        let url = FrameInventory.projectHome(of: dataRoot).appendingPathComponent("ngv.json")
++        guard let data = try? Data(contentsOf: url),
++              let binding = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              binding["activePlugin"] as? String == "musicvideo",
++              let version = binding["activePluginVersion"] as? String else { return false }
++        let parts = version.split(separator: ".").compactMap { Int($0) }
++        return parts.count == 3 && (parts[0] > 0 || parts[1] >= 6)
++    }
++
++    public static func requireCurrent(dataRoot: URL) throws {
++        _ = try read(dataRoot: dataRoot)
++    }
++
++    public static func sourceSnapshot(dataRoot: URL) throws -> [String: Any] {
++        guard let analysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot) else {
++            throw GateBlocked("Affect evidence needs the single approved project track.")
++        }
++        let analysisPath = "analysis/" + analysisURL.lastPathComponent
++        let proofPath = "analysis/" + analysisURL.deletingPathExtension().lastPathComponent + ".measurement-proof.json"
++        let analysis = try object(at: analysisPath, dataRoot: dataRoot)
++        let proof = try object(at: proofPath, dataRoot: dataRoot)
++        guard let trackPath = analysis["song_path"] as? String,
++              let hash = analysis["song_sha256"] as? String,
++              proof["song_sha256"] as? String == hash,
++              proof["schema"] as? String == "analysis_measurement_proof/v1",
++              proof["project"] as? String == analysis["project"] as? String else {
++            throw GateBlocked("Affect evidence needs matching analysis and measurement proof.")
++        }
++        let track = try ProjectLocalFile.requireHash(hash, at: trackPath, dataRoot: dataRoot)
++        guard track.standardizedFileURL == AudioProjectLayout.songFiles(dataRoot: dataRoot).first?.standardizedFileURL else {
++            throw GateBlocked("Affect evidence must name the assigned track, not a different project file.")
++        }
++        var files: [String: String] = [
++            analysisPath: try digest(analysisPath, dataRoot), proofPath: try digest(proofPath, dataRoot), trackPath: hash,
++        ]
++        let lyricsDirectory = dataRoot.appendingPathComponent("lyrics")
++        let lyricsEntries = (try? FileManager.default.contentsOfDirectory(at: lyricsDirectory, includingPropertiesForKeys: nil)) ?? []
++        let lyrics = lyricsEntries.filter { ["txt", "md", "lrc"].contains($0.pathExtension.lowercased()) }
++        guard lyrics.count <= 1 else { throw GateBlocked("Affect evidence cannot choose among multiple lyrics files.") }
++        var lyricsHash: String?
++        if let lyricsFile = lyrics.first {
++            let lyricsPath = "lyrics/" + lyricsFile.lastPathComponent
++            lyricsHash = try digest(lyricsPath, dataRoot)
++            files[lyricsPath] = lyricsHash
++        }
++        let aligned = try reliableLyrics(analysis: analysis, proof: proof, lyricsHash: lyricsHash, files: &files, dataRoot: dataRoot)
++        guard let sections = analysis["sections"] as? [[String: Any]], !sections.isEmpty,
++              let bpm = number(analysis["bpm"]), bpm > 0,
++              let multiplier = number(analysis["tempo_multiplier"] ?? 1), multiplier > 0 else {
++            throw GateBlocked("Affect evidence needs approved sections and perceived tempo.")
++        }
++        let chords = analysis["chord_progression"] as? [[String: Any]] ?? []
++        let energy = analysis["energy_curve"] as? [[String: Any]] ?? []
++        let beats = analysis["beats"] as? [Double] ?? []
++        let interpretation = analysis["interpretation"] as? [String: Any] ?? [:]
++        let context = interpretation["overall_character"] as? String ?? ""
++        var indices = Set<Int>()
++        let observations = try sections.map { section -> [String: Any] in
++            guard let index = integer(section["index"]), indices.insert(index).inserted,
++                  let start = number(section["start"]), let end = number(section["end"]), end > start else {
++                throw GateBlocked("Affect section indices and measured bounds must be valid and unique.")
++            }
++            let localChords = chords.filter { overlaps($0, start: start, end: end) }
++            let localEnergy = energy.filter { within($0["t"], start: start, end: end) }
++            let localLyrics = aligned.filter { overlaps($0, start: start, end: end) }
++            let changes = zip(localChords, localChords.dropFirst()).filter { pair in pair.0["label"] as? String != pair.1["label"] as? String }.count
++            var signals: [String: Any] = [
++                "harmony": signal(localChords.isEmpty ? "unavailable" : "estimated", value: localChords, note: "Local chord estimates; change rate is derived, emotional tension is inferred.", field: "chord_progression"),
++                "key": signal(analysis["key"] is String ? "estimated" : "unavailable", value: analysis["key"] ?? NSNull(), note: "Global key estimate; confidence and modulation are not measured by this field.", field: "key"),
++                "rhythm": signal("derived", value: ["perceived_bpm": bpm * multiplier, "beat_count": beats.filter { $0 >= start && $0 < end }.count], note: "Perceived BPM = approved BPM × multiplier; beat count uses measured section bounds.", field: "bpm,tempo_multiplier,beats"),
++                "energy": signal(localEnergy.isEmpty ? "unavailable" : "measured", value: localEnergy, note: "Raw RMS samples, not a normalized affect/energy score; compare dynamics within this track.", field: "energy_curve"),
++                "lyrics": signal(localLyrics.isEmpty ? "unavailable" : "aligned", value: localLyrics, note: "Only measured alignment with matching source proof permits section attribution.", field: "alignment"),
++                "instrumentation": signal("unavailable", value: NSNull(), note: "No verified instrumentation observation in this local analysis; stem names are not instrument recognition.", field: ""),
++                "onsets": signal("unavailable", value: NSNull(), note: "No persisted onset density in this analysis; BPM does not stand in for it.", field: ""),
++                "provider": signal("unavailable", value: NSNull(), note: "No optional provider evidence is attached; local analysis is sufficient. Do not infer provider success.", field: ""),
++                "context": signal(context.isEmpty ? "unavailable" : "inferred", value: context, note: "Recorded analysis interpretation, not independent measurement. Cite only its explicit observations; it may describe instrumentation.", field: "interpretation.overall_character"),
++            ]
++            if var harmony = signals["harmony"] as? [String: Any], !localChords.isEmpty {
++                harmony["changes_per_second"] = Double(changes) / (end - start)
++                signals["harmony"] = harmony
++            }
++            return ["index": index, "start": start, "end": end, "signals": signals]
++        }
++        return ["analysis_path": analysisPath, "files": files, "sections": observations,
++                "stage_diagnostics": analysis["stage_diagnostics"] as? [[String: Any]] ?? []]
++    }
++
++    public static func confidence(_ profile: [String: Any]) -> Double? {
++        guard let evidence = profile[key] as? [String: Any] else { return nil }
++        let values = (evidence["sections"] as? [[String: Any]] ?? []).filter {
++            !($0["detected"] as? [[String: Any]] ?? []).isEmpty
++        }.compactMap { number($0["confidence"]) }
++        return ([number(evidence["confidence"]) ?? 0] + values).min()
++    }
++
++    public static func presentation(dataRoot: URL) throws -> String? {
++        guard let profile = try read(dataRoot: dataRoot), let evidence = profile[key] as? [String: Any] else { return nil }
++        let source = evidence["source"] as? [String: Any] ?? [:]
++        let facts = source["sections"] as? [[String: Any]] ?? []
++        let sections = evidence["sections"] as? [[String: Any]] ?? []
++        var lines = ["### Song affect and visual intent", "", "Detected: \(tagText(profile["detected"])).", "Desired video affect: \(tagText(profile["override"] ?? profile["detected"]))."]
++        if let reason = profile["override_reason"] as? String { lines.append("User override: \(reason)") }
++        if let reason = profile["override_clear_reason"] as? String { lines.append("User cleared override: \(reason)") }
++        let diagnostics = source["stage_diagnostics"] as? [[String: Any]] ?? []
++        if !diagnostics.isEmpty {
++            lines.append("Analysis stage evidence: " + String(decoding: try canonical(diagnostics), as: UTF8.self))
++        }
++        lines += ["Track interpretation (inferred, confidence \(number(evidence["confidence"]) ?? 0)): \(evidence["summary"] as? String ?? "")", ""]
++        for section in sections {
++            let fact = facts.first { integer($0["index"]) == integer(section["index"]) } ?? [:]
++            lines += ["Section \(integer(section["index"]) ?? -1), \(number(fact["start"]) ?? 0)–\(number(fact["end"]) ?? 0)s: detected \(tagText(section["detected"])); inference confidence \(number(section["confidence"]) ?? 0).",
++                "Harmonic interpretation: \(section["harmony"] as? String ?? "")",
++                "Support: \((section["support"] as? [String] ?? []).joined(separator: ", ")); conflict: \((section["conflicts"] as? [String] ?? []).joined(separator: ", ")). \(section["rationale"] as? String ?? "")",
++                "Uncertainty: \(section["uncertainty"] as? String ?? "")",
++                "Visual direction: \(section["visual_direction"] as? String ?? "")"]
++            if let reason = section["abstention_reason"] as? String { lines.append("Abstention: \(reason)") }
++            let signals = fact["signals"] as? [String: Any] ?? [:]
++            for name in signalNames {
++                guard let signal = signals[name] as? [String: Any] else { continue }
++                let value = String(decoding: try canonical(signal["value"] ?? NSNull()), as: UTF8.self)
++                lines.append("\(name) [\(signal["basis"] as? String ?? "unavailable"), \(signal["field"] as? String ?? "")]: \(value). \(signal["note"] as? String ?? "")")
++                if let rate = number(signal["changes_per_second"]) {
++                    lines.append("Chord changes/second (derived): \(rate).")
++                }
++            }
++            lines.append("")
++        }
++        lines.append("Structural evidence is not a subjective creative-quality verdict; creative review must name its reviewer and observations.")
++        return lines.joined(separator: "\n")
++    }
++
++    public static func requireTreatment(_ body: String, dataRoot: URL) throws {
++        try requireCurrent(dataRoot: dataRoot)
++        if let block = try presentation(dataRoot: dataRoot), !body.contains(block) {
++            throw GateBlocked("Treatment must consume the current song affect and desired visual intent through write_treatment.")
++        }
++    }
++
++    public static func requireVisualArc(_ arc: MusicVisualArcDraftV1, shotlist: Shotlist, dataRoot: URL) throws {
++        try requireCurrent(dataRoot: dataRoot)
++        guard let profile = try read(dataRoot: dataRoot), let evidence = profile[key] as? [String: Any],
++              let source = evidence["source"] as? [String: Any] else { return }
++        let facts = source["sections"] as? [[String: Any]] ?? []
++        let interpretations = evidence["sections"] as? [[String: Any]] ?? []
++        for section in arc.sections {
++            let shots = shotlist.shots.filter { section.shotIDs.contains($0.id) }
++            let covered = facts.filter { fact in
++                guard let start = number(fact["start"]), let end = number(fact["end"]) else { return false }
++                return shots.contains { $0.timeStart < end && $0.timeEnd > start }
++            }
++            guard !covered.isEmpty else { throw GateBlocked("Visual Arc has no measured affect section.") }
++            for fact in covered {
++                guard let interpretation = interpretations.first(where: { integer($0["index"]) == integer(fact["index"]) }),
++                      let direction = interpretation["visual_direction"] as? String,
++                      section.visualFunction.contains(direction) else {
++                    throw GateBlocked("Visual Arc visual_function must carry each covered section's approved visual_direction verbatim, including its desired affect.")
++                }
++            }
++        }
++    }
++
++    public static func canonical(_ value: Any) throws -> Data {
++        try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])
++    }
++
++    private static func validateEvidence(_ evidence: [String: Any]) throws {
++        try keys(evidence, allowed: ["schema", "summary", "confidence", "sections", "source"], at: key)
++        guard evidence["schema"] as? String == schema, let confidence = number(evidence["confidence"]), (0...0.7).contains(confidence),
++              let sections = evidence["sections"] as? [[String: Any]], !sections.isEmpty,
++              let source = evidence["source"] as? [String: Any], let facts = source["sections"] as? [[String: Any]], sections.count == facts.count else {
++            throw GateBlocked("Affect evidence needs its version, all measured sections, and inferred confidence in 0...0.7.")
++        }
++        try text(evidence["summary"], at: "summary")
++        var seen = Set<Int>()
++        for section in sections {
++            try keys(section, allowed: ["index", "detected", "confidence", "support", "conflicts", "rationale", "harmony", "uncertainty", "visual_direction", "abstention_reason"], at: "sections")
++            guard let index = integer(section["index"]), seen.insert(index).inserted,
++                  let fact = facts.first(where: { integer($0["index"]) == index }),
++                  let confidence = number(section["confidence"]), (0...0.7).contains(confidence),
++                  let detected = section["detected"] as? [[String: Any]],
++                  let support = section["support"] as? [String], let conflicts = section["conflicts"] as? [String],
++                  Set(support).isDisjoint(with: conflicts), Set(support).count == support.count, Set(conflicts).count == conflicts.count else {
++                throw GateBlocked("Affect section needs an exact measured index, bounded inference, and distinct support/conflict signals.")
++            }
++            try weights(detected, at: "section.detected")
++            for field in ["rationale", "harmony", "uncertainty", "visual_direction"] { try text(section[field], at: field) }
++            let signals = fact["signals"] as? [String: Any] ?? [:]
++            for name in support + conflicts {
++                guard signalNames.contains(name), let signal = signals[name] as? [String: Any], signal["basis"] as? String != "unavailable" else {
++                    throw GateBlocked("Affect cites unavailable signal \(name) in section \(index).")
++                }
++            }
++            if detected.isEmpty {
++                guard confidence == 0 else { throw GateBlocked("Abstention has zero inference confidence.") }
++                try text(section["abstention_reason"], at: "abstention_reason")
++            } else {
++                guard confidence > 0, !support.isEmpty, section["abstention_reason"] == nil else {
++                    throw GateBlocked("A section inference needs support and positive bounded confidence, or explicit abstention.")
++                }
++            }
++        }
++    }
++
++    private static func reliableLyrics(analysis: [String: Any], proof: [String: Any], lyricsHash: String?, files: inout [String: String], dataRoot: URL) throws -> [[String: Any]] {
++        guard let alignment = proof["lyrics_alignment"] as? [String: Any] else { return [] }
++        guard let sourcePath = alignment["source_path"] as? String, let sourceHash = alignment["source_sha256"] as? String else {
++            throw GateBlocked("Lyric alignment proof lacks its source.")
++        }
++        _ = try ProjectLocalFile.requireHash(sourceHash, at: sourcePath, dataRoot: dataRoot)
++        files[sourcePath] = sourceHash
++        let lines = analysis["alignment"] as? [[String: Any]] ?? []
++        let words = lines.flatMap { $0["words"] as? [[String: Any]] ?? [] }
++        let matched = words.filter { number($0["score"]) != nil }.count
++        let timing = alignment["timing_evidence"] as? String ?? ""
++        guard let lyricsHash, lyricsHash == alignment["lyrics_sha256"] as? String,
++              FileDigest.sha256(of: try canonical(lines)) == alignment["alignment_sha256"] as? String,
++              integer(alignment["lyric_token_count"]) == words.count,
++              integer(alignment["matched_token_count"]) == matched else {
++            throw GateBlocked("Lyric evidence does not match its measured alignment proof.")
++        }
++        guard ["recognized_speech", "known_text_alignment"].contains(timing),
++              timing != "known_text_alignment" || alignment["timing_method"] as? String == "attention_dtw",
++              !words.isEmpty, Double(matched) / Double(words.count) >= 0.7 else { return [] }
++        return lines
++    }
++
++    private static func signal(_ basis: String, value: Any, note: String, field: String) -> [String: Any] {
++        ["basis": basis, "value": value, "note": note, "field": field]
++    }
++
++    private static func object(at path: String, dataRoot: URL) throws -> [String: Any] {
++        let url = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
++        guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
++            throw GateBlocked("Invalid JSON object at \(path).")
++        }
++        return object
++    }
++
++    private static func digest(_ path: String, _ root: URL) throws -> String {
++        try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: root))
++    }
++
++    private static func number(_ value: Any?) -> Double? {
++        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }
++        return value.doubleValue
++    }
++
++    private static func integer(_ value: Any?) -> Int? {
++        guard let value = number(value), value.rounded() == value, value >= Double(Int.min), value < Double(Int.max) else { return nil }
++        return Int(value)
++    }
++
++    private static func within(_ value: Any?, start: Double, end: Double) -> Bool {
++        guard let value = number(value) else { return false }
++        return value >= start && value < end
++    }
++
++    private static func overlaps(_ value: [String: Any], start: Double, end: Double) -> Bool {
++        guard let a = number(value["start"]), let b = number(value["end"]), a < b else { return false }
++        return a < end && b > start
++    }
++
++    private static func keys(_ object: [String: Any], allowed: Set<String>, at path: String) throws {
++        guard Set(object.keys).isSubset(of: allowed) else { throw GateBlocked("Unknown fields in \(path).") }
++    }
++
++    private static func text(_ value: Any?, at path: String) throws {
++        guard let value = value as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++            throw GateBlocked("\(path) must explain the evidence or creative decision.")
++        }
++    }
++
++    private static func weights(_ value: Any?, at path: String) throws {
++        guard let values = value as? [[String: Any]] else { throw GateBlocked("\(path) must be an affect array.") }
++        var seen = Set<String>()
++        var total = 0.0
++        for item in values {
++            try keys(item, allowed: ["value", "weight"], at: path)
++            guard let tag = item["value"] as? String, tags.contains(tag), seen.insert(tag).inserted,
++                  let weight = number(item["weight"]), weight > 0 else { throw GateBlocked("Invalid affect tag or weight in \(path).") }
++            total += weight
++            guard total.isFinite else { throw GateBlocked("Affect weights must have a finite total in \(path).") }
++        }
++    }
++
++    private static func tagText(_ value: Any?) -> String {
++        let values = (value as? [[String: Any]] ?? []).compactMap { $0["value"] as? String }
++        return values.isEmpty ? "undetermined" : values.joined(separator: ", ")
++    }
++}
+diff --git a/Engine/Sources/NexGenEngine/Packs/EngineContract.swift b/Engine/Sources/NexGenEngine/Packs/EngineContract.swift
+index fb1e839b..b30c5005 100644
+--- a/Engine/Sources/NexGenEngine/Packs/EngineContract.swift
++++ b/Engine/Sources/NexGenEngine/Packs/EngineContract.swift
+@@ -1,6 +1,6 @@
+ public enum EngineContract {
+     /// Current host-pack binary contract; bump when any boundary type changes shape.
+-    public static let current = 9
+-    /// Contracts 7–9 add new capabilities and append class storage without changing old layouts.
++    public static let current = 10
++    /// Contracts 7–10 add capabilities without changing existing value layouts.
+     public static let minimumCompatible = 2
+ }
+diff --git a/Engine/Sources/NexGenEngine/Show/ShowFormatters.swift b/Engine/Sources/NexGenEngine/Show/ShowFormatters.swift
+index ab7a6e44..bd29c7f4 100644
+--- a/Engine/Sources/NexGenEngine/Show/ShowFormatters.swift
++++ b/Engine/Sources/NexGenEngine/Show/ShowFormatters.swift
+@@ -78,6 +78,9 @@ enum ShowFormatters {
+             lines.append("**Notes:**")
+             lines.append(notes.trimmingCharacters(in: .whitespacesAndNewlines))
+         }
++        if let affect = try MusicAffectEvidenceV1.presentation(dataRoot: dataRoot) {
++            lines += ["", affect]
++        }
+         return lines.joined(separator: "\n")
+     }
+ 
+@@ -367,11 +370,8 @@ enum ShowFormatters {
+         guard FileManager.default.fileExists(atPath: anaDir.path, isDirectory: &isDir), isDir.boolValue else {
+             return "_No analysis/ directory exists — analysis has not run._"
+         }
+-        let entries = (try? FileManager.default.contentsOfDirectory(at: anaDir, includingPropertiesForKeys: nil)) ?? []
+-        let candidates = entries
+-            .filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix("_") }
+-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+-        guard let first = candidates.first else {
++        guard let expected = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
++              let first = try? ProjectLocalFile.resolve("analysis/" + expected.lastPathComponent, dataRoot: dataRoot) else {
+             return "_No analysis/<song>.json exists — run audio analysis._"
+         }
+         guard let raw = try? Data(contentsOf: first),
+@@ -488,6 +488,13 @@ enum ShowFormatters {
+             lines.append("")
+         }
+ 
++        do {
++            let source = try MusicAffectEvidenceV1.sourceSnapshot(dataRoot: dataRoot)
++            let json = String(decoding: try MusicAffectEvidenceV1.canonical(source), as: UTF8.self)
++            lines += ["### Section evidence for affect interpretation", "", "```json", json, "```", ""]
++        } catch {
++            lines += ["Section affect evidence unavailable: \(error)", ""]
++        }
+         return lines.joined(separator: "\n")
+     }
+ 
+diff --git a/Sources/MusicvideoPlugin/AffectProfile.swift b/Sources/MusicvideoPlugin/AffectProfile.swift
+index dadea35a..e532d9cf 100644
+--- a/Sources/MusicvideoPlugin/AffectProfile.swift
++++ b/Sources/MusicvideoPlugin/AffectProfile.swift
+@@ -24,7 +24,7 @@ public struct AffectProfile: Codable, Sendable, Equatable {
+     /// One line on what drove the detection (the audio + lyric evidence), so a later reader can see why
+     /// the pattern selection came out as it did.
+     public var rationale: String
+-    /// `measured` when the read leans on the DSP analysis, `inferred` when it leans on the lyrics/context.
++    /// Emotional meaning is inferred; legacy basis values remain readable without reclassifying source signals.
+     public var basis: EvidenceBasis
+ 
+     public init(
+@@ -72,6 +72,18 @@ public struct AffectProfile: Codable, Sendable, Equatable {
+     }
+ 
+     public func save(dataRoot: URL) throws {
++        let url = PipelineLayout.url(Self.file, in: dataRoot)
++        if FileManager.default.fileExists(atPath: url.path) {
++            let data = try Data(contentsOf: ProjectLocalFile.resolve(Self.file, dataRoot: dataRoot))
++            if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
++               object[MusicAffectEvidenceV1.key] != nil {
++                guard try JSONDecoder().decode(Self.self, from: data) == self else {
++                    throw GateBlocked("Use record_affect to change versioned affect evidence and its user override.")
++                }
++                try MusicAffectEvidenceV1.validateProfile(object, dataRoot: dataRoot)
++                return
++            }
++        }
+         try JSONArtifactStore(dataRoot: dataRoot).save(self, to: Self.file)
+     }
+ }
+diff --git a/Sources/MusicvideoPlugin/GateChecks.swift b/Sources/MusicvideoPlugin/GateChecks.swift
+index 482095f3..67ec9d62 100644
+--- a/Sources/MusicvideoPlugin/GateChecks.swift
++++ b/Sources/MusicvideoPlugin/GateChecks.swift
+@@ -1788,6 +1788,7 @@ enum MusicvideoGateChecks {
+     /// `brief`: a schema-valid brief.yaml (decode enforces the whole Brief contract, incl. budget and
+     /// visual-medium-notes rules) plus a concrete target platform.
+     static func requireRealBrief(dataRoot: URL) throws {
++        try MusicAffectEvidenceV1.requireCurrent(dataRoot: dataRoot)
+         let brief: Brief
+         do {
+             brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+@@ -2290,6 +2291,7 @@ enum MusicvideoGateChecks {
+         guard !treatment.meta.summaryOneline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+             throw GateBlocked("Can't approve \"treatment\": its one-line summary is empty.")
+         }
++        try MusicAffectEvidenceV1.requireTreatment(treatment.bodyMarkdown, dataRoot: dataRoot)
+         guard !treatment.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+             throw GateBlocked("Can't approve \"treatment\": the treatment body is empty — write it.")
+         }
+diff --git a/Sources/MusicvideoPlugin/MusicvideoPack.swift b/Sources/MusicvideoPlugin/MusicvideoPack.swift
+index 9cd6e454..5a878854 100644
+--- a/Sources/MusicvideoPlugin/MusicvideoPack.swift
++++ b/Sources/MusicvideoPlugin/MusicvideoPack.swift
+@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
+ 
+ public struct MusicvideoPack: Pack, PackResourceRootProviding {
+     public let name = "musicvideo"
+-    public let version = "0.5.8"
++    public let version = "0.6.0"
+ 
+     static let productionProfiles: [ProductionProfile] = [
+         StandardProductionProfiles.generativeFilm,
+diff --git a/Sources/MusicvideoPlugin/MusicvideoPatternProvider.swift b/Sources/MusicvideoPlugin/MusicvideoPatternProvider.swift
+index 4497078c..c5407767 100644
+--- a/Sources/MusicvideoPlugin/MusicvideoPatternProvider.swift
++++ b/Sources/MusicvideoPlugin/MusicvideoPatternProvider.swift
+@@ -44,9 +44,27 @@ public struct MusicvideoPatternProvider: PatternProviding {
+         let options = (try? JSONDecoder().decode(Options.self, from: optionsJSON))
+             ?? Options(projectProfile: nil, perceivedBpm: nil, matchMode: nil, excludedPatternIds: nil, maxResults: nil)
+         let brief = try? JSONDecoder().decode(Brief.self, from: briefJSON)
++        var projectOverride = options.projectProfile
++        if projectOverride == nil, let brief,
++           let wire = try? JSONSerialization.jsonObject(with: optionsJSON) as? [String: Any],
++           let profile = wire["affect_profile"] as? [String: Any],
++           let confidence = MusicAffectEvidenceV1.confidence(profile) {
++            var project = ProjectProfileAssembler.assemble(
++                brief: brief, perceivedBpm: options.perceivedBpm,
++                matchMode: options.matchMode ?? .balanced,
++                excludedPatternIds: options.excludedPatternIds ?? [], affectProfile: options.affectProfile)
++            if options.affectProfile?.isOverridden != true {
++                if options.affectProfile?.effective.isEmpty != false {
++                    project.creative.affects = nil
++                } else {
++                    project.creative.affects?.confidence = min(0.7, max(0, confidence))
++                }
++            }
++            projectOverride = project
++        }
+         do {
+             let (set, coverage) = try PatternFitLibrary.recommend(
+-                brief: brief, projectOverride: options.projectProfile, perceivedBpm: options.perceivedBpm,
++                brief: brief, projectOverride: projectOverride, perceivedBpm: options.perceivedBpm,
+                 matchMode: options.matchMode ?? .balanced, excludedPatternIds: options.excludedPatternIds ?? [],
+                 maxResults: options.maxResults, affectProfile: options.affectProfile)
+             return try rankedEnvelope(set: set, coverage: coverage)
+diff --git a/Sources/MusicvideoPlugin/MusicvideoProductionGate.swift b/Sources/MusicvideoPlugin/MusicvideoProductionGate.swift
+index 91411709..d1e9e7bd 100644
+--- a/Sources/MusicvideoPlugin/MusicvideoProductionGate.swift
++++ b/Sources/MusicvideoPlugin/MusicvideoProductionGate.swift
+@@ -334,6 +334,7 @@ enum MusicvideoProductionGate {
+                 coverage: coverage.items
+             )
+             try MusicvideoProductionValidatorV1.validate(draft)
++            try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
+             let executionByID = Dictionary(uniqueKeysWithValues:
+                 executionPlan.shots.map { ($0.id, $0) }
+             )
+diff --git a/Sources/MusicvideoPlugin/ProjectProfileAssembler.swift b/Sources/MusicvideoPlugin/ProjectProfileAssembler.swift
+index 7d2764e4..3c76cc47 100644
+--- a/Sources/MusicvideoPlugin/ProjectProfileAssembler.swift
++++ b/Sources/MusicvideoPlugin/ProjectProfileAssembler.swift
+@@ -29,7 +29,7 @@ public enum ProjectProfileAssembler {
+     static let audioConfidence = 0.9
+ 
+     /// Confidence for an agent-detected affect (audio analysis + lyrics), and for a user override.
+-    static let agentAffectConfidence = 0.85
++    static let agentAffectConfidence = 0.7
+     static let overrideConfidence = 1.0
+ 
+     public static func assemble(
+diff --git a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/brief.md b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/brief.md
+index 963f2c0d..50fae39c 100644
+--- a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/brief.md
++++ b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/brief.md
+@@ -343,10 +343,38 @@ explain the affected approvals and use an explicit rewind before rewriting it.
+        (if present). Do NOT match trigger words over the tone tags —
+        that keyword heuristic is exactly what the deterministic
+        pattern-fit contract retired. Record it with
+-       `record_affect(detected=[{tag, weight}, …], rationale=…)`; it
+-       answers the `affect_energy` axis for the ranking. If the user
++       `record_affect` with `detected`, `rationale` and the versioned
++       `harmonic_evidence` envelope; it answers the `affect_energy` axis.
++       First read `show_artifact(gate="analysis")`: its section evidence
++       names exact approved indices/bounds and available signal families.
++       Cover every measured section. Compare local chord progression and
++       derived change rate with perceived tempo, beats, raw dynamics and
++       any reliable aligned lyrics; cite approved interpretation as
++       `context`, never as an independent measurement. Do not infer
++       instrumentation from stem names or onset density from BPM. Missing
++       provider evidence is normal; Mirelo is optional, never a prerequisite.
++       Interpret tension, resolution and suspected modulation explicitly as
++       inference, preserving unreliable key estimates and disagreements.
++       Major does not imply happy; minor does not imply sad. Correlated
++       signals do not increase certainty. Confidence is at most 0.7.
++       Each section records detected tags, support/conflicts, harmonic
++       interpretation, uncertainty and a concrete `visual_direction`.
++       With insufficient evidence use no tags, confidence zero and an
++       `abstention_reason`; a wholly undetermined track has no detected
++       tags and zero summary confidence. No lyrics-derived time boundaries.
++       Begin each visual direction with its effective desired tags in order
++       (comma-separated) and `: `, then describe a concrete image/motion/
++       color decision. Without an override use that section's detected tags,
++       or `undetermined: ` when abstaining. With an override use its tags
++       for every section while retaining the original detected interpretation.
++       Inspect the returned source facts; explain supports, conflicts and
++       uncertainty through the existing native result surface. The creative
++       quality needs an attributed review, not a deterministic quality score.
++       If the user
+        wants a **deliberately contrary mood** (a happy song cut dark)
+-       or the read is wrong, record it as `override` and show them
++       or the read is wrong, use `override_action="set"` with `override`
++       and `override_reason`. Omission preserves a prior override; clearing
++       it requires `override_action="clear"` and the user's reason. Show them
+        "detected X → set Y". Then **generate suggestions** from the
+        pattern library, scored by the brief context: `visual_medium`,
+        the recorded affect, perceived BPM (from analysis), concept type,
+diff --git a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/shotlist.md b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/shotlist.md
+index 8f18fc12..806359f2 100644
+--- a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/shotlist.md
++++ b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/shotlist.md
+@@ -1,5 +1,15 @@
+ # Phase K7 — Shotlist
+ 
++When the approved affect record carries harmonic evidence, each Visual Arc section's
++`visual_function` must include verbatim the `visual_direction` for every measured affect
++section overlapped by its shots. This carries the effective desired affect and a concrete
++visual decision into the prompt compiler, including abstract motion/light/color decisions.
++Keep detected song mood distinct from an explicit contrary user intent; do not replace the
++latter with the former. Use the existing approved shot/section timing, never new mood timing.
++The host writer and independent gate reject omitted, changed or stale decisions. Missing
++optional instrumentation/onset/provider evidence stays missing. Legacy projects without the
++affect extension keep their existing contract; they are not silently rewritten.
++
+ For a causality-bound Storyboard, every `execution_shots` item names its approved `storyboard_step_ids`. Preserve complete step coverage across the Shot List, including imported sources. The host binds exact Treatment/Storyboard causality bytes to the execution plan and independently rechecks coverage before approval. Mapping an ID does not prove that an image depicts the intended action; actual take and sequence review remain necessary.
+ 
+ > **Orchestrator instruction (main-session context).** Never spawn this
+diff --git a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/treatment.md b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/treatment.md
+index d3c2a4a5..2cfaed75 100644
+--- a/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/treatment.md
++++ b/Sources/MusicvideoPlugin/Resources/MusicvideoPack/phases/treatment.md
+@@ -1,5 +1,15 @@
+ # Phase K3 — Treatment
+ 
++Read the approved Brief's section affect evidence through `show_artifact(gate="brief")`.
++Develop a concrete visual decision from each section's `visual_direction`, including for
++abstract concepts. Desired video affect (explicit user override) wins; keep detected song
++affect, supporting/conflicting signals and uncertainty visible. `write_treatment` adds the
++current exact evidence block to the canonical treatment; implement those decisions in the
++body, not merely in a mood label. Do not invent section timing, normalize raw RMS, or treat
++this structural record as a subjective creative-quality PASS. Record an attributed creative
++review separately in the treatment prose. A changed choice needs an explicit Brief rewind;
++no downstream tool rewrites affect. Legacy projects without the extension remain readable.
++
+ `write_treatment` requires `causality_plan`, indexed by stable beat/scene IDs and exact excerpts of `body_markdown`. Separate presentation order from story chronology. Link visible causes, state changes, introduced elements and payoffs; record all eight attributed change-review answers and affected downstream beats. Unresolved canon alternatives may remain in a draft but block approval. Use the approved concept type: abstract and performance work need not invent a causal plot. Read the complete causal-change procedure through `get_production_knowledge`; do not replace it with a three-act template or another startup interview.
+ 
+ > **Orchestrator instruction (main-session context).** Never spawn this
+diff --git a/Sources/NexGenVideo/Agent/Pipeline/PipelineAffectWriter.swift b/Sources/NexGenVideo/Agent/Pipeline/PipelineAffectWriter.swift
+new file mode 100644
+index 00000000..f32c44d4
+--- /dev/null
++++ b/Sources/NexGenVideo/Agent/Pipeline/PipelineAffectWriter.swift
+@@ -0,0 +1,79 @@
++import CoreFoundation
++import Foundation
++import NexGenEngine
++
++enum PipelineAffectWriter {
++    static func write(_ args: [String: Any], dataRoot: URL) throws -> [String: Any] {
++        let allowed: Set<String> = ["detected", "override", "override_action", "override_reason", "rationale", "basis", "harmonic_evidence", "project_dir"]
++        guard Set(args.keys).isSubset(of: allowed),
++              let rationale = args["rationale"] as? String, !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
++              args["basis"] == nil || args["basis"] as? String == "inferred" else {
++            throw ToolError("record_affect needs a rationale and inferred basis; signal measurements stay separate.")
++        }
++        let detected = try weighted(args["detected"], name: "detected")
++        let destination = PipelineLayout.url(MusicAffectEvidenceV1.path, in: dataRoot)
++        var prior: [String: Any] = [:]
++        if FileManager.default.fileExists(atPath: destination.path)
++            || (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil {
++            let safe = try ProjectLocalFile.resolve(MusicAffectEvidenceV1.path, dataRoot: dataRoot)
++            guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: safe)) as? [String: Any] else {
++                throw ToolError("Existing affect record is unreadable; preserve it and repair the source before recording.")
++            }
++            prior = object
++        }
++        var profile: [String: Any] = ["detected": detected, "rationale": rationale, "basis": "inferred"]
++        let action = args["override_action"] as? String ?? (args["override"] == nil ? "preserve" : "set")
++        switch action {
++        case "preserve":
++            guard args["override"] == nil, args["override_reason"] == nil else {
++                throw ToolError("Use override_action=set to change the desired video affect.")
++            }
++            if let override = prior["override"] as? [[String: Any]], !override.isEmpty {
++                profile["override"] = override
++                profile["override_reason"] = prior["override_reason"] ?? "Prior override; its original reason was not recorded."
++            }
++        case "set":
++            let override = try weighted(args["override"], name: "override")
++            guard !override.isEmpty, let reason = args["override_reason"] as? String,
++                  !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++                throw ToolError("A deliberate user override requires desired tags and the user's reason.")
++            }
++            profile["override"] = override
++            profile["override_reason"] = reason
++        case "clear":
++            guard args["override"] == nil, let reason = args["override_reason"] as? String,
++                  !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++                throw ToolError("Clearing an override requires the user's reason and no override tags.")
++            }
++            profile["override_clear_reason"] = reason
++        default:
++            throw ToolError("Unknown override_action; use preserve, set or clear.")
++        }
++        if let draft = args[MusicAffectEvidenceV1.key] as? [String: Any] {
++            profile[MusicAffectEvidenceV1.key] = try MusicAffectEvidenceV1.materialize(draft, dataRoot: dataRoot)
++            try MusicAffectEvidenceV1.validateProfile(profile, dataRoot: dataRoot)
++        } else {
++            guard args[MusicAffectEvidenceV1.key] == nil, prior[MusicAffectEvidenceV1.key] == nil,
++                  !MusicAffectEvidenceV1.requiresEvidence(dataRoot: dataRoot), !detected.isEmpty else {
++                throw ToolError("record_affect requires harmonic_evidence for every measured section; it cannot silently erase existing evidence.")
++            }
++        }
++        _ = try ProjectLocalFile.ensureDirectory("analysis", dataRoot: dataRoot)
++        try MusicAffectEvidenceV1.canonical(profile).write(to: destination, options: .atomic)
++        return profile
++    }
++
++    private static func weighted(_ value: Any?, name: String) throws -> [[String: Any]] {
++        guard let entries = value as? [[String: Any]] else { throw ToolError("\(name) must be an array of weighted affect tags.") }
++        var seen = Set<String>()
++        return try entries.map { entry in
++            guard Set(entry.keys).isSubset(of: ["tag", "weight"]),
++                  let tag = entry["tag"] as? String, AffectTagVocabulary.all.contains(tag), seen.insert(tag).inserted,
++                  let weight = (entry["weight"] ?? 1) as? NSNumber,
++                  CFGetTypeID(weight) != CFBooleanGetTypeID(), weight.doubleValue.isFinite, weight.doubleValue > 0 else {
++                throw ToolError("\(name) needs distinct vocabulary tags and finite positive weights.")
++            }
++            return ["value": tag, "weight": weight.doubleValue]
++        }
++    }
++}
+diff --git a/Sources/NexGenVideo/Agent/Pipeline/PipelineMusicvideoProductionWriter.swift b/Sources/NexGenVideo/Agent/Pipeline/PipelineMusicvideoProductionWriter.swift
+index 586001b7..bb4552e5 100644
+--- a/Sources/NexGenVideo/Agent/Pipeline/PipelineMusicvideoProductionWriter.swift
++++ b/Sources/NexGenVideo/Agent/Pipeline/PipelineMusicvideoProductionWriter.swift
+@@ -40,6 +40,7 @@ enum PipelineMusicvideoProductionWriter {
+             )
+         }
+         try MusicvideoProductionValidatorV1.validate(draft)
++        try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
+         let shotIDs = Set(shotlist.shots.map(\.id))
+         let sectionIDs = Set(shotlist.shots.compactMap(\.section))
+         let inputs = Dictionary(uniqueKeysWithValues: executionInputs.map { ($0.id, $0) })
+@@ -218,6 +219,7 @@ enum PipelineMusicvideoProductionWriter {
+             coverage: coverage.items
+         )
+         try MusicvideoProductionValidatorV1.validate(draft)
++        try MusicAffectEvidenceV1.requireVisualArc(draft.visualArc, shotlist: shotlist, dataRoot: dataRoot)
+         for segment in performance.segments {
+             let url = try ProjectLocalFile.requireHash(
+                 segment.segmentSHA256,
+diff --git a/Sources/NexGenVideo/Agent/Tools/AffectEvidenceWriteContract.swift b/Sources/NexGenVideo/Agent/Tools/AffectEvidenceWriteContract.swift
+new file mode 100644
+index 00000000..f9399fd6
+--- /dev/null
++++ b/Sources/NexGenVideo/Agent/Tools/AffectEvidenceWriteContract.swift
+@@ -0,0 +1,53 @@
++import Foundation
++import NexGenEngine
++
++enum AffectEvidenceWriteContract {
++    static var schema: [String: Any] {
++        let weighted: [String: Any] = [
++            "type": "array", "items": object([
++                "tag": ["type": "string", "enum": AffectTagVocabulary.all],
++                "weight": ["type": "number", "exclusiveMinimum": 0],
++            ], required: ["tag", "weight"]),
++        ]
++        let evidenceWeighted: [String: Any] = [
++            "type": "array", "items": object([
++                "value": ["type": "string", "enum": AffectTagVocabulary.all],
++                "weight": ["type": "number", "exclusiveMinimum": 0],
++            ], required: ["value", "weight"]),
++        ]
++        let text: [String: Any] = ["type": "string", "minLength": 1]
++        let confidence: [String: Any] = ["type": "number", "minimum": 0, "maximum": 0.7]
++        let signals: [String: Any] = ["type": "array", "uniqueItems": true, "items": ["type": "string", "enum": MusicAffectEvidenceV1.signalNames]]
++        let section = object([
++            "index": ["type": "integer", "description": "Exact approved analysis section index. Never invent timing."],
++            "detected": evidenceWeighted,
++            "confidence": confidence,
++            "support": signals,
++            "conflicts": signals,
++            "rationale": text,
++            "harmony": ["type": "string", "minLength": 1, "description": "Interpret progression, change rate, tension/resolution and any suspected modulation as inference. State missing/uncertain harmony explicitly. No major=happy or minor=sad rule."],
++            "uncertainty": text,
++            "visual_direction": ["type": "string", "minLength": 1, "description": "Concrete creative choice for this section. Begin with the exact effective desired affect tags followed by ': '. With no override use this section's detected tags; empty means 'undetermined: '. User override wins."],
++            "abstention_reason": text,
++        ], required: ["index", "detected", "confidence", "support", "conflicts", "rationale", "harmony", "uncertainty", "visual_direction"])
++        return object([
++            "detected": weighted,
++            "override": weighted,
++            "override_action": ["type": "string", "enum": ["preserve", "set", "clear"], "description": "Default preserve. Set/clear only on an explicit user choice; setting requires override and override_reason."],
++            "override_reason": text,
++            "rationale": text,
++            "basis": ["type": "string", "enum": ["inferred"]],
++            "harmonic_evidence": object([
++                "schema": ["type": "string", "enum": [MusicAffectEvidenceV1.schema]],
++                "summary": text,
++                "confidence": confidence,
++                "sections": ["type": "array", "minItems": 1, "items": section],
++            ], required: ["schema", "summary", "confidence", "sections"]),
++            "project_dir": ["type": "string"],
++        ], required: ["detected", "rationale", "harmonic_evidence"])
++    }
++
++    private static func object(_ properties: [String: [String: Any]], required: [String]) -> [String: Any] {
++        ["type": "object", "additionalProperties": false, "properties": properties, "required": required]
++    }
++}
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 1e182b9c..bff1c226 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -1158,43 +1158,8 @@ enum ToolDefinitions {
+         ),
+         AgentTool(
+             name: .recordAffect,
+-            description: "Record the track's emotional register (affect) that YOU read from the audio analysis (BPM, key/mode, energy curve, section dynamics — already computed) plus the lyrics. This answers the pattern-fit `affect_energy` axis from the signal and the text, NOT from a keyword table — so do the reading yourself, don't match trigger words. `detected` is your automatic read; pass `override` ONLY to record a deliberate user correction, including a purposely contrary mood (a happy song cut dark) — a legitimate directing choice the detection can't anticipate. When you set an override, show the user 'detected X → set Y' so the choice stays legible. Call this once affect is knowable (after analysis, with lyrics if present) and before suggest_patterns, which consumes it. WRITES.",
+-            inputSchema: objectSchema(
+-                properties: [
+-                    "detected": [
+-                        "type": "array",
+-                        "minItems": 1,
+-                        "description": "Weighted affect tags you inferred from audio + lyrics. Weights need not sum to 1; they are relative.",
+-                        "items": [
+-                            "type": "object",
+-                            "additionalProperties": false,
+-                            "properties": [
+-                                "tag": ["type": "string", "enum": AffectTagVocabulary.all,
+-                                        "description": "One affect from the fixed vocabulary."],
+-                                "weight": ["type": "number", "description": "Relative strength of this affect (default 1)."],
+-                            ],
+-                            "required": ["tag"],
+-                        ],
+-                    ],
+-                    "override": [
+-                        "type": "array",
+-                        "description": "The user's deliberate override, same shape as detected. Omit unless the user corrected or deliberately contradicted the detection.",
+-                        "items": [
+-                            "type": "object",
+-                            "additionalProperties": false,
+-                            "properties": [
+-                                "tag": ["type": "string", "enum": AffectTagVocabulary.all],
+-                                "weight": ["type": "number"],
+-                            ],
+-                            "required": ["tag"],
+-                        ],
+-                    ],
+-                    "rationale": ["type": "string", "description": "One line on the audio + lyric evidence behind the read (kept for later legibility)."],
+-                    "basis": ["type": "string", "enum": ["measured", "documented", "inferred"], "description": "measured when the read leans on the DSP analysis, inferred when on lyrics/context (default inferred)."],
+-                    "project_dir": ["type": "string", "description": "Optional pipeline data root; omit to use the open project."],
+-                ],
+-                required: ["detected"]
+-            )
++            description: "Record bounded emotional inference from the approved local analysis, section by section. The host binds exact source bytes and measured section bounds; cite only available harmony/key/rhythm/energy/aligned-lyrics signals. Missing instrumentation, onset or provider evidence must stay unavailable. Compare progression and tension with dynamics; no major=happy/minor=sad rule or normalized raw RMS. Empty detected plus abstention_reason permits abstention. Each inference confidence is at most 0.7; agreement of correlated signals is not independent certainty. harmonic_evidence keeps support, conflicts, uncertainty and a concrete visual_direction for Treatment/Visual Arc. Keep detected song mood distinct from desired video mood. override_action=set/clear requires an explicit user choice; omission preserves prior override. Show detected → desired with the reason. WRITES only in Brief before suggest_patterns.",
++            inputSchema: AffectEvidenceWriteContract.schema
+         ),
+         AgentTool(
+             name: .getPattern,
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+PipelineArtifacts.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+PipelineArtifacts.swift
+index 3ad073fa..2a6ffaa5 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+PipelineArtifacts.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+PipelineArtifacts.swift
+@@ -287,10 +287,15 @@ extension ToolExecutor {
+         } catch {
+             throw ToolError("Treatment rejected: \(error)")
+         }
+-        let body = try args.requireString("body_markdown")
++        var body = try args.requireString("body_markdown")
+         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+             throw ToolError("Treatment rejected: body_markdown is empty.")
+         }
++        try MusicAffectEvidenceV1.requireCurrent(dataRoot: root)
++        if let affect = try MusicAffectEvidenceV1.presentation(dataRoot: root) {
++            if !body.contains(affect) { body += "\n\n" + affect }
++        }
++        try MusicAffectEvidenceV1.requireTreatment(body, dataRoot: root)
+         let treatment = Treatment(meta: meta, bodyMarkdown: body)
+         let url: URL
+         do {
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+index e0c95fe6..be073cb0 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+@@ -264,12 +264,8 @@ extension ToolExecutor {
+         if let mode = args["match_mode"] as? String { options["match_mode"] = mode }
+         if let excluded = args["excluded_pattern_ids"] as? [String] { options["excluded_pattern_ids"] = excluded }
+         if let top = args["top"] as? Int { options["max_results"] = top }
+-        // #214: forward the recorded affect detection/override so the affect axis comes from audio +
+-        // lyrics, not the brief tone-tag map. Pure passthrough — the host never interprets the affect
+-        // vocabulary (a pack concern); it hands the pack the bytes it wrote. Absent → assembler falls back.
+-        if let affectData = try? Data(contentsOf: PipelineLayout.url(Self.affectFile, in: root)),
+-           let affectObj = try? JSONSerialization.jsonObject(with: affectData) {
+-            options["affect_profile"] = affectObj
++        if let profile = try MusicAffectEvidenceV1.read(dataRoot: root) {
++            options["affect_profile"] = profile
+         }
+         let optionsJSON = try JSONSerialization.data(withJSONObject: options)
+         let data = try provider.recommend(briefJSON: briefJSON, optionsJSON: optionsJSON)
+@@ -281,59 +277,18 @@ extension ToolExecutor {
+     /// the pack. Kept next to `analysis/` the pack owns.
+     static let affectFile = "analysis/affect.json"
+ 
+-    /// #214 — persist the affect the agent read from the audio analysis + lyrics, so the pattern-fit
+-    /// `affect_energy` axis comes from the signal and the text, not the brief's tone-tag lookup. `detected`
+-    /// is the automatic read; `override` is the user's deliberate correction (kept alongside, never erasing
+-    /// the detection — a deliberately contrary mood is a legitimate directing choice). The agent does the
+-    /// inference; this tool only records it, schema-validated against the affect vocabulary.
+     func recordAffectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+         let root = try resolveDataRoot(args, editor: editor)
+-
+-        // A tag carries signal only with a positive weight (the affect axis is a weighted mean), so a
+-        // zero/negative-weight entry is rejected rather than persisted — it would otherwise count as a
+-        // present-but-unscorable affect and shadow the tone-tag fallback.
+-        func weighted(_ key: String) throws -> [[String: Any]] {
+-            guard let raw = args[key] as? [[String: Any]] else { return [] }
+-            var out: [[String: Any]] = []
+-            for entry in raw {
+-                guard let tag = entry["tag"] as? String, !tag.isEmpty else {
+-                    throw ToolError("Each \(key) entry needs a 'tag' (an affect from the enum).")
+-                }
+-                let weight = (entry["weight"] as? Double) ?? (entry["weight"] as? Int).map(Double.init) ?? 1.0
+-                guard weight > 0 else {
+-                    throw ToolError("\(key) tag '\(tag)' has weight \(weight) — weights must be positive (they are relative strengths).")
+-                }
+-                out.append(["value": tag, "weight": weight])
+-            }
+-            return out
+-        }
+-
+-        let detected = try weighted("detected")
+-        guard !detected.isEmpty else {
+-            throw ToolError("record_affect needs at least one 'detected' affect {tag, weight}.")
+-        }
+-        var profile: [String: Any] = [
+-            "detected": detected,
+-            "rationale": args.string("rationale") ?? "",
+-            "basis": args.string("basis") ?? "inferred",
+-        ]
+-        // An empty override is not a correction — omit it so it never reads as one.
+-        let override = try weighted("override")
+-        if !override.isEmpty { profile["override"] = override }
+-
+-        let data = try JSONSerialization.data(withJSONObject: profile, options: [.prettyPrinted, .sortedKeys])
+-        let url = PipelineLayout.url(Self.affectFile, in: root)
+-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+-        try data.write(to: url, options: .atomic)
+-
+-        let overrode = profile["override"] != nil
+-        return try jsonResult([
++        let profile = try PipelineAffectWriter.write(args, dataRoot: root)
++        var result: [String: Any] = [
+             "recorded": true,
+-            "overridden": overrode,
+-            "note": overrode
+-                ? "Override recorded — pattern-fit will use the set affect, not the detected one. Show the user 'detected X → set Y' so the choice stays legible."
+-                : "Detection recorded — it answers the affect_energy axis for suggest_patterns. The user can override it.",
+-        ])
++            "overridden": profile["override"] != nil,
++            "profile": profile,
++        ]
++        if let presentation = try MusicAffectEvidenceV1.presentation(dataRoot: root) {
++            result["review"] = presentation
++        }
++        return try jsonResult(result)
+     }
+ 
+     /// #247 — write `brief.yaml` through the real engine `Brief` decoder + `validate()`, not freeform
+diff --git a/Tests/NexGenEngineTests/MusicvideoPackTests.swift b/Tests/NexGenEngineTests/MusicvideoPackTests.swift
+index 4b0cad1e..9843fc0f 100644
+--- a/Tests/NexGenEngineTests/MusicvideoPackTests.swift
++++ b/Tests/NexGenEngineTests/MusicvideoPackTests.swift
+@@ -428,7 +428,7 @@ struct MusicvideoPackTests {
+     func packSatisfiesContract() {
+         let pack: Pack = MusicvideoPack()
+         #expect(pack.name == "musicvideo")
+-        #expect(pack.version == "0.5.8")
++        #expect(pack.version == "0.6.0")
+         #expect(pack.manifest.minAppVersion == "1.5.8")
+     }
+ 
+diff --git a/Tests/NexGenEngineTests/ProductionProfileTests.swift b/Tests/NexGenEngineTests/ProductionProfileTests.swift
+index 4b8aa304..dfa0732f 100644
+--- a/Tests/NexGenEngineTests/ProductionProfileTests.swift
++++ b/Tests/NexGenEngineTests/ProductionProfileTests.swift
+@@ -6,7 +6,7 @@ struct ProductionProfileTests {
+     @Test("engine feature version reflects production profiles")
+     func engineVersion() {
+         #expect(NexGenEngine.version == "0.3.0")
+-        #expect(EngineContract.current == 9)
++        #expect(EngineContract.current == 10)
+         #expect(EngineContract.minimumCompatible == 2)
+     }
+ 
+diff --git a/Tests/NexGenVideoTests/Agent/PipelineAffectWriterTests.swift b/Tests/NexGenVideoTests/Agent/PipelineAffectWriterTests.swift
+new file mode 100644
+index 00000000..3f633f38
+--- /dev/null
++++ b/Tests/NexGenVideoTests/Agent/PipelineAffectWriterTests.swift
+@@ -0,0 +1,326 @@
++import Foundation
++import Testing
++@testable import NexGenVideo
++@testable import MusicvideoPlugin
++import NexGenEngine
++
++@Suite("Section affect evidence and creative consumers")
++struct PipelineAffectWriterTests {
++    @Test("contrast fixtures preserve measurements and attributed interpretations without judging creative truth")
++    func contrastFixtures() throws {
++        let examples: [(String, Double, Double, String, String)] = [
++            ("C", 84, 0.03, "Sparse piano, fragile delivery.", "fragile"),
++            ("Am", 168, 0.8, "Dense drums, dark distorted texture.", "tense"),
++            ("C", 84, 0.8, "Dense brass, forceful delivery.", "anthemic"),
++        ]
++        for (chord, bpm, energy, context, tag) in examples {
++            let fixture = try Fixture(chord: chord, bpm: bpm, energy: energy, context: context)
++            defer { fixture.remove() }
++            let profile = try PipelineAffectWriter.write(fixture.args(tag: tag), dataRoot: fixture.root)
++            let evidence = try #require(profile[MusicAffectEvidenceV1.key] as? [String: Any])
++            let source = try #require(evidence["source"] as? [String: Any])
++            let sections = try #require(source["sections"] as? [[String: Any]])
++            let signals = try #require(sections[0]["signals"] as? [String: Any])
++            let harmony = try #require(signals["harmony"] as? [String: Any])
++            let values = try #require(harmony["value"] as? [[String: Any]])
++            #expect(values.first?["label"] as? String == chord)
++            #expect(harmony["basis"] as? String == "estimated")
++            #expect((signals["instrumentation"] as? [String: Any])?["basis"] as? String == "unavailable")
++            #expect((signals["context"] as? [String: Any])?["basis"] as? String == "inferred")
++            let view = try #require(MusicAffectEvidenceV1.presentation(dataRoot: fixture.root))
++            #expect(view.contains(tag))
++            #expect(view.contains(context))
++            #expect(view.contains("conflict: harmony"))
++            #expect(view.contains("not a subjective creative-quality verdict"))
++        }
++    }
++
++    @Test("aligned contradictory lyrics stay separately attributed; unaligned lyrics cannot support a section")
++    func lyricsConflictAndMissingProof() throws {
++        let fixture = try Fixture(alignedLyrics: true)
++        defer { fixture.remove() }
++        var args = fixture.args(tag: "fragile")
++        var evidence = try #require(args[MusicAffectEvidenceV1.key] as? [String: Any])
++        var sections = try #require(evidence["sections"] as? [[String: Any]])
++        sections[0]["conflicts"] = ["harmony", "lyrics"]
++        sections[0]["rationale"] = "Measured sparse dynamics support fragility while the aligned words 'We won' suggest triumph; retain the disagreement."
++        evidence["sections"] = sections
++        args[MusicAffectEvidenceV1.key] = evidence
++        _ = try PipelineAffectWriter.write(args, dataRoot: fixture.root)
++        let view = try #require(MusicAffectEvidenceV1.presentation(dataRoot: fixture.root))
++        #expect(view.contains("We won"))
++        #expect(view.contains("conflict: harmony, lyrics"))
++        var proof = try fixture.object("analysis/song.measurement-proof.json")
++        proof.removeValue(forKey: "lyrics_alignment")
++        try fixture.write(proof, "analysis/song.measurement-proof.json")
++        #expect(throws: (any Error).self) { try MusicAffectEvidenceV1.requireCurrent(dataRoot: fixture.root) }
++        #expect(throws: (any Error).self) { try PipelineAffectWriter.write(args, dataRoot: fixture.root) }
++    }
++
++    @Test("instrumental, missing chords, unreliable key and absent provider data allow bounded abstention")
++    func abstentionWithoutFabricatedEvidence() throws {
++        let fixture = try Fixture(chord: nil)
++        defer { fixture.remove() }
++        var analysis = try fixture.object("analysis/song.json")
++        analysis["key"] = "uncertain"
++        analysis["stage_diagnostics"] = [["stage": "optional_provider", "status": "failed"]]
++        try fixture.write(analysis, "analysis/song.json")
++        let profile = try PipelineAffectWriter.write(fixture.args(tag: nil), dataRoot: fixture.root)
++        let view = try #require(MusicAffectEvidenceV1.presentation(dataRoot: fixture.root))
++        #expect((profile["detected"] as? [[String: Any]])?.isEmpty == true)
++        #expect(view.contains("Abstention: Insufficient reliable emotional evidence."))
++        #expect(view.contains("lyrics [unavailable"))
++        #expect(view.contains("provider [unavailable"))
++        #expect(view.contains("optional_provider"))
++        #expect(view.contains("uncertain"))
++        #expect(MusicAffectEvidenceV1.confidence(profile) == 0)
++    }
++
++    @Test("invalid references, unknown timing and excessive inference confidence cannot be persisted")
++    func invalidDraftsLeaveOriginalBytes() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        _ = try PipelineAffectWriter.write(fixture.args(), dataRoot: fixture.root)
++        let original = try Data(contentsOf: fixture.root.appendingPathComponent(MusicAffectEvidenceV1.path))
++        for mutation in ["confidence", "timing", "unavailable", "duplicate", "override"] {
++            var args = fixture.args()
++            var evidence = try #require(args[MusicAffectEvidenceV1.key] as? [String: Any])
++            var sections = try #require(evidence["sections"] as? [[String: Any]])
++            switch mutation {
++            case "confidence": sections[0]["confidence"] = 0.71
++            case "timing": sections[0]["start"] = 0.5
++            case "unavailable": sections[0]["support"] = ["provider"]
++            case "duplicate": sections[1]["index"] = 0
++            default:
++                args["override_action"] = "set"
++                args["override"] = [["tag": "dark", "weight": 1]]
++                args["override_reason"] = "User requested a dark contrast."
++            }
++            evidence["sections"] = sections
++            args[MusicAffectEvidenceV1.key] = evidence
++            #expect(throws: (any Error).self) { try PipelineAffectWriter.write(args, dataRoot: fixture.root) }
++            #expect(try Data(contentsOf: fixture.root.appendingPathComponent(MusicAffectEvidenceV1.path)) == original)
++        }
++    }
++
++    @Test("an explicit override survives re-recording and drives treatment and real Visual Arc prompt directives")
++    func overrideReachesCreativeConsumer() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        var args = fixture.args(desired: "dark")
++        args["override_action"] = "set"
++        args["override"] = [["tag": "dark", "weight": 1]]
++        args["override_reason"] = "User wants an unsettling visual contrast."
++        _ = try PipelineAffectWriter.write(args, dataRoot: fixture.root)
++        let profile = try PipelineAffectWriter.write(fixture.args(desired: "dark"), dataRoot: fixture.root)
++        #expect((profile["override"] as? [[String: Any]])?.first?["value"] as? String == "dark")
++        #expect((profile["detected"] as? [[String: Any]])?.first?["value"] as? String == "fragile")
++        let view = try #require(MusicAffectEvidenceV1.presentation(dataRoot: fixture.root))
++        #expect(view.contains("Detected: fragile"))
++        #expect(view.contains("Desired video affect: dark"))
++        #expect(view.contains("User wants an unsettling visual contrast."))
++        try MusicAffectEvidenceV1.requireTreatment("A dark abstract treatment.\n" + view, dataRoot: fixture.root)
++        #expect(throws: (any Error).self) { try MusicAffectEvidenceV1.requireTreatment("A generic mood label.", dataRoot: fixture.root) }
++        let shotlist = try fixture.shotlist()
++        let arc = fixture.arc(direction: "dark: Let a narrow cold light contract around the recurring circle.")
++        try MusicAffectEvidenceV1.requireVisualArc(arc, shotlist: shotlist, dataRoot: fixture.root)
++        let directives = PipelineMusicvideoProductionWriter.visualArcDirectives(visualArc: arc, shotID: "s001")
++        #expect(directives.contains { $0.contains("dark: Let a narrow cold light contract") })
++        #expect(throws: (any Error).self) {
++            try MusicAffectEvidenceV1.requireVisualArc(fixture.arc(direction: "fragile: Ignore the user's contrary choice."), shotlist: shotlist, dataRoot: fixture.root)
++        }
++        var clear = fixture.args()
++        clear["override_action"] = "clear"
++        clear["override_reason"] = "User returned to the detected mood."
++        let cleared = try PipelineAffectWriter.write(clear, dataRoot: fixture.root)
++        #expect(cleared["override"] == nil)
++        #expect(cleared["override_clear_reason"] as? String == "User returned to the detected mood.")
++    }
++
++    @Test("exact changed source bytes invalidate evidence and downstream consumers")
++    func sourceMutationInvalidates() throws {
++        for path in ["audio/song.wav", "analysis/song.json", "analysis/song.measurement-proof.json", "lyrics/lyrics.txt", "analysis/transcript.json"] {
++            let fixture = try Fixture(alignedLyrics: true)
++            defer { fixture.remove() }
++            _ = try PipelineAffectWriter.write(fixture.args(), dataRoot: fixture.root)
++            let view = try #require(MusicAffectEvidenceV1.presentation(dataRoot: fixture.root))
++            for phase in ["brief", "treatment", "shotlist"] {
++                try PipelineLineageStore.record(phase: phase, snapshot: MusicvideoPipelineLineage.snapshot(phase: phase, dataRoot: fixture.root), dataRoot: fixture.root)
++                try MusicvideoPipelineLineage.requireCurrent(phase: phase, dataRoot: fixture.root)
++            }
++            var bytes = try Data(contentsOf: fixture.root.appendingPathComponent(path))
++            bytes.append(0x20)
++            try bytes.write(to: fixture.root.appendingPathComponent(path))
++            for phase in ["brief", "treatment", "shotlist"] {
++                #expect(throws: (any Error).self) { try MusicvideoPipelineLineage.requireCurrent(phase: phase, dataRoot: fixture.root) }
++            }
++            #expect(throws: (any Error).self) { try MusicAffectEvidenceV1.requireCurrent(dataRoot: fixture.root) }
++            #expect(throws: (any Error).self) { try MusicAffectEvidenceV1.requireTreatment(view, dataRoot: fixture.root) }
++            #expect(throws: (any Error).self) {
++                try MusicAffectEvidenceV1.requireVisualArc(fixture.arc(direction: "fragile: Let a narrow cold light contract around the recurring circle."), shotlist: fixture.shotlist(), dataRoot: fixture.root)
++            }
++        }
++    }
++
++    @Test("legacy typed round-trip cannot erase the extension or bypass its canonical writer")
++    func legacyRoundTripPreservesBytes() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        _ = try PipelineAffectWriter.write(fixture.args(), dataRoot: fixture.root)
++        let url = fixture.root.appendingPathComponent(MusicAffectEvidenceV1.path)
++        let original = try Data(contentsOf: url)
++        var decoded = try JSONDecoder().decode(AffectProfile.self, from: original)
++        try decoded.save(dataRoot: fixture.root)
++        #expect(try Data(contentsOf: url) == original)
++        decoded.override = [WeightedAffect(value: .dark, weight: 1)]
++        #expect(throws: (any Error).self) { try decoded.save(dataRoot: fixture.root) }
++        #expect(try Data(contentsOf: url) == original)
++    }
++
++    @Test("old projects stay readable; the new pack requires evidence and retains the vocabulary")
++    func legacyAndVocabulary() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        try MusicAffectEvidenceV1.requireCurrent(dataRoot: fixture.root)
++        try MusicAffectEvidenceV1.requireTreatment("Legacy treatment", dataRoot: fixture.root)
++        let binding: [String: Any] = ["activePlugin": "musicvideo", "activePluginVersion": "0.6.0"]
++        try MusicAffectEvidenceV1.canonical(binding).write(to: fixture.home.appendingPathComponent("ngv.json"))
++        try MusicAffectEvidenceV1.requireCurrent(dataRoot: fixture.root)
++        try MusicAffectEvidenceV1.requireTreatment("Legacy treatment after explicit pack update", dataRoot: fixture.root)
++        var legacyWrite = fixture.args()
++        legacyWrite.removeValue(forKey: MusicAffectEvidenceV1.key)
++        #expect(throws: (any Error).self) { try PipelineAffectWriter.write(legacyWrite, dataRoot: fixture.root) }
++        #expect(Set(MusicAffectEvidenceV1.tags) == Set(AffectTag.allCases.map(\.rawValue)))
++        #expect(Set(MusicAffectEvidenceV1.tags) == Set(AffectTagVocabulary.all))
++        let profile = AffectProfile(detected: [WeightedAffect(value: .fragile, weight: 1)])
++        let brief = try Brief(project: "demo", generated: "fixture", mission: .demo, targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored)
++        #expect(ProjectProfileAssembler.assemble(brief: brief, affectProfile: profile).creative.affects?.confidence == 0.7)
++    }
++
++    @Test("the actual Pattern Fit provider uses evidence confidence, explicit override and abstention")
++    func patternProviderConsumesEvidence() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        let brief = try Brief(project: "demo", generated: "fixture", mission: .demo, targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", conceptType: .abstract, visualMedium: .liveActionRealistic, tone: [.euphoric], figures: .none, lyricsIntegration: .ignored)
++        for mode in ["detection", "override", "abstention"] {
++            var args = fixture.args(tag: mode == "abstention" ? nil : "fragile", desired: mode == "override" ? "dark" : nil)
++            if mode == "override" {
++                args["override_action"] = "set"
++                args["override"] = [["tag": "dark", "weight": 1]]
++                args["override_reason"] = "Deliberate contrary intent."
++            } else if mode == "abstention" {
++                args["override_action"] = "clear"
++                args["override_reason"] = "User withdraws the desired affect."
++            }
++            let profile = try PipelineAffectWriter.write(args, dataRoot: fixture.root)
++            let typed = try JSONDecoder().decode(AffectProfile.self, from: MusicAffectEvidenceV1.canonical(profile))
++            var expected = ProjectProfileAssembler.assemble(brief: brief, affectProfile: typed)
++            if mode == "detection" { expected.creative.affects?.confidence = 0.6 }
++            if mode == "abstention" { expected.creative.affects = nil }
++            let response = try MusicvideoPatternProvider().recommend(briefJSON: JSONEncoder().encode(brief), optionsJSON: MusicAffectEvidenceV1.canonical(["affect_profile": profile]))
++            let object = try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
++            let recommendations = try #require(object["recommendations"] as? [String: Any])
++            #expect(recommendations["project_profile_sha256"] as? String == FileDigest.sha256(of: try PatternFitLibrary.canonicalJSON(expected)))
++            #expect(recommendations["score_semantics"] as? String == "compatibility_index_not_probability")
++        }
++    }
++
++    @Test("artifact displays show actual source evidence and never mistake affect for analysis")
++    func existingArtifactDisplayConsumesEvidence() throws {
++        let fixture = try Fixture()
++        defer { fixture.remove() }
++        let brief = try Brief(project: "demo", generated: "fixture", mission: .demo, targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored)
++        try YAMLArtifactStore(dataRoot: fixture.root).save(brief, to: PipelineLayout.briefFile)
++        _ = try PipelineAffectWriter.write(fixture.args(), dataRoot: fixture.root)
++        #expect(ShowArtifact.gate("brief", dataRoot: fixture.root).contains("Detected: fragile"))
++        let analysis = ShowArtifact.gate("analysis", dataRoot: fixture.root)
++        #expect(analysis.contains("84.0"))
++        #expect(analysis.contains("Section evidence for affect interpretation"))
++        #expect(analysis.contains("changes_per_second"))
++    }
++
++    private struct Fixture {
++        let home: URL
++        let root: URL
++
++        init(chord: String? = "C", bpm: Double = 84, energy: Double = 0.03, context: String = "Sparse piano, fragile delivery.", alignedLyrics: Bool = false) throws {
++            home = FileManager.default.temporaryDirectory.appendingPathComponent("affect-evidence-" + UUID().uuidString)
++            root = try ProjectScaffold.initProject(home: home, name: "demo")
++            for dir in ["audio", "analysis", "lyrics"] {
++                try FileManager.default.createDirectory(at: root.appendingPathComponent(dir), withIntermediateDirectories: true)
++            }
++            let track = Data("synthetic source bytes; not runtime audio evidence".utf8)
++            try track.write(to: root.appendingPathComponent("audio/song.wav"))
++            let hash = FileDigest.sha256(of: track)
++            let chords: [[String: Any]] = chord.map {
++                [["start": 0, "end": 2, "label": $0], ["start": 2, "end": 8, "label": "G"]]
++            } ?? []
++            var analysis: [String: Any] = [
++                "project": "demo", "schema": "analysis/v3", "song_path": "audio/song.wav", "song_sha256": hash,
++                "duration_s": 8, "sample_rate": 48000, "bpm": bpm, "tempo_multiplier": 1,
++                "beats": [0, 1, 2, 3, 4, 5, 6, 7], "downbeats": [0, 4],
++                "sections": [["index": 0, "start": 0, "end": 4], ["index": 1, "start": 4, "end": 8]],
++                "energy_curve": [["t": 1, "rms": energy], ["t": 5, "rms": energy * 2]],
++                "interpretation": ["overall_character": context], "alignment": [],
++                "chord_progression": chords,
++            ]
++            var proof: [String: Any] = ["schema": "analysis_measurement_proof/v1", "project": "demo", "song_sha256": hash]
++            if alignedLyrics {
++                let text = Data("We won".utf8)
++                try text.write(to: root.appendingPathComponent("lyrics/lyrics.txt"))
++                let lines: [[String: Any]] = [["start": 1, "end": 2, "text": "We won", "words": [["start": 1, "end": 1.4, "text": "We", "score": 0.9], ["start": 1.4, "end": 2, "text": "won", "score": 0.9]]]]
++                let source = Data("{}".utf8)
++                try source.write(to: root.appendingPathComponent("analysis/transcript.json"))
++                analysis["alignment"] = lines
++                proof["lyrics_alignment"] = [
++                    "source_path": "analysis/transcript.json", "source_sha256": FileDigest.sha256(of: source),
++                    "lyrics_sha256": FileDigest.sha256(of: text),
++                    "alignment_sha256": FileDigest.sha256(of: try MusicAffectEvidenceV1.canonical(lines)),
++                    "timing_evidence": "recognized_speech", "lyric_token_count": 2, "matched_token_count": 2,
++                ]
++            }
++            try write(analysis, "analysis/song.json")
++            try write(proof, "analysis/song.measurement-proof.json")
++        }
++
++        func remove() { try? FileManager.default.removeItem(at: home) }
++        func write(_ value: [String: Any], _ path: String) throws {
++            try MusicAffectEvidenceV1.canonical(value).write(to: root.appendingPathComponent(path))
++        }
++        func object(_ path: String) throws -> [String: Any] {
++            try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent(path))) as? [String: Any])
++        }
++        func args(tag: String? = "fragile", desired: String? = nil) -> [String: Any] {
++            let detected = tag.map { [["value": $0, "weight": 1] as [String: Any]] } ?? []
++            let sections: [[String: Any]] = (0...1).map { index in
++                var section: [String: Any] = [
++                    "index": index, "detected": detected, "confidence": tag == nil ? 0 : 0.6,
++                    "support": tag == nil ? [] : ["energy", "rhythm", "context"], "conflicts": tag == nil ? [] : ["harmony"],
++                    "rationale": "Dynamics and approved arrangement context support a tentative reading; chord brightness need not agree.",
++                    "harmony": "Resolution is a tentative reading of the progression, not a measured emotion.",
++                    "uncertainty": "Key confidence is unknown; instrumentation is context, not independent detection.",
++                    "visual_direction": (desired ?? tag ?? "undetermined") + ": Let a narrow cold light contract around the recurring circle.",
++                ]
++                if tag == nil { section["abstention_reason"] = "Insufficient reliable emotional evidence." }
++                return section
++            }
++            return [
++                "detected": tag.map { [["tag": $0, "weight": 1] as [String: Any]] } ?? [],
++                "rationale": "Tentative section-derived interpretation, not a creative-quality verdict.",
++                MusicAffectEvidenceV1.key: ["schema": MusicAffectEvidenceV1.schema, "summary": "A restrained opening grows denser; conflicting clues remain visible.", "confidence": tag == nil ? 0 : 0.6, "sections": sections],
++            ]
++        }
++        func shotlist() throws -> Shotlist {
++            try Shotlist(schema_: shotlistSchemaVersion, mode: .beat, project: "demo", song: Song(title: "Fixture", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: 84, durationS: 8), generated: "fixture", generator: "fixture", shots: [
++                Shot(id: "s001", section: "opening", timeStart: 0, timeEnd: 4, durationS: 4, type: .bRoll, description: "Circle", visualPrompt: "Circle", mood: "dark"),
++                Shot(id: "s002", section: "ending", timeStart: 4, timeEnd: 8, durationS: 4, type: .bRoll, description: "Circle", visualPrompt: "Circle", mood: "dark"),
++            ])
++        }
++        func arc(direction: String) -> MusicVisualArcDraftV1 {
++            MusicVisualArcDraftV1(concept: "Abstract circles", motifs: [], sections: [
++                MusicArcSectionV1(sectionID: "opening", musicalFunction: "opening", visualFunction: direction, motifIDs: [], shotIDs: ["s001"], constants: [], variations: [], lyricsRelation: .unused, changeExplanation: "Contracting light"),
++                MusicArcSectionV1(sectionID: "ending", musicalFunction: "ending", visualFunction: direction, motifIDs: [], shotIDs: ["s002"], constants: [], variations: [], lyricsRelation: .unused, changeExplanation: "Contracting light"),
++            ])
++        }
++    }
++}
+diff --git a/plugins/musicvideo-changelog.md b/plugins/musicvideo-changelog.md
+new file mode 100644
+index 00000000..a724f22f
+--- /dev/null
++++ b/plugins/musicvideo-changelog.md
+@@ -0,0 +1,10 @@
++# Music Video pack changes
++
++## 0.6.0 — prepared, not released
++
++- Section affect evidence binds approved local chord estimates, rhythm, dynamics and reliable lyric alignment to exact source bytes. Emotional meaning remains bounded inference with explicit uncertainty, conflict and abstention.
++- Explicit desired video affect survives re-recording and reaches Pattern Fit, Treatment and Visual Arc prompt directives while detected song affect remains visible.
++- New `record_affect` writes on this pack require the versioned evidence through the existing Brief writer. Older pinned packs and existing artifacts without the extension retain their previous contract. No project schema migration is introduced.
++- The pack requires additive EngineContract 10 for the new evidence API. The engine compatibility floor remains 2; the marketing-version minimum is unchanged. No release is implied by this entry.
++
++Prepared structural fixtures cover source tampering, conflicting and absent signals, override persistence, actual consumers and legacy preservation. GitHub Actions and attributed creative/runtime review remain pending.
+diff --git a/plugins/musicvideo.json b/plugins/musicvideo.json
+index 3cc4bfbf..a22b54cd 100644
+--- a/plugins/musicvideo.json
++++ b/plugins/musicvideo.json
+@@ -6,7 +6,7 @@
+   "tagline": "Structured AI music video production with engine-enforced consistency.",
+   "headline": "Turn a song into a finished video.",
+   "benefit": "Reads your track and plans shots to the beat.",
+-  "version": "0.5.8",
++  "version": "0.6.0",
+   "projectSchema": "musicvideo/2.0.0",
+   "migratesFrom": [
+     "musicvideo/legacy",

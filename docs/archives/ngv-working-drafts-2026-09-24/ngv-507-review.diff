@@ -1,0 +1,1689 @@
+diff --git a/.github/workflows/workspace-ui-acceptance.yml b/.github/workflows/workspace-ui-acceptance.yml
+index f36523b9..d0d5e448 100644
+--- a/.github/workflows/workspace-ui-acceptance.yml
++++ b/.github/workflows/workspace-ui-acceptance.yml
+@@ -9,6 +9,11 @@ on:
+       - 'Sources/NexGenVideo/App/main.swift'
+       - 'Sources/NexGenVideo/Agent/AgentService.swift'
+       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
++      - 'Sources/NexGenVideo/Inspector/**'
++      - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
++      - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
++      - 'Sources/NexGenVideo/UI/AppTheme.swift'
++      - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
+ 
+ concurrency:
+   group: workspace-ui-acceptance-${{ github.ref }}
+diff --git a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+index 69908cc6..9f44fcca 100644
+--- a/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
++++ b/Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift
+@@ -12,6 +12,10 @@ enum WorkspaceUIAcceptance {
+         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
+     }
+ 
++    private static var inspectorRequested: Bool {
++        ProcessInfo.processInfo.environment["NGV_INSPECTOR_UI_ACCEPTANCE"] == "1"
++    }
++
+     static func runIfRequested() {
+         guard isRequested else { return }
+         guard let evidencePath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_EVIDENCE"],
+@@ -213,6 +217,15 @@ enum WorkspaceUIAcceptance {
+                   returnedFrames == initialEditFrames else {
+                 fail("edit workspace did not settle before panel controls", scale: scale)
+             }
++            if inspectorRequested {
++                await captureInspectorCases(
++                    editor: editor,
++                    window: window,
++                    host: host,
++                    evidenceURL: evidenceURL,
++                    scale: scale
++                )
++            }
+             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                   await waitUntil(timeout: .seconds(5), {
+                       host.layoutSubtreeIfNeeded()
+@@ -373,6 +386,107 @@ enum WorkspaceUIAcceptance {
+         exit(1)
+     }
+ 
++    private static func captureInspectorCases(
++        editor: EditorViewModel,
++        window: NSWindow,
++        host: NSView,
++        evidenceURL: URL,
++        scale: Double
++    ) async {
++        let originalAssets = editor.mediaAssets
++        let originalClipIDs = editor.selectedClipIds
++        let originalObject = editor.inspectedObject
++        let originalMediaTab = editor.mediaPanelTab(for: .edit)
++        let image = MediaAsset(
++            id: "inspector-image",
++            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
++            type: .image,
++            name: "Inspector reference"
++        )
++        let audio = MediaAsset(
++            id: "inspector-audio",
++            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.wav"),
++            type: .audio,
++            name: "Inspector audio"
++        )
++        editor.mediaAssets.append(contentsOf: [image, audio])
++
++        let cases: [(family: String, clipIDs: Set<String>, tab: String?)] = [
++            ("text", ["inspector-text"], nil),
++            ("video", ["inspector-image-1"], "Video"),
++            ("effects", ["inspector-image-1"], "Adjust"),
++            ("ai", ["inspector-image-1"], "AI Edit"),
++            ("audio", ["inspector-audio-clip"], nil),
++            ("mixed", ["inspector-image-1", "inspector-image-2"], nil),
++            ("asset", [], nil),
++        ]
++        for item in cases {
++            editor.selectedClipIds = item.clipIDs
++            if item.family == "asset" {
++                guard await waitUntil(timeout: .seconds(5), {
++                    host.layoutSubtreeIfNeeded()
++                    return editor.selectedClipIds.isEmpty && editor.inspectedObject == nil
++                }) else {
++                    fail("could not clear the clip inspection before asset inspection", scale: scale)
++                }
++                editor.inspectedObject = .mediaAsset(image.id)
++            } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
++                editor.inspectedObject = .clip(clipID)
++            } else {
++                editor.inspectedObject = nil
++            }
++            guard await waitUntil(timeout: .seconds(5), {
++                host.layoutSubtreeIfNeeded()
++                return visiblePanelIDs(in: host) == expectedPanels(for: .edit)
++                    && editor.selectedClipIds == item.clipIDs
++                    && (item.family != "asset" || editor.inspectedObject == .mediaAsset(image.id))
++            }) else {
++                fail("inspector \(item.family) did not settle", scale: scale)
++            }
++            if let tab = item.tab {
++                let identifier = "inspector.tab.\(tab)"
++                if probeState(identifier: identifier, in: window) != true {
++                    guard click(identifier: identifier, in: window) == nil,
++                          await waitUntil(timeout: .seconds(5), {
++                              host.layoutSubtreeIfNeeded()
++                              return probeState(identifier: identifier, in: window) == true
++                          }) else {
++                        fail("inspector tab \(tab) did not activate", scale: scale)
++                    }
++                }
++            }
++            try? await Task.sleep(for: .milliseconds(300))
++            host.layoutSubtreeIfNeeded()
++            let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
++            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
++                fail("could not capture inspector \(item.family)", scale: scale)
++            }
++            emit("inspector", scale: scale, fields: ["family": item.family, "screenshot": name])
++        }
++        let captionIdentifier = "media.tab.Captions"
++        if probeState(identifier: captionIdentifier, in: window) != true {
++            guard click(identifier: captionIdentifier, in: window) == nil,
++                  await waitUntil(timeout: .seconds(5), {
++                      host.layoutSubtreeIfNeeded()
++                      return editor.mediaPanelTab(for: .edit) == .captions
++                          && probeState(identifier: captionIdentifier, in: window) == true
++                  }) else {
++                fail("caption form did not activate", scale: scale)
++            }
++        }
++        try? await Task.sleep(for: .milliseconds(300))
++        host.layoutSubtreeIfNeeded()
++        let captionName = "scale-\(scaleLabel(scale))-inspector-caption.png"
++        guard snapshot(host, at: evidenceURL.appendingPathComponent(captionName)) else {
++            fail("could not capture caption form", scale: scale)
++        }
++        emit("inspector", scale: scale, fields: ["family": "caption", "screenshot": captionName])
++        editor.setMediaPanelTab(originalMediaTab, for: .edit)
++        editor.selectedClipIds = originalClipIDs
++        editor.inspectedObject = originalObject
++        editor.mediaAssets = originalAssets
++    }
++
+     private static func makeProjectFixture(scale: Double) throws -> URL {
+         let title = scale == 1.25
+             ? "An exceptionally long project name for the final picture lock"
+@@ -385,7 +499,40 @@ enum WorkspaceUIAcceptance {
+             at: projectURL,
+             withIntermediateDirectories: true
+         )
+-        try JSONEncoder().encode(Timeline()).write(
++        var timeline = Timeline()
++        if inspectorRequested {
++            var textClip = Clip(mediaRef: "inspector-title", startFrame: 0, durationFrames: 90)
++            textClip.id = "inspector-text"
++            textClip.mediaType = .text
++            textClip.sourceClipType = .text
++            textClip.textContent = "Inspector title"
++
++            var firstImage = Clip(mediaRef: "inspector-image", startFrame: 100, durationFrames: 90)
++            firstImage.id = "inspector-image-1"
++            firstImage.mediaType = .image
++            firstImage.sourceClipType = .image
++
++            var secondImage = Clip(mediaRef: "inspector-image", startFrame: 200, durationFrames: 90)
++            secondImage.id = "inspector-image-2"
++            secondImage.mediaType = .image
++            secondImage.sourceClipType = .image
++            secondImage.speed = 1.5
++            secondImage.transform.centerX = 0.6
++            secondImage.transform.rotation = 30
++            secondImage.opacity = 0.5
++
++            var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
++            audioClip.id = "inspector-audio-clip"
++            audioClip.mediaType = .audio
++            audioClip.sourceClipType = .audio
++
++            timeline.tracks = [
++                Track(type: .text, clips: [textClip]),
++                Track(type: .image, clips: [firstImage, secondImage]),
++                Track(type: .audio, clips: [audioClip]),
++            ]
++        }
++        try JSONEncoder().encode(timeline).write(
+             to: projectURL.appendingPathComponent(Project.timelineFilename),
+             options: .atomic
+         )
+diff --git a/Sources/NexGenVideo/Inspector/Components/Adjust/AdjustSlider.swift b/Sources/NexGenVideo/Inspector/Components/Adjust/AdjustSlider.swift
+index a6ae6d65..8df88a3a 100644
+--- a/Sources/NexGenVideo/Inspector/Components/Adjust/AdjustSlider.swift
++++ b/Sources/NexGenVideo/Inspector/Components/Adjust/AdjustSlider.swift
+@@ -1,16 +1,19 @@
+ import SwiftUI
+ 
+ struct AdjustSlider: View {
+-    let value: Double
++    let value: Double?
+     let range: ClosedRange<Double>
+     var gradient: [Color]? = nil
+     var defaultValue: Double = 0
++    var accessibilityName: String? = nil
+     let onChanged: (Double) -> Void
+     let onCommit: (Double) -> Void
++    @Environment(\.isEnabled) private var isEnabled
+ 
+-    private var fraction: Double {
++    private var fraction: Double? {
++        guard let value else { return nil }
+         let span = range.upperBound - range.lowerBound
+-        guard span > 0 else { return 0 }
++        guard span > 0 else { return nil }
+         return min(1, max(0, (value - range.lowerBound) / span))
+     }
+ 
+@@ -22,18 +25,20 @@ struct AdjustSlider: View {
+     var body: some View {
+         GeometryReader { geo in
+             let w = geo.size.width
+-            let thumbX = CGFloat(fraction) * w
++            let thumbX = CGFloat(fraction ?? 0) * w
+             ZStack(alignment: .leading) {
+                 track(width: w)
+-                Circle()
+-                    .fill(AppTheme.Accent.primary)
+-                    .frame(width: AppTheme.Slider.thumbSize, height: AppTheme.Slider.thumbSize)
+-                    .overlay(Circle().strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.thin))
+-                    .shadow(AppTheme.Shadow.sm)
+-                    .position(x: thumbX, y: geo.size.height / 2)
++                if fraction != nil {
++                    Circle()
++                        .fill(AppTheme.Accent.primary)
++                        .frame(width: AppTheme.Slider.thumbSize, height: AppTheme.Slider.thumbSize)
++                        .overlay(Circle().strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.thin))
++                        .shadow(AppTheme.Shadow.sm)
++                        .position(x: thumbX, y: geo.size.height / 2)
++                }
+             }
+             .contentShape(Rectangle())
+-            .onTapGesture(count: 2) { _ in onCommit(defaultValue) }
++            .onTapGesture(count: 2) { _ in if isEnabled { onCommit(defaultValue) } }
+             .gesture(
+                 DragGesture(minimumDistance: 0)
+                     .onChanged { onChanged(value(atX: $0.location.x, width: w)) }
+@@ -41,6 +46,10 @@ struct AdjustSlider: View {
+             )
+         }
+         .frame(height: AppTheme.Slider.thumbSize)
++        .allowsHitTesting(isEnabled)
++        .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
++        .accessibilityLabel(accessibilityName ?? "Adjustment")
++        .accessibilityValue(value.map { String($0) } ?? "Mixed values")
+     }
+ 
+     @ViewBuilder
+@@ -56,7 +65,7 @@ struct AdjustSlider: View {
+                     .frame(height: AppTheme.Slider.trackHeight)
+                 Capsule()
+                     .fill(AppTheme.Text.tertiaryColor)
+-                    .frame(width: max(0, CGFloat(fraction) * width), height: AppTheme.Slider.trackHeight)
++                    .frame(width: max(0, CGFloat(fraction ?? 0) * width), height: AppTheme.Slider.trackHeight)
+             }
+         }
+     }
+diff --git a/Sources/NexGenVideo/Inspector/Components/Adjust/ColorWheelControl.swift b/Sources/NexGenVideo/Inspector/Components/Adjust/ColorWheelControl.swift
+index f0168946..69451bda 100644
+--- a/Sources/NexGenVideo/Inspector/Components/Adjust/ColorWheelControl.swift
++++ b/Sources/NexGenVideo/Inspector/Components/Adjust/ColorWheelControl.swift
+@@ -24,6 +24,7 @@ struct ColorWheelControl: View {
+                 range: masterRange,
+                 gradient: AppTheme.Slider.lumaGradient,
+                 defaultValue: masterDefault,
++                accessibilityName: "\(title) level",
+                 onChanged: onMasterChanged,
+                 onCommit: onMasterCommit
+             )
+diff --git a/Sources/NexGenVideo/Inspector/Components/ColorField.swift b/Sources/NexGenVideo/Inspector/Components/ColorField.swift
+index 2542d8f4..d35352f2 100644
+--- a/Sources/NexGenVideo/Inspector/Components/ColorField.swift
++++ b/Sources/NexGenVideo/Inspector/Components/ColorField.swift
+@@ -7,6 +7,7 @@ struct ColorField: View {
+     let displayColor: Color
+     let onUserChange: (Color) -> Void
+     var supportsOpacity: Bool = true
++    @FocusState private var isFocused: Bool
+ 
+     var body: some View {
+         Button(action: open) {
+@@ -19,6 +20,21 @@ struct ColorField: View {
+                 )
+         }
+         .buttonStyle(.plain)
++        .focused($isFocused)
++        .inspectorControlChrome(focused: isFocused)
++        .accessibilityLabel("Color")
++        .accessibilityValue(colorAccessibilityValue)
++    }
++
++    private var colorAccessibilityValue: String {
++        guard let color = NSColor(displayColor).usingColorSpace(.sRGB) else { return "Color" }
++        return String(
++            format: "Red %.0f%%, green %.0f%%, blue %.0f%%, opacity %.0f%%",
++            Double(color.redComponent) * 100,
++            Double(color.greenComponent) * 100,
++            Double(color.blueComponent) * 100,
++            Double(color.alphaComponent) * 100
++        )
+     }
+ 
+     private func open() {
+diff --git a/Sources/NexGenVideo/Inspector/Components/FontPickerField.swift b/Sources/NexGenVideo/Inspector/Components/FontPickerField.swift
+index bf27f707..3981be79 100644
+--- a/Sources/NexGenVideo/Inspector/Components/FontPickerField.swift
++++ b/Sources/NexGenVideo/Inspector/Components/FontPickerField.swift
+@@ -8,6 +8,7 @@ struct FontPickerField: View {
+     let onCancel: () -> Void
+ 
+     @State private var anchorHolder = FontMenuAnchorHolder()
++    @FocusState private var isFocused: Bool
+ 
+     var body: some View {
+         Button {
+@@ -26,13 +27,13 @@ struct FontPickerField: View {
+             .padding(.horizontal, AppTheme.Spacing.smMd)
+             .padding(.vertical, AppTheme.Spacing.xs)
+             .frame(maxWidth: AppTheme.ComponentSize.fontPickerMaxWidth, alignment: .trailing)
+-            .background(
+-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
+-            )
++            .inspectorControlChrome(focused: isFocused)
+         }
+         .buttonStyle(.plain)
++        .focused($isFocused)
+         .fixedSize()
++        .accessibilityLabel("Font")
++        .accessibilityValue(displayName)
+         .background(FontMenuAnchorView(holder: anchorHolder))
+     }
+ 
+diff --git a/Sources/NexGenVideo/Inspector/Components/InspectorPositionFields.swift b/Sources/NexGenVideo/Inspector/Components/InspectorPositionFields.swift
+index b1899162..37e73df6 100644
+--- a/Sources/NexGenVideo/Inspector/Components/InspectorPositionFields.swift
++++ b/Sources/NexGenVideo/Inspector/Components/InspectorPositionFields.swift
+@@ -17,6 +17,7 @@ struct InspectorPositionFields: View {
+                 range: -10...10,
+                 displayMultiplier: canvasW,
+                 format: "%.0f",
++                accessibilityName: "Position X",
+                 fieldWidth: 36,
+                 trailingLabel: "X",
+                 onChanged: { newX in apply(setX: newX, setY: nil) }
+@@ -27,6 +28,7 @@ struct InspectorPositionFields: View {
+                 range: -10...10,
+                 displayMultiplier: canvasH,
+                 format: "%.0f",
++                accessibilityName: "Position Y",
+                 fieldWidth: 36,
+                 trailingLabel: "Y",
+                 onChanged: { newY in apply(setX: nil, setY: newY) }
+diff --git a/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift b/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
+index 9ea73f18..d2cdfda5 100644
+--- a/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
++++ b/Sources/NexGenVideo/Inspector/Components/InspectorRow.swift
+@@ -1,35 +1,158 @@
+ import SwiftUI
+ 
+-/// `[icon] Label                                    trailing`
+-struct InspectorRow<Trailing: View>: View {
+-    let icon: String
++private struct InspectorControlChrome: ViewModifier {
++    var focused = false
++    var mixed = false
++    var error = false
++    @Environment(\.isEnabled) private var isEnabled
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    @State private var hovered = false
++
++    func body(content: Content) -> some View {
++        content
++            .background(
++                RoundedRectangle(cornerRadius: AppTheme.Radius.xsSm)
++                    .fill(isEnabled ? AppTheme.Background.baseColor : AppTheme.Background.raisedColor)
++            )
++            .overlay(
++                RoundedRectangle(cornerRadius: AppTheme.Radius.xsSm)
++                    .strokeBorder(border, lineWidth: AppTheme.BorderWidth.thin)
++            )
++            .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
++            .onHover { hovered = isEnabled && $0 }
++            .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: hovered)
++    }
++
++    private var border: Color {
++        guard isEnabled else { return AppTheme.Border.subtleColor }
++        if error { return AppTheme.Status.errorColor }
++        if focused { return AppTheme.Accent.primary }
++        if mixed { return AppTheme.Border.primaryColor }
++        return hovered ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor
++    }
++}
++
++extension View {
++    func inspectorControlChrome(focused: Bool = false, mixed: Bool = false, error: Bool = false) -> some View {
++        modifier(InspectorControlChrome(focused: focused, mixed: mixed, error: error))
++    }
++}
++
++private struct InspectorFormLayout: Layout {
++    let scale: CGFloat
++    let stacked: Bool
++    private var gap: CGFloat { AppTheme.Spacing.sm }
++    private var labelWidth: CGFloat { AppTheme.ComponentSize.inspectorLabelWidth * scale }
++
++    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
++        let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil }
++            ?? AppTheme.ComponentSize.inspectorInlineMinWidth * scale
++        guard subviews.count == 2 else {
++            let height = subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)).height ?? 0
++            return CGSize(width: width, height: height)
++        }
++        let sizes = measuredSizes(width: width, subviews: subviews)
++        return CGSize(
++            width: width,
++            height: sizes.inline
++                ? max(sizes.label.height, sizes.control.height)
++                : sizes.label.height + gap + sizes.control.height
++        )
++    }
++
++    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
++        guard subviews.count == 2 else {
++            subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
++            return
++        }
++        let sizes = measuredSizes(width: bounds.width, subviews: subviews)
++        if sizes.inline {
++            let height = max(sizes.label.height, sizes.control.height)
++            subviews[0].place(
++                at: CGPoint(x: bounds.minX, y: bounds.minY + (height - sizes.label.height) / 2),
++                proposal: ProposedViewSize(width: labelWidth, height: sizes.label.height)
++            )
++            subviews[1].place(
++                at: CGPoint(x: bounds.maxX - sizes.control.width, y: bounds.minY + (height - sizes.control.height) / 2),
++                proposal: ProposedViewSize(width: sizes.control.width, height: sizes.control.height)
++            )
++        } else {
++            subviews[0].place(
++                at: CGPoint(x: bounds.minX, y: bounds.minY),
++                proposal: ProposedViewSize(width: bounds.width, height: sizes.label.height)
++            )
++            subviews[1].place(
++                at: CGPoint(x: bounds.maxX - sizes.control.width, y: bounds.minY + sizes.label.height + gap),
++                proposal: ProposedViewSize(width: sizes.control.width, height: sizes.control.height)
++            )
++        }
++    }
++
++    private func measuredSizes(width: CGFloat, subviews: Subviews) -> (label: CGSize, control: CGSize, inline: Bool) {
++        let inline = !stacked && width >= AppTheme.ComponentSize.inspectorInlineMinWidth * scale
++        let controlWidth = inline ? max(0, width - labelWidth - gap) : width
++        let inlineControl = subviews[1].sizeThatFits(ProposedViewSize(width: controlWidth, height: nil))
++        let fitsInline = inline && inlineControl.width <= controlWidth
++        let control = fitsInline
++            ? inlineControl
++            : subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
++        let label = subviews[0].sizeThatFits(ProposedViewSize(width: fitsInline ? labelWidth : width, height: nil))
++        return (label, control, fitsInline)
++    }
++}
++
++struct InspectorFormRow<Trailing: View>: View {
+     let label: String
++    var icon: String? = nil
+     var labelHelp: String? = nil
++    var stacked = false
+     @ViewBuilder var trailing: () -> Trailing
++    @Environment(\.interfaceScale) private var interfaceScale
+ 
+     var body: some View {
+-        HStack(spacing: AppTheme.Spacing.xs) {
+-            Image(systemName: icon)
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.secondaryColor)
+-                .frame(width: AppTheme.IconSize.xxs, alignment: .leading)
++        InspectorFormLayout(scale: CGFloat(interfaceScale), stacked: stacked) {
++            labelContent
++            trailing()
++        }
++        .frame(maxWidth: .infinity, alignment: .leading)
++    }
++
++    private var labelContent: some View {
++        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.xs) {
++            if let icon {
++                Image(systemName: icon)
++                    .interfaceFont(size: AppTheme.Typography.ui)
++                    .foregroundStyle(AppTheme.Text.secondaryColor)
++                    .frame(width: AppTheme.IconSize.md, alignment: .leading)
++                    .accessibilityHidden(true)
++            }
+             Text(label)
+                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+-                .foregroundStyle(AppTheme.Text.primaryColor)
++                .foregroundStyle(AppTheme.Text.secondaryColor)
++                .fixedSize(horizontal: false, vertical: true)
+             if let labelHelp {
+                 Image(systemName: "info.circle")
+                     .interfaceFont(size: AppTheme.Typography.ui)
+                     .foregroundStyle(AppTheme.Text.tertiaryColor)
+                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+-                    .contentShape(Rectangle())
+                     .help(labelHelp)
++                    .accessibilityLabel(labelHelp)
+             }
+-            Spacer()
+-            trailing()
+         }
+     }
+ }
+ 
++struct InspectorRow<Trailing: View>: View {
++    let icon: String
++    let label: String
++    var labelHelp: String? = nil
++    @ViewBuilder var trailing: () -> Trailing
++
++    var body: some View {
++        InspectorFormRow(label: label, icon: icon, labelHelp: labelHelp, trailing: trailing)
++    }
++}
++
+ extension InspectorRow where Trailing == EmptyView {
+     init(icon: String, label: String) {
+         self.init(icon: icon, label: label, trailing: { EmptyView() })
+diff --git a/Sources/NexGenVideo/Inspector/Components/InspectorSection.swift b/Sources/NexGenVideo/Inspector/Components/InspectorSection.swift
+index dbd4c525..ceaf4e32 100644
+--- a/Sources/NexGenVideo/Inspector/Components/InspectorSection.swift
++++ b/Sources/NexGenVideo/Inspector/Components/InspectorSection.swift
+@@ -1,5 +1,55 @@
+ import SwiftUI
+ 
++struct InspectorSectionLabel: View {
++    let title: String
++
++    var body: some View {
++        Text(title.uppercased())
++            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
++            .tracking(AppTheme.Tracking.wide)
++            .foregroundStyle(AppTheme.Text.mutedColor)
++            .fixedSize(horizontal: false, vertical: true)
++    }
++}
++
++struct InspectorSectionHeading<Accessory: View>: View {
++    let title: String
++    var expanded: Bool? = nil
++    var onToggle: (() -> Void)? = nil
++    @ViewBuilder var accessory: () -> Accessory
++
++    var body: some View {
++        HStack(alignment: .center, spacing: AppTheme.Spacing.sm) {
++            if let expanded, let onToggle {
++                Button(action: onToggle) {
++                    HStack(spacing: AppTheme.Spacing.xs) {
++                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
++                            .interfaceFont(size: AppTheme.Typography.metadata)
++                            .foregroundStyle(AppTheme.Text.mutedColor)
++                            .frame(width: AppTheme.IconSize.xxs)
++                        InspectorSectionLabel(title: title)
++                    }
++                    .contentShape(Rectangle())
++                }
++                .buttonStyle(.plain)
++                .accessibilityLabel(title)
++                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
++            } else {
++                InspectorSectionLabel(title: title)
++            }
++            Spacer(minLength: AppTheme.Spacing.xs)
++            accessory()
++        }
++        .frame(maxWidth: .infinity, alignment: .leading)
++    }
++}
++
++extension InspectorSectionHeading where Accessory == EmptyView {
++    init(title: String, expanded: Bool? = nil, onToggle: (() -> Void)? = nil) {
++        self.init(title: title, expanded: expanded, onToggle: onToggle, accessory: { EmptyView() })
++    }
++}
++
+ struct InspectorSection<Content: View>: View {
+     let title: String
+     @ViewBuilder var content: () -> Content
+@@ -11,10 +61,7 @@ struct InspectorSection<Content: View>: View {
+ 
+     var body: some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+-            Text(title.uppercased())
+-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                .tracking(AppTheme.Tracking.wide)
+-                .foregroundStyle(AppTheme.Text.mutedColor)
++            InspectorSectionHeading(title: title)
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                 content()
+             }
+diff --git a/Sources/NexGenVideo/Inspector/Components/ScrubbableNumberField.swift b/Sources/NexGenVideo/Inspector/Components/ScrubbableNumberField.swift
+index 62fe1662..bd3ee062 100644
+--- a/Sources/NexGenVideo/Inspector/Components/ScrubbableNumberField.swift
++++ b/Sources/NexGenVideo/Inspector/Components/ScrubbableNumberField.swift
+@@ -9,6 +9,7 @@ struct ScrubbableNumberField: View {
+     var displayMultiplier: Double = 1
+     var format: String = "%.0f"
+     var valueSuffix: String = ""
++    var accessibilityName: String? = nil
+     /// Display units changed per pixel of horizontal drag.
+     var dragSensitivity: Double = 1
+     var fieldWidth: CGFloat = 50
+@@ -19,11 +20,14 @@ struct ScrubbableNumberField: View {
+ 
+     @State private var isEditing = false
+     @State private var editText = ""
++    @State private var hasError = false
+     @FocusState private var editFocused: Bool
+ 
+     @State private var isDragging = false
+     @State private var dragStartValue: Double = 0
+     @State private var liveValue: Double = 0
++    @Environment(\.isEnabled) private var isEnabled
++    @Environment(\.interfaceScale) private var interfaceScale
+ 
+     private var isMixed: Bool { value == nil && !isDragging }
+     private var sourceValue: Double { isDragging ? liveValue : (value ?? liveValue) }
+@@ -62,9 +66,10 @@ struct ScrubbableNumberField: View {
+                         .lineLimit(1)
+                 }
+             }
+-            .frame(width: fieldWidth, alignment: .trailing)
++            .frame(width: fieldWidth * CGFloat(interfaceScale), alignment: .trailing)
+             .padding(.horizontal, AppTheme.Spacing.sm)
+             .padding(.vertical, AppTheme.Spacing.xxs)
++            .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)
+             .overlay(scrubOverlay)
+ 
+             if let trailingLabel {
+@@ -75,6 +80,9 @@ struct ScrubbableNumberField: View {
+             }
+         }
+         .fixedSize(horizontal: true, vertical: false)
++        .accessibilityLabel(accessibilityName ?? "Value")
++        .accessibilityValue(isMixed ? "Mixed values" : displayText)
++        .accessibilityHint(hasError ? "Enter a number" : "Drag to adjust or click to type")
+         .onAppear { liveValue = value ?? range.lowerBound }
+         .onChange(of: value) { _, new in
+             if !isDragging { liveValue = new ?? liveValue }
+@@ -93,7 +101,7 @@ struct ScrubbableNumberField: View {
+             EmptyView()
+         } else {
+             ScrubMouseArea(
+-                canScrub: !isMixed,
++                canScrub: isEnabled && !isMixed,
+                 onDragStart: {
+                     dragStartValue = value ?? liveValue
+                     isDragging = true
+@@ -116,6 +124,8 @@ struct ScrubbableNumberField: View {
+                     }
+                 },
+                 onClick: {
++                    guard isEnabled else { return }
++                    hasError = false
+                     editText = editingText
+                     isEditing = true
+                 }
+@@ -132,7 +142,11 @@ struct ScrubbableNumberField: View {
+         let cleaned = withoutSuffix
+             .trimmingCharacters(in: .whitespaces)
+             .replacingOccurrences(of: ",", with: ".")
+-        guard let parsed = Double(cleaned) else { return }
++        guard let parsed = Double(cleaned) else {
++            hasError = true
++            return
++        }
++        hasError = false
+         let mult = displayMultiplier == 0 ? 1 : displayMultiplier
+         let raw = (parsed / mult).clamped(to: range)
+         liveValue = raw
+@@ -163,6 +177,7 @@ private struct ScrubMouseArea: NSViewRepresentable {
+     }
+ 
+     private func apply(to v: ScrubArea) {
++        if v.canScrub != canScrub { v.window?.invalidateCursorRects(for: v) }
+         v.canScrub = canScrub
+         v.onDragStart = onDragStart
+         v.onDragChanged = onDragChanged
+@@ -183,7 +198,7 @@ private struct ScrubMouseArea: NSViewRepresentable {
+         override var acceptsFirstResponder: Bool { false }
+ 
+         override func resetCursorRects() {
+-            addCursorRect(bounds, cursor: .resizeLeftRight)
++            if canScrub { addCursorRect(bounds, cursor: .resizeLeftRight) }
+         }
+ 
+         override func mouseDown(with event: NSEvent) {
+diff --git a/Sources/NexGenVideo/Inspector/InspectorView.swift b/Sources/NexGenVideo/Inspector/InspectorView.swift
+index ab50cb80..3d2ff3d1 100644
+--- a/Sources/NexGenVideo/Inspector/InspectorView.swift
++++ b/Sources/NexGenVideo/Inspector/InspectorView.swift
+@@ -570,7 +570,8 @@ struct InspectorView: View {
+                     let label = Text(segment.label)
+                         .interfaceFont(size: AppTheme.Typography.ui, weight: isLast ? .semibold : .regular)
+                         .foregroundStyle(isLast ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+-                        .lineLimit(1)
++                        .lineLimit(2)
++                        .fixedSize(horizontal: false, vertical: true)
+                     // Parent segments that resolve to an object navigate to it — the graph's payoff.
+                     if !isLast, let target = segment.object {
+                         Button { editor.inspectedObject = target } label: { label }
+@@ -646,10 +647,7 @@ struct InspectorView: View {
+         @ViewBuilder content: () -> Content
+     ) -> some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+-            Text(title.uppercased())
+-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                .tracking(AppTheme.Tracking.wide)
+-                .foregroundStyle(AppTheme.Text.mutedColor)
++            InspectorSectionHeading(title: title)
+             VStack(spacing: AppTheme.Spacing.sm) {
+                 content()
+             }
+@@ -660,25 +658,20 @@ struct InspectorView: View {
+         label: String,
+         value: String,
+         valueHelp: String? = nil,
+-        truncate: Text.TruncationMode = .tail
++        stacked: Bool = false
+     ) -> some View {
+-        HStack(spacing: AppTheme.Spacing.sm) {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.tertiaryColor)
+-                .fixedSize()
+-            Spacer()
++        InspectorFormRow(label: label, stacked: stacked) {
+             Text(value)
+                 .interfaceFont(size: AppTheme.Typography.ui)
+                 .foregroundStyle(AppTheme.Text.secondaryColor)
+-                .lineLimit(1)
+-                .truncationMode(truncate)
+                 .multilineTextAlignment(.trailing)
++                .lineLimit(stacked ? 3 : nil)
++                .truncationMode(stacked ? .middle : .tail)
++                .fixedSize(horizontal: false, vertical: true)
+                 .textSelection(.enabled)
+                 .help(valueHelp ?? value)
+-                .padding(.horizontal, AppTheme.Spacing.xs)
+         }
+-        .frame(height: AppTheme.IconSize.md)
++        .frame(minHeight: AppTheme.IconSize.md)
+     }
+ 
+     // MARK: - Clip Inspector
+@@ -758,6 +751,17 @@ struct InspectorView: View {
+                     }
+                 }
+             }
++            if activeTab == .video || activeTab == .audio {
++                keyframesToggleBar(
++                    enabled: activeTab == .video
++                        ? nonTextVisualClips.count == 1
++                        : selectedAudioClips.count == 1
++                )
++                    .padding(.horizontal, AppTheme.Spacing.lg)
++                    .padding(.vertical, AppTheme.Spacing.xs)
++                    .frame(maxWidth: .infinity, alignment: .trailing)
++                    .background(AppTheme.Background.surfaceColor)
++            }
+         }
+     }
+ 
+@@ -782,6 +786,7 @@ struct InspectorView: View {
+             titles: titles, selected: selected,
+             raisedBackground: raisedBackground,
+             accentedTitles: [ClipTab.ai.rawValue],
++            acceptanceProbePrefix: "inspector.tab",
+             onSelect: onSelect
+         )
+     }
+@@ -811,7 +816,6 @@ struct InspectorView: View {
+             speedSection(clips: clips + selectedAudioClips)
+         }
+ 
+-        keyframesToggleBar(enabled: single != nil)
+     }
+ 
+     func keyframesToggleBar(enabled: Bool) -> some View {
+@@ -850,6 +854,7 @@ struct InspectorView: View {
+                         range: 0.25...4.0,
+                         format: "%.2f",
+                         valueSuffix: "x",
++                        accessibilityName: "Speed",
+                         dragSensitivity: 0.01,
+                         fieldWidth: 50,
+                         onChanged: { newVal in
+@@ -906,7 +911,7 @@ struct InspectorView: View {
+         label: String,
+         clipId: String?,
+         property: AnimatableProperty,
+-        @ViewBuilder fields: () -> Fields
++        @ViewBuilder fields: @escaping () -> Fields
+     ) -> some View {
+         propertyRow(label: label) {
+             HStack(spacing: AppTheme.Spacing.sm) {
+@@ -916,7 +921,7 @@ struct InspectorView: View {
+                 }
+             }
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+     }
+ 
+     private func keyframeControls(clipId: String, property: AnimatableProperty) -> some View {
+@@ -1009,6 +1014,7 @@ struct InspectorView: View {
+             displayMultiplier: 100,
+             format: "%.0f",
+             valueSuffix: "%",
++            accessibilityName: "Scale",
+             fieldWidth: 50,
+             onChanged: { newVal in
+                 for c in clips { editor.applyScale(clipId: c.id, newScale: newVal) }
+@@ -1029,6 +1035,7 @@ struct InspectorView: View {
+             displayMultiplier: 1,
+             format: "%.0f",
+             valueSuffix: "°",
++            accessibilityName: "Rotation",
+             fieldWidth: 50,
+             onChanged: { newVal in
+                 for c in clips { editor.applyRotation(clipId: c.id, valueDeg: newVal) }
+@@ -1049,6 +1056,7 @@ struct InspectorView: View {
+             displayMultiplier: 100,
+             format: "%.0f",
+             valueSuffix: "%",
++            accessibilityName: "Opacity",
+             fieldWidth: 50,
+             onChanged: { newVal in
+                 for c in clips { editor.applyOpacity(clipId: c.id, value: newVal) }
+@@ -1070,18 +1078,7 @@ struct InspectorView: View {
+         resetHelp: String? = nil,
+         onReset: (() -> Void)? = nil
+     ) -> some View {
+-        HStack {
+-            Button(action: onToggle) {
+-                HStack(spacing: AppTheme.Spacing.xs) {
+-                    sectionTitleLabel(title: title)
+-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+-                        .interfaceFont(size: AppTheme.Typography.metadata)
+-                        .foregroundStyle(AppTheme.Text.mutedColor)
+-                }
+-                .contentShape(Rectangle())
+-            }
+-            .buttonStyle(.plain)
+-            Spacer()
++        InspectorSectionHeading(title: title, expanded: expanded, onToggle: onToggle) {
+             if let onReset {
+                 resetButton(onReset: onReset, help: resetHelp)
+             }
+@@ -1089,11 +1086,7 @@ struct InspectorView: View {
+     }
+ 
+     func sectionTitleLabel(title: String) -> some View {
+-        Text(title.uppercased())
+-            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-            .tracking(AppTheme.Tracking.wide)
+-            .foregroundStyle(AppTheme.Text.mutedColor)
+-            .fixedSize()
++        InspectorSectionLabel(title: title)
+     }
+ 
+     func resetButton(onReset: @escaping () -> Void, help: String?) -> some View {
+@@ -1106,21 +1099,14 @@ struct InspectorView: View {
+         }
+         .buttonStyle(.plain)
+         .help(help ?? "Reset")
++        .accessibilityLabel(help ?? "Reset")
+     }
+ 
+     func propertyRow<Trailing: View>(
+         label: String,
+-        @ViewBuilder trailing: () -> Trailing
++        @ViewBuilder trailing: @escaping () -> Trailing
+     ) -> some View {
+-        HStack(spacing: AppTheme.Spacing.sm) {
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.secondaryColor)
+-                .lineLimit(1)
+-                .fixedSize()
+-            Spacer()
+-            trailing()
+-        }
++        InspectorFormRow(label: label, trailing: trailing)
+     }
+ 
+     // MARK: - Flip
+@@ -1153,7 +1139,7 @@ struct InspectorView: View {
+                 }
+             }
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+     }
+ 
+     private func iconToggleButton(
+@@ -1205,7 +1191,7 @@ struct InspectorView: View {
+                 }
+             }
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+         .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
+     }
+ 
+@@ -1331,7 +1317,7 @@ struct InspectorView: View {
+             plainMetadataRow(
+                 label: "Path",
+                 value: asset.url.path,
+-                truncate: .middle
++                stacked: true
+             )
+         }
+     }
+diff --git a/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift b/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
+index 2164d859..82ebc3c7 100644
+--- a/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
++++ b/Sources/NexGenVideo/Inspector/Tabs/AIEditTab.swift
+@@ -98,16 +98,10 @@ struct AIEditTab: View {
+ 
+     private func aiSection<Content: View>(
+         title: String,
+-        @ViewBuilder content: () -> Content
++        @ViewBuilder content: @escaping () -> Content
+     ) -> some View {
+-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+-            Text(title.uppercased())
+-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                .tracking(AppTheme.Tracking.wide)
+-                .foregroundStyle(AppTheme.Text.mutedColor)
+-            VStack(spacing: AppTheme.Spacing.smMd) {
+-                content()
+-            }
++        InspectorSection(title) {
++            content()
+         }
+     }
+ 
+@@ -117,25 +111,11 @@ struct AIEditTab: View {
+         @ViewBuilder content: () -> Content
+     ) -> some View {
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+-            Button {
++            InspectorSectionHeading(title: title, expanded: isExpanded.wrappedValue, onToggle: {
+                 withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
+                     isExpanded.wrappedValue.toggle()
+                 }
+-            } label: {
+-                HStack(spacing: AppTheme.Spacing.xs) {
+-                    Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Text.mutedColor)
+-                        .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+-                    Text(title.uppercased())
+-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+-                        .tracking(AppTheme.Tracking.wide)
+-                        .foregroundStyle(AppTheme.Text.mutedColor)
+-                    Spacer(minLength: AppTheme.Spacing.xs)
+-                }
+-                .contentShape(Rectangle())
+-            }
+-            .buttonStyle(.plain)
++            })
+ 
+             if isExpanded.wrappedValue {
+                 VStack(spacing: AppTheme.Spacing.smMd) {
+@@ -182,19 +162,12 @@ struct AIEditTab: View {
+         help: String,
+         isOn: Binding<Bool>
+     ) -> some View {
+-        HStack(spacing: AppTheme.Spacing.sm) {
+-            Image(systemName: icon)
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(isOn.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
+-                .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
+-            Text(label)
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.secondaryColor)
+-            Spacer(minLength: AppTheme.Spacing.xs)
+-            Toggle("", isOn: isOn)
++        InspectorFormRow(label: label, icon: icon, labelHelp: help) {
++            Toggle(label, isOn: isOn)
+                 .toggleStyle(.switch)
+                 .controlSize(.mini)
+                 .labelsHidden()
++                .accessibilityLabel(label)
+         }
+         .help(help)
+     }
+@@ -241,25 +214,41 @@ struct AIEditTab: View {
+         let isEnabled = availability.isAvailable
+         let disabledReason = availability.reason
+ 
++        ViewThatFits(in: .horizontal) {
++            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
++                actionDescription(icon: icon, title: title, detail: disabledReason ?? description, enabled: isEnabled)
++                Spacer(minLength: AppTheme.Spacing.sm)
++                actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
++            }
++            .frame(minWidth: AppTheme.ComponentSize.inspectorActionInlineMinWidth)
++
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
++                actionDescription(icon: icon, title: title, detail: disabledReason ?? description, enabled: isEnabled)
++                actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
++                    .frame(maxWidth: .infinity, alignment: .trailing)
++            }
++        }
++        .frame(maxWidth: .infinity, alignment: .leading)
++        .help(disabledReason ?? "")
++    }
++
++    private func actionDescription(icon: String, title: String, detail: String, enabled: Bool) -> some View {
+         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+             Image(systemName: icon)
+                 .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
+-                .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
++                .foregroundStyle(enabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
++                .frame(width: AppTheme.IconSize.xs)
++                .accessibilityHidden(true)
+             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                 Text(title)
+                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+-                    .foregroundStyle(isEnabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
+-                Text(disabledReason ?? description)
++                    .foregroundStyle(enabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
++                Text(detail)
+                     .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(disabledReason != nil ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
++                    .foregroundStyle(enabled ? AppTheme.Text.tertiaryColor : AppTheme.Text.secondaryColor)
+                     .fixedSize(horizontal: false, vertical: true)
+             }
+-            Spacer(minLength: AppTheme.Spacing.sm)
+-            actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
+         }
+-        .frame(maxWidth: .infinity, alignment: .leading)
+-        .help(disabledReason ?? "")
+     }
+ 
+     private func videoAudioActionRow(kind: VideoToAudioEditKind) -> some View {
+diff --git a/Sources/NexGenVideo/Inspector/Tabs/AdjustTab.swift b/Sources/NexGenVideo/Inspector/Tabs/AdjustTab.swift
+index dc0083b5..33de4666 100644
+--- a/Sources/NexGenVideo/Inspector/Tabs/AdjustTab.swift
++++ b/Sources/NexGenVideo/Inspector/Tabs/AdjustTab.swift
+@@ -148,39 +148,39 @@ extension InspectorView {
+     ) -> some View {
+         let expanded = !collapsedAdjustSections.contains(title)
+         let hasEffects = anyAdjusted(effectIds, clips: clips)
+-        let isOn = !hasEffects || sectionEnabled(effectIds, clips: clips)
++        let enablement = sectionEnablement(effectIds, clips: clips)
+         VStack(spacing: AppTheme.Spacing.none) {
+-            HStack(spacing: AppTheme.Spacing.sm) {
+-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+-                    .interfaceFont(size: AppTheme.Typography.metadata)
+-                    .foregroundStyle(AppTheme.Text.mutedColor)
+-                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
+-                sectionTitleLabel(title: title)
+-                Spacer(minLength: AppTheme.Spacing.sm)
++            InspectorSectionHeading(title: title, expanded: expanded, onToggle: {
++                if expanded { collapsedAdjustSections.insert(title) }
++                else { collapsedAdjustSections.remove(title) }
++            }) {
+                 if hasEffects {
+                     resetButton(
+                         onReset: { resetEffects(effectIds, clips: clips, actionName: "Reset \(title)") },
+                         help: "Reset \(title.lowercased())"
+                     )
+                 }
+-                Toggle("", isOn: Binding(
+-                    get: { isOn },
+-                    set: { setSectionEnabled(effectIds, clips: clips, enabled: $0) }
+-                ))
+-                .toggleStyle(.checkbox)
+-                .labelsHidden()
++                Button {
++                    setSectionEnabled(effectIds, clips: clips, enabled: enablement != .on)
++                } label: {
++                    Image(systemName: enablement.iconName)
++                        .interfaceFont(size: AppTheme.Typography.ui)
++                        .foregroundStyle(hasEffects ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
++                        .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
++                        .contentShape(Rectangle())
++                }
++                .buttonStyle(.plain)
+                 .disabled(!hasEffects)
+-                .help(hasEffects ? "Enable \(title.lowercased())" : "No adjustments yet")
++                .help(hasEffects
++                    ? "\(enablement == .on ? "Disable" : "Enable") \(title.lowercased())"
++                    : "No adjustments yet")
++                .accessibilityLabel("\(enablement == .on ? "Disable" : "Enable") \(title)")
++                .accessibilityValue(enablement.accessibilityValue)
+             }
+             .padding(.horizontal, AppTheme.Spacing.lg)
+             .padding(.vertical, AppTheme.Spacing.smMd)
+             .frame(maxWidth: .infinity, alignment: .leading)
+             .background(AppTheme.Background.raisedColor)
+-            .contentShape(Rectangle())
+-            .onTapGesture {
+-                if expanded { collapsedAdjustSections.insert(title) }
+-                else { collapsedAdjustSections.remove(title) }
+-            }
+             .overlay(alignment: .bottom) {
+                 if expanded { sectionDivider }
+             }
+@@ -206,19 +206,10 @@ extension InspectorView {
+     private func adjustSubgroup(title: String, controls: [EffectControl], clips: [Clip]) -> some View {
+         let expanded = !collapsedAdjustSubgroups.contains(title)
+         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+-            HStack(spacing: AppTheme.Spacing.xs) {
+-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+-                    .interfaceFont(size: AppTheme.Typography.metadata)
+-                    .foregroundStyle(AppTheme.Text.mutedColor)
+-                    .frame(width: AppTheme.IconSize.xxs, alignment: .center)
+-                sectionTitleLabel(title: title)
+-                Spacer(minLength: 0)
+-            }
+-            .contentShape(Rectangle())
+-            .onTapGesture {
++            InspectorSectionHeading(title: title, expanded: expanded, onToggle: {
+                 if expanded { collapsedAdjustSubgroups.insert(title) }
+                 else { collapsedAdjustSubgroups.remove(title) }
+-            }
++            })
+             if expanded {
+                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                     ForEach(controls, id: \.self) { control in
+@@ -405,40 +396,42 @@ extension InspectorView {
+             .buttonStyle(.plain)
+             .help(path ?? "Choose a .cube LUT file")
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+     }
+ 
+     private func lutIntensityRow(clips: [Clip]) -> some View {
+         let spec = EffectRegistry.descriptor(id: "color.lut")?.params.first { $0.key == "intensity" }
+         let range = spec?.range ?? 0...1
+         let value = lutIntensity(in: clips)
+-        return HStack(spacing: AppTheme.Spacing.sm) {
+-            Text("Intensity")
+-                .interfaceFont(size: AppTheme.Typography.ui)
+-                .foregroundStyle(AppTheme.Text.secondaryColor)
+-                .lineLimit(1)
+-                .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
+-            AdjustSlider(
+-                value: value, range: range, defaultValue: spec?.defaultValue ?? 1,
+-                onChanged: { setLUTIntensity($0, clips: clips, commit: false) },
+-                onCommit: { setLUTIntensity($0, clips: clips, commit: true) }
+-            )
+-            ScrubbableNumberField(
+-                value: value, range: range, displayMultiplier: 100, format: "%.0f",
+-                valueSuffix: "%", dragSensitivity: 0.5, fieldWidth: 50,
+-                onChanged: { setLUTIntensity($0 / 100, clips: clips, commit: false) }
+-            ) { setLUTIntensity($0 / 100, clips: clips, commit: true) }
++        return InspectorFormRow(label: "Intensity") {
++            HStack(spacing: AppTheme.Spacing.sm) {
++                AdjustSlider(
++                    value: value, range: range, defaultValue: spec?.defaultValue ?? 1,
++                    accessibilityName: "LUT intensity",
++                    onChanged: { setLUTIntensity($0, clips: clips, commit: false) },
++                    onCommit: { setLUTIntensity($0, clips: clips, commit: true) }
++                )
++                .frame(minWidth: AppTheme.ComponentSize.inspectorSliderMinWidth)
++                ScrubbableNumberField(
++                    value: value, range: range, displayMultiplier: 100, format: "%.0f",
++                    valueSuffix: "%", accessibilityName: "LUT intensity",
++                    dragSensitivity: 0.5, fieldWidth: 50,
++                    onChanged: { setLUTIntensity($0, clips: clips, commit: false) }
++                ) { setLUTIntensity($0, clips: clips, commit: true) }
++            }
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+     }
+ 
+     private func lutPath(in clips: [Clip]) -> String? {
+         (clips.first?.effects ?? []).first { $0.type == "color.lut" }?.params["path"]?.string
+     }
+ 
+-    private func lutIntensity(in clips: [Clip]) -> Double {
+-        (clips.first?.effects ?? []).first { $0.type == "color.lut" }?
+-            .params["intensity"]?.resolved(at: 0, default: 1) ?? 1
++    private func lutIntensity(in clips: [Clip]) -> Double? {
++        sharedClipValue(clips) { clip in
++            (clip.effects ?? []).first { $0.type == "color.lut" }?
++                .params["intensity"]?.resolved(at: 0, default: 1) ?? 1
++        }
+     }
+ 
+     private func chooseLUT(clips: [Clip]) {
+@@ -487,31 +480,32 @@ extension InspectorView {
+         if let descriptor = EffectRegistry.descriptor(id: control.effectId),
+            let spec = descriptor.params.first(where: { $0.key == control.paramKey }) {
+             let label = control.label ?? spec.label
+-            HStack(spacing: AppTheme.Spacing.sm) {
+-                Text(label)
+-                    .interfaceFont(size: AppTheme.Typography.ui)
+-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+-                    .lineLimit(1)
+-                    .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
+-                AdjustSlider(
+-                    value: sharedClipValue(clips) { controlValue($0, control, spec) } ?? spec.defaultValue,
+-                    range: spec.range,
+-                    gradient: control.gradient,
+-                    defaultValue: spec.defaultValue,
+-                    onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) },
+-                    onCommit: { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
+-                )
+-                ScrubbableNumberField(
+-                    value: sharedClipValue(clips) { controlValue($0, control, spec) },
+-                    range: spec.range,
+-                    format: effectParamFormat(spec),
+-                    valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
+-                    dragSensitivity: effectParamSensitivity(spec),
+-                    fieldWidth: 50,
+-                    onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
+-                ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
++            let value = sharedClipValue(clips) { controlValue($0, control, spec) }
++            InspectorFormRow(label: label) {
++                HStack(spacing: AppTheme.Spacing.sm) {
++                    AdjustSlider(
++                        value: value,
++                        range: spec.range,
++                        gradient: control.gradient,
++                        defaultValue: spec.defaultValue,
++                        accessibilityName: label,
++                        onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) },
++                        onCommit: { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
++                    )
++                    .frame(minWidth: AppTheme.ComponentSize.inspectorSliderMinWidth)
++                    ScrubbableNumberField(
++                        value: value,
++                        range: spec.range,
++                        format: effectParamFormat(spec),
++                        valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
++                        accessibilityName: label,
++                        dragSensitivity: effectParamSensitivity(spec),
++                        fieldWidth: 50,
++                        onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
++                    ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
++                }
+             }
+-            .frame(height: AppTheme.Timeline.keyframeRowHeight)
++            .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+         }
+     }
+ 
+@@ -567,8 +561,34 @@ extension InspectorView {
+         }
+     }
+ 
+-    private func sectionEnabled(_ ids: Set<String>, clips: [Clip]) -> Bool {
+-        !clips.contains { ($0.effects ?? []).contains { ids.contains($0.type) && !$0.enabled } }
++    private enum SectionEnablement {
++        case on
++        case off
++        case mixed
++
++        var iconName: String {
++            switch self {
++            case .on: "checkmark.square"
++            case .off: "square"
++            case .mixed: "minus.square"
++            }
++        }
++
++        var accessibilityValue: String {
++            switch self {
++            case .on: "On"
++            case .off: "Off"
++            case .mixed: "Mixed"
++            }
++        }
++    }
++
++    private func sectionEnablement(_ ids: Set<String>, clips: [Clip]) -> SectionEnablement {
++        let states = clips.flatMap { clip in
++            (clip.effects ?? []).filter { ids.contains($0.type) }.map(\.enabled)
++        }
++        guard states.contains(false) else { return .on }
++        return states.contains(true) ? .mixed : .off
+     }
+ 
+     private func setSectionEnabled(_ ids: Set<String>, clips: [Clip], enabled: Bool) {
+diff --git a/Sources/NexGenVideo/Inspector/Tabs/AudioTab.swift b/Sources/NexGenVideo/Inspector/Tabs/AudioTab.swift
+index 94ab16af..4f567e82 100644
+--- a/Sources/NexGenVideo/Inspector/Tabs/AudioTab.swift
++++ b/Sources/NexGenVideo/Inspector/Tabs/AudioTab.swift
+@@ -46,7 +46,6 @@ extension InspectorView {
+             }
+         }
+ 
+-        keyframesToggleBar(enabled: single != nil)
+     }
+ 
+     @ViewBuilder
+@@ -60,6 +59,7 @@ extension InspectorView {
+                 range: VolumeScale.floorDb...VolumeScale.ceilingDb,
+                 format: "%.1f",
+                 valueSuffix: " dB",
++                accessibilityName: "Volume",
+                 dragSensitivity: 0.3,
+                 fieldWidth: 56,
+                 displayTextOverride: { db in db <= VolumeScale.floorDb ? "-∞ dB" : nil },
+@@ -88,6 +88,7 @@ extension InspectorView {
+                 range: 0...maxSeconds,
+                 format: "%.2f",
+                 valueSuffix: " s",
++                accessibilityName: label,
+                 dragSensitivity: 0.02,
+                 fieldWidth: 56,
+                 onChanged: { seconds in
+@@ -101,6 +102,6 @@ extension InspectorView {
+                 }
+             }
+         }
+-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
++        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+     }
+ }
+diff --git a/Sources/NexGenVideo/Inspector/Tabs/TextTab.swift b/Sources/NexGenVideo/Inspector/Tabs/TextTab.swift
+index cc5cd80e..4bbd99fa 100644
+--- a/Sources/NexGenVideo/Inspector/Tabs/TextTab.swift
++++ b/Sources/NexGenVideo/Inspector/Tabs/TextTab.swift
+@@ -79,6 +79,7 @@ struct TextTab: View {
+                 range: 12...300,
+                 format: "%.0f",
+                 valueSuffix: " pt",
++                accessibilityName: "Text size",
+                 fieldWidth: 50,
+                 onChanged: { newVal in
+                     editor.applyTextStyle(clipId: clip.id) { $0.fontSize = newVal }
+@@ -99,6 +100,7 @@ struct TextTab: View {
+                 displayMultiplier: 100,
+                 format: "%.0f",
+                 valueSuffix: "%",
++                accessibilityName: "Text opacity",
+                 fieldWidth: 50,
+                 onChanged: { newVal in
+                     editor.applyClipProperty(clipId: clip.id) { $0.opacity = newVal }
+@@ -177,20 +179,10 @@ struct TextTab: View {
+         setEnabled: @escaping (inout TextStyle, Bool) -> Void,
+         setColor: @escaping (inout TextStyle, TextStyle.RGBA) -> Void
+     ) -> some View {
+-        InspectorRow(icon: icon, label: label) {
+-            HStack(spacing: AppTheme.Spacing.sm) {
+-                ColorField(
+-                    displayColor: color,
+-                    onUserChange: { new in
+-                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
+-                            setColor(&$0, TextStyle.RGBA(new))
+-                        }
+-                    }
+-                )
+-                .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
+-                .disabled(!enabled)
++        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
++            InspectorRow(icon: icon, label: label) {
+                 Toggle(
+-                    "",
++                    label,
+                     isOn: Binding(
+                         get: { enabled },
+                         set: { new in editor.commitTextStyle(clipId: clip.id) { setEnabled(&$0, new) } }
+@@ -200,7 +192,20 @@ struct TextTab: View {
+                 .toggleStyle(.switch)
+                 .controlSize(.mini)
+                 .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
++                .accessibilityLabel(label)
++            }
++            InspectorFormRow(label: "Color") {
++                ColorField(
++                    displayColor: color,
++                    onUserChange: { new in
++                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
++                            setColor(&$0, TextStyle.RGBA(new))
++                        }
++                    }
++                )
++                .disabled(!enabled)
+             }
++            .padding(.leading, AppTheme.Spacing.lgXl)
+         }
+     }
+ 
+diff --git a/Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift b/Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift
+index 13314a3a..c743ac76 100644
+--- a/Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift
++++ b/Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift
+@@ -164,25 +164,29 @@ struct CaptionTab: View {
+                     range: AppTheme.Caption.minFontSize...AppTheme.Caption.maxFontSize,
+                     format: "%.0f",
+                     valueSuffix: " pt",
++                    accessibilityName: "Caption size",
+                     onChanged: { style.fontSize = $0 }
+                 ) { style.fontSize = $0 }
+             }
+             InspectorRow(icon: "paintpalette", label: "Color") {
+                 ColorField(displayColor: style.color.swiftUIColor, onUserChange: { style.color = TextStyle.RGBA($0) })
+             }
+-            InspectorRow(icon: "rectangle.fill", label: "Background") {
+-                HStack(spacing: AppTheme.Spacing.sm) {
+-                    ColorField(displayColor: style.background.color.swiftUIColor) {
+-                        style.background.color = TextStyle.RGBA($0)
+-                    }
+-                    .opacity(style.background.enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
+-                    .disabled(!style.background.enabled)
+-                    Toggle("", isOn: $style.background.enabled)
++            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
++                InspectorRow(icon: "rectangle.fill", label: "Background") {
++                    Toggle("Background", isOn: $style.background.enabled)
+                         .labelsHidden()
+                         .toggleStyle(.switch)
+                         .controlSize(.mini)
+                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
++                        .accessibilityLabel("Caption background")
++                }
++                InspectorFormRow(label: "Color") {
++                    ColorField(displayColor: style.background.color.swiftUIColor) {
++                        style.background.color = TextStyle.RGBA($0)
++                    }
++                    .disabled(!style.background.enabled)
+                 }
++                .padding(.leading, AppTheme.Spacing.lgXl)
+             }
+             InspectorRow(icon: "textformat", label: "Case") {
+                 Menu {
+@@ -200,11 +204,12 @@ struct CaptionTab: View {
+                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+             }
+             InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
+-                Toggle("", isOn: $censorProfanity)
++                Toggle("Censor profanity", isOn: $censorProfanity)
+                     .labelsHidden()
+                     .toggleStyle(.switch)
+                     .controlSize(.mini)
+                     .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
++                    .accessibilityLabel("Censor profanity")
+             }
+         }
+     }
+@@ -212,10 +217,11 @@ struct CaptionTab: View {
+     private var placementSection: some View {
+         InspectorSection("Placement") {
+             previewBox
+-            HStack(spacing: AppTheme.Spacing.mdLg) {
+-                Spacer(minLength: AppTheme.Spacing.xs)
+-                posField("X", value: center.x) { center.x = $0 }
+-                posField("Y", value: center.y) { center.y = $0 }
++            InspectorFormRow(label: "Position") {
++                HStack(spacing: AppTheme.Spacing.mdLg) {
++                    posField("X", value: center.x) { center.x = $0 }
++                    posField("Y", value: center.y) { center.y = $0 }
++                }
+             }
+         }
+     }
+@@ -349,6 +355,7 @@ struct CaptionTab: View {
+                 displayMultiplier: 100,
+                 format: "%.0f",
+                 valueSuffix: "%",
++                accessibilityName: "Caption position \(label)",
+                 onChanged: { onChange(snapCenter($0)) }
+             ) { onChange(snapCenter($0)) }
+         }
+@@ -366,15 +373,9 @@ struct CaptionTab: View {
+             HStack(spacing: AppTheme.Spacing.sm) {
+                 Button(action: generate) {
+                     Text("Generate Captions")
+-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+-                        .foregroundStyle(AppTheme.Background.baseColor)
+-                        .lineLimit(1)
+                         .frame(maxWidth: .infinity)
+-                        .padding(.vertical, AppTheme.Spacing.smMd)
+-                        .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Accent.primary))
+-                        .opacity(effectiveCount == 0 ? AppTheme.Opacity.medium : AppTheme.Opacity.opaque)
+                 }
+-                .buttonStyle(.plain).focusable(false)
++                .buttonStyle(.capsule(.prominent, size: .regular))
+                 .disabled(effectiveCount == 0 || isGenerating)
+ 
+                 agentMenu
+diff --git a/Sources/NexGenVideo/MediaPanel/MediaPanelView.swift b/Sources/NexGenVideo/MediaPanel/MediaPanelView.swift
+index 99282b54..dfb3e5b1 100644
+--- a/Sources/NexGenVideo/MediaPanel/MediaPanelView.swift
++++ b/Sources/NexGenVideo/MediaPanel/MediaPanelView.swift
+@@ -13,7 +13,8 @@ struct MediaPanelView: View {
+         VStack(spacing: AppTheme.Spacing.none) {
+             SegmentedTabBar(
+                 titles: EditorViewModel.MediaPanelTab.allCases.map(\.rawValue),
+-                selected: editor.mediaPanelTab(for: workspace).rawValue
++                selected: editor.mediaPanelTab(for: workspace).rawValue,
++                acceptanceProbePrefix: "media.tab"
+             ) { title in
+                 if let tab = EditorViewModel.MediaPanelTab(rawValue: title) {
+                     withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
+diff --git a/Sources/NexGenVideo/UI/AppTheme.swift b/Sources/NexGenVideo/UI/AppTheme.swift
+index bc1426ef..7100012c 100644
+--- a/Sources/NexGenVideo/UI/AppTheme.swift
++++ b/Sources/NexGenVideo/UI/AppTheme.swift
+@@ -393,6 +393,10 @@ enum AppTheme {
+         static let reviewSourceLabelWidth: CGFloat = 110
+         static let reviewRemixPopoverWidth: CGFloat = 340
+         static let inspectorPopoverWidth: CGFloat = 340
++        static let inspectorLabelWidth: CGFloat = 104
++        static let inspectorInlineMinWidth: CGFloat = 220
++        static let inspectorActionInlineMinWidth: CGFloat = 300
++        static let inspectorSliderMinWidth: CGFloat = 44
+         static let fontPickerMaxWidth: CGFloat = 160
+         static let generationReferenceWidth: CGFloat = 72
+         static let generationReferenceHeight: CGFloat = 41
+diff --git a/Sources/NexGenVideo/UI/SegmentedTabBar.swift b/Sources/NexGenVideo/UI/SegmentedTabBar.swift
+index 1212170a..9d024563 100644
+--- a/Sources/NexGenVideo/UI/SegmentedTabBar.swift
++++ b/Sources/NexGenVideo/UI/SegmentedTabBar.swift
+@@ -16,6 +16,7 @@ struct SegmentedTabBar: View {
+     /// Titles with an explicit scope marker. Marking is caller-owned and independent of accenting.
+     var markedTitles: Set<String> = []
+     var accentColor: Color? = nil
++    var acceptanceProbePrefix: String? = nil
+     let onSelect: (String) -> Void
+ 
+     var body: some View {
+@@ -78,6 +79,14 @@ struct SegmentedTabBar: View {
+                 }
+                 .buttonStyle(.plain)
+                 .accessibilityAddTraits(isActive ? .isSelected : [])
++                .background {
++                    if let acceptanceProbePrefix {
++                        AppRelaunchClickProbe(
++                            identifier: "\(acceptanceProbePrefix).\(title)",
++                            acceptanceState: isActive
++                        )
++                    }
++                }
+             }
+             Spacer()
+         }
+diff --git a/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift b/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift
+new file mode 100644
+index 00000000..25478931
+--- /dev/null
++++ b/Tests/NexGenVideoTests/UI/InspectorFormLayoutTests.swift
+@@ -0,0 +1,70 @@
++import AppKit
++import SwiftUI
++import Testing
++@testable import NexGenVideo
++
++@Suite("Inspector form geometry", .serialized)
++@MainActor
++struct InspectorFormLayoutTests {
++    @Test func valuesKeepOneTrailingAxisAcrossWidthsAndTextScales() throws {
++        for width: CGFloat in [184, 260, 360] {
++            for scale in [1.0, 1.3, 1.5] {
++                let host = NSHostingView(rootView: VStack(spacing: AppTheme.Spacing.md) {
++                    InspectorFormRow(label: "White Balance Temperature") {
++                        Text("5600 K")
++                            .interfaceFont(size: AppTheme.Typography.ui)
++                            .background(InspectorGeometryProbe(name: "value-first"))
++                    }
++                    .background(InspectorGeometryProbe(name: "row-first"))
++                    InspectorRow(icon: "speaker.wave.2", label: "Volume") {
++                        Text("-12.0 dB")
++                            .interfaceFont(size: AppTheme.Typography.ui)
++                            .background(InspectorGeometryProbe(name: "value-second"))
++                    }
++                    .background(InspectorGeometryProbe(name: "row-second"))
++                }
++                .padding(.horizontal, AppTheme.Spacing.lg)
++                .environment(\.interfaceScale, scale)
++                .frame(width: width))
++                host.setFrameSize(.init(width: width, height: 240))
++                host.layoutSubtreeIfNeeded()
++                _ = host.fittingSize
++                host.layoutSubtreeIfNeeded()
++
++                let first = try frame("value-first", in: host)
++                let second = try frame("value-second", in: host)
++                let firstRow = try frame("row-first", in: host)
++                let secondRow = try frame("row-second", in: host)
++                #expect(abs(first.maxX - second.maxX) < 1)
++                #expect(first.minX >= firstRow.minX - 1)
++                #expect(second.minX >= secondRow.minX - 1)
++                #expect(first.maxX <= firstRow.maxX + 1)
++                #expect(second.maxX <= secondRow.maxX + 1)
++                #expect(firstRow.maxX <= width - AppTheme.Spacing.lg + 1)
++                #expect(secondRow.maxX <= width - AppTheme.Spacing.lg + 1)
++            }
++        }
++    }
++
++    private func frame<Content: View>(_ name: String, in host: NSHostingView<Content>) throws -> CGRect {
++        let view = try #require(find(name, in: host))
++        return view.convert(view.bounds, to: host)
++    }
++
++    private func find(_ name: String, in view: NSView) -> NSView? {
++        if view.identifier?.rawValue == name { return view }
++        return view.subviews.lazy.compactMap { find(name, in: $0) }.first
++    }
++}
++
++private struct InspectorGeometryProbe: NSViewRepresentable {
++    let name: String
++
++    func makeNSView(context: Context) -> NSView {
++        let view = NSView()
++        view.identifier = NSUserInterfaceItemIdentifier(name)
++        return view
++    }
++
++    func updateNSView(_ nsView: NSView, context: Context) {}
++}
+diff --git a/scripts/workspace_ui_acceptance.py b/scripts/workspace_ui_acceptance.py
+index 4f578f1e..cf043094 100644
+--- a/scripts/workspace_ui_acceptance.py
++++ b/scripts/workspace_ui_acceptance.py
+@@ -8,6 +8,9 @@ import time
+ 
+ 
+ EXPECTED_WORKSPACES = {"media", "production", "edit", "postproduction", "export"}
++EXPECTED_INSPECTORS = {
++    "text", "video", "effects", "ai", "audio", "mixed", "asset", "caption"
++}
+ SCALES = (1.0, 1.25, 1.5)
+ 
+ 
+@@ -25,6 +28,7 @@ def run_scale(executable, output, scale):
+                 "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
+                 "NGV_WORKSPACE_UI_EVIDENCE": str(output.resolve()),
+                 "NGV_WORKSPACE_UI_SCALE": str(scale),
++                "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
+             },
+             timeout=90,
+             check=False,
+@@ -60,9 +64,10 @@ def run_scale(executable, output, scale):
+     narrow = [row for row in rows if row.get("event") == "narrow-production"]
+     pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
+     invariants = [row for row in rows if row.get("event") == "invariants"]
++    inspector = [row for row in rows if row.get("event") == "inspector"]
+     screenshots = [
+         row.get("screenshot")
+-        for row in workspace_rows + hidden + narrow + pinned
++        for row in workspace_rows + hidden + narrow + pinned + inspector
+     ]
+     valid_images = all(
+         isinstance(name, str)
+@@ -80,11 +85,13 @@ def run_scale(executable, output, scale):
+         and len(narrow) == 1
+         and len(pinned) == 1
+         and len(invariants) == 1
++        and {row.get("family") for row in inspector} == EXPECTED_INSPECTORS
++        and len(inspector) == len(EXPECTED_INSPECTORS)
+         and invariants[0].get("liveStateUnchanged") is True
+         and invariants[0].get("projectBytesUnchanged") is True
+         and invariants[0].get("undoUnchanged") is True
+         and invariants[0].get("workingCopyUnchanged") is True
+-        and len(screenshots) == 8
++        and len(screenshots) == 8 + len(EXPECTED_INSPECTORS)
+         and valid_images
+     )
+     return {

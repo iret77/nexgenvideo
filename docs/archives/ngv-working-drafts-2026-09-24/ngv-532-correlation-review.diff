@@ -1,0 +1,1867 @@
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index 55e1cabf..d89b21ad 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -225,7 +225,10 @@ final class AgentService {
+     }
+ 
+     @ObservationIgnored
+-    private var pendingHostStates: [UUID: [AgentHostStateRecord]] = [:]
++    private var projectGenerationID = UUID()
++
++    @ObservationIgnored
++    private var hostTurnReferences: [UUID: AgentHostTurnReference] = [:]
+     var isStreaming: Bool = false {
+         didSet {
+             captureDiagnosticTranscript()
+@@ -1265,21 +1268,21 @@ final class AgentService {
+     func recordHostState(
+         _ record: AgentHostStateRecord,
+         origin: ToolCallOrigin,
+-        toolUseID: String? = nil
++        toolUseID: String? = nil,
++        turnReference: AgentHostTurnReference? = nil
+     ) {
+         guard let sessionID = origin.chatSessionID else { return }
++        let verifiedTurnReference = verifiedHostTurnReference(
++            turnReference,
++            origin: origin
++        )
+         if sessionID == currentSessionId {
+             guard Self.attachHostState(
+                 record,
+                 toolUseID: toolUseID,
++                turnReference: verifiedTurnReference,
+                 to: &messages
+-            ) else {
+-                upsertPendingHostState(
+-                    record.associated(with: toolUseID),
+-                    sessionID: sessionID
+-                )
+-                return
+-            }
++            ) else { return }
+             syncMessagesIntoCurrentSession()
+             onSessionsChanged?()
+             return
+@@ -1290,57 +1293,82 @@ final class AgentService {
+         guard Self.attachHostState(
+             record,
+             toolUseID: toolUseID,
++            turnReference: verifiedTurnReference,
+             to: &sessions[index].messages
+-        ) else {
+-            upsertPendingHostState(
+-                record.associated(with: toolUseID),
+-                sessionID: sessionID
+-            )
+-            return
+-        }
++        ) else { return }
+         sessions[index].updatedAt = Date()
+         onSessionsChanged?()
+     }
+ 
+-    private func upsertPendingHostState(
+-        _ record: AgentHostStateRecord,
+-        sessionID: UUID
+-    ) {
+-        var records = pendingHostStates[sessionID] ?? []
+-        if let index = records.firstIndex(where: { $0.id == record.id }) {
+-            records[index] = record.associated(with: record.toolUseID, retaining: records[index].id)
+-        } else {
+-            records.append(record)
++    func captureHostTurnReference(
++        origin: ToolCallOrigin
++    ) -> AgentHostTurnReference? {
++        let chatSessionID: UUID
++        let generationID: UUID
++        switch origin {
++        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
++            chatSessionID = sessionID
++            generationID = runtimeGenerationID
++        case .inAppChat(let sessionID):
++            guard let runtimeGenerationID else { return nil }
++            chatSessionID = sessionID
++            generationID = runtimeGenerationID
++        case .direct, .externalMCP:
++            return nil
+         }
+-        pendingHostStates[sessionID] = records
++        guard
++            let reference = hostTurnReferences[generationID],
++            reference.projectGenerationID == projectGenerationID,
++            reference.chatSessionID == chatSessionID,
++            reference.runtimeGenerationID == generationID,
++            sessionContainsMessage(
++                reference.inputMessageID,
++                sessionID: chatSessionID
++            ) else { return nil }
++        return reference
+     }
+ 
+-    private func attachPendingHostStates(
+-        sessionID: UUID,
+-        toolUseID: String,
+-        toolName: String
+-    ) {
+-        guard var records = pendingHostStates[sessionID] else { return }
+-        guard let matching = records.first(where: {
+-            ($0.toolUseID == nil || $0.toolUseID == toolUseID)
+-                && ToolRunPresentation.baseName(for: $0.toolName)
+-                    == ToolRunPresentation.baseName(for: toolName)
+-        }) else { return }
+-        _ = Self.attachHostState(
+-            matching,
+-            toolUseID: toolUseID,
+-            to: &messages
+-        )
+-        records.removeAll { $0.id == matching.id }
+-        pendingHostStates[sessionID] = records.isEmpty ? nil : records
+-        syncMessagesIntoCurrentSession()
+-        onSessionsChanged?()
++    private func verifiedHostTurnReference(
++        _ reference: AgentHostTurnReference?,
++        origin: ToolCallOrigin
++    ) -> AgentHostTurnReference? {
++        guard let reference,
++              reference.projectGenerationID == projectGenerationID,
++              reference.chatSessionID == origin.chatSessionID,
++              sessionContainsMessage(
++                  reference.inputMessageID,
++                  sessionID: reference.chatSessionID
++              ) else { return nil }
++        switch origin {
++        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
++            return sessionID == reference.chatSessionID
++                    && runtimeGenerationID == reference.runtimeGenerationID
++                ? reference
++                : nil
++        case .inAppChat(let sessionID):
++            return sessionID == reference.chatSessionID ? reference : nil
++        case .direct, .externalMCP:
++            return nil
++        }
++    }
++
++    private func sessionContainsMessage(
++        _ messageID: UUID,
++        sessionID: UUID
++    ) -> Bool {
++        if currentSessionId == sessionID {
++            return messages.contains { $0.id == messageID }
++        }
++        return sessions.first(where: { $0.id == sessionID })?.messages.contains {
++            $0.id == messageID
++        } == true
+     }
+ 
+     @discardableResult
+     private static func attachHostState(
+         _ record: AgentHostStateRecord,
+         toolUseID: String?,
++        turnReference: AgentHostTurnReference?,
+         to messages: inout [AgentMessage]
+     ) -> Bool {
+         if let messageIndex = messages.indices.reversed().first(where: { index in
+@@ -1356,35 +1384,52 @@ final class AgentService {
+             return true
+         }
+         let requestedID = toolUseID ?? record.toolUseID
+-        let match: (index: Int, toolUseID: String)? = messages.indices.reversed().compactMap { index in
+-            guard messages[index].role == .assistant else { return nil }
+-            for block in messages[index].blocks {
+-                guard case .toolUse(let id, let name, _) = block else { continue }
+-                if let requestedID {
+-                    if id == requestedID { return (index, id) }
+-                } else if ToolRunPresentation.baseName(for: name)
+-                    == ToolRunPresentation.baseName(for: record.toolName),
+-                    !messages[index].hostStateRecords.contains(where: {
+-                        $0.toolUseID == id
+-                    }) {
+-                    return (index, id)
++        let searchableIndices: [Int]
++        if let turnReference,
++           let anchor = messages.firstIndex(where: {
++               $0.id == turnReference.inputMessageID && $0.role == .user
++           }) {
++            let end = messages.indices.dropFirst(anchor + 1).first(where: {
++                messages[$0].role == .user && messages[$0].blocks.contains {
++                    if case .text = $0 { return true }
++                    return false
+                 }
+-            }
+-            return nil
+-        }.first
+-        guard let match else { return false }
+-        let associated = record.associated(with: match.toolUseID)
+-        if let index = messages[match.index].hostStateRecords.firstIndex(where: {
+-            $0.toolUseID == match.toolUseID && $0.phase == associated.phase
+-        }) {
+-            let priorID = messages[match.index].hostStateRecords[index].id
+-            messages[match.index].hostStateRecords[index] = associated.associated(
+-                with: match.toolUseID,
+-                retaining: priorID
+-            )
++            }) ?? messages.endIndex
++            searchableIndices = Array(anchor..<end)
+         } else {
+-            messages[match.index].hostStateRecords.append(associated)
++            searchableIndices = Array(messages.indices)
++        }
++        if let requestedID,
++           let messageIndex = searchableIndices.first(where: { index in
++               messages[index].role == .assistant
++                   && messages[index].blocks.contains {
++                       if case .toolUse(let id, _, _) = $0 {
++                           return id == requestedID
++                       }
++                       return false
++                   }
++           }) {
++            let associated = record.associated(with: requestedID)
++            if let index = messages[messageIndex].hostStateRecords.firstIndex(where: {
++                $0.toolUseID == requestedID && $0.phase == associated.phase
++            }) {
++                let priorID = messages[messageIndex].hostStateRecords[index].id
++                messages[messageIndex].hostStateRecords[index] = associated.associated(
++                    with: requestedID,
++                    retaining: priorID
++                )
++            } else {
++                messages[messageIndex].hostStateRecords.append(associated)
++            }
++            return true
+         }
++        guard let turnReference,
++              let messageIndex = messages.firstIndex(where: {
++                  $0.id == turnReference.inputMessageID && $0.role == .user
++              }) else { return false }
++        messages[messageIndex].hostStateRecords.append(
++            record.associated(with: requestedID)
++        )
+         return true
+     }
+ 
+@@ -1467,14 +1512,31 @@ final class AgentService {
+ 
+     func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+         guard batch.totalEUR != nil else {
+-            let unpricedItemIDs = batch.payload.items.compactMap {
+-                $0.package.payload.estimate == nil ? $0.id : nil
++            let unpricedItems: [[String: Any]] = batch.payload.items.enumerated().compactMap {
++                index, item in
++                guard item.package.payload.estimate == nil else { return nil }
++                let target = item.package.payload.target
++                let tool = item.package.payload.modality == "image"
++                    ? ToolName.generateImage.rawValue
++                    : ToolName.generateVideo.rawValue
++                return [
++                    "index": index,
++                    "reason": "no_host_price_for_route",
++                    "tool": tool,
++                    "purpose": item.purpose,
++                    "route": [
++                        "provider": target.provider.rawValue,
++                        "transport": target.transport.rawValue,
++                        "model": target.modelId,
++                        "endpoint": target.endpoint,
++                    ],
++                ]
+             }
+             let payload = try NativeCockpitReader.serialize([
+                 "status": "preparation_incomplete",
+                 "reason": "missing_cost_estimates",
+-                "unpriced_item_ids": unpricedItemIDs,
+-                "message": "No approval was opened. Repair or re-prepare the listed items with host-verified prices.",
++                "unpriced_items": unpricedItems,
++                "message": "No approval was opened. Repair or re-prepare the indexed inputs with host-verified prices.",
+             ])
+             return .error(String(decoding: payload, as: UTF8.self))
+         }
+@@ -2250,7 +2312,8 @@ final class AgentService {
+                             currentSHA256: nil
+                         ),
+                         origin: origin,
+-                        toolUseID: approval.sourceToolUseID
++                        toolUseID: approval.sourceToolUseID,
++                        turnReference: approval.sourceHostTurnReference
+                     )
+                     enqueueGateFollowUp(
+                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+@@ -2307,7 +2370,8 @@ final class AgentService {
+                 currentSHA256: nil
+             ),
+             origin: origin,
+-            toolUseID: approval.sourceToolUseID
++            toolUseID: approval.sourceToolUseID,
++            turnReference: approval.sourceHostTurnReference
+         )
+         enqueueGateFollowUp(
+             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
+@@ -2577,6 +2641,9 @@ final class AgentService {
+     @ObservationIgnored
+     private var runtimeSessionID: UUID?
+ 
++    @ObservationIgnored
++    private var runtimeGenerationID: UUID?
++
+     @ObservationIgnored
+     private var pendingTurnImages: [AgentRuntimeImage] = []
+ 
+@@ -2611,7 +2678,8 @@ final class AgentService {
+         pendingSpendFollowUps.removeAll()
+         currentTask?.cancel()
+         currentTask = nil
+-        pendingHostStates.removeAll()
++        projectGenerationID = UUID()
++        hostTurnReferences.removeAll()
+         rotateRuntime()
+         composerStates.removeAll()
+         sessions = ChatSessionStore.load(from: projectURL)
+@@ -2654,9 +2722,6 @@ final class AgentService {
+     }
+ 
+     func newChat() {
+-        if let currentSessionId {
+-            pendingHostStates.removeValue(forKey: currentSessionId)
+-        }
+         saveComposerState()
+         currentTask?.cancel()
+         abandonSessionDialog()
+@@ -2808,7 +2873,9 @@ final class AgentService {
+             resumeToolCalls(from: followUp.origin)
+         }
+         sessions.removeAll { $0.id == id }
+-        pendingHostStates.removeValue(forKey: id)
++        hostTurnReferences = hostTurnReferences.filter {
++            $0.value.chatSessionID != id
++        }
+         composerStates.removeValue(forKey: id)
+         if deletingActive {
+             currentTask?.cancel()
+@@ -2920,6 +2987,7 @@ final class AgentService {
+         currentTask?.cancel()
+         currentTask = nil
+         runtimeAdapter = nil
++        runtimeGenerationID = nil
+         runtimeSessionID = nil
+         runtimeContextSignature = nil
+         isStreaming = false
+@@ -3096,8 +3164,10 @@ final class AgentService {
+             }
+         }
+         let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
++        let generationID = UUID()
+         let request = AgentRuntimeSessionRequest(
+             sessionID: sessionID,
++            runtimeGenerationID: generationID,
+             providerSessionID: providerSessionID,
+             priorMessages: messages,
+             hostContext: hostContext,
+@@ -3127,6 +3197,7 @@ final class AgentService {
+         }
+         runtimeAdapter = adapter
+         runtimeSessionID = sessionID
++        runtimeGenerationID = generationID
+         runtimeContextSignature = signature
+         return adapter
+     }
+@@ -3137,6 +3208,7 @@ final class AgentService {
+         }
+         runtimeAdapter = nil
+         runtimeSessionID = nil
++        runtimeGenerationID = nil
+         runtimeContextSignature = nil
+     }
+ 
+@@ -3165,11 +3237,6 @@ final class AgentService {
+                 defaultAssistantID: &defaultAssistantID
+             )
+             appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
+-            attachPendingHostStates(
+-                sessionID: sessionID,
+-                toolUseID: id,
+-                toolName: name
+-            )
+         case .toolResult(let id, let content, let isError):
+             let block = AgentContentBlock.toolResult(
+                 toolUseId: id,
+@@ -3258,6 +3325,8 @@ final class AgentService {
+         let runtimeMessages = await runtimeMessages(transientImages: transientImages)
+         guard !Task.isCancelled,
+               currentSessionId == sessionID,
++              let inputMessage = messages.last,
++              inputMessage.role == .user,
+               let currentMessage = runtimeMessages.last else { return }
+         let adapter: any AgentRuntimeAdapter
+         do {
+@@ -3270,6 +3339,17 @@ final class AgentService {
+             return
+         }
+         let turnID = UUID()
++        guard let runtimeGenerationID else {
++            streamError = .upstream("The agent runtime has no execution identity.")
++            return
++        }
++        hostTurnReferences[runtimeGenerationID] = AgentHostTurnReference(
++            projectGenerationID: projectGenerationID,
++            chatSessionID: sessionID,
++            runtimeGenerationID: runtimeGenerationID,
++            logicalTurnID: turnID,
++            inputMessageID: inputMessage.id
++        )
+         var fence = AgentRuntimeEventFence()
+         fence.begin(sessionID: sessionID, turnID: turnID)
+         do {
+diff --git a/Sources/NexGenVideo/Agent/GateApproval.swift b/Sources/NexGenVideo/Agent/GateApproval.swift
+index c2765eff..9a89ccde 100644
+--- a/Sources/NexGenVideo/Agent/GateApproval.swift
++++ b/Sources/NexGenVideo/Agent/GateApproval.swift
+@@ -33,6 +33,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+     let sourceToolName: String
+     let sourceToolUseID: String?
+     let sourceHostStateID: UUID
++    let sourceHostTurnReference: AgentHostTurnReference?
+     /// Set only for an in-app turn that can be resumed automatically.
+     let sessionId: UUID?
+ 
+@@ -46,6 +47,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         sourceToolName: String = ToolName.approveGate.rawValue,
+         sourceToolUseID: String? = nil,
+         sourceHostStateID: UUID = UUID(),
++        sourceHostTurnReference: AgentHostTurnReference? = nil,
+         sessionId: UUID? = nil,
+         id: String = UUID().uuidString
+     ) {
+@@ -60,6 +62,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+         self.sourceToolName = sourceToolName
+         self.sourceToolUseID = sourceToolUseID
+         self.sourceHostStateID = sourceHostStateID
++        self.sourceHostTurnReference = sourceHostTurnReference
+         self.sessionId = sessionId
+     }
+ 
+@@ -74,6 +77,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
+             sourceToolName: sourceToolName,
+             sourceToolUseID: sourceToolUseID,
+             sourceHostStateID: sourceHostStateID,
++            sourceHostTurnReference: sourceHostTurnReference,
+             sessionId: sessionId,
+             id: id
+         )
+diff --git a/Sources/NexGenVideo/Agent/MCP/MCPHTTPServer.swift b/Sources/NexGenVideo/Agent/MCP/MCPHTTPServer.swift
+index 3ca6ba47..a2e385d1 100644
+--- a/Sources/NexGenVideo/Agent/MCP/MCPHTTPServer.swift
++++ b/Sources/NexGenVideo/Agent/MCP/MCPHTTPServer.swift
+@@ -4,12 +4,13 @@ import Network
+ 
+ actor MCPHTTPServer {
+     static let agentSessionHeader = "X-NexGen-Agent-Session"
+-    static let agentTurnHeader = "X-NexGen-Agent-Turn"
++    static let agentRuntimeHeader = "X-NexGen-Agent-Runtime"
+ 
+     final class SessionOrigin: @unchecked Sendable {
+         private let lock = NSLock()
+         private let mcpSessionID: UUID
+         private var chatSessionID: UUID?
++        private var runtimeGenerationID: UUID?
+ 
+         init(mcpSessionID: UUID) {
+             self.mcpSessionID = mcpSessionID
+@@ -20,21 +21,26 @@ actor MCPHTTPServer {
+                 chatSessionID.map {
+                     .embeddedRuntime(
+                         chatSessionID: $0,
+-                        mcpSessionID: mcpSessionID
++                        runtimeGenerationID: runtimeGenerationID ?? mcpSessionID
+                     )
+                 } ?? .externalMCP(sessionID: mcpSessionID)
+             }
+         }
+ 
+-        func bind(chatSessionID: UUID?) {
++        func bind(chatSessionID: UUID?, runtimeGenerationID: UUID?) {
+             lock.withLock {
+                 self.chatSessionID = chatSessionID
++                self.runtimeGenerationID = runtimeGenerationID
+             }
+         }
+ 
+-        func accepts(chatSessionID: UUID?) -> Bool {
++        func accepts(
++            chatSessionID: UUID?,
++            runtimeGenerationID: UUID?
++        ) -> Bool {
+             lock.withLock {
+                 self.chatSessionID == chatSessionID
++                    && self.runtimeGenerationID == runtimeGenerationID
+             }
+         }
+     }
+@@ -545,11 +551,13 @@ actor MCPHTTPServer {
+                 )
+                 if isInitialize {
+                     session.origin.bind(
+-                        chatSessionID: Self.agentChatSessionID(request: request)
++                        chatSessionID: Self.agentChatSessionID(request: request),
++                        runtimeGenerationID: Self.agentRuntimeID(request: request)
+                     )
+                 }
+                 if isInitialize || session.origin.accepts(
+-                    chatSessionID: Self.agentChatSessionID(request: request)
++                    chatSessionID: Self.agentChatSessionID(request: request),
++                    runtimeGenerationID: Self.agentRuntimeID(request: request)
+                 ) {
+                     response = await session.transport.handleRequest(request)
+                 } else {
+@@ -636,10 +644,10 @@ actor MCPHTTPServer {
+             )
+         }
+ 
+-        let logicalTurnID = Self.agentTurnID(request: request) ?? UUID()
++        let runtimeGenerationID = Self.agentRuntimeID(request: request) ?? UUID()
+         let origin = Self.toolCallOrigin(
+             request: request,
+-            mcpSessionID: logicalTurnID
++            mcpSessionID: runtimeGenerationID
+         )
+         return await MCP20260728.handle(
+             body: request.body,
+@@ -843,16 +851,16 @@ actor MCPHTTPServer {
+         if let chatSessionID = agentChatSessionID(request: request) {
+             return .embeddedRuntime(
+                 chatSessionID: chatSessionID,
+-                mcpSessionID: mcpSessionID
++                runtimeGenerationID: mcpSessionID
+             )
+         }
+         return .externalMCP(sessionID: mcpSessionID)
+     }
+ 
+-    private nonisolated static func agentTurnID(
++    private nonisolated static func agentRuntimeID(
+         request: HTTPRequest
+     ) -> UUID? {
+-        header(request.headers, named: agentTurnHeader)
++        header(request.headers, named: agentRuntimeHeader)
+             .flatMap(UUID.init(uuidString:))
+     }
+ 
+diff --git a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+index 87ce4fc4..519fd44e 100644
+--- a/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
++++ b/Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift
+@@ -187,20 +187,31 @@ enum AgentTranscriptProjection {
+             output[$0].record.phase == state.record.phase
+         }
+         switch state.record.state {
+-        case .approved, .checked, .persisted, .approvalFailed,
+-             .persistedPhaseRecordFailed:
++        case .approved, .checked, .persisted, .persistedPhaseRecordFailed:
+             for index in samePhase.reversed() {
+                 output.remove(at: index)
+             }
+-        case .draft, .writeBlocked, .writeRejected, .writeOutcomeUnavailable:
+-            let hasDurableState = samePhase.contains {
+-                switch output[$0].record.state {
+-                case .persisted, .checked, .approved: true
+-                default: false
++        case .writeOutcomeUnavailable:
++            for index in samePhase.reversed() {
++                if output[index].record.state != .persistedPhaseRecordFailed {
++                    output.remove(at: index)
++                }
++            }
++        case .draft, .writeBlocked, .writeRejected:
++            let hasProtectedState = samePhase.contains {
++                isCleanDurable(output[$0].record.state)
++                    || isRepairRequired(output[$0].record.state)
++            }
++            for index in samePhase.reversed() {
++                if !hasProtectedState
++                    || (!isCleanDurable(output[index].record.state)
++                        && !isRepairRequired(output[index].record.state)) {
++                    output.remove(at: index)
+                 }
+             }
++        case .approvalFailed:
+             for index in samePhase.reversed() {
+-                if !hasDurableState || !isDurableState(output[index].record.state) {
++                if !isRepairRequired(output[index].record.state) {
+                     output.remove(at: index)
+                 }
+             }
+@@ -208,13 +219,20 @@ enum AgentTranscriptProjection {
+         output.append(state)
+     }
+ 
+-    private static func isDurableState(_ state: AgentHostStateRecord.State) -> Bool {
++    private static func isCleanDurable(_ state: AgentHostStateRecord.State) -> Bool {
+         switch state {
+         case .persisted, .checked, .approved: true
+         default: false
+         }
+     }
+ 
++    private static func isRepairRequired(_ state: AgentHostStateRecord.State) -> Bool {
++        switch state {
++        case .persistedPhaseRecordFailed, .writeOutcomeUnavailable: true
++        default: false
++        }
++    }
++
+     private static func appendReceipt(
+         _ receipt: AgentTranscriptReceipt,
+         phase: String?,
+diff --git a/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift b/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
+index 0c8fa17e..65dfff9e 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/AgentRuntimeContract.swift
+@@ -175,6 +175,7 @@ typealias AgentRuntimeToolExecutor = @MainActor @Sendable (
+ 
+ struct AgentRuntimeSessionRequest: @unchecked Sendable {
+     let sessionID: UUID
++    let runtimeGenerationID: UUID
+     let providerSessionID: String?
+     let priorMessages: [AgentMessage]
+     let hostContext: AgentRuntimeHostContext
+diff --git a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeLaunch.swift b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeLaunch.swift
+index aaee02b1..0801ff8d 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeLaunch.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeLaunch.swift
+@@ -33,7 +33,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
+     /// The in-app chat that owns this embedded runtime's MCP calls.
+     var appSessionId: UUID?
+     /// The subprocess lifetime that owns suspension and retry state for its MCP calls.
+-    var agentTurnId: UUID?
++    var runtimeGenerationId: UUID?
+ 
+     init(
+         workingDirectory: URL,
+@@ -47,7 +47,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
+         sessionId: String? = nil,
+         resumeSessionId: String? = nil,
+         appSessionId: UUID? = nil,
+-        agentTurnId: UUID? = nil
++        runtimeGenerationId: UUID? = nil
+     ) {
+         self.workingDirectory = workingDirectory
+         self.pluginDirectories = pluginDirectories
+@@ -60,7 +60,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
+         self.sessionId = sessionId
+         self.resumeSessionId = resumeSessionId
+         self.appSessionId = appSessionId
+-        self.agentTurnId = agentTurnId
++        self.runtimeGenerationId = runtimeGenerationId
+     }
+ }
+ 
+@@ -72,7 +72,7 @@ enum ClaudeCodeLaunch {
+     static func mcpConfigJSON(
+         port: Int,
+         appSessionId: UUID? = nil,
+-        agentTurnId: UUID? = nil,
++        runtimeGenerationId: UUID? = nil,
+         pluginServers: [String: String] = [:]
+     ) -> String {
+         var headerFields: [String] = []
+@@ -81,9 +81,9 @@ enum ClaudeCodeLaunch {
+                 "\"\(MCPHTTPServer.agentSessionHeader)\":\"\(appSessionId.uuidString)\""
+             )
+         }
+-        if let agentTurnId {
++        if let runtimeGenerationId {
+             headerFields.append(
+-                "\"\(MCPHTTPServer.agentTurnHeader)\":\"\(agentTurnId.uuidString)\""
++                "\"\(MCPHTTPServer.agentRuntimeHeader)\":\"\(runtimeGenerationId.uuidString)\""
+             )
+         }
+         let headers = headerFields.isEmpty
+@@ -111,7 +111,7 @@ enum ClaudeCodeLaunch {
+             "--mcp-config", mcpConfigJSON(
+                 port: cfg.mcpPort,
+                 appSessionId: cfg.appSessionId,
+-                agentTurnId: cfg.agentTurnId,
++                runtimeGenerationId: cfg.runtimeGenerationId,
+                 pluginServers: cfg.pluginMcpServers
+             ),
+             "--strict-mcp-config",
+diff --git a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntime.swift b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntime.swift
+index 7f8253a5..52021624 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntime.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntime.swift
+@@ -42,11 +42,13 @@ final class ClaudeCodeRuntime {
+     private var reportedSessionId = false
+     private var resumeFailureHandled = false
+     private let appSessionId: UUID?
++    private let runtimeGenerationID: UUID
+ 
+     init(
+         pluginDirectories: [URL] = [],
+         mcpPort: Int = 19789,
+         appSessionId: UUID? = nil,
++        runtimeGenerationID: UUID = UUID(),
+         resumeSessionId: String? = nil,
+         seedMessages: [AgentMessage] = [],
+         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
+@@ -62,6 +64,7 @@ final class ClaudeCodeRuntime {
+         self.pluginDirectories = pluginDirectories
+         self.mcpPort = mcpPort
+         self.appSessionId = appSessionId
++        self.runtimeGenerationID = runtimeGenerationID
+         self.resumeSessionId = resumeSessionId
+         self.resolveExecutable = resolveExecutable
+         self.resolveWorkingDirectory = resolveWorkingDirectory
+@@ -139,8 +142,6 @@ final class ClaudeCodeRuntime {
+             fail("No project folder is selected for the Claude Code runtime.")
+             return false
+         }
+-        let agentTurnId = UUID()
+-
+         let config = ClaudeCodeLaunchConfig(
+             workingDirectory: workingDirectory,
+             pluginDirectories: pluginDirectories,
+@@ -154,7 +155,7 @@ final class ClaudeCodeRuntime {
+             appendSystemPrompt: systemInstructions,
+             resumeSessionId: resumeSessionId,
+             appSessionId: appSessionId,
+-            agentTurnId: agentTurnId
++            runtimeGenerationId: runtimeGenerationID
+         )
+         let newProcess = ClaudeCodeProcess()
+         do {
+diff --git a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntimeAdapter.swift b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntimeAdapter.swift
+index 13b0af4d..1870556c 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntimeAdapter.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/ClaudeCodeRuntimeAdapter.swift
+@@ -232,6 +232,7 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
+             pluginDirectories: request.pluginDirectories,
+             mcpPort: request.mcpPort,
+             appSessionId: request.sessionID,
++            runtimeGenerationID: request.runtimeGenerationID,
+             resumeSessionId: request.providerSessionID,
+             seedMessages: request.priorMessages,
+             resolveWorkingDirectory: { request.workingDirectory },
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolCallOrigin.swift b/Sources/NexGenVideo/Agent/Tools/ToolCallOrigin.swift
+index 09cdd918..57bd125f 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolCallOrigin.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolCallOrigin.swift
+@@ -8,7 +8,7 @@ enum ToolCallOrigin: Hashable, Sendable {
+ 
+     case direct
+     case inAppChat(sessionID: UUID)
+-    case embeddedRuntime(chatSessionID: UUID, mcpSessionID: UUID)
++    case embeddedRuntime(chatSessionID: UUID, runtimeGenerationID: UUID)
+     case externalMCP(sessionID: UUID)
+ 
+     var chatSessionID: UUID? {
+@@ -23,8 +23,17 @@ enum ToolCallOrigin: Hashable, Sendable {
+         switch self {
+         case .direct: nil
+         case .inAppChat(let sessionID): .inAppChat(sessionID)
+-        case .embeddedRuntime(_, let mcpSessionID): .mcpSession(mcpSessionID)
++        case .embeddedRuntime(_, let runtimeGenerationID):
++            .mcpSession(runtimeGenerationID)
+         case .externalMCP(let sessionID): .mcpSession(sessionID)
+         }
+     }
+ }
++
++struct AgentHostTurnReference: Hashable, Sendable {
++    let projectGenerationID: UUID
++    let chatSessionID: UUID
++    let runtimeGenerationID: UUID
++    let logicalTurnID: UUID
++    let inputMessageID: UUID
++}
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+index 3534db15..dd12993f 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift
+@@ -200,7 +200,7 @@ struct AgentTool: @unchecked Sendable {
+ enum ToolDefinitions {
+     static let all: [AgentTool] = base + [
+         AgentTool(name: .prepareGenerationBatch,
+-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, this returns preparation_incomplete with its item ID and opens no approval. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
++            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, this returns preparation_incomplete with its original input index and route and opens no approval. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+             inputSchema: objectSchema(properties: [
+                 "requestID": ["type": "string"],
+                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+index 8a2d1e8a..44e32172 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift
+@@ -843,7 +843,8 @@ extension ToolExecutor {
+         _ args: [String: Any],
+         origin: ToolCallOrigin,
+         toolUseID: String? = nil,
+-        hostStateID: UUID = UUID()
++        hostStateID: UUID = UUID(),
++        hostTurnReference: AgentHostTurnReference? = nil
+     ) async throws -> ToolResult {
+         let root = try resolveDataRoot(args, editor: editor)
+         let phase = try args.requireString("phase")
+@@ -869,7 +870,8 @@ extension ToolExecutor {
+                 declaredPack: declaredPack,
+                 declaredBinding: declaredBinding,
+                 sourceToolUseID: toolUseID,
+-                sourceHostStateID: hostStateID
++                sourceHostStateID: hostStateID,
++                sourceHostTurnReference: hostTurnReference
+             ),
+             origin: origin
+         )
+@@ -881,7 +883,8 @@ extension ToolExecutor {
+         _ args: [String: Any],
+         origin: ToolCallOrigin,
+         toolUseID: String? = nil,
+-        hostStateID: UUID = UUID()
++        hostStateID: UUID = UUID(),
++        hostTurnReference: AgentHostTurnReference? = nil
+     ) async throws -> ToolResult {
+         let root = try resolveDataRoot(args, editor: editor)
+         let phase = try args.requireString("phase")
+@@ -942,7 +945,8 @@ extension ToolExecutor {
+                     declaredBinding: declaredBinding,
+                     sourceToolName: ToolName.setGateState.rawValue,
+                     sourceToolUseID: toolUseID,
+-                    sourceHostStateID: hostStateID
++                    sourceHostStateID: hostStateID,
++                    sourceHostTurnReference: hostTurnReference
+                 ),
+                 origin: origin
+             )
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+index 6b3da08d..52efe2c0 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift
+@@ -248,6 +248,9 @@ final class ToolExecutor {
+         }
+         guard let editor else { return .error("Editor not available") }
+         let origin = normalizedToolCallOrigin(origin, editor: editor)
++        let hostTurnReference = editor.agentService.captureHostTurnReference(
++            origin: origin
++        )
+         let before = editor.timeline
+         var result: ToolResult
+         var guardedPhase: String?
+@@ -402,7 +405,8 @@ final class ToolExecutor {
+                         currentSHA256: nil
+                     ),
+                     origin: origin,
+-                    toolUseID: hostToolUseID
++                    toolUseID: hostToolUseID,
++                    turnReference: hostTurnReference
+                 )
+             }
+             writerEntered = tool.isCanonicalArtifactWriter
+@@ -412,7 +416,8 @@ final class ToolExecutor {
+                 resolved,
+                 origin: origin,
+                 toolUseID: hostToolUseID,
+-                hostStateID: hostStateID
++                hostStateID: hostStateID,
++                hostTurnReference: hostTurnReference
+             )
+             writerReturnedSuccess = tool.isCanonicalArtifactWriter
+                 && !result.isError
+@@ -489,7 +494,8 @@ final class ToolExecutor {
+             editor.agentService.recordHostState(
+                 state,
+                 origin: origin,
+-                toolUseID: hostToolUseID
++                toolUseID: hostToolUseID,
++                turnReference: hostTurnReference
+             )
+             if state.state == .persistedPhaseRecordFailed,
+                !phaseRecordFailed {
+@@ -761,11 +767,14 @@ final class ToolExecutor {
+         _ origin: ToolCallOrigin,
+         editor: EditorViewModel
+     ) -> ToolCallOrigin {
+-        guard case .embeddedRuntime(let chatSessionID, let mcpSessionID) = origin,
++        guard case .embeddedRuntime(
++            let chatSessionID,
++            let runtimeGenerationID
++        ) = origin,
+               !editor.agentService.sessions.contains(where: { $0.id == chatSessionID }) else {
+             return origin
+         }
+-        return .externalMCP(sessionID: mcpSessionID)
++        return .externalMCP(sessionID: runtimeGenerationID)
+     }
+ 
+     private func run(
+@@ -774,7 +783,8 @@ final class ToolExecutor {
+         _ args: [String: Any],
+         origin: ToolCallOrigin,
+         toolUseID: String?,
+-        hostStateID: UUID
++        hostStateID: UUID,
++        hostTurnReference: AgentHostTurnReference?
+     ) async throws -> ToolResult {
+         switch tool {
+         case .getProductionKnowledge: return try getProductionKnowledge(args)
+@@ -856,7 +866,8 @@ final class ToolExecutor {
+                 args,
+                 origin: origin,
+                 toolUseID: toolUseID,
+-                hostStateID: hostStateID
++                hostStateID: hostStateID,
++                hostTurnReference: hostTurnReference
+             )
+         case .rewind:               return try rewindTool(editor, args)
+         case .estimateCost:         return try estimateCostTool(editor, args)
+@@ -886,7 +897,8 @@ final class ToolExecutor {
+                 args,
+                 origin: origin,
+                 toolUseID: toolUseID,
+-                hostStateID: hostStateID
++                hostStateID: hostStateID,
++                hostTurnReference: hostTurnReference
+             )
+         case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
+         }
+diff --git a/Tests/NexGenVideoTests/Agent/AgentDialogSubmissionTests.swift b/Tests/NexGenVideoTests/Agent/AgentDialogSubmissionTests.swift
+index 59350bf4..d30f6902 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentDialogSubmissionTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentDialogSubmissionTests.swift
+@@ -138,7 +138,7 @@ struct AgentDialogSubmissionTests {
+             dialog,
+             origin: .embeddedRuntime(
+                 chatSessionID: owner.id,
+-                mcpSessionID: mcpSessionID
++                runtimeGenerationID: mcpSessionID
+             )
+         )
+ 
+@@ -160,7 +160,7 @@ struct AgentDialogSubmissionTests {
+             args: [:],
+             origin: .embeddedRuntime(
+                 chatSessionID: owner.id,
+-                mcpSessionID: mcpSessionID
++                runtimeGenerationID: mcpSessionID
+             )
+         )
+         #expect(stale.isError)
+@@ -170,7 +170,7 @@ struct AgentDialogSubmissionTests {
+             args: [:],
+             origin: .embeddedRuntime(
+                 chatSessionID: owner.id,
+-                mcpSessionID: UUID()
++                runtimeGenerationID: UUID()
+             )
+         )
+         #expect(!replacement.isError)
+diff --git a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+index 62242fa3..3d559695 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+@@ -414,7 +414,7 @@ struct AgentServiceRuntimeContractTests {
+                     args: writerArgs,
+                     origin: .embeddedRuntime(
+                         chatSessionID: turn.sessionID,
+-                        mcpSessionID: UUID()
++                        runtimeGenerationID: session.runtimeGenerationID
+                     )
+                 )
+             } else {
+@@ -434,7 +434,7 @@ struct AgentServiceRuntimeContractTests {
+                 ), for: turn)
+                 await waitUntil {
+                     service.messages.flatMap(\.hostStateRecords).contains {
+-                        $0.toolUseID == "writer"
++                        $0.state == .persisted
+                     }
+                 }
+             }
+@@ -471,6 +471,17 @@ struct AgentServiceRuntimeContractTests {
+             await waitUntil { !service.isStreaming }
+ 
+             #expect(service.messages.flatMap(\.hostStateRecords).map(\.state) == [.persisted])
++            let hostMessage = try #require(service.messages.first {
++                !$0.hostStateRecords.isEmpty
++            })
++            if backend == .claudeCode {
++                #expect(hostMessage.role == .user)
++                #expect(hostMessage.id == service.messages.first?.id)
++                #expect(hostMessage.hostStateRecords.first?.toolUseID == nil)
++            } else {
++                #expect(hostMessage.role == .assistant)
++                #expect(hostMessage.hostStateRecords.first?.toolUseID == "writer")
++            }
+             #expect(!service.messages.contains { $0.role == .user && $0.blocks.isEmpty })
+             let projected = AgentTranscriptProjection.turns(
+                 messages: service.messages,
+@@ -566,42 +577,307 @@ struct AgentServiceRuntimeContractTests {
+         }
+     }
+ 
+-    @Test("same-name host events bind one-to-one to their tool calls")
+-    func sameNameHostEventsKeepDistinctToolIdentity() throws {
++    @Test("an MCP-first writer in a resumed legacy chat stays on its new turn")
++    func legacyWriterCannotCaptureAnMCPFirstHostState() async throws {
+         let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+         let service = makeService(backend: .claudeCode, adapter: adapter)
+-        let sessionID = try #require(service.currentSessionId)
+-        service.messages = [AgentMessage(role: .assistant, blocks: [
+-            .toolUse(id: "first", name: "write_brief", inputJSON: "{}"),
+-            .toolUse(id: "second", name: "write_brief", inputJSON: "{}"),
+-        ])]
+-        let first = AgentHostStateRecord(
+-            state: .writeRejected,
+-            phase: "brief",
+-            toolName: "write_brief",
+-            action: .agentCorrection,
+-            artifactPath: nil,
+-            byteComparison: .unchanged,
+-            previousSHA256: nil,
+-            currentSHA256: nil
++        let legacyAssistant = AgentMessage(role: .assistant, blocks: [
++            .toolUse(id: "legacy-writer", name: "write_brief", inputJSON: "{}"),
++        ])
++        service.messages = [
++            AgentMessage(role: .user, blocks: [.text("Earlier turn")]),
++            legacyAssistant,
++            AgentMessage(role: .user, blocks: [
++                .toolResult(
++                    toolUseId: "legacy-writer",
++                    content: [.text("legacy result")],
++                    isError: false
++                ),
++            ]),
++        ]
++
++        #expect(service.send(text: "Write the new brief.", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let turn = try #require(adapter.sendRequests.first)
++        let runtime = try #require(adapter.resumeRequests.first)
++        let origin = ToolCallOrigin.embeddedRuntime(
++            chatSessionID: turn.sessionID,
++            runtimeGenerationID: runtime.runtimeGenerationID
++        )
++        let reference = try #require(service.captureHostTurnReference(origin: origin))
++        let record = hostRecord(state: .persisted, suffix: "new")
++
++        service.recordHostState(
++            record,
++            origin: origin,
++            turnReference: reference
++        )
++        adapter.emit(.toolCall(
++            messageID: "new-writer-message",
++            id: "new-writer",
++            name: "write_brief",
++            inputJSON: "{}"
++        ), for: turn)
++        await waitUntil {
++            service.messages.contains { message in
++                message.blocks.contains {
++                    if case .toolUse(let id, _, _) = $0 { return id == "new-writer" }
++                    return false
++                }
++            }
++        }
++
++        let old = try #require(service.messages.first { $0.id == legacyAssistant.id })
++        #expect(old.hostStateRecords.isEmpty)
++        let owner = try #require(service.messages.first { $0.id == reference.inputMessageID })
++        #expect(owner.role == .user)
++        #expect(owner.hostStateRecords == [record])
++        #expect(owner.hostStateRecords.first?.toolUseID == nil)
++
++        adapter.emit(.terminal(.completed(.endTurn)), for: turn)
++        adapter.finish(turn)
++        await waitUntil { !service.isStreaming }
++    }
++
++    @Test("an API host event keeps its real id inside the owning turn")
++    func apiHostStateCannotCaptureAReusedLegacyToolID() async throws {
++        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
++        let service = makeService(backend: .anthropicAPI, adapter: adapter)
++        let legacyAssistant = AgentMessage(role: .assistant, blocks: [
++            .toolUse(id: "reused", name: "write_brief", inputJSON: "{}"),
++        ])
++        service.messages = [
++            AgentMessage(role: .user, blocks: [.text("Earlier turn")]),
++            legacyAssistant,
++            AgentMessage(role: .user, blocks: [
++                .toolResult(
++                    toolUseId: "reused",
++                    content: [.text("legacy result")],
++                    isError: false
++                ),
++            ]),
++        ]
++
++        #expect(service.send(text: "Write again.", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let turn = try #require(adapter.sendRequests.first)
++        let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
++        let reference = try #require(service.captureHostTurnReference(origin: origin))
++        let record = hostRecord(state: .persisted, suffix: "api")
++        service.recordHostState(
++            record,
++            origin: origin,
++            toolUseID: "reused",
++            turnReference: reference
+         )
+-        let second = AgentHostStateRecord(
+-            state: .persisted,
++        adapter.emit(.toolCall(
++            messageID: "current-writer",
++            id: "reused",
++            name: "write_brief",
++            inputJSON: "{}"
++        ), for: turn)
++
++        let old = try #require(service.messages.first { $0.id == legacyAssistant.id })
++        let owner = try #require(service.messages.first {
++            $0.id == reference.inputMessageID
++        })
++        #expect(old.hostStateRecords.isEmpty)
++        #expect(owner.hostStateRecords.map(\.id) == [record.id])
++        #expect(owner.hostStateRecords.first?.toolUseID == "reused")
++
++        adapter.emit(.terminal(.completed(.endTurn)), for: turn)
++        adapter.finish(turn)
++        await waitUntil { !service.isStreaming }
++    }
++
++    @Test("same-name calls keep real API ids while MCP records claim no id")
++    func reorderedSameNameHostEventsKeepProvenIdentity() async throws {
++        for backend in AgentBackend.allCases {
++            let adapter = FakeRuntimeAdapter(backend: backend)
++            let service = makeService(backend: backend, adapter: adapter)
++            #expect(service.send(text: "Write twice.", mentions: []))
++            await waitUntil { adapter.sendRequests.count == 1 }
++            let turn = try #require(adapter.sendRequests.first)
++            adapter.emit(.toolCall(
++                messageID: "writers",
++                id: "first",
++                name: "write_brief",
++                inputJSON: "{}"
++            ), for: turn)
++            adapter.emit(.toolCall(
++                messageID: "writers",
++                id: "second",
++                name: "write_brief",
++                inputJSON: "{}"
++            ), for: turn)
++            await waitUntil {
++                service.messages.flatMap(\.blocks).filter {
++                    if case .toolUse = $0 { return true }
++                    return false
++                }.count == 2
++            }
++            let first = hostRecord(state: .writeRejected, suffix: "first")
++            let second = hostRecord(state: .persisted, suffix: "second")
++
++            if backend == .anthropicAPI {
++                let origin = ToolCallOrigin.inAppChat(sessionID: turn.sessionID)
++                service.recordHostState(second, origin: origin, toolUseID: "second")
++                service.recordHostState(first, origin: origin, toolUseID: "first")
++
++                let records = service.messages
++                    .filter { $0.role == .assistant }
++                    .flatMap(\.hostStateRecords)
++                #expect(Dictionary(uniqueKeysWithValues: records.compactMap {
++                    record in record.toolUseID.map { ($0, record.id) }
++                }) == ["first": first.id, "second": second.id])
++            } else {
++                let runtime = try #require(
++                    adapter.startRequests.first ?? adapter.resumeRequests.first
++                )
++                let origin = ToolCallOrigin.embeddedRuntime(
++                    chatSessionID: turn.sessionID,
++                    runtimeGenerationID: runtime.runtimeGenerationID
++                )
++                let reference = try #require(
++                    service.captureHostTurnReference(origin: origin)
++                )
++                service.recordHostState(
++                    second,
++                    origin: origin,
++                    turnReference: reference
++                )
++                service.recordHostState(
++                    first,
++                    origin: origin,
++                    turnReference: reference
++                )
++
++                let owner = try #require(service.messages.first {
++                    $0.id == reference.inputMessageID
++                })
++                #expect(owner.hostStateRecords.map(\.id) == [second.id, first.id])
++                #expect(owner.hostStateRecords.allSatisfy { $0.toolUseID == nil })
++                #expect(service.messages.filter { $0.role == .assistant }
++                    .flatMap(\.hostStateRecords).isEmpty)
++            }
++
++            adapter.emit(.terminal(.completed(.endTurn)), for: turn)
++            adapter.finish(turn)
++            await waitUntil { !service.isStreaming }
++        }
++    }
++
++    @Test("late MCP completion after cancel remains on the cancelled turn")
++    func cancelLateCompletionAndResendStaySeparated() async throws {
++        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
++        let service = makeService(backend: .claudeCode, adapter: adapter)
++        #expect(service.send(text: "Original request", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let originalTurn = try #require(adapter.sendRequests.first)
++        let originalRuntime = try #require(adapter.startRequests.first)
++        let originalOrigin = ToolCallOrigin.embeddedRuntime(
++            chatSessionID: originalTurn.sessionID,
++            runtimeGenerationID: originalRuntime.runtimeGenerationID
++        )
++        let originalReference = try #require(
++            service.captureHostTurnReference(origin: originalOrigin)
++        )
++
++        service.cancel()
++        let completed = hostRecord(state: .persisted, suffix: "late")
++        service.recordHostState(
++            completed,
++            origin: originalOrigin,
++            turnReference: originalReference
++        )
++
++        #expect(service.send(text: "Resend request", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 2 }
++        let resendTurn = adapter.sendRequests[1]
++        let resendRuntime = try #require(adapter.resumeRequests.last)
++        let resendOrigin = ToolCallOrigin.embeddedRuntime(
++            chatSessionID: resendTurn.sessionID,
++            runtimeGenerationID: resendRuntime.runtimeGenerationID
++        )
++        let resendReference = try #require(
++            service.captureHostTurnReference(origin: resendOrigin)
++        )
++        let rejected = hostRecord(state: .writeRejected, suffix: "resend")
++        service.recordHostState(
++            rejected,
++            origin: resendOrigin,
++            turnReference: resendReference
++        )
++        adapter.emit(.toolCall(
++            messageID: "resend-writer-message",
++            id: "resend-writer",
++            name: "write_brief",
++            inputJSON: "{}"
++        ), for: resendTurn)
++
++        let originalOwner = try #require(service.messages.first {
++            $0.id == originalReference.inputMessageID
++        })
++        let resendOwner = try #require(service.messages.first {
++            $0.id == resendReference.inputMessageID
++        })
++        #expect(originalOwner.hostStateRecords.map(\.id) == [completed.id])
++        #expect(resendOwner.hostStateRecords.map(\.id) == [rejected.id])
++        #expect(originalOwner.hostStateRecords.first?.toolUseID == nil)
++        #expect(resendOwner.hostStateRecords.first?.toolUseID == nil)
++        #expect(originalReference.runtimeGenerationID != resendReference.runtimeGenerationID)
++        #expect(originalReference.logicalTurnID != resendReference.logicalTurnID)
++
++        adapter.emit(.terminal(.completed(.endTurn)), for: resendTurn)
++        adapter.finish(resendTurn)
++        await waitUntil { !service.isStreaming }
++    }
++
++    @Test("host turn references cannot cross chat or project generations")
++    func hostTurnReferenceRespectsSessionAndProjectBoundaries() async throws {
++        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
++        let service = makeService(backend: .claudeCode, adapter: adapter)
++        #expect(service.send(text: "Project-scoped request", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let turn = try #require(adapter.sendRequests.first)
++        let runtime = try #require(adapter.startRequests.first)
++        let origin = ToolCallOrigin.embeddedRuntime(
++            chatSessionID: turn.sessionID,
++            runtimeGenerationID: runtime.runtimeGenerationID
++        )
++        let reference = try #require(service.captureHostTurnReference(origin: origin))
++        let wrongSessionOrigin = ToolCallOrigin.embeddedRuntime(
++            chatSessionID: UUID(),
++            runtimeGenerationID: runtime.runtimeGenerationID
++        )
++        #expect(service.captureHostTurnReference(origin: wrongSessionOrigin) == nil)
++
++        service.loadSessions(from: nil)
++        service.recordHostState(
++            hostRecord(state: .persisted, suffix: "stale-project"),
++            origin: origin,
++            turnReference: reference
++        )
++
++        #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
++        #expect(service.sessions.flatMap(\.messages)
++            .flatMap(\.hostStateRecords).isEmpty)
++    }
++
++    private func hostRecord(
++        state: AgentHostStateRecord.State,
++        suffix: String
++    ) -> AgentHostStateRecord {
++        AgentHostStateRecord(
++            state: state,
+             phase: "brief",
+             toolName: "write_brief",
+-            action: .reviewForApproval,
++            action: state == .persisted ? .reviewForApproval : .agentCorrection,
+             artifactPath: PipelineLayout.briefFile,
+-            byteComparison: .created,
+-            previousSHA256: nil,
+-            currentSHA256: String(repeating: "a", count: 64)
++            byteComparison: state == .persisted ? .changed : .unchanged,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: String(repeating: suffix == "second" ? "c" : "b", count: 64)
+         )
+-
+-        service.recordHostState(first, origin: .inAppChat(sessionID: sessionID))
+-        service.recordHostState(second, origin: .inAppChat(sessionID: sessionID))
+-
+-        let records = service.messages.flatMap(\.hostStateRecords)
+-        #expect(records.map(\.toolUseID) == ["first", "second"])
+-        #expect(records.map(\.id) == [first.id, second.id])
+     }
+ 
+     private func makeService(
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+index 7b767d10..c847d8ec 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift
+@@ -337,9 +337,6 @@ struct AgentTranscriptLayoutPolicyTests {
+         let message = try sourceFile(
+             "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
+         )
+-        let projection = try sourceFile(
+-            "Sources/NexGenVideo/Agent/Panel/AgentTranscriptProjection.swift"
+-        )
+         let batch = try sourceFile(
+             "Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift"
+         )
+@@ -348,8 +345,6 @@ struct AgentTranscriptLayoutPolicyTests {
+         #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
+         #expect(message.contains("Previous fingerprint"))
+         #expect(message.contains("editor.revealCockpit"))
+-        #expect(projection.contains("let results = resultMessage.map"))
+-        #expect(projection.contains("isDurableState"))
+         #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
+         #expect(!batch.contains("Waiting for cost estimates"))
+         #expect(batch.contains("batch.totalEUR == nil"))
+diff --git a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+index ada783fa..4a474df0 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentTranscriptProjectionTests.swift
+@@ -572,6 +572,100 @@ struct AgentTranscriptProjectionTests {
+         #expect(states.map(\.state) == [.persisted, .writeRejected])
+     }
+ 
++    @Test("partial persistence and unknown writes remain visible through later failures")
++    func repairStatesSurviveLaterFailedAttempts() {
++        for initialState in [
++            AgentHostStateRecord.State.persistedPhaseRecordFailed,
++            .writeOutcomeUnavailable,
++        ] {
++            for laterState in [
++                AgentHostStateRecord.State.draft,
++                .writeBlocked,
++                .writeRejected,
++                .writeOutcomeUnavailable,
++            ] {
++                let initial = projectionRecord(
++                    state: initialState,
++                    toolUseID: "initial"
++                )
++                let later = projectionRecord(
++                    state: laterState,
++                    toolUseID: "later"
++                )
++                let states = projectedStates([initial, later])
++
++                if initialState == .writeOutcomeUnavailable,
++                   laterState == .writeOutcomeUnavailable {
++                    #expect(states.map(\.state) == [.writeOutcomeUnavailable])
++                    #expect(states.first?.id == later.id)
++                } else {
++                    #expect(states.map(\.state) == [initialState, laterState])
++                }
++            }
++        }
++    }
++
++    @Test("only a verified clean write clears repair state")
++    func cleanSuccessAloneClearsRepairState() {
++        let repair = projectionRecord(
++            state: .persistedPhaseRecordFailed,
++            toolUseID: "repair"
++        )
++        let clean = projectionRecord(state: .persisted, toolUseID: "clean")
++        #expect(projectedStates([repair, clean]).map(\.state) == [.persisted])
++
++        let priorReady = projectionRecord(state: .checked, toolUseID: "ready")
++        let uncertain = projectionRecord(
++            state: .writeOutcomeUnavailable,
++            toolUseID: "uncertain"
++        )
++        #expect(projectedStates([priorReady, uncertain]).map(\.state) == [
++            .writeOutcomeUnavailable,
++        ])
++    }
++
++    private func projectionRecord(
++        state: AgentHostStateRecord.State,
++        toolUseID: String
++    ) -> AgentHostStateRecord {
++        AgentHostStateRecord(
++            toolUseID: toolUseID,
++            state: state,
++            phase: "storyboard",
++            toolName: "write_storyboard",
++            action: state == .persisted ? .reviewForApproval : .agentCorrection,
++            artifactPath: "storyboard/current.yaml",
++            byteComparison: state == .writeOutcomeUnavailable ? .unavailable : .changed,
++            previousSHA256: String(repeating: "a", count: 64),
++            currentSHA256: state == .writeOutcomeUnavailable
++                ? nil
++                : String(repeating: "b", count: 64)
++        )
++    }
++
++    private func projectedStates(
++        _ records: [AgentHostStateRecord]
++    ) -> [AgentHostStateRecord] {
++        let messages = records.map { record in
++            AgentMessage(
++                role: .assistant,
++                blocks: [.toolUse(
++                    id: record.toolUseID ?? record.id.uuidString,
++                    name: record.toolName,
++                    inputJSON: "{}"
++                )],
++                hostStateRecords: [record]
++            )
++        }
++        return AgentTranscriptProjection.turns(
++            messages: messages,
++            isStreaming: false
++        ).flatMap(\.items).compactMap { item in
++            guard case .hostState(let state) = item else { return nil }
++            return state.record
++        }
++    }
++
+     private func hostStateMessage(_ record: AgentHostStateRecord) -> AgentMessage {
+         AgentMessage(
+             role: .user,
+diff --git a/Tests/NexGenVideoTests/Agent/AnthropicRuntimeAdapterTests.swift b/Tests/NexGenVideoTests/Agent/AnthropicRuntimeAdapterTests.swift
+index c229cf02..2358d420 100644
+--- a/Tests/NexGenVideoTests/Agent/AnthropicRuntimeAdapterTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AnthropicRuntimeAdapterTests.swift
+@@ -381,6 +381,7 @@ private func testSessionRequest(
+ ) -> AgentRuntimeSessionRequest {
+     AgentRuntimeSessionRequest(
+         sessionID: sessionID,
++        runtimeGenerationID: UUID(),
+         providerSessionID: nil,
+         priorMessages: [],
+         hostContext: hostContext,
+diff --git a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+index e8ae7fb2..61fdc8c2 100644
+--- a/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ChatSessionStoreTests.swift
+@@ -119,6 +119,34 @@ struct ChatSessionStoreTests {
+         #expect(back.messages.first?.hostStateRecords.first?.toolUseID == "storyboard-writer")
+     }
+ 
++    @Test("ID-less embedded host state round-trips on its owning user turn")
++    func embeddedHostStateTurnOwnershipRoundTrips() throws {
++        let turn = AgentMessage(
++            role: .user,
++            blocks: [.text("Write the storyboard")],
++            hostStateRecords: [AgentHostStateRecord(
++                state: .persistedPhaseRecordFailed,
++                phase: "storyboard",
++                toolName: "write_storyboard",
++                action: .agentCorrection,
++                artifactPath: "storyboard/current.yaml",
++                byteComparison: .changed,
++                previousSHA256: String(repeating: "a", count: 64),
++                currentSHA256: String(repeating: "b", count: 64)
++            )]
++        )
++        let data = try #require(ChatSessionStore.encodeSession(
++            ChatSession(title: "t", messages: [turn])
++        ))
++        let back = try decoder.decode(ChatSession.self, from: data)
++
++        #expect(back.messages.first?.id == turn.id)
++        #expect(back.messages.first?.role == .user)
++        #expect(back.messages.first?.hostStateRecords.first?.state
++            == .persistedPhaseRecordFailed)
++        #expect(back.messages.first?.hostStateRecords.first?.toolUseID == nil)
++    }
++
+     @Test("conversation titles preserve distinguishing text at both ends")
+     func conversationTitleUsesMiddleCompaction() {
+         let source = String(repeating: "opening detail ", count: 8)
+diff --git a/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift b/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
+index b4cd4ae9..78175de5 100644
+--- a/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ClaudeCodeLaunchTests.swift
+@@ -17,11 +17,11 @@ struct ClaudeCodeLaunchTests {
+ 
+     @Test func embeddedSessionIdentityIsCarriedInTheMCPHeader() {
+         let sessionID = UUID(uuidString: "7D713075-EF8D-4428-BD9B-33888359267C")!
+-        let turnID = UUID(uuidString: "C73A3F70-A49C-4F05-BD9F-EA1223673554")!
++        let runtimeID = UUID(uuidString: "C73A3F70-A49C-4F05-BD9F-EA1223673554")!
+         let json = ClaudeCodeLaunch.mcpConfigJSON(
+             port: 19789,
+             appSessionId: sessionID,
+-            agentTurnId: turnID
++            runtimeGenerationId: runtimeID
+         )
+         let object = try? JSONSerialization.jsonObject(
+             with: Data(json.utf8)
+@@ -31,7 +31,7 @@ struct ClaudeCodeLaunchTests {
+         let headers = nexgen?["headers"] as? [String: String]
+ 
+         #expect(headers?[MCPHTTPServer.agentSessionHeader] == sessionID.uuidString)
+-        #expect(headers?[MCPHTTPServer.agentTurnHeader] == turnID.uuidString)
++        #expect(headers?[MCPHTTPServer.agentRuntimeHeader] == runtimeID.uuidString)
+     }
+ 
+     @Test("#201: claude -p gets the FULL manual as --append-system-prompt (parity with the API agent)")
+diff --git a/Tests/NexGenVideoTests/Agent/ClaudeCodeRuntimeAdapterTests.swift b/Tests/NexGenVideoTests/Agent/ClaudeCodeRuntimeAdapterTests.swift
+index ac39eb41..0e318850 100644
+--- a/Tests/NexGenVideoTests/Agent/ClaudeCodeRuntimeAdapterTests.swift
++++ b/Tests/NexGenVideoTests/Agent/ClaudeCodeRuntimeAdapterTests.swift
+@@ -320,6 +320,7 @@ private func claudeSessionRequest(
+ ) -> AgentRuntimeSessionRequest {
+     AgentRuntimeSessionRequest(
+         sessionID: sessionID,
++        runtimeGenerationID: UUID(),
+         providerSessionID: providerSessionID,
+         priorMessages: [AgentMessage(role: .assistant, blocks: [.text("Earlier")])],
+         hostContext: AgentRuntimeHostContext(
+diff --git a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+index 9ec402ce..440df3c3 100644
+--- a/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
++++ b/Tests/NexGenVideoTests/Agent/GateApprovalTests.swift
+@@ -193,7 +193,7 @@ struct GateApprovalTests {
+         service.isStreaming = true
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: try #require(service.currentSessionId),
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+ 
+         _ = try service.requestGateApproval(
+@@ -245,7 +245,7 @@ struct GateApprovalTests {
+             GateApproval(phase: "brief"),
+             origin: .embeddedRuntime(
+                 chatSessionID: unrelatedChat,
+-                mcpSessionID: UUID()
++                runtimeGenerationID: UUID()
+             )
+         )
+         #expect(service.pendingGateApproval?.sessionId == unrelatedChat)
+@@ -261,7 +261,7 @@ struct GateApprovalTests {
+             args: ["project_dir": dataRoot.path, "phase": "project_init"],
+             origin: .embeddedRuntime(
+                 chatSessionID: UUID(),
+-                mcpSessionID: UUID()
++                runtimeGenerationID: UUID()
+             )
+         )
+ 
+@@ -571,7 +571,7 @@ struct GateApprovalTests {
+         let chatID = try #require(h.editor.agentService.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: chatID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+ 
+         _ = try h.editor.agentService.requestGateApproval(
+@@ -594,7 +594,7 @@ struct GateApprovalTests {
+             args: [:],
+             origin: .embeddedRuntime(
+                 chatSessionID: chatID,
+-                mcpSessionID: UUID()
++                runtimeGenerationID: UUID()
+             )
+         )
+         #expect(!replacement.isError)
+diff --git a/Tests/NexGenVideoTests/Agent/MCPHTTPServerTests.swift b/Tests/NexGenVideoTests/Agent/MCPHTTPServerTests.swift
+index 06c71212..39effbda 100644
+--- a/Tests/NexGenVideoTests/Agent/MCPHTTPServerTests.swift
++++ b/Tests/NexGenVideoTests/Agent/MCPHTTPServerTests.swift
+@@ -78,9 +78,9 @@ struct MCPHTTPServerTests {
+     func explicitToolCallOrigin() throws {
+         let chatID = UUID()
+         let mcpID = UUID()
+-        let turnID = UUID()
++        let runtimeID = UUID()
+         let embeddedData = Data(
+-            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\(MCPHTTPServer.agentTurnHeader): \(turnID.uuidString)\r\n\r\n".utf8
++            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\(MCPHTTPServer.agentRuntimeHeader): \(runtimeID.uuidString)\r\n\r\n".utf8
+         )
+         guard case .complete(let embedded, _) = MCPHTTPServer.decodeRequest(embeddedData) else {
+             Issue.record("Embedded request did not decode")
+@@ -88,8 +88,11 @@ struct MCPHTTPServerTests {
+         }
+         #expect(MCPHTTPServer.toolCallOrigin(
+             request: embedded,
+-            mcpSessionID: turnID
+-        ) == .embeddedRuntime(chatSessionID: chatID, mcpSessionID: turnID))
++            mcpSessionID: runtimeID
++        ) == .embeddedRuntime(
++            chatSessionID: chatID,
++            runtimeGenerationID: runtimeID
++        ))
+ 
+         let externalData = Data(
+             "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\r\n".utf8
+@@ -104,6 +107,32 @@ struct MCPHTTPServerTests {
+         ) == .externalMCP(sessionID: mcpID))
+     }
+ 
++    @Test("legacy MCP sessions retain the exact embedded runtime generation")
++    func legacySessionOriginRetainsRuntimeGeneration() {
++        let fallbackID = UUID()
++        let chatID = UUID()
++        let runtimeID = UUID()
++        let origin = MCPHTTPServer.SessionOrigin(mcpSessionID: fallbackID)
++
++        origin.bind(
++            chatSessionID: chatID,
++            runtimeGenerationID: runtimeID
++        )
++
++        #expect(origin.value == .embeddedRuntime(
++            chatSessionID: chatID,
++            runtimeGenerationID: runtimeID
++        ))
++        #expect(origin.accepts(
++            chatSessionID: chatID,
++            runtimeGenerationID: runtimeID
++        ))
++        #expect(!origin.accepts(
++            chatSessionID: chatID,
++            runtimeGenerationID: UUID()
++        ))
++    }
++
+     @Test("MCP session rotation preserves exact client ownership")
+     func sessionRotationPreservesExactClientOwnership() async throws {
+         let port: UInt16 = 29_988
+@@ -192,11 +221,11 @@ struct MCPHTTPServerTests {
+         }
+     }
+ 
+-    @Test("modern requests remain sessionless and retain logical turn ownership")
++    @Test("modern requests remain sessionless and retain runtime ownership")
+     func modernRequestsAreSessionless() async throws {
+         let port: UInt16 = 29_990
+         let chatID = UUID()
+-        let turnID = UUID()
++        let runtimeID = UUID()
+         let legacyServerCount = MCPRunCounter()
+         let modernCallCount = MCPRunCounter()
+         let server = MCPHTTPServer(
+@@ -212,8 +241,8 @@ struct MCPHTTPServerTests {
+             modernHandler: { request, origin in
+                 modernCallCount.increment()
+                 let owner = switch origin {
+-                case .embeddedRuntime(let sessionID, let logicalTurnID):
+-                    "\(sessionID.uuidString):\(logicalTurnID.uuidString)"
++                case .embeddedRuntime(let sessionID, let generationID):
++                    "\(sessionID.uuidString):\(generationID.uuidString)"
+                 case .direct: "direct"
+                 case .inAppChat: "in-app"
+                 case .externalMCP: "external"
+@@ -235,12 +264,12 @@ struct MCPHTTPServerTests {
+                     id: requestID,
+                     to: endpoint,
+                     agentSessionID: chatID,
+-                    agentTurnID: turnID
++                    runtimeGenerationID: runtimeID
+                 )
+                 #expect(response.statusCode == 200)
+                 let text = String(decoding: response.data, as: UTF8.self)
+                 #expect(text.contains(chatID.uuidString))
+-                #expect(text.contains(turnID.uuidString))
++                #expect(text.contains(runtimeID.uuidString))
+                 #expect(response.mcpSessionID == nil)
+             }
+             #expect(legacyServerCount.value == 1)
+@@ -454,7 +483,7 @@ struct MCPHTTPServerTests {
+         id: Int,
+         to endpoint: URL,
+         agentSessionID: UUID,
+-        agentTurnID: UUID
++        runtimeGenerationID: UUID
+     ) async throws -> (data: Data, statusCode: Int, mcpSessionID: String?) {
+         var request = URLRequest(url: endpoint)
+         request.httpMethod = "POST"
+@@ -475,8 +504,8 @@ struct MCPHTTPServerTests {
+             forHTTPHeaderField: MCPHTTPServer.agentSessionHeader
+         )
+         request.setValue(
+-            agentTurnID.uuidString,
+-            forHTTPHeaderField: MCPHTTPServer.agentTurnHeader
++            runtimeGenerationID.uuidString,
++            forHTTPHeaderField: MCPHTTPServer.agentRuntimeHeader
+         )
+         let (data, rawResponse) = try await URLSession.shared.data(for: request)
+         let response = try #require(rawResponse as? HTTPURLResponse)
+diff --git a/Tests/NexGenVideoTests/Generation/CostGuardTests.swift b/Tests/NexGenVideoTests/Generation/CostGuardTests.swift
+index 35b05041..c55f2ed7 100644
+--- a/Tests/NexGenVideoTests/Generation/CostGuardTests.swift
++++ b/Tests/NexGenVideoTests/Generation/CostGuardTests.swift
+@@ -556,7 +556,7 @@ struct CostGuardTests {
+         service.isStreaming = true
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: try #require(service.currentSessionId),
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "m1",
+@@ -624,7 +624,7 @@ struct CostGuardTests {
+         let sessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: sessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "fal-ai/nano-banana-pro/edit",
+@@ -677,7 +677,7 @@ struct CostGuardTests {
+         let chatSessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: chatSessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "fal-ai/nano-banana-pro/edit",
+@@ -757,7 +757,7 @@ struct CostGuardTests {
+         let sessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: sessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "m1",
+@@ -810,7 +810,7 @@ struct CostGuardTests {
+         let originSessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: originSessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "fal-ai/nano-banana-pro/edit",
+@@ -892,7 +892,7 @@ struct CostGuardTests {
+         let sessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: sessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "fal-ai/nano-banana-pro/edit",
+@@ -988,7 +988,7 @@ struct CostGuardTests {
+         let firstSessionID = try #require(service.currentSessionId)
+         let firstOrigin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: firstSessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "m1",
+@@ -1029,7 +1029,7 @@ struct CostGuardTests {
+ 
+         let secondOrigin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: secondSessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         service.messages = [AgentMessage(role: .user, blocks: [
+             .toolResult(
+@@ -1112,7 +1112,7 @@ struct CostGuardTests {
+         let chatSessionID = try #require(service.currentSessionId)
+         let origin = ToolCallOrigin.embeddedRuntime(
+             chatSessionID: chatSessionID,
+-            mcpSessionID: UUID()
++            runtimeGenerationID: UUID()
+         )
+         let selected = option(
+             modelId: "m1",
+diff --git a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+index dc8a7910..3453966c 100644
+--- a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
++++ b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+@@ -234,8 +234,25 @@ struct GenerationBatchTests {
+         payloadJSON.removeValue(forKey: "estimate")
+         let payload = try JSONDecoder().decode(GenerationPackageV1.Payload.self, from: JSONSerialization.data(withJSONObject: payloadJSON))
+         let unpriced = try GenerationPackageV1(payload: payload)
+-        let manifest = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey, phase: nil,
+-            items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
++        let pricedID = UUID().uuidString
++        let unpricedID = UUID().uuidString
++        let manifest = try GenerationBatch(payload: .init(
++            nonce: UUID(),
++            projectKey: batch.payload.projectKey,
++            phase: nil,
++            items: [
++                .init(
++                    id: pricedID,
++                    purpose: "Priced generation",
++                    package: original
++                ),
++                .init(
++                    id: unpricedID,
++                    purpose: "Unpriced generation",
++                    package: unpriced
++                ),
++            ]
++        ))
+         #expect(manifest.totalEUR == nil)
+         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
+         let result = try editor.agentService.presentGenerationBatch(
+@@ -250,7 +267,25 @@ struct GenerationBatchTests {
+             with: Data(ToolHarness.textOf(result).utf8)
+         ) as? [String: Any])
+         #expect(payload["status"] as? String == "preparation_incomplete")
+-        #expect(payload["unpriced_item_ids"] as? [String] == manifest.payload.items.map(\.id))
++        #expect(payload["reason"] as? String == "missing_cost_estimates")
++        let unpricedItems = try #require(
++            payload["unpriced_items"] as? [[String: Any]]
++        )
++        #expect(unpricedItems.count == 1)
++        let item = try #require(unpricedItems.first)
++        #expect(item["index"] as? Int == 1)
++        #expect(item["reason"] as? String == "no_host_price_for_route")
++        #expect(item["purpose"] as? String == "Unpriced generation")
++        let expectedTool = unpriced.payload.modality == "image"
++            ? ToolName.generateImage.rawValue
++            : ToolName.generateVideo.rawValue
++        #expect(item["tool"] as? String == expectedTool)
++        let route = try #require(item["route"] as? [String: Any])
++        #expect(route["provider"] as? String == unpriced.payload.target.provider.rawValue)
++        #expect(route["transport"] as? String == unpriced.payload.target.transport.rawValue)
++        #expect(route["model"] as? String == unpriced.payload.target.modelId)
++        #expect(route["endpoint"] as? String == unpriced.payload.target.endpoint)
++        #expect(!ToolHarness.textOf(result).contains(unpricedID))
+     }
+ 
+     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {

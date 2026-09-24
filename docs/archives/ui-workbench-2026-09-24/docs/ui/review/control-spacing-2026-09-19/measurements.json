@@ -1,0 +1,5469 @@
+{
+  "taskCommands": [
+    "organize",
+    "audio-sync",
+    "music",
+    "sfx",
+    "ai-edit",
+    "upscale",
+    "rerun",
+    "color-match",
+    "captions",
+    "caption-correct",
+    "caption-translate",
+    "word-cut",
+    "entity-edit",
+    "frame-redo",
+    "frame-remix",
+    "frame-review",
+    "checks",
+    "patterns",
+    "analysis-proof",
+    "remeasure",
+    "pov",
+    "blockout-import",
+    "performance",
+    "coverage",
+    "source-binding",
+    "take-repair",
+    "assembly",
+    "model-research",
+    "tutorial",
+    "feedback"
+  ],
+  "measurements": [
+    {
+      "name": "1048-100-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-100-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 434
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "1048-130-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-100-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 294
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "768-130-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-100-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-organize",
+      "items": [
+        {
+          "label": "Nach Medientyp ordnen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-audio-sync",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-music",
+      "items": [
+        {
+          "label": "Ruhig",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Dynamisch",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Instrumental",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-sfx",
+      "items": [
+        {
+          "label": "Mechanik",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Schritte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-ai-edit",
+      "items": [
+        {
+          "label": "Als neues Medium",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Ausgewählte Instanz ersetzen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-upscale",
+      "items": [
+        {
+          "label": "2× Auflösung",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-rerun",
+      "items": [
+        {
+          "label": "Original erhalten",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-color-match",
+      "items": [
+        {
+          "label": "Belichtung +0,2",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Sättigung 95 %",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-captions",
+      "items": [
+        {
+          "label": "Die Maus findet ein Zahnrad.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Die Maschine erwacht.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-caption-correct",
+      "items": [
+        {
+          "label": "Interpunktion",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeilenumbrüche",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-caption-translate",
+      "items": [
+        {
+          "label": "The mouse finds a gear.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "The machine comes alive.",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-word-cut",
+      "items": [
+        {
+          "label": "Schnittänderung übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-entity-edit",
+      "items": [
+        {
+          "label": "Licht: Golden Hour",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Material: Rau",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-frame-redo",
+      "items": [
+        {
+          "label": "Startframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Endframe",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-frame-remix",
+      "items": [
+        {
+          "label": "Neue Ankervariante",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-frame-review",
+      "items": [
+        {
+          "label": "Identität konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Stil konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Raum konsistent",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-checks",
+      "items": [
+        {
+          "label": "Struktur gültig",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzen vorhanden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chronologie prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-patterns",
+      "items": [
+        {
+          "label": "Erzählbogen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Performance",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Atmosphäre",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-analysis-proof",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-remeasure",
+      "items": [
+        {
+          "label": "Beat-/Downbeat-Modell",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Akkorde",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Transkription",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-pov",
+      "items": [
+        {
+          "label": "Front",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Seitlich",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Gegenschuss",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-blockout-import",
+      "items": [
+        {
+          "label": "Quellclip prüfen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Zeitverlauf übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-performance",
+      "items": [
+        {
+          "label": "Lyrics-Zeile übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Zeit statt Clip-Zeit verwenden",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-coverage",
+      "items": [
+        {
+          "label": "Intro: Stillstand",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Chorus: Bewegung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Finale: gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-source-binding",
+      "items": [
+        {
+          "label": "Explizite Quelle",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Start-/Endbedingung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-take-repair",
+      "items": [
+        {
+          "label": "Lokale Reparatur",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Handlung vereinfachen",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Planung revidieren",
+          "type": "radio",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-assembly",
+      "items": [
+        {
+          "label": "Geprüfte Takes",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Song-Anker erhalten",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-model-research",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": -0.01,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-tutorial",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "390-130-feedback",
+      "items": [],
+      "taskOverflow": false
+    },
+    {
+      "name": "model-review",
+      "items": [
+        {
+          "label": "Startbild bestätigt",
+          "type": "checkbox",
+          "disabled": true,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "Videoquelle bestätigt",
+          "type": "checkbox",
+          "disabled": true,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "Referenzlimit bestätigt",
+          "type": "checkbox",
+          "disabled": true,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "video-batch",
+      "items": [
+        {
+          "label": "1A · Die leere Straße",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "1B · Das kleine Zahnrad",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "1C · Der versperrte Weg",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        },
+        {
+          "label": "1D · Eine andere Lösung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 25
+        },
+        {
+          "label": "1E · Die Maschine erwacht",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 297.7
+        },
+        {
+          "label": "1F · Gemeinsamer Komfort",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 570.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "settings-general",
+      "items": [
+        {
+          "label": "Benachrichtigungen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "Diagnosedaten teilen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "settings-models",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 503.3
+        },
+        {
+          "label": "fal.ai · FLUX.1 [schnell]",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "Runway · Gen-4 Image",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "fal.ai · Seedance 2.0 · Text zu Video",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "Runway · Gen-4 Turbo · Bild zu Video",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "fal.ai · ElevenLabs Sound Effects",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "ElevenLabs · Sound Effects",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "ElevenLabs · Sprache · NGV-Demoprofil",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        },
+        {
+          "label": "ElevenLabs · Musik · NGV-Demoprofil",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 409
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "mcp",
+      "items": [
+        {
+          "label": "Dieser Verbindung vertrauen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "take-review",
+      "items": [
+        {
+          "label": "Identität",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Zustände & Props",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Raum & Blickrichtung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Handlung",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Timing & Kamera",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Bild- und Tonartefakte",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "take-rescue",
+      "items": [
+        {
+          "label": "Bild und Handlung in diesem Bereich geprüft",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        },
+        {
+          "label": "Take-Ton übernehmen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 269
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "inspector",
+      "items": [
+        {
+          "label": "Im Bild positionieren",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        },
+        {
+          "label": "Horizontal spiegeln",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        },
+        {
+          "label": "Vertikal spiegeln",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "post-review",
+      "items": [
+        {
+          "label": "Alle Übergänge gesichtet · 0/5",
+          "type": "checkbox",
+          "disabled": true,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        },
+        {
+          "label": "Gesamtfilm gesichtet · Ton im Produkt",
+          "type": "checkbox",
+          "disabled": true,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "export",
+      "items": [
+        {
+          "label": "Aktuellen Sequenzreview voraussetzen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        },
+        {
+          "label": "Vorschaubild beilegen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "preview",
+      "items": [
+        {
+          "label": "Vorschaubild beilegen",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 815
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "media",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 503.3
+        }
+      ],
+      "taskOverflow": false
+    },
+    {
+      "name": "generation-music",
+      "items": [
+        {
+          "label": "KI-generiert",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 503.3
+        },
+        {
+          "label": "Instrumental",
+          "type": "checkbox",
+          "disabled": false,
+          "gap": 8,
+          "center": 0,
+          "width": 16,
+          "height": 16,
+          "clipped": false,
+          "left": 304
+        }
+      ],
+      "taskOverflow": false
+    }
+  ],
+  "interactions": [
+    {
+      "name": "Checkbox caption toggles only its option and retains focus",
+      "pass": true
+    },
+    {
+      "name": "Space toggles the focused checkbox",
+      "pass": true
+    },
+    {
+      "name": "Reviewed choices are disabled",
+      "pass": true
+    },
+    {
+      "name": "Model evidence result remains connected",
+      "pass": true
+    },
+    {
+      "name": "Radio choice stays exclusive and retains focus",
+      "pass": true
+    },
+    {
+      "name": "Optional input reaches the proposal",
+      "pass": true
+    },
+    {
+      "name": "Every native check control in reviewed surfaces uses the shared layout",
+      "pass": true
+    }
+  ],
+  "failures": []
+}

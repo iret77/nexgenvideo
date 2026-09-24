@@ -1,0 +1,33 @@
+{
+  "results": [
+    {
+      "name": "Storyboard selection updates Inspector",
+      "pass": true
+    },
+    {
+      "name": "Sketch moment selection",
+      "pass": true
+    },
+    {
+      "name": "Reference captions sit below complete images",
+      "pass": true
+    },
+    {
+      "name": "Anchor captions sit below images",
+      "pass": true
+    },
+    {
+      "name": "Media selection and list view remain usable",
+      "pass": true
+    },
+    {
+      "name": "Source picker stays a compact list",
+      "pass": true
+    },
+    {
+      "name": "Review filmstrip remains selectable",
+      "pass": true
+    }
+  ],
+  "runtimeErrors": []
+}

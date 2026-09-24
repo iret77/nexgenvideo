@@ -1,0 +1,26 @@
+[
+  {
+    "suite": "acceptance",
+    "exit": 0
+  },
+  {
+    "suite": "guards",
+    "exit": 1
+  },
+  {
+    "suite": "workbench",
+    "exit": 1
+  },
+  {
+    "suite": "polish",
+    "exit": 1
+  },
+  {
+    "suite": "background",
+    "exit": 0
+  },
+  {
+    "suite": "artwork",
+    "exit": 0
+  }
+]

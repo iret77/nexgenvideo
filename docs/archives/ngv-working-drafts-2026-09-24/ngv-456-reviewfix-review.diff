@@ -1,0 +1,2704 @@
+diff --git a/.github/workflows/bundle.yml b/.github/workflows/bundle.yml
+index cd03f5d0..ea6068ae 100644
+--- a/.github/workflows/bundle.yml
++++ b/.github/workflows/bundle.yml
+@@ -2,6 +2,30 @@ name: Bundle .app
+ 
+ on:
+   workflow_dispatch:
++    inputs:
++      evidence_mode:
++        description: Exact work to run
++        required: true
++        default: bundle
++        type: choice
++        options:
++          - bundle
++          - codex-app-server-acceptance
++      source_sha:
++        description: Exact 40-character commit for Codex acceptance
++        required: false
++        default: ""
++        type: string
++      run_paid_llm_smoke:
++        description: Run the separately approved paid Codex LLM smoke
++        required: false
++        default: false
++        type: boolean
++      approval:
++        description: Enter APPROVE-CODEX-LLM-SMOKE for Codex acceptance
++        required: false
++        default: ""
++        type: string
+ 
+ permissions:
+   contents: read
+@@ -9,4 +33,17 @@ permissions:
+ 
+ jobs:
+   validate:
++    if: inputs.evidence_mode == 'bundle'
+     uses: ./.github/workflows/ci.yml
++
++  codex-app-server-acceptance:
++    if: inputs.evidence_mode == 'codex-app-server-acceptance'
++    uses: ./.github/workflows/codex-app-server-acceptance.yml
++    with:
++      source_sha: ${{ inputs.source_sha }}
++      source_ref: ${{ github.ref }}
++      gateway_workflow_ref: ${{ github.workflow_ref }}
++      run_paid_llm_smoke: ${{ inputs.run_paid_llm_smoke }}
++      approval: ${{ inputs.approval }}
++    secrets:
++      CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
+diff --git a/.github/workflows/codex-app-server-acceptance.yml b/.github/workflows/codex-app-server-acceptance.yml
+index cf6fcaff..32c5404d 100644
+--- a/.github/workflows/codex-app-server-acceptance.yml
++++ b/.github/workflows/codex-app-server-acceptance.yml
+@@ -1,10 +1,22 @@
+ name: Codex App Server Acceptance
+ 
+-# ci-lint: allow-CI008 Manual workflow_dispatch is required because this includes a paid LLM smoke.
++# ci-lint: allow-CI008 The registered bundle workflow is the only manual gateway to this paid smoke.
+ # ci-lint: allow-CI007 No push or pull_request event may start this workflow.
+ on:
+-  workflow_dispatch:
++  workflow_call:
+     inputs:
++      source_sha:
++        description: Exact source and reusable-workflow commit
++        type: string
++        required: true
++      source_ref:
++        description: Exact manually selected source ref
++        type: string
++        required: true
++      gateway_workflow_ref:
++        description: Exact registered bundle workflow ref
++        type: string
++        required: true
+       run_paid_llm_smoke:
+         description: "Run the separately approved paid Codex LLM smoke"
+         type: boolean
+@@ -14,6 +26,10 @@ on:
+         description: "Enter APPROVE-CODEX-LLM-SMOKE"
+         type: string
+         required: true
++    secrets:
++      CODEX_ACCEPTANCE_API_KEY:
++        description: Dedicated OpenAI API key for the approved Codex acceptance run
++        required: false
+ 
+ permissions:
+   contents: read
+@@ -23,28 +39,95 @@ concurrency:
+   cancel-in-progress: false
+ 
+ jobs:
++  gate:
++    runs-on: ubuntu-24.04
++    timeout-minutes: 2
++    steps:
++      - name: Require manual approval, exact workflow identity, and credential
++        shell: bash
++        env:
++          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
++          EXPECTED_SOURCE_REF: ${{ inputs.source_ref }}
++          EXPECTED_GATEWAY_WORKFLOW_REF: ${{ inputs.gateway_workflow_ref }}
++          ACTUAL_SOURCE_SHA: ${{ github.sha }}
++          ACTUAL_SOURCE_REF: ${{ github.ref }}
++          ACTUAL_GATEWAY_WORKFLOW_SHA: ${{ github.workflow_sha }}
++          ACTUAL_GATEWAY_WORKFLOW_REF: ${{ github.workflow_ref }}
++          ACTUAL_ACCEPTANCE_WORKFLOW_SHA: ${{ job.workflow_sha }}
++          ACTUAL_ACCEPTANCE_WORKFLOW_REF: ${{ job.workflow_ref }}
++          ACTUAL_ACCEPTANCE_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
++          ACTUAL_ACCEPTANCE_WORKFLOW_PATH: ${{ job.workflow_file_path }}
++          EVENT_NAME: ${{ github.event_name }}
++          ACTOR: ${{ github.actor }}
++          REPOSITORY: ${{ github.repository }}
++          REPOSITORY_OWNER: ${{ github.repository_owner }}
++          RUN_PAID_LLM_SMOKE: ${{ inputs.run_paid_llm_smoke }}
++          APPROVAL: ${{ inputs.approval }}
++          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
++        run: |
++          set -euo pipefail
++          if test "$EVENT_NAME" != workflow_dispatch; then
++            echo "::error::Codex acceptance must originate from a manual workflow_dispatch." >&2
++            exit 1
++          fi
++          if test "$ACTOR" != "$REPOSITORY_OWNER"; then
++            echo "::error::Only the repository owner may approve Codex acceptance spend." >&2
++            exit 1
++          fi
++          if test "$RUN_PAID_LLM_SMOKE" != true || test "$APPROVAL" != APPROVE-CODEX-LLM-SMOKE; then
++            echo "::error::Codex acceptance requires separate owner approval for paid LLM spend." >&2
++            exit 1
++          fi
++          if ! [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
++            echo "::error::source_sha must be an exact 40-character lowercase commit SHA." >&2
++            exit 1
++          fi
++          expected_gateway_ref="$REPOSITORY/.github/workflows/bundle.yml@$EXPECTED_SOURCE_REF"
++          expected_acceptance_ref="$REPOSITORY/.github/workflows/codex-app-server-acceptance.yml@$EXPECTED_SOURCE_REF"
++          if [[ "$EXPECTED_SOURCE_REF" != refs/heads/* ]] \
++              || test "$ACTUAL_SOURCE_REF" != "$EXPECTED_SOURCE_REF" \
++              || test "$ACTUAL_SOURCE_SHA" != "$EXPECTED_SOURCE_SHA" \
++              || test "$ACTUAL_GATEWAY_WORKFLOW_SHA" != "$EXPECTED_SOURCE_SHA" \
++              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_SHA" != "$EXPECTED_SOURCE_SHA" \
++              || test "$EXPECTED_GATEWAY_WORKFLOW_REF" != "$expected_gateway_ref" \
++              || test "$ACTUAL_GATEWAY_WORKFLOW_REF" != "$expected_gateway_ref" \
++              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_REF" != "$expected_acceptance_ref" \
++              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_REPOSITORY" != "$REPOSITORY" \
++              || test "$ACTUAL_ACCEPTANCE_WORKFLOW_PATH" != .github/workflows/codex-app-server-acceptance.yml; then
++            echo "::error::Codex acceptance workflow, source SHA, and ref are not bound to the same reviewed commit." >&2
++            exit 1
++          fi
++          if test -z "$CODEX_ACCEPTANCE_API_KEY"; then
++            echo "::error::Missing required Actions secret CODEX_ACCEPTANCE_API_KEY; provision it before an owner-approved Codex acceptance run." >&2
++            exit 1
++          fi
++
+   acceptance:
+-    if: inputs.run_paid_llm_smoke && inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
++    needs: gate
+     runs-on: xcode-27
+     timeout-minutes: 25
+     env:
+       NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
+       CODEX_HOME: ${{ runner.temp }}/nexgenvideo-codex-home
+       NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
++      NGV_CODEX_HOSTILE_MCP_MARKER: ${{ runner.temp }}/foreign-mcp-started
+     steps:
+-      - uses: actions/checkout@v4
+ 
+-      - uses: ./.github/actions/setup-xcode-27
+-
+-      - uses: ./.github/actions/cache-swiftpm-dependencies
++      - uses: actions/checkout@v4
++        with:
++          ref: ${{ inputs.source_sha }}
+ 
+-      - name: Require isolated acceptance credential
++      - name: Verify checked-out source identity
+         shell: bash
+         env:
+-          CODEX_ACCEPTANCE_API_KEY: ${{ secrets.CODEX_ACCEPTANCE_API_KEY }}
++          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+         run: |
+           set -euo pipefail
+-          test -n "$CODEX_ACCEPTANCE_API_KEY"
++          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
++
++      - uses: ./.github/actions/setup-xcode-27
++
++      - uses: ./.github/actions/cache-swiftpm-dependencies
+ 
+       - name: Install pinned Codex CLI
+         shell: bash
+@@ -61,7 +144,13 @@ jobs:
+           set -euo pipefail
+           mkdir -p "$CODEX_HOME"
+           chmod 700 "$CODEX_HOME"
+-          printf '%s\n' 'cli_auth_credentials_store = "keyring"' > "$CODEX_HOME/config.toml"
++          printf '%s\n' \
++            'cli_auth_credentials_store = "keyring"' \
++            '[skills]' \
++            'include_instructions = false' \
++            '[skills.bundled]' \
++            'enabled = false' \
++            > "$CODEX_HOME/config.toml"
+           chmod 600 "$CODEX_HOME/config.toml"
+           printf '%s' "$CODEX_ACCEPTANCE_API_KEY" | codex login --with-api-key
+ 
+@@ -80,6 +169,102 @@ jobs:
+       - name: Stage test runtime inputs
+         run: scripts/stage_test_runtime.sh debug
+ 
++      - name: Exercise real dialog and spend consumers deterministically
++        run: |
++          swift test \
++            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
++            --skip-build \
++            --filter productConsumer
++
++      - name: Prove emitted configuration parses and starts a clean App Server
++        shell: bash
++        env:
++          NGV_CODEX_CLEAN_CONFIGURATION: "1"
++        run: |
++          set -euo pipefail
++          swift test \
++            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
++            --skip-build \
++            --filter isolatedConfigurationStartsCleanRuntime
++          python3 - "$CODEX_HOME/config.toml" <<'PY'
++          from pathlib import Path
++          import sys
++          import tomllib
++
++          raw = Path(sys.argv[1]).read_bytes()
++          assert b"[features]\nshell_tool = false" in raw
++          config = tomllib.loads(raw.decode("utf-8"))
++          assert config["skills"] == {
++              "include_instructions": False,
++              "bundled": {"enabled": False},
++          }
++          assert config["features"]
++          assert all(value is False for value in config["features"].values())
++          assert "mcp_servers" not in config
++          PY
++
++      - name: Install adversarial system configuration fixture
++        shell: bash
++        run: |
++          set -euo pipefail
++          fixture="$RUNNER_TEMP/ngv-codex-hostile-system-config.toml"
++          ownership="$RUNNER_TEMP/ngv-codex-hostile-system-config.sha256"
++          fixture_id="nexgenvideo-codex-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
++          printf '%s\n' \
++            "# $fixture_id" \
++            'model_provider = "foreign"' \
++            '[mcp_servers.foreign]' \
++            'command = "/usr/bin/touch"' \
++            "args = [\"$NGV_CODEX_HOSTILE_MCP_MARKER\"]" \
++            > "$fixture"
++          shasum -a 256 "$fixture" | cut -d' ' -f1 > "$ownership"
++          if test -e /etc/codex/config.toml; then
++            echo "::error::Runner already has /etc/codex/config.toml; refusing to overwrite it." >&2
++            exit 1
++          fi
++          if test -d /etc/codex; then
++            printf '%s\n' existing > "$RUNNER_TEMP/ngv-codex-system-dir-state"
++          else
++            printf '%s\n' created > "$RUNNER_TEMP/ngv-codex-system-dir-state"
++          fi
++          sudo mkdir -p /etc/codex
++          sudo bash -c 'set -o noclobber; cat "$1" > "$2"' \
++            _ "$fixture" /etc/codex/config.toml
++          sudo cmp -s "$fixture" /etc/codex/config.toml
++
++      - name: Prove hostile system configuration is rejected before side effects
++        env:
++          NGV_CODEX_HOSTILE_SYSTEM_CONFIG: "1"
++        run: |
++          swift test \
++            --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
++            --skip-build \
++            --filter hostileSystemConfigurationFailsBeforeSideEffects
++          test ! -e "$NGV_CODEX_HOSTILE_MCP_MARKER"
++
++      - name: Remove adversarial system configuration fixture
++        if: always()
++        shell: bash
++        run: |
++          set -euo pipefail
++          ownership="$RUNNER_TEMP/ngv-codex-hostile-system-config.sha256"
++          if test -e /etc/codex/config.toml; then
++            if test ! -s "$ownership"; then
++              echo "::error::Preserving unowned /etc/codex/config.toml." >&2
++              exit 1
++            fi
++            expected="$(cat "$ownership")"
++            actual="$(sudo shasum -a 256 /etc/codex/config.toml | cut -d' ' -f1)"
++            if test "$actual" != "$expected"; then
++              echo "::error::Preserving /etc/codex/config.toml because it is not the exact owned fixture." >&2
++              exit 1
++            fi
++            sudo rm -f /etc/codex/config.toml
++          fi
++          if test "$(cat "$RUNNER_TEMP/ngv-codex-system-dir-state" 2>/dev/null || true)" = created; then
++            sudo rmdir /etc/codex
++          fi
++
+       - name: Run real Codex consumer smoke
+         shell: bash
+         run: |
+@@ -98,6 +283,27 @@ jobs:
+             echo "Acceptance evidence contains a forbidden sensitive field" >&2
+             exit 1
+           fi
++          jq -e '
++            .configuration_inventory_checks >= 2 and
++            .account_verified_before_thread == true and
++            .text == true and
++            .image_input == true and
++            .typed_image_tool_result == true and
++            .nexgen_tool_round_trip == true and
++            .warm_dialogue == true and
++            .cancel_turn_started == true and
++            .cancel_interrupted == true and
++            .process_termination_confirmed == true and
++            .scratch_removed == true and
++            .cold_resume_rejected == true and
++            .host_transcript_replay == true and
++            .phase_and_language_refresh == true and
++            .default_model_has_text_and_image == true and
++            .agent_service_consumer_exercised == true and
++            .real_tool_executor_exercised == true and
++            .two_chats_and_project_boundary == true and
++            .evidence_payload_redacted == true
++          ' "$NGV_CODEX_ACCEPTANCE_EVIDENCE" >/dev/null
+ 
+       - name: Upload redacted evidence
+         uses: actions/upload-artifact@v4
+diff --git a/Sources/NexGenVideo/Agent/AgentService.swift b/Sources/NexGenVideo/Agent/AgentService.swift
+index fced19f1..470115af 100644
+--- a/Sources/NexGenVideo/Agent/AgentService.swift
++++ b/Sources/NexGenVideo/Agent/AgentService.swift
+@@ -145,14 +145,14 @@ final class AgentService {
+         case .codexAppServer:
+             guard CodexAppServerContract.isAcceptanceRun else {
+                 return .upstream(
+-                    "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated runtime."
++                    "Codex remains unavailable until isolation and transcript replay pass approved Actions acceptance."
+                 )
+             }
+             return CodexAppServerLocator.executable(
+                 environment: ProcessInfo.processInfo.environment,
+                 fileManager: .default
+             ) == nil
+-                ? .upstream("Install the supported Codex CLI in Agent settings.")
++                ? .upstream("Install Codex CLI \(CodexAppServerContract.cliVersion) before running the approved acceptance workflow.")
+                 : nil
+         }
+     }
+@@ -168,7 +168,7 @@ final class AgentService {
+         case .claudeCode:
+             return "Sign in to Claude Code in"
+         case .codexAppServer:
+-            return "Set up the isolated Codex account in"
++            return "Codex is not available in"
+         }
+     }
+ 
+@@ -181,7 +181,7 @@ final class AgentService {
+         case .claudeCode:
+             return "Sign in to Claude Code to use the AI chat."
+         case .codexAppServer:
+-            return "Set up the isolated Codex account to use the AI chat."
++            return "Codex is not available until its isolated runtime passes approved Actions acceptance."
+         }
+     }
+ 
+@@ -3317,11 +3317,14 @@ final class AgentService {
+             lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
+         case .error(let failure):
+             if failure.kind == .authenticationRequired {
+-                if backend == .claudeCode {
++                switch backend {
++                case .claudeCode:
+                     requireClaudeAuthentication(for: sessionID)
+-                } else {
+-                    streamError = .authenticationRequired
++                case .codexAppServer:
++                    streamError = .upstream(failure.message)
+                     runtimeContextSignature = nil
++                case .anthropicAPI:
++                    streamError = .upstream(failure.message)
+                 }
+             } else {
+                 streamError = .upstream(failure.message)
+diff --git a/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift b/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
+index 9bfd9979..fdbe339f 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/AgentBackend.swift
+@@ -81,7 +81,7 @@ enum AgentBackend: String, CaseIterable, Identifiable, Sendable {
+             operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
+             transport = .hostRoundTrip
+         case .codexAppServer:
+-            operations.insert(.reportTokenUsage)
++            operations.formUnion([.resumeFromTranscript, .reportTokenUsage])
+             transport = .hostRoundTrip
+         }
+         return AgentRuntimeDescriptor(
+diff --git a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift
+index 0a8a64bf..3b63a2aa 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerDriver.swift
+@@ -13,9 +13,30 @@ enum CodexAppServerContract {
+         ProcessInfo.processInfo.environment["NGV_CODEX_APP_SERVER_ACCEPTANCE"] == "1"
+     }
+ 
+-    static let isolatedConfig = """
++    static let disabledFeatures = [
++        "shell_tool", "view_image", "sleep_tool", "unified_exec", "unified_exec_tty",
++        "shell_snapshot", "unbounded_connection_retries", "deferred_executor",
++        "request_permissions_tool", "standalone_web_search", "hooks", "code_mode_host",
++        "worktrees", "multi_agent", "multi_agent_v2", "apps", "enable_mcp_apps",
++        "tool_suggest", "recommended_plugins", "plugins", "executor_capability_discovery",
++        "in_app_browser", "in_app_chat", "in_app_dictation", "in_app_local_automation",
++        "in_app_updates", "browser_use", "browser_use_full_cdp_access",
++        "browser_use_external", "computer_use", "remote_plugin", "plugin_sharing",
++        "image_generation", "send_message_to_user_async", "token_budget",
++        "current_time_reminder", "realtime_conversation", "auth_elicitation",
++        "tool_call_mcp_elicitation", "artifact", "memories", "skill_mcp_dependency_install",
++        "skill_search", "guardian_approval", "goals",
++    ]
++
++    static var isolatedConfig: String {
++        let featureConfiguration = disabledFeatures
++            .map { "\($0) = false" }
++            .joined(separator: "\n")
++        return [
++            """
+     cli_auth_credentials_store = "keyring"
+     mcp_oauth_credentials_store = "keyring"
++    model_provider = "openai"
+     approval_policy = "never"
+     sandbox_mode = "read-only"
+     web_search = "disabled"
+@@ -45,52 +66,183 @@ enum CodexAppServerContract {
+     open_world_enabled = false
+ 
+     [features]
+-    shell_tool = false
+-    view_image = false
+-    sleep_tool = false
+-    unified_exec = false
+-    unified_exec_tty = false
+-    shell_snapshot = false
+-    unbounded_connection_retries = false
+-    deferred_executor = false
+-    request_permissions_tool = false
+-    standalone_web_search = false
+-    hooks = false
+-    code_mode_host = false
+-    worktrees = false
+-    multi_agent = false
+-    multi_agent_v2 = false
+-    apps = false
+-    enable_mcp_apps = false
+-    tool_suggest = false
+-    recommended_plugins = false
+-    plugins = false
+-    executor_capability_discovery = false
+-    in_app_browser = false
+-    in_app_chat = false
+-    in_app_dictation = false
+-    in_app_local_automation = false
+-    in_app_updates = false
+-    browser_use = false
+-    browser_use_full_cdp_access = false
+-    browser_use_external = false
+-    computer_use = false
+-    remote_plugin = false
+-    plugin_sharing = false
+-    image_generation = false
+-    send_message_to_user_async = false
+-    token_budget = false
+-    current_time_reminder = false
+-    realtime_conversation = false
+-    auth_elicitation = false
+-    tool_call_mcp_elicitation = false
+-    artifact = false
+-    memories = false
+-    skill_mcp_dependency_install = false
+-    skill_search = false
+-    guardian_approval = false
+-    goals = false
+-    """
++    """,
++            featureConfiguration,
++            """
++    [skills]
++    include_instructions = false
++
++    [skills.bundled]
++    enabled = false
++    """,
++        ].joined(separator: "\n") + "\n"
++    }
++
++    static var isolatedConfigurationLayer: [String: Any] {
++        [
++            "cli_auth_credentials_store": "keyring",
++            "mcp_oauth_credentials_store": "keyring",
++            "model_provider": "openai",
++            "approval_policy": "never",
++            "sandbox_mode": "read-only",
++            "web_search": "disabled",
++            "check_for_update_on_startup": false,
++            "analytics": ["enabled": false],
++            "feedback": ["enabled": false],
++            "otel": [
++                "log_user_prompt": false,
++                "exporter": "none",
++                "trace_exporter": "none",
++                "metrics_exporter": "none",
++            ],
++            "tools": [
++                "update_plan": ["enabled": false],
++                "experimental_request_user_input": ["enabled": false],
++            ],
++            "apps": [
++                "_default": [
++                    "enabled": false,
++                    "destructive_enabled": false,
++                    "open_world_enabled": false,
++                ],
++            ],
++            "features": Dictionary(uniqueKeysWithValues: disabledFeatures.map { ($0, false) }),
++            "skills": [
++                "include_instructions": false,
++                "bundled": ["enabled": false],
++            ] as [String: Any],
++        ]
++    }
++
++    static func validateIsolation(
++        configResponse: [String: Any],
++        requirementsResponse: [String: Any],
++        mcpResponse: [String: Any],
++        skillsResponse: [String: Any],
++        home: URL,
++        scratch: URL
++    ) throws {
++        try validateConfiguration(
++            configResponse: configResponse,
++            requirementsResponse: requirementsResponse,
++            home: home
++        )
++        try validateToolInventory(
++            mcpResponse: mcpResponse,
++            skillsResponse: skillsResponse,
++            scratch: scratch
++        )
++    }
++
++    static func validateConfiguration(
++        configResponse: [String: Any],
++        requirementsResponse: [String: Any],
++        home: URL
++    ) throws {
++        guard let layers = configResponse["layers"] as? [[String: Any]],
++              let effective = configResponse["config"] as? [String: Any],
++              let origins = configResponse["origins"] as? [String: Any] else {
++            throw CodexAppServerError.isolationViolation("Codex did not expose complete configuration layers")
++        }
++
++        let expectedConfig = home.appendingPathComponent("config.toml").standardizedFileURL
++        var userLayers = 0
++        for layer in layers {
++            guard let source = layer["name"] as? [String: Any],
++                  let type = source["type"] as? String,
++                  let raw = layer["config"] as? [String: Any] else {
++                throw CodexAppServerError.isolationViolation("Codex returned an unreadable configuration layer")
++            }
++            switch type {
++            case "packagedDefaults":
++                break
++            case "system":
++                guard raw.isEmpty else {
++                    throw CodexAppServerError.isolationViolation("System Codex configuration is active")
++                }
++            case "user":
++                userLayers += 1
++                guard source["profile"] == nil || source["profile"] is NSNull,
++                      let file = source["file"] as? String,
++                      URL(fileURLWithPath: file).standardizedFileURL == expectedConfig,
++                      equalJSON(raw, isolatedConfigurationLayer) else {
++                    throw CodexAppServerError.isolationViolation("The isolated Codex configuration was not preserved")
++                }
++            default:
++                guard raw.isEmpty else {
++                    throw CodexAppServerError.isolationViolation("Forbidden Codex configuration layer: \(type)")
++                }
++            }
++        }
++        guard userLayers == 1 else {
++            throw CodexAppServerError.isolationViolation("The isolated Codex user layer is missing")
++        }
++        for value in origins.values {
++            guard let metadata = value as? [String: Any],
++                  let source = metadata["name"] as? [String: Any],
++                  let type = source["type"] as? String else {
++                throw CodexAppServerError.isolationViolation("Codex returned unreadable configuration origins")
++            }
++            guard ["packagedDefaults", "system", "user"].contains(type) else {
++                throw CodexAppServerError.isolationViolation("Forbidden Codex configuration origin: \(type)")
++            }
++        }
++        guard effective["approval_policy"] as? String == "never",
++              effective["sandbox_mode"] as? String == "read-only",
++              effective["web_search"] as? String == "disabled",
++              effective["model_provider"] as? String == "openai",
++              let skills = effective["skills"] as? [String: Any],
++              skills["include_instructions"] as? Bool == false,
++              let bundledSkills = skills["bundled"] as? [String: Any],
++              bundledSkills["enabled"] as? Bool == false,
++              isAbsentOrNull(effective["model"]),
++              isAbsentOrNull(effective["instructions"]),
++              isAbsentOrNull(effective["developer_instructions"]),
++              isAbsentOrNull(effective["browser_use"]),
++              isAbsentOrNull(effective["computer_use"]) else {
++            throw CodexAppServerError.isolationViolation(
++                "The effective Codex configuration changed the provider or capability boundary"
++            )
++        }
++        guard requirementsResponse["requirements"] == nil
++                || requirementsResponse["requirements"] is NSNull else {
++            throw CodexAppServerError.isolationViolation("Managed Codex requirements are active")
++        }
++    }
++
++    static func validateToolInventory(
++        mcpResponse: [String: Any],
++        skillsResponse: [String: Any],
++        scratch: URL
++    ) throws {
++        guard let mcpServers = mcpResponse["data"] as? [Any], mcpServers.isEmpty,
++              mcpResponse["nextCursor"] == nil || mcpResponse["nextCursor"] is NSNull else {
++            throw CodexAppServerError.isolationViolation("A foreign Codex MCP server is configured")
++        }
++        guard let skillEntries = skillsResponse["data"] as? [[String: Any]],
++              skillEntries.count == 1,
++              skillEntries.allSatisfy({ entry in
++                  entry["cwd"] as? String == scratch.path
++                      && (entry["skills"] as? [Any])?.isEmpty == true
++                      && (entry["errors"] as? [Any])?.isEmpty == true
++              }) else {
++            throw CodexAppServerError.isolationViolation("Codex skills are present or could not be enumerated")
++        }
++    }
++
++    private static func isAbsentOrNull(_ value: Any?) -> Bool {
++        value == nil || value is NSNull
++    }
++
++    private static func equalJSON(_ lhs: Any, _ rhs: Any) -> Bool {
++        guard JSONSerialization.isValidJSONObject(lhs),
++              JSONSerialization.isValidJSONObject(rhs),
++              let left = try? JSONSerialization.data(withJSONObject: lhs, options: [.sortedKeys]),
++              let right = try? JSONSerialization.data(withJSONObject: rhs, options: [.sortedKeys]) else {
++            return false
++        }
++        return left == right
++    }
+ 
+     static func accepts(userAgent: String) -> Bool {
+         userAgent.split(whereSeparator: { !$0.isNumber && $0 != "." })
+@@ -123,8 +275,10 @@ enum CodexAppServerError: LocalizedError, Equatable {
+     case executableUnavailable
+     case incompatibleVersion(String)
+     case isolatedHomeMismatch
++    case isolationViolation(String)
+     case authenticationRequired
+     case resumeIsolationUnavailable
++    case transcriptReplayUnavailable(String)
+     case malformedMessage
+     case remote(code: Int, message: String)
+     case requestTimedOut(String)
+@@ -139,10 +293,14 @@ enum CodexAppServerError: LocalizedError, Equatable {
+             "Codex CLI \(value) is incompatible; version \(CodexAppServerContract.cliVersion) is required."
+         case .isolatedHomeMismatch:
+             "Codex did not honor the isolated runtime home."
++        case .isolationViolation(let detail):
++            "Codex isolation is incompatible: \(detail)."
+         case .authenticationRequired:
+             "Sign in to the isolated NexGenVideo Codex account before starting a turn."
+         case .resumeIsolationUnavailable:
+             "Codex CLI \(CodexAppServerContract.cliVersion) cannot safely restore the isolated tool surface."
++        case .transcriptReplayUnavailable(let detail):
++            "Codex cannot safely replay this chat: \(detail)."
+         case .malformedMessage:
+             "Codex App Server returned an invalid protocol message."
+         case .remote(_, let message):
+@@ -167,7 +325,6 @@ struct CodexAppServerAccountStatus: Equatable, Sendable {
+     enum Billing: Equatable, Sendable {
+         case apiKey
+         case chatGPT(plan: String)
+-        case amazonBedrock(managedCredentials: Bool)
+     }
+ 
+     let billing: Billing
+@@ -179,6 +336,7 @@ protocol CodexAppServerDriving: AnyObject {
+     var accountStatus: CodexAppServerAccountStatus? { get }
+ 
+     func start(home: URL, scratch: URL) async throws
++    func verifyIsolation(home: URL, scratch: URL) async throws
+     func request(method: String, params: [String: Any]) async throws -> [String: Any]
+     func respond(id: Any, result: [String: Any]) throws
+     func respond(id: Any, errorCode: Int, message: String) throws
+@@ -207,6 +365,14 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+     private var pending: [Int: Pending] = [:]
+     private var nextRequestID = 1
+     private var didClose = false
++    private var ownedScratch: URL?
++    private var terminationOwner: CodexAppServerJSONRPCDriver?
++    private var terminationWaiters: [CheckedContinuation<Void, Never>] = []
++    private(set) var requestedMethods: [String] = []
++    private(set) var observedTurnStartedIDs: Set<String> = []
++    private(set) var observedInterruptedTurnIDs: Set<String> = []
++    private(set) var sentTypedImageToolResult = false
++    private(set) var terminationConfirmed = false
+ 
+     init(
+         fileManager: FileManager = .default,
+@@ -244,8 +410,8 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+             home: home,
+             scratch: scratch
+         )
+-        process.terminationHandler = { [weak self] _ in
+-            Task { @MainActor in self?.transportClosed() }
++        process.terminationHandler = { [weak self] process in
++            Task { @MainActor in self?.processDidTerminate(process) }
+         }
+         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+             let data = handle.availableData
+@@ -254,11 +420,14 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+         errors.fileHandleForReading.readabilityHandler = { handle in
+             _ = handle.availableData
+         }
++        terminationOwner = self
+         do {
+             try process.run()
+         } catch {
++            terminationOwner = nil
+             output.fileHandleForReading.readabilityHandler = nil
+             errors.fileHandleForReading.readabilityHandler = nil
++            cleanupScratch()
+             throw CodexAppServerError.launchFailed(error.localizedDescription)
+         }
+         self.process = process
+@@ -266,48 +435,77 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+         stdout = output.fileHandleForReading
+         stderr = errors.fileHandleForReading
+ 
+-        let initialize = try await request(method: "initialize", params: [
+-            "clientInfo": ["name": "NexGenVideo", "version": "1"],
+-            "capabilities": ["experimentalApi": true],
+-        ])
+-        guard let userAgent = initialize["userAgent"] as? String else {
+-            throw CodexAppServerError.malformedMessage
+-        }
+-        guard CodexAppServerContract.accepts(userAgent: userAgent) else {
+-            throw CodexAppServerError.incompatibleVersion(userAgent)
+-        }
+-        guard let reportedHome = initialize["codexHome"] as? String,
+-              URL(fileURLWithPath: reportedHome).standardizedFileURL == home.standardizedFileURL else {
+-            throw CodexAppServerError.isolatedHomeMismatch
+-        }
+-        try send(["method": "initialized", "params": [:]])
+-
+-        let account = try await request(method: "account/read", params: ["refreshToken": false])
+-        if account["requiresOpenaiAuth"] as? Bool == true, account["account"] is NSNull {
+-            throw CodexAppServerError.authenticationRequired
+-        }
+-        guard let details = account["account"] as? [String: Any],
+-              let type = details["type"] as? String else {
+-            throw CodexAppServerError.authenticationRequired
+-        }
+-        switch type {
+-        case "apiKey":
+-            accountStatus = .init(billing: .apiKey)
+-        case "chatgpt":
+-            guard let plan = details["planType"] as? String else {
++        do {
++            let initialize = try await request(method: "initialize", params: [
++                "clientInfo": ["name": "NexGenVideo", "version": "1"],
++                "capabilities": ["experimentalApi": true],
++            ])
++            guard let userAgent = initialize["userAgent"] as? String else {
+                 throw CodexAppServerError.malformedMessage
+             }
+-            accountStatus = .init(billing: .chatGPT(plan: plan))
+-        case "amazonBedrock":
+-            accountStatus = .init(billing: .amazonBedrock(
+-                managedCredentials: details["usesCodexManagedCredentials"] as? Bool ?? false
+-            ))
+-        default:
+-            throw CodexAppServerError.malformedMessage
++            guard CodexAppServerContract.accepts(userAgent: userAgent) else {
++                throw CodexAppServerError.incompatibleVersion(userAgent)
++            }
++            guard let reportedHome = initialize["codexHome"] as? String,
++                  URL(fileURLWithPath: reportedHome).standardizedFileURL == home.standardizedFileURL else {
++                throw CodexAppServerError.isolatedHomeMismatch
++            }
++            try send(["method": "initialized", "params": [:]])
++            try await verifyIsolation(home: home, scratch: scratch)
++
++            let account = try await request(method: "account/read", params: ["refreshToken": false])
++            if account["requiresOpenaiAuth"] as? Bool == true, account["account"] is NSNull {
++                throw CodexAppServerError.authenticationRequired
++            }
++            guard let details = account["account"] as? [String: Any],
++                  let type = details["type"] as? String else {
++                throw CodexAppServerError.authenticationRequired
++            }
++            switch type {
++            case "apiKey":
++                accountStatus = .init(billing: .apiKey)
++            case "chatgpt":
++                guard let plan = details["planType"] as? String else {
++                    throw CodexAppServerError.malformedMessage
++                }
++                accountStatus = .init(billing: .chatGPT(plan: plan))
++            default:
++                throw CodexAppServerError.isolationViolation("The account selected a non-OpenAI provider")
++            }
++        } catch {
++            stop()
++            throw error
+         }
+     }
+ 
++    func verifyIsolation(home: URL, scratch: URL) async throws {
++        let config = try await request(method: "config/read", params: [
++            "cwd": scratch.path,
++            "includeLayers": true,
++        ])
++        let requirements = try await request(method: "configRequirements/read", params: [:])
++        try CodexAppServerContract.validateConfiguration(
++            configResponse: config,
++            requirementsResponse: requirements,
++            home: home
++        )
++        let mcp = try await request(method: "mcpServerStatus/list", params: [
++            "detail": "toolsAndAuthOnly",
++            "limit": 100,
++        ])
++        let skills = try await request(method: "skills/list", params: [
++            "cwds": [scratch.path],
++            "forceReload": true,
++        ])
++        try CodexAppServerContract.validateToolInventory(
++            mcpResponse: mcp,
++            skillsResponse: skills,
++            scratch: scratch
++        )
++    }
++
+     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
++        requestedMethods.append(method)
+         let id = nextRequestID
+         nextRequestID += 1
+         return try await withCheckedThrowingContinuation { continuation in
+@@ -327,6 +525,10 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+     }
+ 
+     func respond(id: Any, result: [String: Any]) throws {
++        if let content = result["contentItems"] as? [[String: Any]],
++           content.contains(where: { $0["type"] as? String == "inputImage" }) {
++            sentTypedImageToolResult = true
++        }
+         try send(["id": id, "result": result])
+     }
+ 
+@@ -347,20 +549,38 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+             finishPending(with: CodexAppServerError.transportClosed)
+             eventContinuation.finish()
+         }
+-        process = nil
+         stdin = nil
+         stdout = nil
+         stderr = nil
++        if process?.isRunning != true {
++            finalizeTermination()
++        }
++    }
++
++    func waitForTermination() async {
++        if terminationConfirmed || process == nil { return }
++        await withCheckedContinuation { continuation in
++            terminationWaiters.append(continuation)
++        }
+     }
+ 
+     private func prepare(home: URL, scratch: URL) throws {
+-        try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
+-        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
+-        let config = home.appendingPathComponent("config.toml")
+-        try Data(CodexAppServerContract.isolatedConfig.utf8).write(to: config, options: .atomic)
+-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
+-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
++        guard !fileManager.fileExists(atPath: scratch.path) else {
++            throw CodexAppServerError.launchFailed("The runtime scratch directory already exists")
++        }
++        do {
++            try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
++            try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
++            ownedScratch = scratch
++            let config = home.appendingPathComponent("config.toml")
++            try Data(CodexAppServerContract.isolatedConfig.utf8).write(to: config, options: .atomic)
++            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
++            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
++            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: config.path)
++        } catch {
++            cleanupScratch()
++            throw error
++        }
+     }
+ 
+     private func receive(_ data: Data) {
+@@ -415,6 +635,16 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+             throw CodexAppServerError.malformedMessage
+         }
+         let params = object["params"] as? [String: Any] ?? [:]
++        if method == "turn/started",
++           let turn = params["turn"] as? [String: Any],
++           let turnID = turn["id"] as? String {
++            observedTurnStartedIDs.insert(turnID)
++        } else if method == "turn/completed",
++                  let turn = params["turn"] as? [String: Any],
++                  turn["status"] as? String == "interrupted",
++                  let turnID = turn["id"] as? String {
++            observedInterruptedTurnIDs.insert(turnID)
++        }
+         if let id = object["id"] {
+             eventContinuation.yield(.request(id: id, method: method, params: params))
+         } else {
+@@ -451,10 +681,38 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+         finishPending(with: CodexAppServerError.transportClosed)
+         eventContinuation.yield(.closed(.transportClosed))
+         eventContinuation.finish()
+-        process = nil
+         stdin = nil
+         stdout = nil
+         stderr = nil
++        if process?.isRunning != true {
++            finalizeTermination()
++        }
++    }
++
++    private func processDidTerminate(_ terminatedProcess: Process) {
++        if process === terminatedProcess {
++            process = nil
++        }
++        if !didClose {
++            transportClosed()
++        }
++        finalizeTermination()
++    }
++
++    private func finalizeTermination() {
++        guard !terminationConfirmed else { return }
++        terminationConfirmed = true
++        cleanupScratch()
++        let waiters = terminationWaiters
++        terminationWaiters.removeAll()
++        waiters.forEach { $0.resume() }
++        terminationOwner = nil
++    }
++
++    private func cleanupScratch() {
++        guard let scratch = ownedScratch else { return }
++        ownedScratch = nil
++        try? fileManager.removeItem(at: scratch)
+     }
+ 
+     private func finishPending(with error: Error) {
+@@ -468,10 +726,12 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
+ 
+     private static func terminate(_ process: Process) {
+         process.terminate()
+-        Task { @MainActor [weak process] in
++        Task { @MainActor [process] in
+             try? await Task.sleep(for: .seconds(2))
+-            guard let process, process.isRunning else { return }
+-            kill(process.processIdentifier, SIGKILL)
++            guard process.isRunning else { return }
++            let pid = process.processIdentifier
++            guard pid > 1 else { return }
++            kill(pid, SIGKILL)
+         }
+     }
+ }
+diff --git a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift
+index 694168f5..99b20857 100644
+--- a/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift
++++ b/Sources/NexGenVideo/Agent/Runtime/CodexAppServerRuntimeAdapter.swift
+@@ -5,6 +5,12 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+     typealias DriverFactory = @MainActor () -> any CodexAppServerDriving
+     typealias RuntimeLocations = @MainActor (_ session: AgentRuntimeSessionRequest) throws -> (home: URL, scratch: URL)
+ 
++    private struct PendingSuspension {
++        let responseID: Any
++        let result: [String: Any]
++        let providerTurnID: String
++    }
++
+     private let driverFactory: DriverFactory
+     private let runtimeLocations: RuntimeLocations
+     private var session: AgentRuntimeSessionRequest?
+@@ -14,6 +20,10 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+     private var activeTurnID: UUID?
+     private var providerThreadID: String?
+     private var providerTurnID: String?
++    private var pendingSuspension: PendingSuspension?
++    private var suspensionTimeoutTask: Task<Void, Never>?
++    private var requiresTranscriptReplay = false
++    private var invalidated = false
+ 
+     private(set) var descriptor: AgentRuntimeDescriptor
+     private(set) var state: AgentRuntimeState = .idle
+@@ -31,15 +41,19 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         guard request.providerSessionID == nil else {
+             throw CodexAppServerError.resumeIsolationUnavailable
+         }
+-        try configure(request)
++        try configure(request, replayTranscript: false)
+     }
+ 
+     func resume(_ request: AgentRuntimeSessionRequest) throws {
+-        throw CodexAppServerError.resumeIsolationUnavailable
++        guard request.providerSessionID == nil else {
++            throw CodexAppServerError.resumeIsolationUnavailable
++        }
++        try configure(request, replayTranscript: true)
+     }
+ 
+     func send(_ request: AgentRuntimeTurnRequest) throws -> AsyncStream<AgentRuntimeEventEnvelope> {
+         guard let session else { throw AgentRuntimeContractError.sessionNotStarted }
++        guard !invalidated else { throw AgentRuntimeContractError.sessionNotStarted }
+         guard session.sessionID == request.sessionID else { throw AgentRuntimeContractError.sessionMismatch }
+         guard activeRelay == nil else { throw AgentRuntimeContractError.turnAlreadyRunning }
+         guard request.currentMessage.role == .user,
+@@ -59,43 +73,71 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+ 
+     func cancel(sessionID: UUID) {
+         guard session?.sessionID == sessionID else { return }
+-        if let relay = activeRelay, let activeTurnID {
+-            state = .cancelling(sessionID: sessionID, turnID: activeTurnID)
+-            relay.finish(.cancelled)
++        guard !invalidated else { return }
++        invalidated = true
++        pendingSuspension = nil
++        suspensionTimeoutTask?.cancel()
++        suspensionTimeoutTask = nil
++        guard let relay = activeRelay, let activeTurnID else {
++            driver?.stop()
++            driver = nil
++            providerThreadID = nil
++            providerTurnID = nil
++            state = .ended(sessionID: sessionID)
++            return
++        }
++        state = .cancelling(sessionID: sessionID, turnID: activeTurnID)
++        relay.yield(.providerSessionInvalidated)
++        guard let driver, let threadID = providerThreadID, let turnID = providerTurnID else {
++            finishCancellation(sessionID: sessionID, relay: relay)
++            return
+         }
+-        let driver = self.driver
+-        let threadID = providerThreadID
+-        let turnID = providerTurnID
+-        Task { @MainActor in
+-            if let driver, let threadID, let turnID {
+-                _ = try? await driver.request(
++        Task { @MainActor [weak self] in
++            do {
++                _ = try await driver.request(
+                     method: "turn/interrupt",
+                     params: ["threadId": threadID, "turnId": turnID]
+                 )
++                guard let self,
++                      self.activeRelay === relay,
++                      self.providerTurnID == turnID,
++                      relay.terminal == nil else { return }
++                try? await Task.sleep(for: .seconds(5))
++                guard self.activeRelay === relay,
++                      self.providerTurnID == turnID,
++                      relay.terminal == nil else { return }
++                self.finishCancellation(sessionID: sessionID, relay: relay)
++            } catch {
++                guard let self, self.activeRelay === relay, relay.terminal == nil else { return }
++                self.finishCancellation(sessionID: sessionID, relay: relay)
+             }
+         }
+-        Task { @MainActor in
+-            try? await Task.sleep(for: .milliseconds(250))
+-            driver?.stop()
+-        }
+-        activeTask?.cancel()
+-        activeTask = nil
+-        self.driver = nil
+-        activeRelay = nil
+-        activeTurnID = nil
+-        providerTurnID = nil
+-        state = .ready(sessionID: sessionID)
+     }
+ 
+     func end(sessionID: UUID) {
+         guard session?.sessionID == sessionID else { return }
+-        cancel(sessionID: sessionID)
++        invalidated = true
++        pendingSuspension = nil
++        suspensionTimeoutTask?.cancel()
++        suspensionTimeoutTask = nil
++        activeRelay?.yield(.providerSessionInvalidated)
++        activeRelay?.finish(.cancelled)
++        activeTask?.cancel()
++        activeTask = nil
++        driver?.stop()
++        driver = nil
++        activeRelay = nil
++        activeTurnID = nil
+         session = nil
+         providerThreadID = nil
++        providerTurnID = nil
+         state = .ended(sessionID: sessionID)
+     }
+ 
+-    private func configure(_ request: AgentRuntimeSessionRequest) throws {
++    private func configure(
++        _ request: AgentRuntimeSessionRequest,
++        replayTranscript: Bool
++    ) throws {
+         if let activeRelay, activeRelay.terminal == nil {
+             throw AgentRuntimeContractError.turnAlreadyRunning
+         }
+@@ -104,6 +146,11 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         session = request
+         providerThreadID = request.providerSessionID
+         providerTurnID = nil
++        pendingSuspension = nil
++        suspensionTimeoutTask?.cancel()
++        suspensionTimeoutTask = nil
++        requiresTranscriptReplay = replayTranscript
++        invalidated = false
+         descriptor = AgentBackend.codexAppServer.runtimeDescriptor(
+             toolNames: Set(request.hostContext.toolSchemas.map(\.name))
+         )
+@@ -132,6 +179,10 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                 guard isCurrent(session: session, request: request, relay: relay),
+                       self.session?.runtimeGenerationID == generationID else { return }
+                 updateAuthentication(driver.accountStatus)
++                try await driver.verifyIsolation(home: locations.home, scratch: locations.scratch)
++                try Task.checkCancellation()
++                guard isCurrent(session: session, request: request, relay: relay),
++                      self.session?.runtimeGenerationID == generationID else { return }
+ 
+                 threadID = try await openThread(
+                     driver: driver,
+@@ -142,6 +193,17 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                 guard isCurrent(session: session, request: request, relay: relay),
+                       self.session?.runtimeGenerationID == generationID else { return }
+                 providerThreadID = threadID
++                if requiresTranscriptReplay {
++                    try await replayTranscript(
++                        Array(request.messages.dropLast()),
++                        threadID: threadID,
++                        driver: driver
++                    )
++                    try Task.checkCancellation()
++                    guard isCurrent(session: session, request: request, relay: relay),
++                          self.session?.runtimeGenerationID == generationID else { return }
++                    requiresTranscriptReplay = false
++                }
+                 relay.yield(.providerSessionStarted(threadID))
+             }
+ 
+@@ -171,25 +233,37 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+             }
+             let timeout = Task { [weak self] in
+                 try? await Task.sleep(for: CodexAppServerContract.turnTimeout)
+-                guard !Task.isCancelled, let self else { return }
++                guard !Task.isCancelled,
++                      let self,
++                      self.isCurrent(session: session, request: request, relay: relay) else { return }
+                 self.protocolFailure("Codex turn timed out.", request: request, relay: relay)
+             }
+             await eventTask.value
+             timeout.cancel()
++            guard ownsTurn(session: session, request: request, relay: relay) else { return }
+             if relay.terminal == nil {
+                 throw CodexAppServerError.transportClosed
+             }
+         } catch is CancellationError {
++            guard ownsTurn(session: session, request: request, relay: relay) else { return }
+             relay.finish(.cancelled)
+         } catch {
+             guard isCurrent(session: session, request: request, relay: relay) else { return }
+             fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
+         }
+         if activeRelay === relay {
++            if invalidated {
++                driver?.stop()
++                driver = nil
++                providerThreadID = nil
++            }
+             activeRelay = nil
+             activeTask = nil
+             activeTurnID = nil
+             providerTurnID = nil
++            pendingSuspension = nil
++            suspensionTimeoutTask?.cancel()
++            suspensionTimeoutTask = nil
+         }
+     }
+ 
+@@ -203,6 +277,7 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+             "runtimeWorkspaceRoots": [],
+             "approvalPolicy": "never",
+             "sandbox": "read-only",
++            "modelProvider": "openai",
+             "baseInstructions": session.hostContext.systemInstructions,
+             "developerInstructions": Self.developerInstructions(for: session.hostContext),
+             "config": Self.turnConfiguration,
+@@ -228,6 +303,19 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         return threadID
+     }
+ 
++    private func replayTranscript(
++        _ messages: [AgentRuntimeMessage],
++        threadID: String,
++        driver: any CodexAppServerDriving
++    ) async throws {
++        let items = try Self.transcriptItems(messages)
++        guard !items.isEmpty else { return }
++        _ = try await driver.request(method: "thread/injectItems", params: [
++            "threadId": threadID,
++            "items": items,
++        ])
++    }
++
+     private func receive(
+         _ inbound: CodexAppServerInbound,
+         driver: any CodexAppServerDriving,
+@@ -245,6 +333,10 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                 try? driver.respond(id: id, errorCode: -32_602, message: "Stale host tool request")
+                 return
+             }
++            guard !invalidated, pendingSuspension == nil else {
++                try? driver.respond(id: id, errorCode: -32_602, message: "The host turn is quiescing")
++                return
++            }
+             guard method == "item/tool/call" else {
+                 try? driver.respond(id: id, errorCode: -32_601, message: "Unsupported server request")
+                 protocolFailure("Codex requested a forbidden capability: \(method)", request: request, relay: relay)
+@@ -259,7 +351,13 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                 relay: relay
+             )
+         case .notification(let method, let params):
+-            receiveNotification(method: method, params: params, request: request, relay: relay)
++            receiveNotification(
++                method: method,
++                params: params,
++                driver: driver,
++                request: request,
++                relay: relay
++            )
+         }
+     }
+ 
+@@ -296,32 +394,59 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         guard isCurrent(session: session, request: request, relay: relay),
+               matchesActiveProviderTurn(params) else { return }
+         relay.yield(.toolResult(id: callID, content: result.content, isError: result.isError))
+-        do {
+-            try driver.respond(id: responseID, result: [
+-                "contentItems": Self.contentItems(result.content),
+-                "success": !result.isError,
+-            ])
+-        } catch {
+-            fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
+-            return
+-        }
++        let providerResult: [String: Any] = [
++            "contentItems": Self.contentItems(result.content),
++            "success": !result.isError,
++        ]
+         if result.turnDisposition == .suspendTurn {
+-            relay.finish(.completed(.toolUse))
+-            if let threadID = providerThreadID, let turnID = providerTurnID {
+-                Task { @MainActor in
+-                    _ = try? await driver.request(
+-                        method: "turn/interrupt",
+-                        params: ["threadId": threadID, "turnId": turnID]
++            guard let threadID = providerThreadID, let turnID = providerTurnID else {
++                protocolFailure("Codex lost the provider turn before host suspension.", request: request, relay: relay)
++                return
++            }
++            pendingSuspension = PendingSuspension(
++                responseID: responseID,
++                result: providerResult,
++                providerTurnID: turnID
++            )
++            state = .cancelling(sessionID: request.sessionID, turnID: request.turnID)
++            do {
++                _ = try await driver.request(
++                    method: "turn/interrupt",
++                    params: ["threadId": threadID, "turnId": turnID]
++                )
++                guard isCurrent(session: session, request: request, relay: relay),
++                      pendingSuspension?.providerTurnID == turnID else { return }
++                suspensionTimeoutTask?.cancel()
++                suspensionTimeoutTask = Task { @MainActor [weak self] in
++                    try? await Task.sleep(for: .seconds(5))
++                    guard !Task.isCancelled,
++                          let self,
++                          self.isCurrent(session: session, request: request, relay: relay),
++                          self.pendingSuspension?.providerTurnID == turnID else { return }
++                    self.protocolFailure(
++                        "Codex did not confirm provider quiescence after host suspension.",
++                        request: request,
++                        relay: relay
+                     )
+                 }
++            } catch {
++                guard isCurrent(session: session, request: request, relay: relay) else { return }
++                fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
+             }
+-            setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++            return
++        }
++        do {
++            try driver.respond(id: responseID, result: providerResult)
++        } catch {
++            fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
++            return
+         }
+     }
+ 
+     private func receiveNotification(
+         method: String,
+         params: [String: Any],
++        driver: any CodexAppServerDriving,
+         request: AgentRuntimeTurnRequest,
+         relay: AgentRuntimeEventRelay
+     ) {
+@@ -329,9 +454,18 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+            inboundThreadID != providerThreadID {
+             return
+         }
++        if let inboundTurnID = Self.notificationTurnID(params),
++           inboundTurnID != providerTurnID {
++            return
++        }
++        if invalidated, method != "turn/completed" { return }
++        if pendingSuspension != nil,
++           method != "turn/completed",
++           method != "error" { return }
+         switch method {
+         case "thread/started", "thread/status/changed", "account/rateLimits/updated", "account/updated",
+-             "model/safetyBuffering/updated", "model/verification":
++             "model/safetyBuffering/updated", "model/verification", "configWarning", "warning",
++             "deprecationNotice":
+             break
+         case "turn/started":
+             guard matchesThread(params),
+@@ -339,9 +473,11 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                   turn["id"] as? String == providerTurnID else { return }
+         case "thread/name/updated":
+             guard matchesThread(params) else { return }
++        case "thread/settings/updated":
++            guard matchesThread(params) else { return }
+         case "serverRequest/resolved":
+             guard matchesThread(params) else { return }
+-        case "thread/compacted", "turn/moderationMetadata":
++        case "thread/compacted", "turn/moderationMetadata", "turn/diff/updated":
+             guard matchesActiveProviderTurn(params) else { return }
+         case "item/reasoning/summaryPartAdded", "item/reasoning/summaryTextDelta",
+              "item/reasoning/textDelta":
+@@ -381,13 +517,43 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                   let turn = params["turn"] as? [String: Any],
+                   turn["id"] as? String == providerTurnID,
+                   let status = turn["status"] as? String else { return }
++            if invalidated {
++                relay.finish(.cancelled)
++                setStateIfActive(.ended(sessionID: request.sessionID), relay: relay)
++                return
++            }
+             switch status {
+             case "completed":
++                guard pendingSuspension == nil else {
++                    protocolFailure(
++                        "Codex completed before the host suspension became quiescent.",
++                        request: request,
++                        relay: relay
++                    )
++                    return
++                }
+                 relay.finish(.completed(.endTurn))
+                 setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
+             case "interrupted":
+-                relay.finish(.cancelled)
+-                setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++                if let pending = pendingSuspension, pending.providerTurnID == providerTurnID {
++                    suspensionTimeoutTask?.cancel()
++                    suspensionTimeoutTask = nil
++                    do {
++                        try driver.respond(id: pending.responseID, result: pending.result)
++                    } catch {
++                        fail(Self.failure(error), sessionID: request.sessionID, relay: relay)
++                        return
++                    }
++                    pendingSuspension = nil
++                    relay.finish(.completed(.toolUse))
++                    setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
++                } else {
++                    relay.finish(.cancelled)
++                    setStateIfActive(
++                        invalidated ? .ended(sessionID: request.sessionID) : .ready(sessionID: request.sessionID),
++                        relay: relay
++                    )
++                }
+             default:
+                 runtimeFailure(
+                     turn["error"] as? [String: Any],
+@@ -397,7 +563,12 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+                 )
+             }
+         case "error":
+-            guard matchesActiveProviderTurn(params) else { return }
++            guard matchesActiveProviderTurn(params),
++                  let willRetry = params["willRetry"] as? Bool else {
++                protocolFailure("Codex returned a malformed runtime error.", request: request, relay: relay)
++                return
++            }
++            guard !willRetry else { return }
+             runtimeFailure(
+                 params["error"] as? [String: Any],
+                 fallback: "Codex reported a runtime error.",
+@@ -439,6 +610,11 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         relay: AgentRuntimeEventRelay
+     ) {
+         guard relay.terminal == nil else { return }
++        invalidated = true
++        pendingSuspension = nil
++        suspensionTimeoutTask?.cancel()
++        suspensionTimeoutTask = nil
++        relay.yield(.providerSessionInvalidated)
+         relay.yield(.error(failure))
+         relay.finish(.failed)
+         driver?.stop()
+@@ -446,6 +622,19 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         setStateIfActive(.failed(sessionID: sessionID, message: failure.message), relay: relay)
+     }
+ 
++    private func finishCancellation(sessionID: UUID, relay: AgentRuntimeEventRelay) {
++        guard activeRelay === relay, relay.terminal == nil else { return }
++        pendingSuspension = nil
++        suspensionTimeoutTask?.cancel()
++        suspensionTimeoutTask = nil
++        relay.finish(.cancelled)
++        driver?.stop()
++        driver = nil
++        providerThreadID = nil
++        providerTurnID = nil
++        state = .ended(sessionID: sessionID)
++    }
++
+     private func setStateIfActive(_ value: AgentRuntimeState, relay: AgentRuntimeEventRelay) {
+         guard activeRelay === relay else { return }
+         state = value
+@@ -459,10 +648,6 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+             authentication = .apiKey(service: "OpenAI via isolated Codex")
+         case .chatGPT(let plan):
+             authentication = .isolatedExternalAccount(command: "Codex ChatGPT \(plan)")
+-        case .amazonBedrock(let managed):
+-            authentication = .isolatedExternalAccount(
+-                command: managed ? "Codex managed Amazon Bedrock" : "Amazon Bedrock"
+-            )
+         }
+         descriptor = AgentRuntimeDescriptor(
+             identity: descriptor.identity,
+@@ -476,12 +661,20 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         session: AgentRuntimeSessionRequest,
+         request: AgentRuntimeTurnRequest,
+         relay: AgentRuntimeEventRelay
++    ) -> Bool {
++        ownsTurn(session: session, request: request, relay: relay)
++            && relay.terminal == nil
++    }
++
++    private func ownsTurn(
++        session: AgentRuntimeSessionRequest,
++        request: AgentRuntimeTurnRequest,
++        relay: AgentRuntimeEventRelay
+     ) -> Bool {
+         self.session?.sessionID == session.sessionID
+             && self.session?.runtimeGenerationID == session.runtimeGenerationID
+             && activeRelay === relay
+             && activeTurnID == request.turnID
+-            && relay.terminal == nil
+     }
+ 
+     private func matchesThread(_ params: [String: Any]) -> Bool {
+@@ -508,6 +701,95 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         }
+     }
+ 
++    private static func transcriptItems(
++        _ messages: [AgentRuntimeMessage]
++    ) throws -> [[String: Any]] {
++        var items: [[String: Any]] = []
++        var toolNames: [String: String] = [:]
++
++        for message in messages {
++            var content: [[String: Any]] = []
++            func flushMessage() {
++                guard !content.isEmpty else { return }
++                items.append([
++                    "type": "message",
++                    "role": message.role.rawValue,
++                    "content": content,
++                ])
++                content.removeAll()
++            }
++
++            for block in message.content {
++                switch block {
++                case .text(let value):
++                    content.append([
++                        "type": message.role == .user ? "input_text" : "output_text",
++                        "text": value,
++                    ])
++                case .image(let image):
++                    guard message.role == .user else {
++                        throw CodexAppServerError.transcriptReplayUnavailable(
++                            "assistant-authored images are unsupported by the pinned history schema"
++                        )
++                    }
++                    content.append([
++                        "type": "input_image",
++                        "image_url": "data:\(image.mediaType);base64,\(image.base64)",
++                    ])
++                case .toolUse(let id, let name, let inputJSON):
++                    guard message.role == .assistant,
++                          let input = inputJSON.data(using: .utf8),
++                          (try? JSONSerialization.jsonObject(with: input)) != nil else {
++                        throw CodexAppServerError.transcriptReplayUnavailable(
++                            "a host tool call has an invalid role or argument payload"
++                        )
++                    }
++                    flushMessage()
++                    toolNames[id] = name
++                    items.append([
++                        "type": "function_call",
++                        "call_id": id,
++                        "name": name,
++                        "namespace": CodexAppServerContract.toolNamespace,
++                        "arguments": inputJSON,
++                    ])
++                case .toolResult(let id, let blocks, let isError):
++                    guard message.role == .user else {
++                        throw CodexAppServerError.transcriptReplayUnavailable(
++                            "a host tool result has an invalid role"
++                        )
++                    }
++                    flushMessage()
++                    var output = blocks.map { block -> [String: Any] in
++                        switch block {
++                        case .text(let value):
++                            return ["type": "input_text", "text": value]
++                        case .image(let base64, let mediaType):
++                            return [
++                                "type": "input_image",
++                                "image_url": "data:\(mediaType);base64,\(base64)",
++                            ]
++                        }
++                    }
++                    output.insert([
++                        "type": "input_text",
++                        "text": isError ? "NexGenVideo host tool status: error" : "NexGenVideo host tool status: success",
++                    ], at: 0)
++                    var item: [String: Any] = [
++                        "type": "function_call_output",
++                        "call_id": id,
++                        "namespace": CodexAppServerContract.toolNamespace,
++                        "output": output,
++                    ]
++                    if let name = toolNames[id] { item["name"] = name }
++                    items.append(item)
++                }
++            }
++            flushMessage()
++        }
++        return items
++    }
++
+     private static func dynamicToolNamespace(_ schemas: [AgentRuntimeToolSchema]) -> [String: Any] {
+         [
+             "type": "namespace",
+@@ -538,6 +820,7 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+ 
+     private static var turnConfiguration: [String: Any] {
+         [
++            "model_provider": "openai",
+             "approval_policy": "never",
+             "sandbox_mode": "read-only",
+             "web_search": "disabled",
+@@ -583,7 +866,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+             switch codex {
+             case .authenticationRequired:
+                 return .init(kind: .authenticationRequired, message: codex.localizedDescription)
+-            case .executableUnavailable, .incompatibleVersion, .resumeIsolationUnavailable:
++            case .executableUnavailable, .incompatibleVersion, .isolationViolation,
++                 .resumeIsolationUnavailable, .transcriptReplayUnavailable:
+                 return .init(kind: .backendUnavailable, message: codex.localizedDescription)
+             case .malformedMessage, .isolatedHomeMismatch:
+                 return .init(kind: .protocolViolation, message: codex.localizedDescription)
+@@ -598,6 +882,11 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         (value as? NSNumber)?.intValue
+     }
+ 
++    private static func notificationTurnID(_ params: [String: Any]) -> String? {
++        if let turnID = params["turnId"] as? String { return turnID }
++        return (params["turn"] as? [String: Any])?["id"] as? String
++    }
++
+     private static func liveLocations(
+         _ session: AgentRuntimeSessionRequest
+     ) throws -> (home: URL, scratch: URL) {
+@@ -612,7 +901,7 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
+         let home = applicationSupport
+             .appendingPathComponent("NexGenVideo", isDirectory: true)
+             .appendingPathComponent("CodexRuntime", isDirectory: true)
+-            .appendingPathComponent(CodexAppServerContract.cliVersion, isDirectory: true)
++            .appendingPathComponent("Home", isDirectory: true)
+         let scratch = caches
+             .appendingPathComponent("NexGenVideo", isDirectory: true)
+             .appendingPathComponent("CodexRuntime", isDirectory: true)
+diff --git a/Sources/NexGenVideo/Settings/AgentPane.swift b/Sources/NexGenVideo/Settings/AgentPane.swift
+index 5f126657..c62d13d8 100644
+--- a/Sources/NexGenVideo/Settings/AgentPane.swift
++++ b/Sources/NexGenVideo/Settings/AgentPane.swift
+@@ -231,13 +231,13 @@ struct AgentPane: View {
+         VStack(spacing: AppTheme.Spacing.none) {
+             SettingsRow(
+                 title: "Codex App Server \(CodexAppServerContract.cliVersion)",
+-                subtitle: "Cold resume cannot preserve the isolated tool surface. Personal Codex settings and chats are not loaded."
++                subtitle: "Uses a dedicated credential home and transcript replay. Personal Codex settings and chats are not loaded."
+             ) {
+                 SettingsStatusBadge(text: "Incompatible", tone: .warning)
+             }
+             SettingsDivider()
+             SettingsNotice(
+-                text: "Codex remains unavailable until a pinned CLI can preserve isolation across resume and its model-visible tools pass approved Actions acceptance.",
++                text: "Codex remains unavailable until configuration isolation, transcript replay, and its model-visible tools pass approved Actions acceptance. Account setup is not available in Settings.",
+                 systemImage: "lock.shield",
+                 tone: .neutral
+             )
+diff --git a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+index e7888b7e..2a80f7d5 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentRuntimeContractTests.swift
+@@ -206,6 +206,7 @@ struct AgentRuntimeContractTests {
+         #expect(codex.capabilities.supports(.structuredDialogs))
+         #expect(codex.capabilities.supports(.approvalSuspension))
+         #expect(!codex.capabilities.supports(.resumeNativeSession))
++        #expect(codex.capabilities.supports(.resumeFromTranscript))
+         #expect(codex.capabilities.supports(.reportTokenUsage))
+         #expect(!codex.capabilities.supports(.readProjectFiles))
+         #expect(!codex.capabilities.supports(.webResearch))
+diff --git a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+index 7891ddcf..eb104d97 100644
+--- a/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
++++ b/Tests/NexGenVideoTests/Agent/AgentServiceRuntimeContractTests.swift
+@@ -348,6 +348,25 @@ struct AgentServiceRuntimeContractTests {
+         #expect(service.streamError == nil)
+     }
+ 
++    @Test("Anthropic API authentication failures preserve the API error")
++    func anthropicAuthenticationFailureIsNotRelabeledAsClaudeCode() async throws {
++        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
++        let service = makeService(backend: .anthropicAPI, adapter: adapter)
++
++        #expect(service.send(text: "Start", mentions: []))
++        await waitUntil { adapter.sendRequests.count == 1 }
++        let turn = try #require(adapter.sendRequests.first)
++        adapter.emit(.error(.init(
++            kind: .authenticationRequired,
++            message: "Anthropic API rejected the configured key."
++        )), for: turn)
++        adapter.emit(.terminal(.failed), for: turn)
++        adapter.finish(turn)
++        await waitUntil { !service.isStreaming }
++
++        #expect(service.streamError?.errorDescription == "Anthropic API rejected the configured key.")
++    }
++
+     @Test("writer host state preserves one tool result and rich follow-up on both backends")
+     func writerHostStateKeepsCanonicalHistory() async throws {
+         for backend in AgentBackend.allCases {
+@@ -1201,6 +1220,7 @@ struct AgentServiceRuntimeContractTests {
+         case .codexAppServer:
+             #expect(descriptor.toolExecutionTransport == .hostRoundTrip)
+             #expect(!descriptor.capabilities.supports(.resumeNativeSession))
++            #expect(descriptor.capabilities.supports(.resumeFromTranscript))
+             #expect(descriptor.capabilities.supports(.reportTokenUsage))
+             #expect(!descriptor.capabilities.supports(.reportCostUsage))
+             #expect(!descriptor.capabilities.supports(.readProjectFiles))
+diff --git a/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift b/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift
+index e578b87a..777f9349 100644
+--- a/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift
++++ b/Tests/NexGenVideoTests/Agent/CodexAppServerLiveAcceptanceTests.swift
+@@ -3,8 +3,74 @@ import Testing
+ @testable import NexGenVideo
+ 
+ @MainActor
+-@Suite("Codex App Server live acceptance")
++@Suite("Codex App Server live acceptance", .serialized)
+ struct CodexAppServerLiveAcceptanceTests {
++    @Test("emitted isolated configuration starts with empty MCP and skill inventories")
++    func isolatedConfigurationStartsCleanRuntime() async throws {
++        let environment = ProcessInfo.processInfo.environment
++        guard CodexAppServerContract.isAcceptanceRun,
++              environment["NGV_CODEX_CLEAN_CONFIGURATION"] == "1" else { return }
++        let home = URL(fileURLWithPath: try #require(environment["CODEX_HOME"]), isDirectory: true)
++        let scratch = URL(
++            fileURLWithPath: try #require(environment["RUNNER_TEMP"]),
++            isDirectory: true
++        ).appendingPathComponent(UUID().uuidString, isDirectory: true)
++        let driver = CodexAppServerJSONRPCDriver()
++        defer { driver.stop() }
++        try await driver.start(home: home, scratch: scratch)
++
++        let configIndex = try #require(driver.requestedMethods.firstIndex(of: "config/read"))
++        let requirementsIndex = try #require(
++            driver.requestedMethods.firstIndex(of: "configRequirements/read")
++        )
++        let mcpIndex = try #require(driver.requestedMethods.firstIndex(of: "mcpServerStatus/list"))
++        let skillsIndex = try #require(driver.requestedMethods.firstIndex(of: "skills/list"))
++        let accountIndex = try #require(driver.requestedMethods.firstIndex(of: "account/read"))
++        #expect(configIndex < mcpIndex)
++        #expect(requirementsIndex < mcpIndex)
++        #expect(mcpIndex < accountIndex)
++        #expect(skillsIndex < accountIndex)
++        #expect(!driver.requestedMethods.contains("thread/start"))
++        #expect(driver.accountStatus == .init(billing: .apiKey))
++
++        driver.stop()
++        await driver.waitForTermination()
++        #expect(driver.terminationConfirmed)
++        #expect(!FileManager.default.fileExists(atPath: scratch.path))
++    }
++
++    @Test("active system configuration is rejected before account or thread work")
++    func hostileSystemConfigurationFailsBeforeSideEffects() async throws {
++        let environment = ProcessInfo.processInfo.environment
++        guard CodexAppServerContract.isAcceptanceRun,
++              environment["NGV_CODEX_HOSTILE_SYSTEM_CONFIG"] == "1" else { return }
++        let home = URL(fileURLWithPath: try #require(environment["CODEX_HOME"]), isDirectory: true)
++        let scratch = URL(
++            fileURLWithPath: try #require(environment["RUNNER_TEMP"]),
++            isDirectory: true
++        ).appendingPathComponent(UUID().uuidString, isDirectory: true)
++        let driver = CodexAppServerJSONRPCDriver()
++        do {
++            try await driver.start(home: home, scratch: scratch)
++            Issue.record("Hostile system configuration was accepted")
++            driver.stop()
++        } catch let error as CodexAppServerError {
++            guard case .isolationViolation = error else {
++                Issue.record("Unexpected rejection: \(error.localizedDescription)")
++                return
++            }
++        }
++        await driver.waitForTermination()
++
++        #expect(!driver.requestedMethods.contains("account/read"))
++        #expect(!driver.requestedMethods.contains("thread/start"))
++        #expect(!driver.requestedMethods.contains("mcpServerStatus/list"))
++        #expect(!driver.requestedMethods.contains("skills/list"))
++        if let marker = environment["NGV_CODEX_HOSTILE_MCP_MARKER"] {
++            #expect(!FileManager.default.fileExists(atPath: marker))
++        }
++    }
++
+     @Test("real isolated text, image, namespaced tool, typed result, dialogue, and cancel")
+     func liveConsumerSmoke() async throws {
+         guard CodexAppServerContract.isAcceptanceRun else { return }
+@@ -28,7 +94,7 @@ struct CodexAppServerLiveAcceptanceTests {
+             base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nE4AAAAASUVORK5CYII="
+         )
+         let current = AgentRuntimeMessage(role: .user, content: [
+-            .text("Call the nexgen acceptance_echo tool exactly once with value image_received. Then briefly confirm completion."),
++            .text("Inspect the attached image. Call the nexgen acceptance_echo tool exactly once with the lowercase luminance category light or dark, then briefly confirm completion."),
+             .image(image),
+         ])
+         let firstEvents = await collectLiveCodexEvents(try firstAdapter.send(.init(
+@@ -48,7 +114,9 @@ struct CodexAppServerLiveAcceptanceTests {
+         })
+         #expect(firstEvents.contains { envelope in
+             guard case .toolResult(_, let content, let isError) = envelope.event else { return false }
+-            return !isError && content.contains(.text("controlled-result"))
++            return !isError
++                && content.contains(.text("controlled-result"))
++                && content.contains { if case .image = $0 { true } else { false } }
+         })
+         #expect(liveTerminals(firstEvents) == [.completed(.endTurn)])
+         let modelResponse = try await firstDriver.request(
+@@ -77,59 +145,233 @@ struct CodexAppServerLiveAcceptanceTests {
+         #expect(liveTerminals(followUpEvents) == [.completed(.endTurn)])
+ 
+         let cancelMessage = AgentRuntimeMessage(role: .user, content: [
+-            .text("Wait before answering so cancellation can be verified."),
++            .text("Draft a detailed 5,000-word technical explanation of nonlinear editing history."),
+         ])
++        let turnIDsBeforeCancel = firstDriver.observedTurnStartedIDs
+         let cancelStream = try firstAdapter.send(.init(
+             sessionID: sessionID,
+             turnID: UUID(),
+             messages: [current, cancelMessage],
+             currentMessage: cancelMessage
+         ))
+-        await Task.yield()
++        for _ in 0..<1_000 where firstDriver.observedTurnStartedIDs.subtracting(turnIDsBeforeCancel).isEmpty {
++            await Task.yield()
++        }
++        let cancelTurnIDs = firstDriver.observedTurnStartedIDs.subtracting(turnIDsBeforeCancel)
++        #expect(!cancelTurnIDs.isEmpty)
+         firstAdapter.cancel(sessionID: sessionID)
+         #expect(liveTerminals(await collectLiveCodexEvents(cancelStream)) == [.cancelled])
+-        try await Task.sleep(for: .seconds(1))
++        await firstDriver.waitForTermination()
++        let cancelledTurnWasInterrupted = !firstDriver.observedInterruptedTurnIDs
++            .intersection(cancelTurnIDs)
++            .isEmpty
++        #expect(cancelledTurnWasInterrupted)
++        #expect(firstDriver.terminationConfirmed)
++        let scratchRemoved = !FileManager.default.fileExists(
++            atPath: scratchRoot.appendingPathComponent(session.runtimeGenerationID.uuidString).path
++        )
++        #expect(scratchRemoved)
+ 
+         let coldAdapter = CodexAppServerRuntimeAdapter()
+-        #expect(throws: CodexAppServerError.resumeIsolationUnavailable) {
++        var coldResumeRejected = false
++        do {
+             try coldAdapter.resume(liveSession(
+                 sessionID: sessionID,
+                 providerSessionID: providerThreadID
+             ))
++        } catch CodexAppServerError.resumeIsolationUnavailable {
++            coldResumeRejected = true
+         }
++        #expect(coldResumeRejected)
++
++        let replayDriver = CodexAppServerJSONRPCDriver()
++        let replayAdapter = CodexAppServerRuntimeAdapter(
++            driverFactory: { replayDriver },
++            runtimeLocations: { request in
++                (home, scratchRoot.appendingPathComponent(request.runtimeGenerationID.uuidString))
++            }
++        )
++        let replaySessionID = UUID()
++        let replaySession = liveSession(
++            sessionID: replaySessionID,
++            interfaceLanguage: .init(identifier: "de-DE", displayName: "German"),
++            phase: "continuity",
++            phaseInstructions: "Begin every reply in this phase with the exact word Wiederaufnahme."
++        )
++        try replayAdapter.resume(replaySession)
++        let replayHistory = [
++            AgentRuntimeMessage(role: .user, content: [.text("Remember the continuity code.")]),
++            AgentRuntimeMessage(role: .assistant, content: [.text("The continuity code is cobalt-47.")]),
++        ]
++        let replayCurrent = AgentRuntimeMessage(
++            role: .user,
++            content: [.text("State the continuity code from the earlier answer.")]
++        )
++        let replayEvents = await collectLiveCodexEvents(try replayAdapter.send(.init(
++            sessionID: replaySessionID,
++            turnID: UUID(),
++            messages: replayHistory + [replayCurrent],
++            currentMessage: replayCurrent
++        )))
++        let replayText = replayEvents.compactMap { envelope -> String? in
++            guard case .text(_, let value, _) = envelope.event else { return nil }
++            return value
++        }.joined()
++        let injectionIndex = replayDriver.requestedMethods.firstIndex(of: "thread/injectItems")
++        let replayTurnIndex = replayDriver.requestedMethods.lastIndex(of: "turn/start")
++        let replayWasInjectedBeforeTurn = injectionIndex.map { injection in
++            replayTurnIndex.map { injection < $0 } ?? false
++        } ?? false
++        let transcriptReplaySucceeded = replayText.localizedCaseInsensitiveContains("cobalt-47")
++            && replayText.localizedCaseInsensitiveContains("Wiederaufnahme")
++            && replayWasInjectedBeforeTurn
++        #expect(transcriptReplaySucceeded)
++        #expect(liveTerminals(replayEvents) == [.completed(.endTurn)])
++        replayAdapter.end(sessionID: replaySessionID)
++        await replayDriver.waitForTermination()
++
+         if let evidencePath = environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
+-            let evidence: [String: Any] = [
++            let accountIndex = try #require(firstDriver.requestedMethods.firstIndex(of: "account/read"))
++            let threadIndex = try #require(firstDriver.requestedMethods.firstIndex(of: "thread/start"))
++            let isolationChecks = firstDriver.requestedMethods.filter { $0 == "config/read" }.count
++            let beforeAccount = firstDriver.requestedMethods[..<accountIndex]
++            #expect(!beforeAccount.contains("model/list"))
++            #expect(!beforeAccount.contains("thread/start"))
++            let billing: String
++            switch firstDriver.accountStatus?.billing {
++            case .apiKey: billing = "api_key"
++            case .chatGPT(let plan): billing = "chatgpt:\(plan)"
++            case nil: billing = "unknown"
++            }
++            try mergeLiveEvidence([
+                 "cli_version": CodexAppServerContract.cliVersion,
+                 "protocol_revision": CodexAppServerContract.protocolRevision,
+                 "combined_schema_sha256": "eb1ba91bd0fab656523092f6ed7de3ea7aef278921a650f14dc871ae7dcfaf84",
+                 "v2_schema_sha256": "995fc3b8f8c469f6787e8fc5be4038c4f31359025edd8480b862e83355f3bf3b",
+-                "compatibility": "incompatible_pending_tool_inventory_and_safe_resume",
+-                "billing": "api_key",
+-                "isolated_home": true,
+-                "account_verified_before_thread": true,
+-                "text": true,
+-                "image_input": true,
+-                "typed_image_tool_result": true,
+-                "nexgen_tool_round_trip": true,
+-                "warm_dialogue": true,
+-                "cancel": true,
+-                "cold_resume_rejected": true,
++                "compatibility": "incompatible_pending_model_visible_tool_inventory_and_consumer_gates",
++                "billing": billing,
++                "configuration_inventory_checks": isolationChecks,
++                "account_verified_before_thread": accountIndex < threadIndex,
++                "text": firstEvents.contains { if case .text = $0.event { true } else { false } },
++                "image_input": firstEvents.contains { if case .toolCall = $0.event { true } else { false } },
++                "typed_image_tool_result": firstDriver.sentTypedImageToolResult,
++                "nexgen_tool_round_trip": firstDriver.sentTypedImageToolResult,
++                "warm_dialogue": liveTerminals(followUpEvents) == [.completed(.endTurn)],
++                "cancel_turn_started": !cancelTurnIDs.isEmpty,
++                "cancel_interrupted": cancelledTurnWasInterrupted,
++                "process_termination_confirmed": firstDriver.terminationConfirmed,
++                "scratch_removed": scratchRemoved,
++                "cold_resume_rejected": coldResumeRejected,
++                "host_transcript_replay": transcriptReplaySucceeded,
++                "phase_and_language_refresh": transcriptReplaySucceeded,
+                 "model_catalog_count": models.count,
+-                "default_model_has_text_and_image": true,
++                "default_model_has_text_and_image": modalities.contains("text") && modalities.contains("image"),
+                 "model_visible_tool_inventory_captured": false,
++                "dialog_and_spend_consumers_exercised": false,
+                 "evidence_payload_redacted": true,
+-            ]
+-            let data = try JSONSerialization.data(
+-                withJSONObject: evidence,
+-                options: [.prettyPrinted, .sortedKeys]
+-            )
+-            try data.write(to: URL(fileURLWithPath: evidencePath), options: .atomic)
++            ], at: evidencePath)
++        }
++    }
++
++    @Test("real AgentService and ToolExecutor consume the Codex runtime")
++    func liveProductConsumerSmoke() async throws {
++        guard CodexAppServerContract.isAcceptanceRun else { return }
++        let environment = ProcessInfo.processInfo.environment
++        let home = URL(fileURLWithPath: try #require(environment["CODEX_HOME"]), isDirectory: true)
++        let scratchRoot = URL(
++            fileURLWithPath: try #require(environment["RUNNER_TEMP"]),
++            isDirectory: true
++        )
++        var productDrivers: [CodexAppServerJSONRPCDriver] = []
++        let service = AgentService(
++            backend: .codexAppServer,
++            refreshBackendStatusOnInit: false,
++            runtimeAdapterFactory: { _ in
++                let driver = CodexAppServerJSONRPCDriver()
++                productDrivers.append(driver)
++                return CodexAppServerRuntimeAdapter(
++                    driverFactory: { driver },
++                    runtimeLocations: { request in
++                        (home, scratchRoot.appendingPathComponent(request.runtimeGenerationID.uuidString))
++                    }
++                )
++            },
++            runtimeReadinessOverride: { nil }
++        )
++        let editor = EditorViewModel(agentService: service)
++        service.editor = editor
++        service.loadSessions(from: nil)
++        let firstChatID = try #require(service.currentSessionId)
++
++        #expect(service.send(
++            text: "Call get_timeline exactly once with no arguments. Report only its totalFrames value.",
++            mentions: []
++        ))
++        for _ in 0..<900 where service.isStreaming {
++            try await Task.sleep(for: .seconds(1))
++        }
++        #expect(!service.isStreaming)
++        #expect(service.streamError == nil)
++        let usedTimeline = service.messages.contains { message in
++            message.blocks.contains { block in
++                guard case .toolUse(_, let name, _) = block else { return false }
++                return name == ToolName.getTimeline.rawValue
++            }
++        }
++        let receivedTimeline = service.messages.contains { message in
++            message.blocks.contains { block in
++                guard case .toolResult(_, _, let isError) = block else { return false }
++                return !isError
++            }
++        }
++        #expect(usedTimeline)
++        #expect(receivedTimeline)
++
++        let secondProject = scratchRoot.appendingPathComponent(
++            "codex-product-boundary-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        service.loadSessions(from: secondProject)
++        let secondChatID = try #require(service.currentSessionId)
++        #expect(secondChatID != firstChatID)
++        #expect(service.send(
++            text: "Call get_timeline exactly once with no arguments. Report only its totalFrames value.",
++            mentions: []
++        ))
++        for _ in 0..<900 where service.isStreaming {
++            try await Task.sleep(for: .seconds(1))
++        }
++        #expect(!service.isStreaming)
++        #expect(service.streamError == nil)
++        let secondProjectToolResult = service.messages.contains { message in
++            message.blocks.contains { block in
++                guard case .toolResult(_, _, let isError) = block else { return false }
++                return !isError
++            }
++        }
++        #expect(secondProjectToolResult)
++        service.cancel()
++        for driver in productDrivers { await driver.waitForTermination() }
++        let crossedChatAndProjectBoundary = secondChatID != firstChatID
++            && productDrivers.count >= 2
++            && receivedTimeline
++            && secondProjectToolResult
++
++        if let evidencePath = environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
++            try mergeLiveEvidence([
++                "agent_service_consumer_exercised": usedTimeline && receivedTimeline,
++                "real_tool_executor_exercised": receivedTimeline && secondProjectToolResult,
++                "two_chats_and_project_boundary": crossedChatAndProjectBoundary,
++            ], at: evidencePath)
+         }
+     }
+ 
+     private func liveSession(
+         sessionID: UUID,
+-        providerSessionID: String? = nil
++        providerSessionID: String? = nil,
++        interfaceLanguage: AgentInterfaceLanguage = .init(identifier: "en", displayName: "English"),
++        phase: String = "smoke",
++        phaseInstructions: String = "Call acceptance_echo when requested."
+     ) -> AgentRuntimeSessionRequest {
+         let tool = AgentRuntimeToolSchema(
+             name: "acceptance_echo",
+@@ -142,10 +384,10 @@ struct CodexAppServerLiveAcceptanceTests {
+             ]
+         )
+         let context = AgentRuntimeHostContext(
+-            interfaceLanguage: .init(identifier: "en", displayName: "English"),
++            interfaceLanguage: interfaceLanguage,
+             baseInstructions: "Follow the host contract and use only the supplied nexgen tool.",
+-            pack: .init(id: "acceptance", version: "1", projectSchema: "1", currentPhase: "smoke"),
+-            phaseInstructions: "Call acceptance_echo when requested.",
++            pack: .init(id: "acceptance", version: "1", projectSchema: "1", currentPhase: phase),
++            phaseInstructions: phaseInstructions,
+             toolSchemas: [tool],
+             authority: [.toolSchemas, .toolExecution, .structuredDialogs, .outputApprovals, .gateRefusals]
+         )
+@@ -160,7 +402,10 @@ struct CodexAppServerLiveAcceptanceTests {
+             providerExtensions: [],
+             mcpPort: 0,
+             executeTool: { _, name, input in
+-                guard name == "acceptance_echo", input.contains("image_received") else {
++                guard name == "acceptance_echo",
++                      let data = input.data(using: .utf8),
++                      let arguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++                      arguments["value"] as? String == "light" else {
+                     return .error("unexpected acceptance call")
+                 }
+                 return ToolResult(
+@@ -193,3 +438,19 @@ private func liveTerminals(_ events: [AgentRuntimeEventEnvelope]) -> [AgentRunti
+         return value
+     }
+ }
++
++private func mergeLiveEvidence(_ values: [String: Any], at path: String) throws {
++    let url = URL(fileURLWithPath: path)
++    var evidence: [String: Any] = [:]
++    if FileManager.default.fileExists(atPath: path) {
++        evidence = try #require(
++            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
++        )
++    }
++    for (key, value) in values { evidence[key] = value }
++    let data = try JSONSerialization.data(
++        withJSONObject: evidence,
++        options: [.prettyPrinted, .sortedKeys]
++    )
++    try data.write(to: url, options: .atomic)
++}
+diff --git a/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift b/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift
+index 93929fd5..60a8f63d 100644
+--- a/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift
++++ b/Tests/NexGenVideoTests/Agent/CodexAppServerRuntimeAdapterTests.swift
+@@ -13,12 +13,16 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
+     var accountStatus: CodexAppServerAccountStatus? = .init(billing: .apiKey)
+     private let continuation: AsyncStream<CodexAppServerInbound>.Continuation
+     var startError: Error?
++    var isolationError: Error?
+     var inheritedInstructionSources: [String] = []
+     var scriptedEvents: [CodexAppServerInbound] = []
+     var completeAfterToolResponse = false
++    var completeInterrupt = true
++    private(set) var isolationChecks = 0
+     private(set) var calls: [Call] = []
+     private(set) var responses: [[String: Any]] = []
+     private(set) var stopCount = 0
++    private(set) var operations: [String] = []
+ 
+     init() {
+         var continuation: AsyncStream<CodexAppServerInbound>.Continuation!
+@@ -30,8 +34,14 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
+         if let startError { throw startError }
+     }
+ 
++    func verifyIsolation(home: URL, scratch: URL) async throws {
++        isolationChecks += 1
++        if let isolationError { throw isolationError }
++    }
++
+     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
+         calls.append(.init(method: method, params: params))
++        operations.append("request:\(method)")
+         switch method {
+         case "thread/start":
+             return [
+@@ -46,7 +56,22 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
+                 for event in self.scriptedEvents { self.continuation.yield(event) }
+             }
+             return ["turn": ["id": "provider-turn-1"]]
++        case "thread/injectItems":
++            return [:]
+         case "turn/interrupt":
++            if completeInterrupt {
++                Task { @MainActor in
++                    await Task.yield()
++                    self.continuation.yield(.notification(method: "turn/completed", params: [
++                        "threadId": params["threadId"] as? String ?? "thread-1",
++                        "turn": [
++                            "id": params["turnId"] as? String ?? "provider-turn-1",
++                            "status": "interrupted",
++                            "items": [],
++                        ],
++                    ]))
++                }
++            }
+             return [:]
+         default:
+             throw CodexAppServerError.remote(code: -32_601, message: method)
+@@ -55,6 +80,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
+ 
+     func respond(id: Any, result: [String: Any]) throws {
+         responses.append(result)
++        operations.append("respond")
+         if completeAfterToolResponse {
+             continuation.yield(.notification(method: "turn/completed", params: [
+                 "threadId": "thread-1",
+@@ -65,6 +91,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
+ 
+     func respond(id: Any, errorCode: Int, message: String) throws {
+         responses.append(["error": ["code": errorCode, "message": message]])
++        operations.append("respond:error")
+     }
+ 
+     func stop() {
+@@ -86,6 +113,7 @@ struct CodexAppServerRuntimeAdapterTests {
+         for required in [
+             "cli_auth_credentials_store = \"keyring\"",
+             "mcp_oauth_credentials_store = \"keyring\"",
++            "model_provider = \"openai\"",
+             "sandbox_mode = \"read-only\"",
+             "web_search = \"disabled\"",
+             "shell_tool = false",
+@@ -99,9 +127,14 @@ struct CodexAppServerRuntimeAdapterTests {
+             "send_message_to_user_async = false",
+             "current_time_reminder = false",
+             "unbounded_connection_retries = false",
++            "[skills]",
++            "include_instructions = false",
++            "[skills.bundled]",
++            "enabled = false",
+         ] {
+             #expect(config.contains(required))
+         }
++        #expect(config.contains("[features]\nshell_tool = false"))
+         #expect(!config.contains("mcp_servers."))
+         #expect(CodexAppServerContract.cliVersion == "0.156.0")
+         #expect(CodexAppServerContract.protocolRevision == "rust-v0.156.0")
+@@ -128,6 +161,95 @@ struct CodexAppServerRuntimeAdapterTests {
+         #expect(environment["CLAUDE_CODE_PLUGIN_DIR"] == nil)
+     }
+ 
++    @Test("effective system, managed, MCP, and skill layers fail before a thread")
++    func isolationInventoryIsValidated() throws {
++        let home = URL(fileURLWithPath: "/isolated/codex")
++        let scratch = URL(fileURLWithPath: "/isolated/scratch")
++        let cleanConfig: [String: Any] = [
++            "layers": [
++                [
++                    "name": ["type": "packagedDefaults", "file": "/bin/codex"],
++                    "config": [:],
++                    "version": "1",
++                ],
++                [
++                    "name": ["type": "system", "file": "/etc/codex/config.toml"],
++                    "config": [:],
++                    "version": "1",
++                ],
++                [
++                    "name": [
++                        "type": "user",
++                        "file": home.appendingPathComponent("config.toml").path,
++                        "profile": NSNull(),
++                    ],
++                    "config": CodexAppServerContract.isolatedConfigurationLayer,
++                    "version": "1",
++                ],
++            ],
++            "config": [
++                "approval_policy": "never",
++                "sandbox_mode": "read-only",
++                "web_search": "disabled",
++                "model_provider": "openai",
++                "skills": [
++                    "include_instructions": false,
++                    "bundled": ["enabled": false],
++                ] as [String: Any],
++            ],
++            "origins": [
++                "approval_policy": [
++                    "name": [
++                        "type": "user",
++                        "file": home.appendingPathComponent("config.toml").path,
++                    ],
++                    "version": "1",
++                ],
++            ],
++        ]
++        let requirements: [String: Any] = ["requirements": NSNull()]
++        let mcp: [String: Any] = ["data": [], "nextCursor": NSNull()]
++        let skills: [String: Any] = [
++            "data": [["cwd": scratch.path, "skills": [], "errors": []]],
++        ]
++
++        try CodexAppServerContract.validateIsolation(
++            configResponse: cleanConfig,
++            requirementsResponse: requirements,
++            mcpResponse: mcp,
++            skillsResponse: skills,
++            home: home,
++            scratch: scratch
++        )
++
++        var hostileConfig = cleanConfig
++        var hostileLayers = try #require(hostileConfig["layers"] as? [[String: Any]])
++        hostileLayers[1]["config"] = [
++            "mcp_servers": ["foreign": ["command": "/usr/bin/touch"]],
++        ]
++        hostileConfig["layers"] = hostileLayers
++        #expect(throws: CodexAppServerError.self) {
++            try CodexAppServerContract.validateIsolation(
++                configResponse: hostileConfig,
++                requirementsResponse: requirements,
++                mcpResponse: mcp,
++                skillsResponse: skills,
++                home: home,
++                scratch: scratch
++            )
++        }
++        #expect(throws: CodexAppServerError.self) {
++            try CodexAppServerContract.validateIsolation(
++                configResponse: cleanConfig,
++                requirementsResponse: requirements,
++                mcpResponse: ["data": [["name": "foreign"]]],
++                skillsResponse: skills,
++                home: home,
++                scratch: scratch
++            )
++        }
++    }
++
+     @Test("text, real image data, namespaced tool result, and usage preserve the host contract")
+     func textImageAndToolRoundTrip() async throws {
+         let driver = FakeCodexAppServerDriver()
+@@ -206,6 +328,7 @@ struct CodexAppServerRuntimeAdapterTests {
+     @Test("dialog or spend suspension returns the tool result and interrupts before continuation")
+     func hostSuspensionStopsTheTurn() async throws {
+         let driver = FakeCodexAppServerDriver()
++        var executions = 0
+         driver.scriptedEvents = [
+             .notification(method: "turn/started", params: [
+                 "threadId": "thread-1",
+@@ -219,11 +342,20 @@ struct CodexAppServerRuntimeAdapterTests {
+                 "tool": "host_tool",
+                 "arguments": [:],
+             ]),
++            .request(id: 2, method: "item/tool/call", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "callId": "dialog-2",
++                "namespace": "nexgen",
++                "tool": "host_tool",
++                "arguments": [:],
++            ]),
+         ]
+         let sessionID = UUID()
+         let adapter = makeAdapter(driver)
+         try adapter.start(sessionRequest(sessionID: sessionID) { _, _, _ in
+-            .suspended("Decision opened")
++            executions += 1
++            return .suspended("Decision opened")
+         })
+         let current = AgentRuntimeMessage(role: .user, content: [.text("Ask")])
+         let events = await collectCodexEvents(try adapter.send(.init(
+@@ -233,8 +365,262 @@ struct CodexAppServerRuntimeAdapterTests {
+             currentMessage: current
+         )))
+ 
++        #expect(driver.responses.count == 2)
++        #expect(executions == 1)
++        #expect(driver.operations.filter { $0 == "respond" }.count == 1)
++        #expect(driver.operations.filter { $0 == "respond:error" }.count == 1)
++        let interruptIndex = try #require(driver.operations.firstIndex(of: "request:turn/interrupt"))
++        let responseIndex = try #require(driver.operations.firstIndex(of: "respond"))
++        #expect(interruptIndex < responseIndex)
++        #expect(codexTerminals(events) == [.completed(.toolUse)])
++    }
++
++    @Test("Codex reaches AgentService, ToolExecutor, and the real dialog suspension consumer")
++    func productConsumerOwnsDialogSuspension() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "turn/started", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "inProgress", "items": []],
++            ]),
++            .request(id: 7, method: "item/tool/call", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "callId": "dialog-1",
++                "namespace": "nexgen",
++                "tool": "show_dialog",
++                "arguments": [
++                    "title": "Choose",
++                    "sections": [[
++                        "id": "choice",
++                        "label": "Choice",
++                        "type": "choices",
++                        "options": [
++                            ["id": "continue", "label": "Continue"],
++                            ["id": "revise", "label": "Revise"],
++                        ],
++                    ]],
++                ],
++            ]),
++        ]
++        let adapter = makeAdapter(driver)
++        let service = AgentService(
++            backend: .codexAppServer,
++            refreshBackendStatusOnInit: false,
++            runtimeAdapterFactory: { _ in adapter },
++            runtimeReadinessOverride: { nil },
++            runtimeHostContextOverride: { .hostOwned(tools: ToolDefinitions.all) }
++        )
++        let editor = EditorViewModel(agentService: service)
++        service.editor = editor
++        service.loadSessions(from: nil)
++
++        #expect(service.send(text: "Ask for the choice.", mentions: []))
++        for _ in 0..<1_000 where service.isStreaming { await Task.yield() }
++
++        #expect(!service.isStreaming)
++        #expect(service.pendingDialog?.title == "Choose")
++        #expect(driver.operations.contains("request:turn/interrupt"))
+         #expect(driver.responses.count == 1)
++        service.cancel()
++    }
++
++    @Test("Codex suspension reaches the real spend approval consumer")
++    func productConsumerOwnsSpendSuspension() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "turn/started", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "inProgress", "items": []],
++            ]),
++            .request(id: 8, method: "item/tool/call", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "callId": "spend-1",
++                "namespace": "nexgen",
++                "tool": "host_tool",
++                "arguments": [:],
++            ]),
++        ]
++        let service = AgentService(
++            backend: .codexAppServer,
++            refreshBackendStatusOnInit: false,
++            runtimeReadinessOverride: { nil }
++        )
++        let editor = EditorViewModel(agentService: service)
++        service.editor = editor
++        service.loadSessions(from: nil)
++        let sessionID = try #require(service.currentSessionId)
++        let option = SpendOption(
++            modelId: "acceptance-model",
++            modelName: "Acceptance Model",
++            target: ResolvedGenerationTarget(
++                modelId: "acceptance-model",
++                provider: .fal,
++                endpoint: "acceptance-model",
++                binding: nil
++            ),
++            credits: 1,
++            requiresCatalogAvailability: false
++        )
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID) { _, _, _ in
++            do {
++                return try service.requestSpendApproval(
++                    SpendApproval(
++                        id: "spend-approval",
++                        recommendedOptionId: option.id,
++                        options: [option],
++                        actionLabel: "Generate image"
++                    ),
++                    origin: .inAppChat(sessionID: sessionID),
++                    editor: editor,
++                    execute: { _, _ in .ok("unexpected") }
++                )
++            } catch {
++                return .error(error.localizedDescription)
++            }
++        })
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Prepare the spend decision")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(service.pendingSpendApproval?.id == "spend-approval")
++        #expect(driver.operations.contains("request:turn/interrupt"))
+         #expect(codexTerminals(events) == [.completed(.toolUse)])
++        service.cancel()
++        adapter.end(sessionID: sessionID)
++    }
++
++    @Test("retrying runtime errors remain inside the provider turn")
++    func retryingErrorIsNotFatal() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "error", params: [
++                "threadId": "thread-1",
++                "turnId": "provider-turn-1",
++                "willRetry": true,
++                "error": ["message": "temporary"],
++            ]),
++            .notification(method: "turn/completed", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(!events.contains { if case .error = $0.event { true } else { false } })
++        #expect(codexTerminals(events) == [.completed(.endTurn)])
++    }
++
++    @Test("a failed adapter refuses another turn instead of opening an empty thread")
++    func failedAdapterCannotRestartWithoutTranscriptReplay() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [.notification(method: "future/unsafeEvent", params: [:])]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let first = AgentRuntimeMessage(role: .user, content: [.text("First")])
++        _ = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [first],
++            currentMessage: first
++        )))
++        let second = AgentRuntimeMessage(role: .user, content: [.text("Second")])
++
++        #expect(throws: AgentRuntimeContractError.sessionNotStarted) {
++            try adapter.send(.init(
++                sessionID: sessionID,
++                turnID: UUID(),
++                messages: [first, second],
++                currentMessage: second
++            ))
++        }
++        #expect(driver.calls.filter { $0.method == "thread/start" }.count == 1)
++    }
++
++    @Test("resume opens an isolated ephemeral thread and replays canonical history")
++    func transcriptReplayPreservesContextAndRefreshesHostInstructions() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [.notification(method: "turn/completed", params: [
++            "threadId": "thread-1",
++            "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
++        ])]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.resume(sessionRequest(sessionID: sessionID))
++        let earlierUser = AgentRuntimeMessage(role: .user, content: [.text("Earlier")])
++        let earlierAssistant = AgentRuntimeMessage(role: .assistant, content: [
++            .text("Answer"),
++            .toolUse(id: "call-1", name: "host_tool", inputJSON: #"{"value":"safe"}"#),
++        ])
++        let earlierResult = AgentRuntimeMessage(role: .user, content: [
++            .toolResult(id: "call-1", content: [.text("done")], isError: false),
++        ])
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Continue")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [earlierUser, earlierAssistant, earlierResult, current],
++            currentMessage: current
++        )))
++
++        let replay = try #require(driver.calls.first { $0.method == "thread/injectItems" })
++        let items = try #require(replay.params["items"] as? [[String: Any]])
++        #expect(items.contains { $0["type"] as? String == "function_call" })
++        #expect(items.contains { $0["type"] as? String == "function_call_output" })
++        let start = try #require(driver.calls.first { $0.method == "thread/start" })
++        #expect((start.params["baseInstructions"] as? String)?.contains("Current phase: story") == true)
++        #expect((start.params["baseInstructions"] as? String)?.contains("PHASE INSTRUCTIONS") == true)
++        #expect((start.params["developerInstructions"] as? String)?.contains("de-DE") == true)
++        let turn = try #require(driver.calls.first { $0.method == "turn/start" })
++        let input = try #require(turn.params["input"] as? [[String: Any]])
++        #expect(input.first?["text"] as? String == "Continue")
++        #expect(codexTerminals(events) == [.completed(.endTurn)])
++    }
++
++    @Test("informative warnings and events from an old turn do not abort the active turn")
++    func informationalAndStaleNotificationsAreIgnored() async throws {
++        let driver = FakeCodexAppServerDriver()
++        driver.scriptedEvents = [
++            .notification(method: "configWarning", params: ["summary": "disabled feature"]),
++            .notification(method: "warning", params: ["message": "notice"]),
++            .notification(method: "deprecationNotice", params: ["summary": "notice"]),
++            .notification(method: "future/oldEvent", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "old-turn"],
++            ]),
++            .notification(method: "turn/completed", params: [
++                "threadId": "thread-1",
++                "turn": ["id": "provider-turn-1", "status": "completed", "items": []],
++            ]),
++        ]
++        let sessionID = UUID()
++        let adapter = makeAdapter(driver)
++        try adapter.start(sessionRequest(sessionID: sessionID))
++        let current = AgentRuntimeMessage(role: .user, content: [.text("Hello")])
++        let events = await collectCodexEvents(try adapter.send(.init(
++            sessionID: sessionID,
++            turnID: UUID(),
++            messages: [current],
++            currentMessage: current
++        )))
++
++        #expect(codexTerminals(events) == [.completed(.endTurn)])
+     }
+ 
+     @Test("unknown protocol events fail closed and cannot append a late answer")
+@@ -454,6 +840,15 @@ struct CodexAppServerRuntimeAdapterTests {
+ 
+         #expect(codexTerminals(events) == [.cancelled])
+         #expect(!events.map(\.event).contains(.text(messageID: "late", value: "late", isDelta: true)))
++        let retry = AgentRuntimeMessage(role: .user, content: [.text("Retry")])
++        #expect(throws: AgentRuntimeContractError.sessionNotStarted) {
++            try adapter.send(.init(
++                sessionID: sessionID,
++                turnID: UUID(),
++                messages: [current, retry],
++                currentMessage: retry
++            ))
++        }
+     }
+ 
+     private func makeAdapter(_ driver: FakeCodexAppServerDriver) -> CodexAppServerRuntimeAdapter {
+diff --git a/docs/CODEX_APP_SERVER_CONTRACT.md b/docs/CODEX_APP_SERVER_CONTRACT.md
+index 167ef445..49a03be5 100644
+--- a/docs/CODEX_APP_SERVER_CONTRACT.md
++++ b/docs/CODEX_APP_SERVER_CONTRACT.md
+@@ -1,6 +1,6 @@
+ # Codex App Server runtime contract
+ 
+-Status: implementation candidate; CLI 0.156.0 is explicitly incompatible for production until both the model-visible tool inventory and a safe cold-resume contract exist and pass dedicated Actions acceptance.
++Status: implementation candidate; CLI 0.156.0 is explicitly incompatible for production until effective-layer isolation, transcript replay, model-visible tool inventory, account setup, and the product-consumer gates pass dedicated Actions acceptance.
+ 
+ ## Pinned runtime and protocol
+ 
+@@ -21,33 +21,42 @@ This export does not start App Server, authenticate, query models, or prove runt
+ 
+ ## Isolation boundary
+ 
+-NexGenVideo supplies a dedicated `CODEX_HOME` under Application Support and a per-runtime scratch directory under Caches. It points `HOME` and all XDG roots into those host-owned locations, uses a system-only `PATH`, writes a complete strict configuration, and passes only an allowlisted environment. It never reads or copies `~/.codex`, auth files, personal MCP servers, plugins, skills, hooks, project instructions, or Desktop conversations.
++NexGenVideo supplies a stable dedicated `CODEX_HOME` under Application Support and a per-runtime scratch directory under Caches. The home is not versioned because the supported keyring identity includes the canonical home path. The host points `HOME` and all XDG roots into those locations, uses a system-only `PATH`, writes its own strict user configuration, and passes only an allowlisted environment. It never reads or copies `~/.codex`, auth files, personal MCP servers, plugins, skills, hooks, project instructions, or Desktop conversations.
+ 
+-The isolated home uses the supported `cli_auth_credentials_store = "keyring"` mechanism. The upstream keyring key is derived from the canonical Codex home, so a personal CLI login is deliberately not visible. A missing isolated login stops after `account/read`; it does not call `model/list`, start a thread, probe a model, or select a paid fallback.
++`--strict-config` validates fields; it does not isolate layers. CLI 0.156.0 still loads packaged defaults, `/etc/codex`, MDM, enterprise-cloud, project, and legacy-managed layers. Its bundled skills are enabled by default, so the isolated user layer explicitly sets `skills.bundled.enabled = false` and disables automatic skill instructions. After initialization and again immediately before `thread/start`, NexGenVideo first calls `config/read(includeLayers: true)` and `configRequirements/read`. It requires its exact user layer, an empty system layer, no active managed/project/legacy/session layer, no managed requirements, and the expected effective provider/sandbox/approval/web/skills boundary. Only after that check passes does it call `mcpServerStatus/list` and `skills/list`, because the pinned MCP status implementation eagerly starts configured servers while collecting their tools. Those inventories must be empty. Any unreadable or incompatible result stops before a thread or model request. The adversarial Actions fixture places a foreign MCP in `/etc/codex/config.toml` and requires rejection before MCP inventory or launch.
++
++The pinned source initializes thread MCP/tool state inside `thread/start`, after these checks. The CLI does not offer a switch that prevents system/managed layers from being loaded, however, and the checks cannot make a mutable system layer atomic with the later start. This residual boundary and the actual model-visible inventory must pass on the target runner; the implementation does not claim OS-level hermeticity or production compatibility.
++
++The isolated home uses the supported `cli_auth_credentials_store = "keyring"` mechanism. The upstream keyring key is derived from the canonical Codex home, so a personal CLI login is deliberately not visible. A missing isolated login stops after the configuration/MCP/skills inventory and `account/read`; it does not call `model/list`, start a thread, probe a model, or select a paid fallback. API-key and ChatGPT billing modes come from `account/read`. The app does not yet expose the supported `account/login/start` flow, so production account setup remains a blocker and the UI does not claim that Settings can perform it.
+ 
+ For each new thread the host sends:
+ 
+ - `ephemeral: true`, so the incompatible cold-resume format is not persisted as usable provider session state;
+ - `environments: []` and `runtimeWorkspaceRoots: []`, which remove local execution environments and their shell/patch tools;
+ - `allowProviderModelFallback: false`, so the runtime cannot silently change provider or billing path;
++- `modelProvider: "openai"`, matching the effective configuration verified before the start;
+ - `sandbox: "read-only"` and `approvalPolicy: "never"` as defense in depth;
+ - one `nexgen` dynamic-tool namespace containing only host-owned JSON schemas;
+ - the complete localized host instructions, pack identity, current phase, and packaged phase instructions;
+ - explicit feature/config disablement for shell, image view/generation, web, apps, plugins, skills, hooks, collaboration, browser/computer use, plan, and provider dialogs.
+ 
+-`instructionSources` and runtime workspace roots in every start response must be empty. Any unknown server request, notification, thread-item capability, namespace, tool, thread id, turn id, runtime generation, project generation, or chat id fails closed. Tool results preserve typed text and image blocks. Audio and video remain host-inspected assets, not claimed native model inputs.
++The driver retains the launched native process until its termination handler confirms exit. Stop sends `SIGTERM`, escalates only the same still-running PID after the grace period, closes pending RPCs, and removes only the uniquely created runtime scratch directory. It does not signal an unproven process group.
++
++`instructionSources` and runtime workspace roots in every start response must be empty. Any dangerous unknown server request, current-turn notification, thread-item capability, namespace, or tool fails closed. Informative `configWarning`, `warning`, and `deprecationNotice` events are accepted without treating them as capabilities; identifiable events from an older thread or turn are discarded. Tool results preserve typed text and image blocks. Audio and video remain host-inspected assets, not claimed native model inputs.
+ 
+ ## Why 0.156.0 is still pending
+ 
+ The pinned source has an internal `ToolPolicy` startup ceiling, but the public App Server start API does not expose its `allowed_tools` field. The known configuration plus empty environments removes the dangerous local surfaces in source, but that is not evidence of the final model-visible request. Compatibility therefore remains disabled in normal app runs. `NGV_CODEX_APP_SERVER_ACCEPTANCE=1` is reserved for the dedicated approved Actions run.
+ 
+-That acceptance must capture the actual provider request and prove that the advertised tool surface contains only the intended `nexgen` namespace. A version or model that advertises any other callable capability is incompatible even if the sandbox would later deny execution.
++That acceptance must capture the actual provider request and classify the complete advertised tool surface. Dangerous built-ins or foreign MCP/app tools are incompatible even if the sandbox would later deny execution. A non-mutating clock capability alone is recorded but is not treated as a host-gate bypass.
+ 
+ This check cannot be replaced by configuration inspection. In the pinned [tool planner](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/core/src/tools/spec_plan.rs), model catalog metadata can independently enable the built-in async-user-message and clock tools even when their feature flags are false. The adapter rejects every non-`item/tool/call` request and every non-`nexgen` namespace, but rejection after advertisement is not a sufficient isolation proof.
+ 
+-There is also a confirmed cold-resume incompatibility. In the pinned [`thread/resume` processor](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/app-server/src/request_processors/thread_processor.rs), a cold thread is restored through `resume_thread_with_history`; the pinned [`ThreadManager`](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/core/src/thread_manager.rs) then uses `StartThreadOptions::new`, which defaults `dynamic_tools` to empty and `environments` to `None`. That discards the host namespace and can reattach the default local environment. Passing empty `runtimeWorkspaceRoots`, read-only sandboxing, and current instructions does not restore the missing environment/tool selection. NexGenVideo therefore rejects cold/native resume before launching App Server and does not advertise `resumeNativeSession` for this backend. Multi-turn dialogue is supported only while the original bounded process and thread remain live.
++There is a confirmed native cold-resume incompatibility. In the pinned [`thread/resume` processor](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/app-server/src/request_processors/thread_processor.rs), a cold thread is restored through `resume_thread_with_history`; the pinned [`ThreadManager`](https://github.com/openai/codex/blob/rust-v0.156.0/codex-rs/core/src/thread_manager.rs) then uses `StartThreadOptions::new`, which defaults `dynamic_tools` to empty and `environments` to `None`. NexGenVideo still rejects `thread/resume` and does not advertise `resumeNativeSession`.
++
++For host-driven rotation, including language and phase changes, the adapter instead starts a newly checked ephemeral thread with the current full host instructions and schemas, then appends the canonical prior transcript through pinned `thread/injectItems` before the next user turn. User/assistant text, user images, namespaced function calls, typed function outputs, hidden host messages, and success/error state are mapped explicitly; an unrepresentable item refuses the replay. Failures and cancellation invalidate the old adapter, so a later send must use this replay path and can never open a silent empty thread. Deterministic fixtures and a guarded live replay scenario are prepared, but the path remains production-incompatible until the Actions run proves the pinned server consumes it as specified.
+ 
+-This is a version incompatibility, not an acceptance item that can be waived. A later pinned CLI must expose a resume contract that reasserts both the dynamic-tool namespace and empty environment selection before the backend can become selectable. The Codex picker and durable backend preference remain out of scope and disabled.
++The Codex picker and durable backend preference remain out of scope and disabled.
+ 
+ ## Required acceptance evidence
+ 
+@@ -56,9 +65,9 @@ The approved Actions run must retain redacted evidence for:
+ 1. exact CLI/package version, generated schema hashes, initialize/initialized, isolated `codexHome`, and strict-config success;
+ 2. isolated account status and billing mode before any model or model-list request;
+ 3. the actual model catalog and input modalities used by the later discovery contract;
+-4. complete model-visible tool inventory, including negative adversarial personal config fixtures;
++4. complete model-visible tool inventory, including the adversarial system-config fixture and an honest classification of harmless versus gate-bypassing capabilities;
+ 5. text, actual image data, `nexgen` tool call/result with typed image output, dialog/spend suspension, and localized phase instructions;
+-6. two chats and projects, warm dialogue continuity, explicit cold-resume rejection, cancel/resend with a late old response, wrong runtime identity, EOF, timeout, crash, offline/auth expiry, unknown events, and reconnect/reinitialization joining the existing host phase job;
++6. two chats and projects, warm dialogue continuity, host-transcript replay after language/phase rotation, explicit native cold-resume rejection, cancel/resend with a late old response, wrong runtime identity, EOF, timeout, crash, offline/auth expiry, unknown events, and reconnect/reinitialization joining the existing host phase job;
+ 7. process-tree exit and absence of secrets, prompts, tokens, or raw tool payloads in Actions logs.
+ 
+ The real LLM smoke is a separately approved paid step. Normal CI covers only deterministic protocol/consumer fixtures.

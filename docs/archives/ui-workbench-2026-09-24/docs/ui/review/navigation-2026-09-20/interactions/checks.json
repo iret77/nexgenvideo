@@ -1,0 +1,191 @@
+[
+  {
+    "name": "Prüfen bestätigt keine Clay-Vorlage",
+    "pass": true
+  },
+  {
+    "name": "Bestätigen gilt nur der sichtbaren Vorlage und führt weiter",
+    "pass": true
+  },
+  {
+    "name": "Blocking-Gate bleibt bis letzter Bestätigung gesperrt",
+    "pass": true
+  },
+  {
+    "name": "Veränderte Geometrie entwertet Sichtung weiterhin",
+    "pass": true
+  },
+  {
+    "name": "Korrektur bleibt bei Shot 1E und zeigt Zustände direkt",
+    "pass": true
+  },
+  {
+    "name": "Unveränderter Skip führt zur gezielten Ankerkorrektur",
+    "pass": true
+  },
+  {
+    "name": "Korrektur bewahrt andere Ankersichtungen",
+    "pass": true
+  },
+  {
+    "name": "Kostendialog benennt einen Shot und ist folgenlos abbrechbar",
+    "pass": true
+  },
+  {
+    "name": "Takes prüfen öffnet dauerhaftes Arbeitsfenster",
+    "pass": true
+  },
+  {
+    "name": "Take auswählen führt zum nächsten offenen Shot",
+    "pass": true
+  },
+  {
+    "name": "Direkte Shotnavigation vergibt keine Freigabe",
+    "pass": true
+  },
+  {
+    "name": "Take-Befund braucht eine bewusste Ausnahme",
+    "pass": true
+  },
+  {
+    "name": "Ausnahme bleibt am konkreten Take dokumentiert",
+    "pass": true
+  },
+  {
+    "name": "Take-Übersicht bleibt direkt erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Farbe zeigt nach Titel keine Titel-Regler",
+    "pass": true
+  },
+  {
+    "name": "Werkzeugwechsel verändert weder Titel noch ausgewählte Quelle",
+    "pass": true
+  },
+  {
+    "name": "Videoclip-Auswahl öffnet passende Farbwerkzeuge",
+    "pass": true
+  },
+  {
+    "name": "Titelfunktion bleibt vollständig erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Untertitel sind sequenzbezogen ohne Videoclip erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Ordnerwechsel entfernt unsichtbare Auswahl",
+    "pass": true
+  },
+  {
+    "name": "Suche entfernt unsichtbare Auswahl und Aktionen",
+    "pass": true
+  },
+  {
+    "name": "Ansichtswechsel bewahrt sichtbare Auswahl",
+    "pass": true
+  },
+  {
+    "name": "Inhaltssuche erklärt Nutzen statt direkt Speicher zu öffnen",
+    "pass": true
+  },
+  {
+    "name": "Wartung bleibt ausdrücklich erreichbar",
+    "pass": true
+  },
+  {
+    "name": "Modellprüfung zeigt konkretes Modell und Grenzen",
+    "pass": true
+  },
+  {
+    "name": "Kreative Richtung wird vor dem Vorschlag gewählt",
+    "pass": true
+  },
+  {
+    "name": "Vorschlag und Abbruch verändern das Dokument nicht",
+    "pass": true
+  },
+  {
+    "name": "Übernahme ändert nur den gewählten Abschnitt und hat Undo",
+    "pass": true
+  },
+  {
+    "name": "Gestaltung ist in der Hauptfläche bedienbar",
+    "pass": true
+  },
+  {
+    "name": "Modellwahl und reale Renderdauer sind im Auftrag sichtbar",
+    "pass": true
+  },
+  {
+    "name": "Modell ohne Bildbindung kann bestätigte Anker nicht ignorieren",
+    "pass": true
+  },
+  {
+    "name": "Kosten binden Modell, Shots, Renderdauer und Eingaben",
+    "pass": true
+  },
+  {
+    "name": "Modellwechsel verwirft frühere Kostenfreigabe",
+    "pass": true
+  },
+  {
+    "name": "Hintergrundarbeit erlaubt Sichtung aber keine Bearbeitung",
+    "pass": true
+  },
+  {
+    "name": "Job endet auch beim Sichten einer anderen Phase",
+    "pass": true
+  },
+  {
+    "name": "Pane-Größen bleiben nach dem Auftrag bedienbar",
+    "pass": true
+  },
+  {
+    "name": "Budget entspricht freigegebenem Auftrag",
+    "pass": true
+  },
+  {
+    "name": "Fal-only kann mit der vorhandenen Seedance-Bildroute produzieren",
+    "pass": true
+  },
+  {
+    "name": "Deaktivierter Anbieter entwertet bestehende Kostenfreigabe",
+    "pass": true
+  },
+  {
+    "name": "Seedance 2.5 bindet längere Renderdauer ohne Shot-Timing zu ändern",
+    "pass": true
+  },
+  {
+    "name": "Unabhängige Revision beendet früheren Korrekturkontext",
+    "pass": true
+  },
+  {
+    "name": "Weiterer Take verwendet dieselbe Modell- und Kostenentscheidung",
+    "pass": true
+  },
+  {
+    "name": "Weitere Variante erhält Vorgänger und bewusste Auswahl",
+    "pass": true
+  },
+  {
+    "name": "Ausgelieferte Inline-Vorschau lädt ohne Bootfehler",
+    "pass": true
+  },
+  {
+    "name": "Inline-Vorschau besitzt den neuen Take-Viewer",
+    "pass": true
+  },
+  {
+    "name": "Inline-Take-Viewer bleibt im Fenster",
+    "pass": true
+  },
+  {
+    "name": "Keine unbehandelten Browserfehler",
+    "pass": true,
+    "errors": []
+  }
+]

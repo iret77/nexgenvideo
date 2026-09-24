@@ -1,0 +1,1888 @@
+diff --git a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
+index e7054b12..fc0bd3ff 100644
+--- a/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
++++ b/Sources/NexGenVideo/Agent/Tools/ToolExecutor+Mirelo.swift
+@@ -1057,6 +1057,12 @@ extension ToolExecutor {
+         workingRoot: URL,
+         workingCopyKey: String
+     ) async throws -> ToolResult {
++        defer {
++            try? editor.generationService.refreshMireloSpendRecovery(
++                editor: editor,
++                store: store
++            )
++        }
+         do {
+             try authorization.projectMutationScope?.requireCurrent(editor: editor)
+             var outcome = try await MireloExecutionCoordinator.shared.execute(
+@@ -1071,6 +1077,10 @@ extension ToolExecutor {
+                         authorization: authorization,
+                         editor: editor
+                     )
++                    try editor.generationService.refreshMireloSpendRecovery(
++                        editor: editor,
++                        store: store
++                    )
+                 }
+             )
+             try mireloRecordSubmittedIfNeeded(
+@@ -1078,6 +1088,10 @@ extension ToolExecutor {
+                 authorization: authorization,
+                 editor: editor
+             )
++            try editor.generationService.refreshMireloSpendRecovery(
++                editor: editor,
++                store: store
++            )
+             try authorization.projectMutationScope?.requireCurrent(editor: editor)
+             let artifacts: [MireloArtifact]
+             do {
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+index a85e8b60..bf0bb508 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Cost.swift
+@@ -169,7 +169,9 @@ extension EditorViewModel {
+         placeholders: [MediaAsset],
+         preserveMireloExecutionIdentity: Bool = false,
+         allowDetachedManifest: Bool = false,
+-        note: String?
++        note: String?,
++        projectWriter: ((String, Data, Data) throws -> Void)? = nil,
++        batchWriter: ((GenerationSpendEvent, GenerationBatchAuthorization, EditorViewModel) throws -> Void)? = nil
+     ) throws {
+         guard let transactionID = authorization.transactionId else { return }
+         guard
+@@ -180,6 +182,48 @@ extension EditorViewModel {
+             )
+         }
+         try authorization.projectMutationScope?.requireCurrent(editor: self)
++        let existingEvents = generationLog.spendEvents.filter {
++            $0.transactionId == transactionID
++        }
++        if existingEvents.last?.kind == .released {
++            guard existingEvents.count == 2,
++                  let reserved = existingEvents.first,
++                  let released = existingEvents.last,
++                  reserved.kind == .reserved,
++                  reserved.model == authorization.target.modelId,
++                  reserved.provider == authorization.target.provider,
++                  reserved.transport == authorization.target.transport,
++                  reserved.endpoint == authorization.target.endpoint,
++                  released.model == reserved.model,
++                  released.provider == reserved.provider,
++                  released.transport == reserved.transport,
++                  released.endpoint == reserved.endpoint,
++                  generationLog.entries.allSatisfy {
++                    $0.spendTransactionId != transactionID
++                  },
++                  mediaAssets.allSatisfy {
++                    $0.generationInput?.spendTransactionId != transactionID
++                  },
++                  mediaManifest.entries.allSatisfy({
++                    $0.generationInput?.spendTransactionId != transactionID
++                  }) else {
++                throw GenerationRequestError.storage(
++                    "The released generation remains attached to project media or activity."
++                )
++            }
++            if let batch = authorization.batchItem {
++                if let batchWriter {
++                    try batchWriter(released, batch, self)
++                } else {
++                    try GenerationBatchStore.recordSpendEvent(
++                        released,
++                        authorization: batch,
++                        editor: self
++                    )
++                }
++            }
++            return
++        }
+         let matchingAssets = mediaAssets.filter {
+             $0.generationInput?.spendTransactionId == transactionID
+         }
+@@ -220,9 +264,7 @@ extension EditorViewModel {
+                 "The unsubmitted reservation conflicts with existing project media."
+             )
+         }
+-        let transactionEvents = generationLog.spendEvents.filter {
+-            $0.transactionId == transactionID
+-        }
++        let transactionEvents = existingEvents
+         guard transactionEvents.count == 1,
+               let first = transactionEvents.first,
+               transactionEvents.last?.kind == .reserved,
+@@ -265,24 +307,21 @@ extension EditorViewModel {
+             log: nextLog,
+             generatedInputs: projectedInputs
+         )
+-        if let batch = authorization.batchItem {
+-            try GenerationBatchStore.recordSpendEvent(
+-                releaseEvent,
+-                authorization: batch,
+-                editor: self
+-            )
+-        }
+         let manifestData = try JSONEncoder().encode(nextManifest)
+         let logData = try JSONEncoder().encode(nextLog)
+-        try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
+-            try manifestData.write(
+-                to: staging.appendingPathComponent(Project.manifestFilename),
+-                options: .atomic
+-            )
+-            try logData.write(
+-                to: staging.appendingPathComponent(Project.generationLogFilename),
+-                options: .atomic
+-            )
++        if let projectWriter {
++            try projectWriter(workingCopyKey, manifestData, logData)
++        } else {
++            try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
++                try manifestData.write(
++                    to: staging.appendingPathComponent(Project.manifestFilename),
++                    options: .atomic
++                )
++                try logData.write(
++                    to: staging.appendingPathComponent(Project.generationLogFilename),
++                    options: .atomic
++                )
++            }
+         }
+         for asset in expectedAssets.values {
+             asset.generationInput = nil
+@@ -293,6 +332,17 @@ extension EditorViewModel {
+         mediaManifest = nextManifest
+         generationLog = nextLog
+         onPipelineChanged?()
++        if let batch = authorization.batchItem {
++            if let batchWriter {
++                try batchWriter(releaseEvent, batch, self)
++            } else {
++                try GenerationBatchStore.recordSpendEvent(
++                    releaseEvent,
++                    authorization: batch,
++                    editor: self
++                )
++            }
++        }
+     }
+ 
+     func releaseUnsubmittedSpendReservation(
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+index 7a7a62ca..3cadea8d 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel+Folders.swift
+@@ -198,8 +198,35 @@ extension EditorViewModel {
+     }
+ 
+     func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) {
++        let releasedTransactions = Set(
++            Dictionary(grouping: generationLog.spendEvents, by: \.transactionId)
++                .compactMap { transactionID, events in
++                    guard events.count == 2,
++                          events[0].kind == .reserved,
++                          events[1].kind == .released,
++                          events[1].model == events[0].model,
++                          events[1].provider == events[0].provider,
++                          events[1].transport == events[0].transport,
++                          events[1].endpoint == events[0].endpoint else {
++                        return nil
++                    }
++                    return transactionID
++                }
++        )
++        var restoredManifest = snapshot.mediaManifest
++        for index in restoredManifest.entries.indices {
++            guard let transactionID = restoredManifest.entries[index]
++                .generationInput?.spendTransactionId,
++                  releasedTransactions.contains(transactionID) else { continue }
++            restoredManifest.entries[index].generationInput = nil
++        }
++        for asset in snapshot.mediaAssets {
++            guard let transactionID = asset.generationInput?.spendTransactionId,
++                  releasedTransactions.contains(transactionID) else { continue }
++            asset.generationInput = nil
++        }
+         timeline = snapshot.timeline
+-        mediaManifest = snapshot.mediaManifest
++        mediaManifest = restoredManifest
+         mediaAssets = snapshot.mediaAssets
+         selectedClipIds = snapshot.selectedClipIds
+         selectedMediaAssetIds = snapshot.selectedMediaAssetIds
+diff --git a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+index 68026a17..b24b0d40 100644
+--- a/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
++++ b/Sources/NexGenVideo/Editor/ViewModel/EditorViewModel.swift
+@@ -1333,5 +1333,6 @@ final class EditorViewModel {
+     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+     var mireloSpendRecoveryMessage: String?
+     @ObservationIgnored var mireloSpendRecoveryNoticeFingerprint: String?
++    @ObservationIgnored var onWorkingCopyReloadCompleted: ((Result<Void, Error>) -> Void)?
+ 
+ }
+diff --git a/Sources/NexGenVideo/Generation/GenerationBatchCoordinator.swift b/Sources/NexGenVideo/Generation/GenerationBatchCoordinator.swift
+index ac7ff0ee..d3fdcede 100644
+--- a/Sources/NexGenVideo/Generation/GenerationBatchCoordinator.swift
++++ b/Sources/NexGenVideo/Generation/GenerationBatchCoordinator.swift
+@@ -69,10 +69,13 @@ final class GenerationBatchCoordinator {
+             do {
+                 let snapshots = try await Task.detached(priority: .utility) { try GenerationBatchStore.all(home: home) }.value
+                 guard let self, let editor, editor.workingRoot == home, self.readID == requestID else { return }
+-                try GenerationBatchStore.reconcileRuntime(snapshots, editor: editor)
+-                self.snapshots = snapshots
++                let reconciled = try GenerationBatchStore.reconcileRuntime(
++                    snapshots,
++                    editor: editor
++                )
++                self.snapshots = reconciled
+                 self.error = nil
+-                let candidates = snapshots.filter { snapshot in snapshot.authorityAvailable && snapshot.journal.executions.contains(where: {
++                let candidates = reconciled.filter { snapshot in snapshot.authorityAvailable && snapshot.journal.executions.contains(where: {
+                     [.queued, .submitting, .running].contains($0.state) || (retryKnownJobs && $0.state == .blocked && $0.providerRequestResumable)
+                 }) }.map(\.batch.id)
+                 if let first = candidates.first {
+diff --git a/Sources/NexGenVideo/Generation/GenerationBatchStore.swift b/Sources/NexGenVideo/Generation/GenerationBatchStore.swift
+index 9eaaaa73..30601c55 100644
+--- a/Sources/NexGenVideo/Generation/GenerationBatchStore.swift
++++ b/Sources/NexGenVideo/Generation/GenerationBatchStore.swift
+@@ -178,27 +178,157 @@ enum GenerationBatchStore {
+         try authority.recordSpendEvent(event, authorization: authorization)
+     }
+ 
+-    static func reconcileRuntime(_ snapshots: [Snapshot], editor: EditorViewModel) throws {
++    @discardableResult
++    static func reconcileRuntime(
++        _ snapshots: [Snapshot],
++        editor: EditorViewModel,
++        authority supplied: GenerationExecutionAuthorityStore? = nil
++    ) throws -> [Snapshot] {
+         guard let home = editor.workingRoot else {
+             throw GenerationRequestError.storage("The generation batch project is closed.")
+         }
+-        var changedLog = false
+-        for event in snapshots.flatMap(\.authoritySpendEvents) {
+-            if let existing = editor.generationLog.spendEvents.first(where: { $0.id == event.id }) {
++        let authority = try supplied ?? .live()
++        var reconciledSnapshots = snapshots
++        for index in reconciledSnapshots.indices where reconciledSnapshots[index].authorityAvailable {
++            let snapshot = reconciledSnapshots[index]
++            var repairedEvents = snapshot.authoritySpendEvents
++            for execution in snapshot.journal.executions {
++                guard let transactionID = execution.transactionID else { continue }
++                let projectEvents = editor.generationLog.spendEvents.filter {
++                    $0.transactionId == transactionID
++                }
++                guard projectEvents.last?.kind == .released else { continue }
++                let authorityEvents = repairedEvents.filter {
++                    $0.transactionId == transactionID
++                }
++                if authorityEvents.contains(where: { $0.id == projectEvents.last?.id }) {
++                    continue
++                }
++                guard authorityEvents.count == 1,
++                      authorityEvents[0].kind == .reserved,
++                      projectEvents.count == 2,
++                      projectEvents[0] == authorityEvents[0],
++                      let release = projectEvents.last else {
++                    throw GenerationRequestError.storage(
++                        "The project release conflicts with its approved generation authority."
++                    )
++                }
++                try authority.recordSpendEvent(
++                    release,
++                    authorization: GenerationBatchAuthorization(
++                        batchID: snapshot.batch.id,
++                        itemID: execution.itemID
++                    )
++                )
++                repairedEvents.append(release)
++            }
++            if repairedEvents != snapshot.authoritySpendEvents {
++                reconciledSnapshots[index] = Snapshot(
++                    batch: snapshot.batch,
++                    journal: snapshot.journal,
++                    authorityAvailable: true,
++                    authoritySpendEvents: repairedEvents,
++                    recoveredOutputs: snapshot.recoveredOutputs
++                )
++            }
++        }
++
++        var nextLog = editor.generationLog
++        let authorityEvents = reconciledSnapshots.flatMap(\.authoritySpendEvents)
++        for event in authorityEvents {
++            if let existing = nextLog.spendEvents.first(where: { $0.id == event.id }) {
+                 guard existing == event else {
+                     throw GenerationRequestError.storage("A project spend event conflicts with its execution authority.")
+                 }
+             } else {
+-                editor.generationLog.spendEvents.append(event)
+-                changedLog = true
++                nextLog.spendEvents.append(event)
++            }
++        }
++
++        var releasedTransactions: Set<String> = []
++        for transactionID in Set(authorityEvents.filter { $0.kind == .released }.map(\.transactionId)) {
++            let events = nextLog.spendEvents.filter { $0.transactionId == transactionID }
++            guard events.count == 2,
++                  events.first?.kind == .reserved,
++                  events.last?.kind == .released else {
++                throw GenerationRequestError.storage(
++                    "Released batch authority conflicts with submitted or charged project spend."
++                )
++            }
++            releasedTransactions.insert(transactionID)
++        }
++
++        let releasedAssets = editor.mediaAssets.filter { asset in
++            guard let transactionID = asset.generationInput?.spendTransactionId else {
++                return false
++            }
++            return releasedTransactions.contains(transactionID)
++        }
++        guard releasedAssets.allSatisfy({
++            !FileManager.default.fileExists(atPath: $0.url.path)
++        }) else {
++            throw GenerationRequestError.storage(
++                "Released batch authority is attached to generated project media."
++            )
++        }
++        var nextManifest = editor.mediaManifest
++        for index in nextManifest.entries.indices {
++            guard let transactionID = nextManifest.entries[index]
++                .generationInput?.spendTransactionId,
++                  releasedTransactions.contains(transactionID) else { continue }
++            guard let url = editor.mediaResolver.expectedURL(
++                for: nextManifest.entries[index].id
++            ), !FileManager.default.fileExists(atPath: url.path) else {
++                throw GenerationRequestError.storage(
++                    "Released batch authority conflicts with existing project media."
++                )
++            }
++            nextManifest.entries[index].generationInput = nil
++        }
++        nextLog.entries.removeAll { entry in
++            entry.spendTransactionId.map(releasedTransactions.contains) == true
++        }
++        let projectedInputs = editor.mediaAssets.compactMap { asset -> GenerationInput? in
++            guard let input = asset.generationInput,
++                  let transactionID = input.spendTransactionId,
++                  releasedTransactions.contains(transactionID) else {
++                return asset.generationInput
+             }
++            return nil
++        }
++        _ = try GenerationBudgetGuard.spendSnapshot(
++            log: nextLog,
++            generatedInputs: projectedInputs
++        )
++
++        if nextLog != editor.generationLog || nextManifest != editor.mediaManifest {
++            guard let key = editor.openWorkingCopyKey else {
++                throw GenerationRequestError.storage(
++                    "Recovered batch spend needs a live working copy."
++                )
++            }
++            let manifestData = try JSONEncoder().encode(nextManifest)
++            let logData = try JSONEncoder().encode(nextLog)
++            try ProjectWorkingCopy.transact(key: key) { staging in
++                try manifestData.write(
++                    to: staging.appendingPathComponent(Project.manifestFilename),
++                    options: .atomic
++                )
++                try logData.write(
++                    to: staging.appendingPathComponent(Project.generationLogFilename),
++                    options: .atomic
++                )
++            }
++            for asset in releasedAssets {
++                asset.generationInput = nil
++            }
++            editor.mediaManifest = nextManifest
++            editor.generationLog = nextLog
++            editor.onPipelineChanged?()
+         }
+-        _ = try GenerationBudgetGuard.verifiedSpend(log: editor.generationLog,
+-            generatedAssets: editor.mediaAssets, requireCompleteMoney: false)
+-        if changedLog { try editor.persistGenerationLog() }
+ 
+         var changedMedia = false
+-        for receipt in snapshots.flatMap(\.recoveredOutputs) {
++        for receipt in reconciledSnapshots.flatMap(\.recoveredOutputs) {
+             guard case .project(let path) = receipt.asset.source else { continue }
+             let url = try ProjectLocalFile.resolve(path, dataRoot: home)
+             if let asset = editor.mediaAssets.first(where: { $0.id == receipt.asset.id }) {
+@@ -240,6 +370,7 @@ enum GenerationBatchStore {
+             try ProjectWorkingCopy.markDirty(key: key)
+             editor.onPipelineChanged?()
+         }
++        return reconciledSnapshots
+     }
+ 
+     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {
+diff --git a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+index 0eac6c5f..b49125dd 100644
+--- a/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
++++ b/Sources/NexGenVideo/Generation/GenerationBudgetGuard.swift
+@@ -60,6 +60,7 @@ enum GenerationBudgetGuard {
+             projectHome: workingRoot,
+             editor: editor
+         )
++        try editor.generationService.refreshMireloSpendRecovery(editor: editor)
+         if let recoveryMessage = editor.mireloSpendRecoveryMessage {
+             throw GenerationBudgetError.blocked(recoveryMessage)
+         }
+@@ -163,6 +164,7 @@ enum GenerationBudgetGuard {
+             projectHome: workingRoot,
+             editor: editor
+         )
++        try editor.generationService.refreshMireloSpendRecovery(editor: editor)
+         if let recoveryMessage = editor.mireloSpendRecoveryMessage {
+             throw GenerationBudgetError.blocked(recoveryMessage)
+         }
+diff --git a/Sources/NexGenVideo/Generation/GenerationService.swift b/Sources/NexGenVideo/Generation/GenerationService.swift
+index 1b3475f9..f334772c 100644
+--- a/Sources/NexGenVideo/Generation/GenerationService.swift
++++ b/Sources/NexGenVideo/Generation/GenerationService.swift
+@@ -69,6 +69,18 @@ enum ReferenceHosting: Equatable {
+ @MainActor
+ final class GenerationService {
+ 
++    private enum MireloSpendRecoveryKind: String, Hashable {
++        case resumable
++        case acceptanceUnknown
++        case conflict
++        case orphan
++    }
++
++    private struct MireloSpendRecoveryIssue: Hashable {
++        let kind: MireloSpendRecoveryKind
++        let detail: String
++    }
++
+     private struct MireloReconciliationOperation {
+         let assetID: String
+         let transactionID: String
+@@ -2093,6 +2105,9 @@ final class GenerationService {
+                 onFailure: onFailure
+             )
+         }
++        defer {
++            try? refreshMireloSpendRecovery(editor: editor, store: store)
++        }
+         var executionWasApproved = false
+         do {
+             let sourceReceipts: [MireloSourceReceipt]
+@@ -2208,7 +2223,8 @@ final class GenerationService {
+                     try self.recordMireloSubmittedIfNeeded(
+                         accepted,
+                         authorization: authorization,
+-                        editor: editor
++                        editor: editor,
++                        store: store
+                     )
+                 }
+             )
+@@ -2261,7 +2277,8 @@ final class GenerationService {
+                 try? recordMireloSubmittedIfNeeded(
+                     current,
+                     authorization: authorization,
+-                    editor: editor
++                    editor: editor,
++                    store: store
+                 )
+             }
+             if !executionWasApproved {
+@@ -2427,6 +2444,9 @@ final class GenerationService {
+             projectHome: workingRoot,
+             editor: editor
+         )
++        defer {
++            try? refreshMireloSpendRecovery(editor: editor, store: store)
++        }
+         guard var record = try store.load(
+             projectKey: projectKey,
+             logicalJobID: transactionID
+@@ -2488,7 +2508,8 @@ final class GenerationService {
+                 try self.recordMireloSubmittedIfNeeded(
+                     accepted,
+                     authorization: authorization,
+-                    editor: editor
++                    editor: editor,
++                    store: store
+                 )
+             }
+         )
+@@ -2559,7 +2580,8 @@ final class GenerationService {
+                 try recordMireloSubmittedIfNeeded(
+                     record,
+                     authorization: authorization,
+-                    editor: editor
++                    editor: editor,
++                    store: store
+                 )
+             }
+             if record.state == .completed,
+@@ -2626,27 +2648,21 @@ final class GenerationService {
+         )
+         var submissions: [(MireloExecutionRecord, GenerationAuthorization)] = []
+         var releases: [(MireloExecutionRecord, GenerationAuthorization)] = []
+-        var issues: [String] = []
++        var reconciliationIssues: [MireloSpendRecoveryIssue] = []
+         for record in records {
+             guard let transactionID = record.spendTransactionID else { continue }
+-            let hasSubmissionRisk = record.providerJobID != nil
+-                || record.state == .submitting
+-                || record.state == .acceptanceUnknown
++            if MireloExecutionCoordinator.shared.hasActiveFlight(
++                authorityID: record.authorityID
++            ) {
++                continue
++            }
+             let events = editor.generationLog.spendEvents.filter {
+                 $0.transactionId == transactionID
+             }
+             guard !events.isEmpty else {
+-                if hasSubmissionRisk {
+-                    issues.append(
+-                        "Authority \(record.logicalJobID) has provider acceptance evidence but no reservation in this project copy."
+-                    )
+-                }
+                 continue
+             }
+             guard grouped[transactionID]?.count == 1 else {
+-                issues.append(
+-                    "Multiple Mirelo authority records claim reservation \(transactionID)."
+-                )
+                 continue
+             }
+             guard let first = events.first,
+@@ -2663,9 +2679,6 @@ final class GenerationService {
+                         && $0.transport == first.transport
+                         && $0.endpoint == first.endpoint
+                   }) else {
+-                issues.append(
+-                    "Authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
+-                )
+                 continue
+             }
+             let authorization = Self.mireloReconciliationAuthorization(
+@@ -2678,40 +2691,23 @@ final class GenerationService {
+                     guard submitted.count == 1,
+                           submitted[0].providerRequestId == providerJobID,
+                           events.last?.kind != .released else {
+-                        issues.append(
+-                            "Authority \(record.logicalJobID) names a different provider job than reservation \(transactionID)."
+-                        )
+                         continue
+                     }
+                     continue
+                 }
+                 guard events.last?.kind == .reserved else {
+-                    issues.append(
+-                        "Authority \(record.logicalJobID) cannot attach its provider job to reservation \(transactionID)."
+-                    )
+                     continue
+                 }
+                 submissions.append((record, authorization))
+                 continue
+             }
+             guard !events.contains(where: { $0.kind == .submitted }) else {
+-                issues.append(
+-                    "Authority \(record.logicalJobID) lost the provider job identity recorded by reservation \(transactionID)."
+-                )
+                 continue
+             }
+             if record.state == .failed {
+                 if events.last?.kind == .reserved {
+                     releases.append((record, authorization))
+-                } else if events.last?.kind != .released {
+-                    issues.append(
+-                        "Rejected authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
+-                    )
+                 }
+-            } else if record.state == .submitting || record.state == .acceptanceUnknown {
+-                issues.append(
+-                    "Authority \(record.logicalJobID) has unresolved Mirelo acceptance for reservation \(transactionID)."
+-                )
+             }
+         }
+         for (record, authorization) in submissions {
+@@ -2720,12 +2716,15 @@ final class GenerationService {
+                 try recordMireloSubmittedIfNeeded(
+                     record,
+                     authorization: authorization,
+-                    editor: editor
++                    editor: editor,
++                    store: store,
++                    refreshRecovery: false
+                 )
+             } catch {
+-                issues.append(
+-                    "Authority \(record.logicalJobID) could not persist its accepted provider job: \(error.localizedDescription)"
+-                )
++                reconciliationIssues.append(.init(
++                    kind: .conflict,
++                    detail: "Authority \(record.logicalJobID) could not persist its accepted provider job: \(error.localizedDescription)"
++                ))
+             }
+         }
+         for (record, authorization) in releases {
+@@ -2737,14 +2736,159 @@ final class GenerationService {
+                     note: record.lastError
+                 )
+             } catch {
+-                issues.append(
+-                    "Rejected authority \(record.logicalJobID) could not release its reservation: \(error.localizedDescription)"
+-                )
++                reconciliationIssues.append(.init(
++                    kind: .conflict,
++                    detail: "Rejected authority \(record.logicalJobID) could not release its reservation: \(error.localizedDescription)"
++                ))
+             }
+         }
++        let issues = reconciliationIssues + mireloSpendRecoveryIssues(
++            records: records,
++            editor: editor
++        )
+         reportMireloSpendRecovery(issues, editor: editor)
+     }
+ 
++    func refreshMireloSpendRecovery(
++        editor: EditorViewModel,
++        store suppliedStore: MireloExecutionStore? = nil
++    ) throws {
++        guard let projectKey = editor.projectId else { return }
++        let projectHasMireloEvidence = editor.generationLog.spendEvents.contains {
++            $0.provider == .mirelo
++        } || editor.mediaManifest.entries.contains {
++            $0.mireloExecutionTransactionId != nil
++                || $0.generationInput?.model.hasPrefix("mirelo/") == true
++        }
++        guard projectHasMireloEvidence
++                || editor.mireloSpendRecoveryMessage != nil else { return }
++        let store: MireloExecutionStore
++        do {
++            if let suppliedStore {
++                store = suppliedStore
++            } else {
++                store = try mireloStoreProvider()
++            }
++        } catch {
++            if projectHasMireloEvidence || editor.mireloSpendRecoveryMessage != nil {
++                throw error
++            }
++            return
++        }
++        let records: [MireloExecutionRecord]
++        do {
++            records = try store.all(projectKey: projectKey).filter {
++                $0.approvedAt != nil && $0.spendTransactionID != nil
++            }
++        } catch {
++            if projectHasMireloEvidence || editor.mireloSpendRecoveryMessage != nil {
++                throw error
++            }
++            return
++        }
++        reportMireloSpendRecovery(
++            mireloSpendRecoveryIssues(records: records, editor: editor),
++            editor: editor
++        )
++    }
++
++    private func mireloSpendRecoveryIssues(
++        records: [MireloExecutionRecord],
++        editor: EditorViewModel
++    ) -> [MireloSpendRecoveryIssue] {
++        let grouped = Dictionary(grouping: records) { $0.spendTransactionID ?? "" }
++        var issues: [MireloSpendRecoveryIssue] = []
++        for record in records {
++            guard let transactionID = record.spendTransactionID else { continue }
++            if MireloExecutionCoordinator.shared.hasActiveFlight(
++                authorityID: record.authorityID
++            ) {
++                continue
++            }
++            let events = editor.generationLog.spendEvents.filter {
++                $0.transactionId == transactionID
++            }
++            let hasSubmissionRisk = record.providerJobID != nil
++                || record.state == .submitting
++                || record.state == .acceptanceUnknown
++            guard !events.isEmpty else {
++                if hasSubmissionRisk {
++                    issues.append(.init(
++                        kind: .orphan,
++                        detail: "Authority \(record.logicalJobID) has submission evidence but no reservation in this project copy."
++                    ))
++                }
++                continue
++            }
++            guard grouped[transactionID]?.count == 1 else {
++                issues.append(.init(
++                    kind: .conflict,
++                    detail: "Multiple Mirelo authority records claim reservation \(transactionID)."
++                ))
++                continue
++            }
++            guard let first = events.first,
++                  first.kind == .reserved,
++                  first.provider == .mirelo,
++                  first.transport == .api,
++                  let authorityModel = Self.mireloAuthorityModelID(record),
++                  first.model == authorityModel,
++                  first.endpoint == record.operation.createPath
++                    || first.endpoint == String(authorityModel.dropFirst("mirelo/".count)),
++                  events.allSatisfy({
++                    $0.model == first.model
++                        && $0.provider == first.provider
++                        && $0.transport == first.transport
++                        && $0.endpoint == first.endpoint
++                  }) else {
++                issues.append(.init(
++                    kind: .conflict,
++                    detail: "Authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
++                ))
++                continue
++            }
++            if let providerJobID = record.providerJobID {
++                let submitted = events.filter { $0.kind == .submitted }
++                guard submitted.count == 1,
++                      submitted[0].providerRequestId == providerJobID,
++                      events.last?.kind != .released else {
++                    issues.append(.init(
++                        kind: .conflict,
++                        detail: "Authority \(record.logicalJobID) and reservation \(transactionID) do not name the same accepted provider job."
++                    ))
++                    continue
++                }
++                continue
++            }
++            if events.contains(where: { $0.kind == .submitted }) {
++                issues.append(.init(
++                    kind: .conflict,
++                    detail: "Authority \(record.logicalJobID) lost the provider job recorded by reservation \(transactionID)."
++                ))
++                continue
++            }
++            if record.state == .submitting || record.state == .acceptanceUnknown {
++                issues.append(.init(
++                    kind: record.operation.usesIdempotencyKey
++                        ? .resumable
++                        : .acceptanceUnknown,
++                    detail: "Authority \(record.logicalJobID) has unresolved Mirelo acceptance for reservation \(transactionID)."
++                ))
++            } else if record.state == .failed, events.last?.kind != .released {
++                issues.append(.init(
++                    kind: .conflict,
++                    detail: "Rejected authority \(record.logicalJobID) is still attached to reservation \(transactionID)."
++                ))
++            }
++        }
++        return Array(Set(issues)).sorted {
++            if $0.kind.rawValue == $1.kind.rawValue {
++                return $0.detail < $1.detail
++            }
++            return $0.kind.rawValue < $1.kind.rawValue
++        }
++    }
++
+     private static func mireloAuthorityModelID(
+         _ record: MireloExecutionRecord
+     ) -> String? {
+@@ -2783,23 +2927,54 @@ final class GenerationService {
+     }
+ 
+     private func reportMireloSpendRecovery(
+-        _ issues: [String],
++        _ reportedIssues: [MireloSpendRecoveryIssue],
+         editor: EditorViewModel
+     ) {
+-        let fingerprint = issues.sorted().joined(separator: "\n")
++        let issues = Array(Set(reportedIssues)).sorted {
++            if $0.kind.rawValue == $1.kind.rawValue {
++                return $0.detail < $1.detail
++            }
++            return $0.kind.rawValue < $1.kind.rawValue
++        }
++        let fingerprint = issues.map {
++            "\($0.kind.rawValue):\($0.detail)"
++        }.joined(separator: "\n")
+         guard !fingerprint.isEmpty else {
+             editor.mireloSpendRecoveryMessage = nil
+             editor.mireloSpendRecoveryNoticeFingerprint = nil
+             return
+         }
+         for issue in issues {
+-            Log.generation.error("Mirelo spend recovery: \(issue)")
++            Log.generation.error("Mirelo spend recovery: \(issue.detail)")
++        }
++        var guidance: [String] = []
++        let resumable = issues.filter { $0.kind == .resumable }.count
++        if resumable > 0 {
++            guidance.append(
++                "\(resumable) Mirelo \(resumable == 1 ? "job has" : "jobs have") unresolved acceptance. Resume the same job from its media item or with run_mirelo_audio; do not create a new logical job."
++            )
++        }
++        let acceptanceUnknown = issues.filter {
++            $0.kind == .acceptanceUnknown
++        }.count
++        if acceptanceUnknown > 0 {
++            guidance.append(
++                "Mirelo acceptance is unknown for \(acceptanceUnknown) non-idempotent \(acceptanceUnknown == 1 ? "job" : "jobs"). Check Mirelo usage; NexGenVideo cannot safely retry or release this authority."
++            )
+         }
+-        let count = issues.count
+-        let message = "Budget stop: \(count) Mirelo "
+-            + "\(count == 1 ? "job has" : "jobs have") spend evidence that this project copy "
+-            + "cannot account for. Open the project copy that created the job or restore its "
+-            + "matching Recovery copy before generating again."
++        let conflicts = issues.filter { $0.kind == .conflict }.count
++        if conflicts > 0 {
++            guidance.append(
++                "\(conflicts) Mirelo spend \(conflicts == 1 ? "record conflicts" : "records conflict") with host authority. NexGenVideo cannot safely repair this in-app; retain the project and its Recovery copy for diagnosis."
++            )
++        }
++        let orphans = issues.filter { $0.kind == .orphan }.count
++        if orphans > 0 {
++            guidance.append(
++                "Host authority contains \(orphans) submitted Mirelo \(orphans == 1 ? "job" : "jobs") absent from this copy. Continue in the originating project or Recovery copy if it still exists. If it was discarded, no safe in-app recovery exists."
++            )
++        }
++        let message = "Budget stop: " + guidance.joined(separator: " ")
+         editor.mireloSpendRecoveryMessage = message
+         guard editor.mireloSpendRecoveryNoticeFingerprint != fingerprint else { return }
+         editor.mireloSpendRecoveryNoticeFingerprint = fingerprint
+@@ -3116,7 +3291,9 @@ final class GenerationService {
+     private func recordMireloSubmittedIfNeeded(
+         _ record: MireloExecutionRecord,
+         authorization: GenerationAuthorization,
+-        editor: EditorViewModel
++        editor: EditorViewModel,
++        store: MireloExecutionStore,
++        refreshRecovery: Bool = true
+     ) throws {
+         guard let providerJobID = record.providerJobID,
+               let transactionID = authorization.transactionId else { return }
+@@ -3128,6 +3305,9 @@ final class GenerationService {
+                     "The Mirelo provider job does not match the project spend record."
+                 )
+             }
++            if refreshRecovery {
++                try refreshMireloSpendRecovery(editor: editor, store: store)
++            }
+             return
+         }
+         try authorization.projectMutationScope?.requireCurrent(editor: editor)
+@@ -3139,6 +3319,9 @@ final class GenerationService {
+             money: authorization.estimate,
+             note: "Mirelo preflight: \(record.preflight.credits) credits. Monetary conversion is not published."
+         )
++        if refreshRecovery {
++            try refreshMireloSpendRecovery(editor: editor, store: store)
++        }
+     }
+ 
+     private func releaseNativeMireloReservationIfRejected(
+diff --git a/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift b/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
+index 91fefd54..90c1ba6b 100644
+--- a/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
++++ b/Sources/NexGenVideo/Generation/MireloExecutionCoordinator.swift
+@@ -1,5 +1,22 @@
+ import Foundation
+ 
++private final class MireloFlightActivityIndex: @unchecked Sendable {
++    private let lock = NSLock()
++    private var authorityIDs: Set<String> = []
++
++    func insert(_ authorityID: String) {
++        lock.withLock { _ = authorityIDs.insert(authorityID) }
++    }
++
++    func remove(_ authorityID: String) {
++        lock.withLock { _ = authorityIDs.remove(authorityID) }
++    }
++
++    func contains(_ authorityID: String) -> Bool {
++        lock.withLock { authorityIDs.contains(authorityID) }
++    }
++}
++
+ struct MireloExecutionOutcome: Sendable, Equatable {
+     let record: MireloExecutionRecord
+     let terminalResponse: Data
+@@ -31,6 +48,11 @@ actor MireloExecutionCoordinator {
+     private var inFlight: [String: Flight] = [:]
+     private var retiring: [String: RetiringFlight] = [:]
+     private var settlementWaiters: [String: [UUID: SettlementWaiter]] = [:]
++    nonisolated private let activityIndex = MireloFlightActivityIndex()
++
++    nonisolated func hasActiveFlight(authorityID: String) -> Bool {
++        activityIndex.contains(authorityID)
++    }
+ 
+     func prepare(
+         store: MireloExecutionStore,
+@@ -222,6 +244,7 @@ actor MireloExecutionCoordinator {
+                 result: result
+             )
+         }
++        activityIndex.insert(authorityID)
+         inFlight[authorityID] = Flight(
+             id: flightID,
+             task: task,
+@@ -276,6 +299,9 @@ actor MireloExecutionCoordinator {
+                 waiter.continuation.resume()
+             }
+         }
++        if inFlight[authorityID] == nil, retiring[authorityID] == nil {
++            activityIndex.remove(authorityID)
++        }
+     }
+ 
+     private func executeOwned(
+diff --git a/Sources/NexGenVideo/Project/VideoProject.swift b/Sources/NexGenVideo/Project/VideoProject.swift
+index 7f5a8ca7..a055bd78 100644
+--- a/Sources/NexGenVideo/Project/VideoProject.swift
++++ b/Sources/NexGenVideo/Project/VideoProject.swift
+@@ -778,10 +778,12 @@ final class VideoProject: NSDocument {
+                 self.editorViewModel.agentService.loadSessions(from: home)
+                 self.editorViewModel.mediaAssets.removeAll()
+                 self.restoreAssetsFromManifest()
++                self.editorViewModel.onWorkingCopyReloadCompleted?(.success(()))
+             case .failure(let error):
+                 Log.project.error(
+                     "discard recovery reload failed: \(error.localizedDescription)"
+                 )
++                self.editorViewModel.onWorkingCopyReloadCompleted?(.failure(error))
+                 self.presentError(error)
+             }
+         }
+diff --git a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+index 4429f894..751f950a 100644
+--- a/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
++++ b/Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift
+@@ -6,6 +6,18 @@ import Testing
+ @Suite("Generation batch single-use execution")
+ @MainActor
+ struct GenerationBatchTests {
++    private struct ReleaseContext {
++        let root: URL
++        let editor: EditorViewModel
++        let batch: GenerationBatch
++        let item: GenerationBatch.Item
++        let authority: GenerationExecutionAuthorityStore
++        let authorityRoot: URL
++        let asset: MediaAsset
++        let authorization: GenerationAuthorization
++        let reservation: GenerationSpendEvent
++    }
++
+     private func fixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
+         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-batch-\(UUID().uuidString).ngv")
+         try Fixtures.prepareProjectPackage(at: root)
+@@ -42,6 +54,90 @@ struct GenerationBatchTests {
+         }
+     }
+ 
++    private func releaseContext() async throws -> ReleaseContext {
++        let (root, editor, batch) = try await fixture()
++        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "ngv-release-authority-\(UUID().uuidString)"
++        )
++        let authority = try GenerationExecutionAuthorityStore(
++            root: authorityRoot,
++            hostID: UUID().uuidString
++        )
++        let approved = try await GenerationBatchStore.approve(
++            batch,
++            editor: editor,
++            authority: authority
++        )
++        let item = batch.payload.items[0]
++        let transactionID = UUID().uuidString
++        let entries = placeholders(item, transaction: transactionID)
++        let entry = try #require(entries.first)
++        let home = try #require(editor.workingRoot)
++        let asset = MediaAsset(
++            entry: entry,
++            resolvedURL: home.appendingPathComponent(
++                Project.mediaDirectoryName + "/fixture-0.png"
++            )
++        )
++        editor.mediaAssets = [asset]
++        editor.persistMediaAsset(asset)
++        let reservation = GenerationSpendEvent(
++            transactionId: transactionID,
++            kind: .reserved,
++            model: item.package.payload.target.modelId,
++            provider: item.package.payload.target.provider,
++            transport: item.package.payload.target.transport,
++            endpoint: item.package.payload.target.endpoint,
++            money: item.package.payload.estimate
++        )
++        editor.generationLog.spendEvents = [reservation]
++        try editor.persistGenerationLog()
++        _ = try GenerationBatchStore.update(
++            approved,
++            editor: editor,
++            authority: authority,
++            addingSpendEvents: [reservation]
++        ) {
++            try $0.beginSubmission(
++                itemID: item.id,
++                packageID: item.package.id,
++                transactionID: transactionID,
++                placeholders: entries,
++                batch: batch
++            )
++        }
++        let authorization = GenerationAuthorization(
++            transactionId: transactionID,
++            target: item.package.payload.target,
++            estimate: item.package.payload.estimate,
++            projectMutationScope: try GenerationProjectMutationScope(
++                projectHome: home,
++                editor: editor
++            ),
++            generationPackage: item.package,
++            batchItem: GenerationBatchAuthorization(
++                batchID: batch.id,
++                itemID: item.id
++            )
++        )
++        return ReleaseContext(
++            root: root,
++            editor: editor,
++            batch: batch,
++            item: item,
++            authority: authority,
++            authorityRoot: authorityRoot,
++            asset: asset,
++            authorization: authorization,
++            reservation: reservation
++        )
++    }
++
++    private func cleanup(_ context: ReleaseContext) {
++        cleanup(context.root)
++        try? FileManager.default.removeItem(at: context.authorityRoot)
++    }
++
+     @Test func duplicateSubmissionsCannotReuseAnItemOrAnotherItemsReservation() async throws {
+         let (root, _, batch) = try await fixture()
+         defer { cleanup(root) }
+@@ -382,4 +478,142 @@ struct GenerationBatchTests {
+         #expect(editor.mediaAssets.contains(where: { $0.id == entry.id && $0.generationStatus == .none }))
+         #expect(editor.mediaManifest.entries.contains(entry))
+     }
++
++    @Test func releaseProjectWriteFailureLeavesAuthorityAndProjectReserved() async throws {
++        let context = try await releaseContext()
++        defer { cleanup(context) }
++        var batchWriteAttempted = false
++
++        #expect(throws: (any Error).self) {
++            try context.editor.releaseUnsubmittedSpendReservation(
++                authorization: context.authorization,
++                placeholders: [context.asset],
++                note: "Preparation failed.",
++                projectWriter: { _, _, _ in
++                    throw CocoaError(.fileWriteUnknown)
++                },
++                batchWriter: { _, _, _ in
++                    batchWriteAttempted = true
++                }
++            )
++        }
++
++        #expect(!batchWriteAttempted)
++        #expect(context.asset.generationInput?.spendTransactionId
++            == context.authorization.transactionId)
++        #expect(context.editor.generationLog.spendEvents.map(\.kind) == [.reserved])
++        let authorityRecord = try context.authority.load(
++            projectKey: context.batch.payload.projectKey,
++            batchID: context.batch.id
++        )
++        #expect(authorityRecord.spendEvents.map(\.kind) == [.reserved])
++    }
++
++    @Test func projectReleaseRepairsMissingAuthorityReleaseIdempotently() async throws {
++        let context = try await releaseContext()
++        defer { cleanup(context) }
++
++        #expect(throws: (any Error).self) {
++            try context.editor.releaseUnsubmittedSpendReservation(
++                authorization: context.authorization,
++                placeholders: [context.asset],
++                note: "Preparation failed.",
++                batchWriter: { _, _, _ in
++                    throw CocoaError(.fileWriteUnknown)
++                }
++            )
++        }
++        #expect(context.asset.generationInput == nil)
++        #expect(context.editor.generationLog.spendEvents.map(\.kind)
++            == [.reserved, .released])
++        let home = try #require(context.editor.workingRoot)
++        var snapshots = try GenerationBatchStore.all(
++            home: home,
++            authority: context.authority
++        )
++        snapshots = try GenerationBatchStore.reconcileRuntime(
++            snapshots,
++            editor: context.editor,
++            authority: context.authority
++        )
++        _ = try GenerationBatchStore.reconcileRuntime(
++            snapshots,
++            editor: context.editor,
++            authority: context.authority
++        )
++
++        let authorityRecord = try context.authority.load(
++            projectKey: context.batch.payload.projectKey,
++            batchID: context.batch.id
++        )
++        #expect(authorityRecord.spendEvents.map(\.kind) == [.reserved, .released])
++        #expect(authorityRecord.spendEvents.last
++            == context.editor.generationLog.spendEvents.last)
++    }
++
++    @Test func authorityReleaseDetachesStaleProjectPlaceholderIdempotently() async throws {
++        let context = try await releaseContext()
++        defer { cleanup(context) }
++        let release = GenerationSpendEvent(
++            transactionId: context.reservation.transactionId,
++            kind: .released,
++            model: context.reservation.model,
++            provider: context.reservation.provider,
++            transport: context.reservation.transport,
++            endpoint: context.reservation.endpoint,
++            money: context.reservation.money,
++            note: "Preparation failed."
++        )
++        try context.authority.recordSpendEvent(
++            release,
++            authorization: GenerationBatchAuthorization(
++                batchID: context.batch.id,
++                itemID: context.item.id
++            )
++        )
++        let home = try #require(context.editor.workingRoot)
++        var snapshots = try GenerationBatchStore.all(
++            home: home,
++            authority: context.authority
++        )
++        try FileManager.default.createDirectory(
++            at: context.asset.url.deletingLastPathComponent(),
++            withIntermediateDirectories: true
++        )
++        try Data("unexpected generated bytes".utf8).write(to: context.asset.url)
++        let beforeLog = context.editor.generationLog
++        let beforeManifest = context.editor.mediaManifest
++        #expect(throws: (any Error).self) {
++            try GenerationBatchStore.reconcileRuntime(
++                snapshots,
++                editor: context.editor,
++                authority: context.authority
++            )
++        }
++        #expect(context.editor.generationLog == beforeLog)
++        #expect(context.editor.mediaManifest == beforeManifest)
++        #expect(context.asset.generationInput != nil)
++        try FileManager.default.removeItem(at: context.asset.url)
++        snapshots = try GenerationBatchStore.reconcileRuntime(
++            snapshots,
++            editor: context.editor,
++            authority: context.authority
++        )
++        _ = try GenerationBatchStore.reconcileRuntime(
++            snapshots,
++            editor: context.editor,
++            authority: context.authority
++        )
++
++        #expect(context.asset.generationInput == nil)
++        #expect(context.editor.mediaManifest.entries.first?.generationInput == nil)
++        #expect(context.editor.generationLog.spendEvents.map(\.kind)
++            == [.reserved, .released])
++        let persistedLog = try JSONDecoder().decode(
++            GenerationLog.self,
++            from: Data(contentsOf: home
++                .appendingPathComponent(Project.generationLogFilename))
++        )
++        #expect(persistedLog == context.editor.generationLog)
++    }
+ }
+diff --git a/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift b/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
+index 8124c5a5..152c4f5c 100644
+--- a/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
++++ b/Tests/NexGenVideoTests/Generation/MireloProviderTests.swift
+@@ -329,22 +329,46 @@ struct MireloProviderTests {
+             record: prepared,
+             spendTransactionID: spendTransactionID
+         )
+-        if state == .failed {
++        switch state {
++        case .prepared:
++            return current
++        case .failed:
+             return try store.update(current) {
+                 $0.state = .failed
+                 $0.lastError = lastError
+             }
+-        }
+-        guard state == .accepted, let providerJobID else {
++        case .submitting:
++            return try store.update(current) {
++                $0.state = .submitting
++                $0.lastError = lastError
++            }
++        case .acceptanceUnknown:
++            current = try store.update(current) {
++                $0.state = .submitting
++            }
++            return try store.update(current) {
++                $0.state = .acceptanceUnknown
++                $0.lastError = lastError
++            }
++        case .accepted:
++            guard let providerJobID else {
++                throw GenerationRequestError.storage(
++                    "An accepted authority fixture needs a provider job id."
++                )
++            }
++            current = try store.update(current) {
++                $0.state = .submitting
++            }
++            current = try store.update(current) {
++                $0.state = .accepted
++                $0.providerJobID = providerJobID
++                $0.lastProviderStatus = "accepted"
++            }
+             return current
+-        }
+-        current = try store.update(current) {
+-            $0.state = .submitting
+-        }
+-        return try store.update(current) {
+-            $0.state = .accepted
+-            $0.providerJobID = providerJobID
+-            $0.lastProviderStatus = "accepted"
++        case .pollingInterrupted, .providerSucceeded, .completed:
++            throw GenerationRequestError.storage(
++                "The authority fixture helper does not synthesize terminal provider evidence."
++            )
+         }
+     }
+ 
+@@ -370,6 +394,17 @@ struct MireloProviderTests {
+         return key
+     }
+ 
++    @MainActor
++    private func discardAndAwaitReload(_ editor: EditorViewModel) async throws {
++        try await withCheckedThrowingContinuation { continuation in
++            editor.onWorkingCopyReloadCompleted = { result in
++                editor.onWorkingCopyReloadCompleted = nil
++                continuation.resume(with: result)
++            }
++            editor.discardRecoveredWork()
++        }
++    }
++
+     private func writeProjectState(
+         package: URL,
+         manifest: MediaManifest,
+@@ -2179,17 +2214,14 @@ struct MireloProviderTests {
+             state: .accepted,
+             providerJobID: "authority-conflict-job"
+         )
+-        let unknown = try await authorityRecord(
++        _ = try await authorityRecord(
+             store: executionStore,
+             projectKey: projectKey,
+             logicalID: "37373737-3737-4737-8737-373737373737",
+             spendTransactionID: unknownTransactionID,
+-            state: .prepared
++            state: .acceptanceUnknown,
++            lastError: "Provider acceptance is unknown."
+         )
+-        _ = try executionStore.update(unknown) {
+-            $0.state = .acceptanceUnknown
+-            $0.lastError = "Provider acceptance is unknown."
+-        }
+         var log = GenerationLog()
+         log.spendEvents = [
+             GenerationSpendEvent(
+@@ -2252,7 +2284,9 @@ struct MireloProviderTests {
+         #expect(editor.generationLog.spendEvents.filter {
+             $0.transactionId == unknownTransactionID
+         }.map(\.kind) == [.reserved])
+-        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot account") == true)
++        #expect(editor.mireloSpendRecoveryMessage?.contains("unresolved acceptance") == true)
++        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot safely repair") == true)
++        #expect(editor.mireloSpendRecoveryMessage?.contains("originating project") == true)
+         let eventCount = editor.generationLog.spendEvents.count
+         #expect(throws: GenerationBudgetError.self) {
+             _ = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+@@ -2304,7 +2338,7 @@ struct MireloProviderTests {
+         #expect(document.editorViewModel.generationLog.spendEvents.isEmpty)
+         #expect(document.editorViewModel.mireloSpendRecoveryMessage != nil)
+         #expect(document.editorViewModel.mediaPanelToast?.message.contains(
+-            "Open the project copy"
++            "no safe in-app recovery exists"
+         ) == true)
+         _ = releaseProject(document)
+     }
+@@ -2358,14 +2392,7 @@ struct MireloProviderTests {
+         #expect(document.editorViewModel.generationLog.spendEvents.contains {
+             $0.kind == .submitted && $0.providerRequestId == "discarded-recovery-job"
+         })
+-        document.editorViewModel.discardRecoveredWork()
+-        for _ in 0..<500 {
+-            if document.editorViewModel.generationLog.spendEvents.isEmpty,
+-               document.editorViewModel.mireloSpendRecoveryMessage != nil {
+-                break
+-            }
+-            await Task.yield()
+-        }
++        try await discardAndAwaitReload(document.editorViewModel)
+         #expect(document.editorViewModel.generationLog.spendEvents.isEmpty)
+         #expect(document.editorViewModel.mireloSpendRecoveryMessage != nil)
+         _ = releaseProject(document)
+@@ -2522,6 +2549,230 @@ struct MireloProviderTests {
+         #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
+     }
+ 
++    @Test("cancel reconciliation ignores a second live Mirelo flight")
++    @MainActor
++    func cancelledJobDoesNotClassifyParallelFlightAsRecovery() async throws {
++        try await publishFixtureCatalog()
++        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "mirelo-parallel-cancel-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        try Fixtures.prepareProjectPackage(at: package)
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        let workingCopyKey = try #require(editor.openWorkingCopyKey)
++        let projectKey = try #require(editor.projectId)
++        let (executionStore, storeRoot) = try store()
++        let fixtureSession = session()
++        let executeGate = FixtureGate()
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let createGate = FixtureGate()
++        let preflightURL = baseURL.appendingPathComponent(
++            MireloOperation.textToSFX.preflightPath
++        )
++        FixtureURLProtocol.install([
++            preflightURL: [.init(data: try fixture("preflight-v3"))],
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"parallel-job","status":"queued"}"#.utf8),
++                gate: createGate
++            )],
++        ])
++        let parallelID = "42424242-4242-4242-8242-424242424242"
++        defer {
++            MireloCapabilityCatalog.shared.clear()
++            fixtureSession.invalidateAndCancel()
++            editor.generationService.mireloBeforeFirstExecute = nil
++            editor.releaseWorkingCopy()
++            ProjectWorkingCopy.discard(key: workingCopyKey)
++            try? FileManager.default.removeItem(at: package)
++            try? FileManager.default.removeItem(at: storeRoot)
++        }
++        _ = try await authorityRecord(
++            store: executionStore,
++            projectKey: projectKey,
++            logicalID: parallelID,
++            spendTransactionID: parallelID,
++            state: .prepared
++        )
++        editor.generationLog.spendEvents.append(GenerationSpendEvent(
++            transactionId: parallelID,
++            kind: .reserved,
++            model: "mirelo/sfx-1.6",
++            provider: .mirelo,
++            transport: .api,
++            endpoint: MireloOperation.textToSFX.createPath
++        ))
++        try editor.persistGenerationLog()
++        let client = MireloClient(
++            apiKey: "fixture-key",
++            baseURL: baseURL,
++            session: fixtureSession
++        )
++        editor.generationService.mireloStoreProvider = { executionStore }
++        editor.generationService.mireloAPIKeyProvider = { "fixture-key" }
++        editor.generationService.mireloClientProvider = { _ in client }
++        editor.generationService.mireloBeforeFirstExecute = {
++            await executeGate.wait()
++        }
++        let active = Task {
++            try await MireloExecutionCoordinator.shared.execute(
++                store: executionStore,
++                projectKey: projectKey,
++                logicalJobID: parallelID,
++                client: client
++            )
++        }
++        await createGate.waitUntilStarted()
++        let submission = await GenerationController.submit(
++            try firstRunRequest(),
++            editor: editor,
++            quoteLoader: { _, _ in testMoney() }
++        )
++        let outcome = try submission.get()
++        let cancelledTransactionID = try #require(editor.mediaAssets.first {
++            $0.id == outcome.placeholderId
++        }?.generationInput?.spendTransactionId)
++        await executeGate.waitUntilStarted()
++        #expect(editor.generationService.cancelGeneration(
++            placeholderId: outcome.placeholderId
++        ))
++        await executeGate.open()
++        await editor.generationService.waitForGeneration(
++            placeholderId: outcome.placeholderId
++        )
++
++        #expect(editor.mireloSpendRecoveryMessage == nil)
++        #expect(editor.generationLog.spendEvents.filter {
++            $0.transactionId == cancelledTransactionID
++        }.map(\.kind) == [.reserved, .released])
++        active.cancel()
++        await createGate.open()
++        _ = await active.result
++        _ = try await MireloExecutionCoordinator.shared.awaitSettlement(
++            store: executionStore,
++            projectKey: projectKey,
++            logicalJobID: parallelID
++        )
++        try editor.generationService.refreshMireloSpendRecovery(
++            editor: editor,
++            store: executionStore
++        )
++        #expect(editor.mireloSpendRecoveryMessage?.contains(
++            "unresolved acceptance"
++        ) == true)
++    }
++
++    @Test("native resume clears only its unknown acceptance issue")
++    @MainActor
++    func unknownResumeKeepsIndependentConflict() async throws {
++        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
++        let pollURL = baseURL.appendingPathComponent(
++            "v3/text-to-sfx/generations/resumed-unknown-job"
++        )
++        FixtureURLProtocol.install([
++            createURL: [.init(
++                status: 202,
++                data: Data(#"{"id":"resumed-unknown-job","status":"queued"}"#.utf8)
++            )],
++            pollURL: [.init(data: try fixture("v3-succeeded"))],
++        ])
++        let context = try await nativeContext(
++            logicalID: "43434343-4343-4343-8343-434343434343",
++            preflight: affordablePreflight()
++        )
++        let conflictID = "44444444-4444-4444-8444-444444444444"
++        defer {
++            context.editor.releaseWorkingCopy()
++            ProjectWorkingCopy.discard(key: context.workingCopyKey)
++            try? FileManager.default.removeItem(at: context.project)
++            try? FileManager.default.removeItem(at: context.storeRoot)
++        }
++        let prepared = try #require(context.store.load(
++            projectKey: context.projectKey,
++            logicalJobID: context.logicalID
++        ))
++        let submitting = try context.store.update(prepared) {
++            $0.state = .submitting
++        }
++        _ = try context.store.update(submitting) {
++            $0.state = .acceptanceUnknown
++            $0.lastError = "Provider acceptance is unknown."
++        }
++        _ = try await authorityRecord(
++            store: context.store,
++            projectKey: context.projectKey,
++            logicalID: conflictID,
++            spendTransactionID: conflictID,
++            state: .accepted,
++            providerJobID: "authority-conflict-job"
++        )
++        context.editor.generationLog.spendEvents.append(contentsOf: [
++            GenerationSpendEvent(
++                transactionId: conflictID,
++                kind: .reserved,
++                model: "mirelo/sfx-1.6",
++                provider: .mirelo,
++                transport: .api,
++                endpoint: MireloOperation.textToSFX.createPath
++            ),
++            GenerationSpendEvent(
++                transactionId: conflictID,
++                kind: .submitted,
++                model: "mirelo/sfx-1.6",
++                provider: .mirelo,
++                transport: .api,
++                endpoint: MireloOperation.textToSFX.createPath,
++                providerRequestId: "ledger-conflict-job"
++            ),
++        ])
++        try context.editor.persistGenerationLog()
++        let service = context.editor.generationService
++        try service.refreshMireloSpendRecovery(
++            editor: context.editor,
++            store: context.store
++        )
++        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
++            "unresolved acceptance"
++        ) == true)
++        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
++            "cannot safely repair"
++        ) == true)
++        let fixtureSession = session()
++        defer { fixtureSession.invalidateAndCancel() }
++        let client = MireloClient(
++            apiKey: "fixture-key",
++            baseURL: baseURL,
++            session: fixtureSession
++        )
++        let wav = wavFixture()
++        try await service.performNativeMireloResume(
++            asset: context.asset,
++            editor: context.editor,
++            store: context.store,
++            client: client,
++            approveCreditChange: { _, _ in false },
++            download: { _ in
++                let file = FileManager.default.temporaryDirectory
++                    .appendingPathComponent("resumed-unknown-\(UUID().uuidString).wav")
++                try wav.write(to: file, options: .atomic)
++                return file
++            }
++        )
++
++        #expect(context.editor.generationLog.spendEvents.contains {
++            $0.transactionId == context.logicalID
++                && $0.kind == .submitted
++                && $0.providerRequestId == "resumed-unknown-job"
++        })
++        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
++            "unresolved acceptance"
++        ) == false)
++        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
++            "cannot safely repair"
++        ) == true)
++    }
++
+     @Test("unsubmitted shared reservation releases persisted and memory-only placeholders atomically")
+     @MainActor
+     func sharedReservationReleaseHandlesPartiallyPersistedPlaceholders() throws {
+@@ -2616,6 +2867,121 @@ struct MireloProviderTests {
+         }.count == 1)
+     }
+ 
++    @Test("undo restore strips released spend without changing active or charged inputs")
++    @MainActor
++    func undoRestoreDoesNotReviveReleasedSpend() throws {
++        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
++            "released-spend-undo-\(UUID().uuidString).ngv",
++            isDirectory: true
++        )
++        try Fixtures.prepareProjectPackage(at: package)
++        let editor = EditorViewModel()
++        editor.projectURL = package
++        let workingCopyKey = try #require(editor.openWorkingCopyKey)
++        defer {
++            editor.releaseWorkingCopy()
++            ProjectWorkingCopy.discard(key: workingCopyKey)
++            try? FileManager.default.removeItem(at: package)
++        }
++        let released = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
++            modelId: "fal-ai/stable-audio-25/text-to-audio",
++            provider: .fal,
++            transport: .api,
++            endpoint: "released-fixture",
++            editor: editor
++        )
++        let active = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
++            modelId: "fal-ai/stable-audio-25/text-to-audio",
++            provider: .fal,
++            transport: .api,
++            endpoint: "active-fixture",
++            editor: editor
++        )
++        let charged = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
++            modelId: "fal-ai/stable-audio-25/text-to-audio",
++            provider: .fal,
++            transport: .api,
++            endpoint: "charged-fixture",
++            editor: editor
++        )
++        try editor.recordSpendEvent(
++            authorization: charged,
++            kind: .submitted,
++            providerRequestId: "charged-job"
++        )
++        try editor.recordSpendEvent(
++            authorization: charged,
++            kind: .charged,
++            money: testMoney()
++        )
++        let media = try editor.prepareWorkingMediaDirectory()
++        func asset(
++            id: String,
++            authorization: GenerationAuthorization
++        ) throws -> MediaAsset {
++            var input = GenerationInput(
++                prompt: id,
++                model: authorization.target.modelId,
++                duration: 5,
++                aspectRatio: ""
++            )
++            input.spendTransactionId = try #require(authorization.transactionId)
++            return MediaAsset(
++                id: id,
++                url: media.appendingPathComponent("\(id).wav"),
++                type: .audio,
++                name: id,
++                duration: 5,
++                generationInput: input
++            )
++        }
++        let releasedAsset = try asset(id: "released", authorization: released)
++        let activeAsset = try asset(id: "active", authorization: active)
++        let chargedAsset = try asset(id: "charged", authorization: charged)
++        let detachedReleasedPlaceholder = try asset(
++            id: releasedAsset.id,
++            authorization: released
++        )
++        editor.mediaAssets = [releasedAsset, activeAsset, chargedAsset]
++        for value in editor.mediaAssets { editor.persistMediaAsset(value) }
++        let undoManager = UndoManager()
++        editor.undoManager = undoManager
++
++        editor.deleteMediaAssets(ids: [releasedAsset.id])
++        try editor.releaseUnsubmittedSpendReservation(
++            authorization: released,
++            placeholders: [detachedReleasedPlaceholder],
++            note: "Preparation failed."
++        )
++        #expect(releasedAsset.generationInput?.spendTransactionId
++            == released.transactionId)
++        undoManager.undo()
++
++        #expect(editor.mediaAssets.first {
++            $0.id == releasedAsset.id
++        }?.generationInput == nil)
++        #expect(editor.mediaManifest.entries.first {
++            $0.id == releasedAsset.id
++        }?.generationInput == nil)
++        #expect(editor.mediaAssets.first {
++            $0.id == activeAsset.id
++        }?.generationInput?.spendTransactionId == active.transactionId)
++        #expect(editor.mediaAssets.first {
++            $0.id == chargedAsset.id
++        }?.generationInput?.spendTransactionId == charged.transactionId)
++        let snapshot = try GenerationBudgetGuard.spendSnapshot(
++            log: editor.generationLog,
++            generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
++        )
++        #expect(snapshot.activeReservationCount == 1)
++        undoManager.redo()
++        #expect(!editor.mediaAssets.contains { $0.id == releasedAsset.id })
++        undoManager.undo()
++        #expect(editor.mediaAssets.first {
++            $0.id == releasedAsset.id
++        }?.generationInput == nil)
++    }
++
+     @Test("first-run definitive create rejection releases its reservation once")
+     @MainActor
+     func firstRunDefinitiveRejectionReleasesReservation() async throws {
+@@ -2763,6 +3129,8 @@ struct MireloProviderTests {
+         try Fixtures.prepareProjectPackage(at: package)
+         let editor = EditorViewModel()
+         editor.projectURL = package
++        let undoManager = UndoManager()
++        editor.undoManager = undoManager
+         let workingCopyKey = try #require(editor.openWorkingCopyKey)
+         let (executionStore, storeRoot) = try store()
+         let fixtureSession = session()
+@@ -2825,7 +3193,8 @@ struct MireloProviderTests {
+         }
+         await executeGate.waitUntilStarted()
+         agentTask.cancel()
+-        editor.deleteMediaAssets(ids: [try #require(placeholderID)])
++        let removedID = try #require(placeholderID)
++        editor.deleteMediaAssets(ids: [removedID])
+         await executeGate.open()
+         let result = try await agentTask.value
+ 
+@@ -2837,6 +3206,21 @@ struct MireloProviderTests {
+         try assertReleasedOnce(editor)
+         #expect(failureCount == 1)
+         #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
++        undoManager.undo()
++        let restored = try #require(editor.mediaAssets.first {
++            $0.id == removedID
++        })
++        #expect(restored.generationInput?.spendTransactionId == nil)
++        #expect(editor.mediaManifest.entries.first {
++            $0.id == removedID
++        }?.generationInput?.spendTransactionId == nil)
++        undoManager.redo()
++        #expect(!editor.mediaAssets.contains { $0.id == removedID })
++        undoManager.undo()
++        #expect(editor.mediaAssets.first {
++            $0.id == removedID
++        }?.generationInput?.spendTransactionId == nil)
++        try assertReleasedOnce(editor)
+     }
+ 
+     @Test("working-copy reload ends an approved cancelled agent generation")
+@@ -2908,14 +3292,7 @@ struct MireloProviderTests {
+         }
+         await executeGate.waitUntilStarted()
+         agentTask.cancel()
+-        editor.discardRecoveredWork()
+-        for _ in 0..<500 {
+-            if editor.generationLog.spendEvents.isEmpty,
+-               editor.mediaAssets.isEmpty {
+-                break
+-            }
+-            await Task.yield()
+-        }
++        try await discardAndAwaitReload(editor)
+         #expect(editor.generationLog.spendEvents.isEmpty)
+         #expect(editor.mediaAssets.isEmpty)
+         await executeGate.open()
+diff --git a/docs/MIRELO_SPEND_RECOVERY_PROPOSAL.md b/docs/MIRELO_SPEND_RECOVERY_PROPOSAL.md
+new file mode 100644
+index 00000000..4725c617
+--- /dev/null
++++ b/docs/MIRELO_SPEND_RECOVERY_PROPOSAL.md
+@@ -0,0 +1,116 @@
++# Mirelo Spend Recovery Proposal
++
++Status: review proposal only. This document does not change an approved storage contract.
++
++## Problem
++
++A Mirelo request can be accepted after the Recovery copy diverges from the saved package. If the
++user then discards recovered editing changes, `ProjectWorkingCopy.rematerialize` correctly restores
++the saved creative state, but it also removes the only project copy of the reservation and submitted
++spend events. The host-owned Mirelo authority survives and still proves possible or actual provider
++acceptance.
++
++Opening a different Finder copy does not repair the evidence. It carries the same project UUID but
++can have a different creative and spend projection, and the current Mirelo authority record does not
++retain the exact `GenerationSpendEvent` bytes needed to restore the projection safely.
++
++## Existing contract and conflict
++
++`docs/PROJECT_STORAGE.md` says that host execution authority is authoritative over an older project
++projection, retains append-only spend events, and that discarding editing changes never erases
++incurred spend. It also says that a project package cannot mint or restore authority.
++
++The implementation cannot currently satisfy all of those statements for Mirelo:
++
++- `MireloExecutionRecord` retains the spend transaction ID, preflight credits and provider evidence,
++  but not the exact project reservation/submission events.
++- A valid project ledger must begin with its original `reserved` event and preserve its event ID,
++  route and optional monetary quote. Creating replacements from the Mirelo request would fabricate
++  audit evidence.
++- Mirelo publishes credits, not a dependable credit-to-EUR conversion. Recovery cannot infer money.
++- A package duplicate with the same UUID provides no proof that its ledger is the projection that
++  originally approved the request.
++
++Consequently, the current safe behavior is a budget stop. The app must not invent a reservation,
++price, lineage acknowledgement or new project identity to clear it.
++
++## Smallest recommended contract delta
++
++Require every host-owned Mirelo authority to retain an immutable spend-projection sidecar containing
++the exact canonical project `GenerationSpendEvent` bytes that the host observed:
++
++1. Approval records the already-persisted `reserved` event byte-for-byte.
++2. Provider acceptance appends the exact `submitted` event byte-for-byte.
++3. Settlement appends an exact `charged` or `released` event when one exists.
++4. Events remain append-only and are validated against the authority's project UUID, transaction,
++   model, provider, transport, endpoint and provider job ID.
++5. Open and post-discard reconciliation may copy only those retained bytes into the project spend
++   projection. It may not restore media, prompts, timeline edits or other discarded creative work.
++6. Every package carrying the same project UUID receives the same host spend projection on this
++   host. That does not grant new execution authority or restore provider output. Save As continues to
++   mint a new UUID and therefore cannot execute or absorb the source authority.
++
++A separate canonical sidecar is preferable to adding stored fields to `MireloExecutionRecord`: it
++avoids changing that value type's layout and permits old authority records to remain readable. The
++sidecar needs its own schema identifier, immutable digest and atomic update rules. The locked storage
++contract should name this separation between authoritative spend projection and creative state
++before implementation.
++
++## Existing data and compatibility
++
++- New approvals can retain exact events without changing project `generation-log/v2`.
++- Existing authority records have no exact reservation event. They remain blocked and must not be
++  backfilled from inferred model, timestamp, event ID or price.
++- Existing projects remain readable. A project receives retained events only when event IDs and the
++  complete transaction identity validate without conflict.
++- Older app versions will ignore the host sidecar. Once a recovered projection is saved, they can
++  read the existing project ledger format, subject to their normal provider support.
++- No format-pack ABI or project schema change is required if the sidecar stays host-owned. The
++  storage-contract clarification is still required because post-discard host-to-project projection
++  is observable behavior.
++
++## UI and budget behavior
++
++- While exact retained events are available, show `Restore Mirelo spend record`; explain that it
++  restores cost history only, not discarded media or edits.
++- Apply automatically during open/discard only if the approved contract explicitly chooses automatic
++  authoritative projection. Otherwise require the visible action above.
++- If exact events are unavailable, say that no safe in-app recovery exists and ask the user to retain
++  the project and Recovery data for diagnosis. Do not suggest opening a copy that is already gone.
++- Preserve `money: nil` when the original event was unpriced. Show the exact Mirelo credits from the
++  authority, but do not convert them to EUR.
++- A configured EUR budget stop remains blocked by unpriced spend. No acknowledgement may waive that
++  uncertainty. Without an EUR stop, normal ledger rules may continue once the exact spend projection
++  is restored.
++- Conflicting project and authority events remain a hard stop with no automatic overwrite.
++
++## Required tests
++
++1. Accepted spend followed by Discard restores exact spend events but not the generated placeholder,
++   media, timeline edits or prompt changes.
++2. Repeated open/discard is byte-idempotent and never duplicates an event.
++3. A same-UUID Finder copy receives spend projection only; it receives no authority, artifacts or
++   creative changes.
++4. Save As receives neither source authority nor source spend projection under its new UUID.
++5. Missing legacy sidecar remains blocked without synthesized data.
++6. Event-ID, route, transaction, provider-job and digest conflicts remain blocked and leave both
++   records unchanged.
++7. Unknown acceptance retains the original reservation and never creates a second provider request.
++8. Unpriced credits remain unpriced; an EUR budget stop stays closed.
++9. Crash injection at each sidecar/project write boundary converges from exact retained evidence.
++10. Concurrent jobs reconcile independently; completing one never clears another conflict or unknown
++    acceptance issue.
++
++## Alternatives
++
++- **Keep the permanent stop.** Safest with current data, but leaves a project UUID unusable after its
++  only Recovery projection is discarded.
++- **Add a new external-spend event kind.** Makes provenance explicit, but changes the portable ledger
++  schema and requires old-project/app migration. It is larger than retaining existing exact events.
++- **Add a package-lineage UUID beneath the project UUID.** Distinguishes Finder copies, but changes
++  authority identity and migration semantics and still does not recover spend after the originating
++  Recovery copy is discarded.
++- **Acknowledge or estimate the orphan.** Rejected: it invents price or permits a user acknowledgement
++  to bypass unknown paid acceptance.
++- **Silently mint a new project identity.** Rejected: it evades, rather than reconciles, the existing
++  spend authority.

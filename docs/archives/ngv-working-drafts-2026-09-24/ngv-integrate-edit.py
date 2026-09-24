@@ -1,0 +1,36 @@
+from pathlib import Path
+r=Path('docs/ui');p=r/'desktop-production-workbench.js';s=p.read_text()
+s=s.replace('schema:6,sidebarVisible:true','schema:6,nle:null,sidebarVisible:true')
+s=s.replace("function surfaceTools(){\n", "function surfaceTools(){\n if(S.view==='edit'&&S.have.edit){$('#nd-surface-tools').innerHTML=nleTools();return;}\n")
+a=s.index('function editView(){');b=s.index('\nfunction finishView()',a);s=s[:a]+'function editView(){return nleView();}'+s[b:]
+s=s.replace("function canvas(){if(S.mediaPreview", "function canvas(){if(S.view==='edit'){$('#nd-canvas').innerHTML=editView();return;}if(S.mediaPreview")
+a=s.index('function bottom(){');b=s.index('\nfunction inspector()',a)
+s=s[:a]+'''function bottom(){let html='';if((['plan','refs','takes'].includes(S.view)||(S.view==='board'&&S.mode==='animatic'))&&S.shots.length&&S.have[S.view])html=sequence();$('#nd-bottom').innerHTML=html;const dock=$('#nd-edit-dock');dock.hidden=!(S.view==='edit'&&S.have.edit);dock.innerHTML=dock.hidden?'':nleTimeline();}
+'''+s[b:]
+s=s.replace("function inspector(){\n", "function inspector(){\n if(S.view==='edit'&&S.have.edit){$('#nd-inspector').innerHTML=nleInspector();return;}\n")
+a=s.index(" if(p==='edit'&&S.have.edit){");b=s.index("\n if(p==='finish'",a);s=s[:a]+s[b:]
+s=s.replace(" $('#nd-gate').innerHTML=", " $('#nd-gate').hidden=S.view==='edit'&&S.have.edit;\n $('#nd-gate').innerHTML=$('#nd-gate').hidden?'':")
+needle="<span class=\"optional\">Keine echten Aufträge</span>`;"
+s=s.replace(needle,"<span class=\"optional\">${S.view==='edit'?'Schnitt-Demo':'Keine echten Aufträge'}</span>${S.view==='edit'&&S.have.edit?action.replace('✓ Freigeben','Schnitt abschließen'):''}`;")
+s=s.replace(" if(modal==='media-import')", " if(modal==='nle-title'){title='Textclip';body=`<label for=\"nd-nle-title\">Text</label><input id=\"nd-nle-title\" value=\"${E(S.nle.titles[0]?.text||'Claude Mouse')}\"><p>V2 · 3 Sekunden ab dem Abspielkopf</p>`;actions=B('nle:save-title','Übernehmen',{primary:true});}\n if(modal==='media-import')")
+s=s.replace("function layout(){", "function layout(){root.classList.toggle('nle-workspace',S.view==='edit'&&!!S.have.edit);root.style.setProperty('--nle-height',(S.nle?.height||296)+'px');")
+s=s.replace("function render(){", "function render(){ensureNLE();")
+s=s.replace('gate();dialog();}', 'gate();dialog();paintIcons();}')
+s=s.replace("function undoContent(snapshot){const presentation={};", "function undoContent(snapshot){const editUI=S.nle?Object.fromEntries(['cursor','sourceCursor','selected','tool','zoom','tab','height'].map(k=>[k,S.nle[k]])):null;const presentation={};")
+s=s.replace("S.position=Math.min(S.position,total());}\n\nfunction approve", "S.position=Math.min(S.position,total());if(S.nle&&editUI){Object.assign(S.nle,editUI);S.nle.cursor=Math.min(S.nle.cursor,nleTotal());if(!nleClip())S.nle.selected=S.nle.clips[0]?.id;}}\n\nfunction approve")
+s=s.replace("function play(){", "function play(){if(S.view==='edit'){nleAction('play');return;}")
+s=s.replace("function position(t){", "function position(t){if(S.view==='edit'&&S.have.edit){nleSeek(t);bottom();paintIcons();return;}")
+s=s.replace("function choose(i,multi=false,range=false){", "function choose(i,multi=false,range=false){if(S.view==='edit'&&S.have.edit){const c=S.nle.clips.find(c=>c.shot===i);if(c)nleSelect(c.id,nleStart(c.id));return;}")
+s=s.replace(" const [verb,param]=a.split(':');", " const [verb,param]=a.split(':');\n if(verb==='nle'){nleAction(param);return;}")
+s=s.replace("if(e.target.closest('#nd-title'))return;", "if(e.target.closest('#nd-title')||S.view==='edit'&&S.have.edit)return;")
+s=s.replace("root.addEventListener('dragstart',e=>{const b=e.target.closest('[data-edit-shot]');", "root.addEventListener('dragstart',e=>{if(e.target.closest('[data-nle-clip]'))return;const b=e.target.closest('[data-edit-shot]');")
+s=s.replace("fixture('Storyboard');\nif(window.openai", "/*__EDIT_JS__*/\nfixture('Schnitt');\nif(window.openai")
+s=s.replace("render,restore};", "render,restore,nleSeek,nleSelect,nleTotal};")
+p.write_text(s)
+p=r/'desktop-production-workbench.fragment.html';s=p.read_text().replace('  <div class="phase-dock"','  <section id="nd-edit-dock" aria-label="Schnitt-Timeline" hidden></section>\n  <div class="phase-dock"');p.write_text(s)
+p=r/'build-desktop-production-workbench.py';s=p.read_text().replace("(root/'desktop-production-workbench.js').read_text())", "(root/'desktop-production-workbench.js').read_text().replace('/*__EDIT_JS__*/', (root/'desktop-production-workbench.edit.js').read_text()))")
+s=s.replace("json.dumps(icons) + '[icon]}'", "json.dumps(icons) + '[icon] || `<i data-lucide=\"${icon}\" aria-hidden=\"true\"></i>`}'")
+p.write_text(s)
+p=r/'desktop-production-workbench.test.js';s=p.read_text().replace('try{\n','try{\n api.fixture(\'Storyboard\');\n',1)
+s=s.replace("api.choose(0);click('move-right');assert('Editing reorders sequence, preserves shot identities',state().editOrder[1]===0&&state().shots.map(s=>s.id).join()===shotIDs);change('[data-field=trim]',.5);assert('Edit trim does not overwrite planned duration',state().shots[0].trim===.5&&state().shots[0].duration===3);", "api.choose(0);change('[data-nle-field=out]',2.5);assert('Edit trim does not overwrite planned duration or shot identities',state().nle.clips[0].out===2.5&&state().shots[0].duration===3&&state().shots.map(s=>s.id).join()===shotIDs);")
+p.write_text(s)

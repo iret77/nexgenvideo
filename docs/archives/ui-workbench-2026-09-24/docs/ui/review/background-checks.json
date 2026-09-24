@@ -1,0 +1,104 @@
+{
+  "results": [
+    {
+      "name": "Two independent indicators in all workspaces",
+      "pass": true
+    },
+    {
+      "name": "Opening AI changes no project state",
+      "pass": true
+    },
+    {
+      "name": "Switching indicators opens only the requested flyout",
+      "pass": true
+    },
+    {
+      "name": "Escape closes and returns focus to invoking indicator",
+      "pass": true
+    },
+    {
+      "name": "Second click closes without a layout toggle",
+      "pass": true
+    },
+    {
+      "name": "Click outside dismisses and preserves requested workspace action",
+      "pass": true
+    },
+    {
+      "name": "Actual export activates only export indicator",
+      "pass": true
+    },
+    {
+      "name": "Open export flyout updates progress from its job",
+      "pass": true
+    },
+    {
+      "name": "Completed export remains inspectable without active spinner",
+      "pass": true
+    },
+    {
+      "name": "Export cancel targets export and records cancellation",
+      "pass": true
+    },
+    {
+      "name": "Cancelled export never completes from a stale timer",
+      "pass": true
+    },
+    {
+      "name": "Manual AI generation uses nonmodal activity and unknown progress",
+      "pass": true
+    },
+    {
+      "name": "Dismissal and workspace switch leave AI job running",
+      "pass": true
+    },
+    {
+      "name": "AI stage updates in the open flyout without invented percent",
+      "pass": true
+    },
+    {
+      "name": "AI cancel does not open a generation form or activate export",
+      "pass": true
+    },
+    {
+      "name": "Batch reports completed results, not fictitious model progress",
+      "pass": true
+    },
+    {
+      "name": "Batch exposes shot identities and individual states",
+      "pass": true
+    },
+    {
+      "name": "Batch stop preserves output and shows interrupted state",
+      "pass": true
+    },
+    {
+      "name": "Restored batch is interrupted and never silently resubmitted",
+      "pass": true
+    },
+    {
+      "name": "Failure has visible and accessible state without spinner",
+      "pass": true
+    },
+    {
+      "name": "Reduced motion keeps activity visible without rotation",
+      "pass": true
+    },
+    {
+      "name": "Flyout stays inside window at 1440",
+      "pass": true
+    },
+    {
+      "name": "Flyout stays inside window at 1024",
+      "pass": true
+    },
+    {
+      "name": "Flyout stays inside window at 768",
+      "pass": true
+    },
+    {
+      "name": "Flyout stays inside window at 390",
+      "pass": true
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "suite": "guards",
+    "exit": 0,
+    "failures": [],
+    "summary": [
+      "{\"passed\":32,\"failed\":[]}"
+    ]
+  },
+  {
+    "suite": "workbench",
+    "exit": 0,
+    "failures": [],
+    "summary": [
+      "{\"passed\":35,\"failed\":[],\"layoutFailures\":[]}"
+    ]
+  },
+  {
+    "suite": "polish",
+    "exit": 0,
+    "failures": [],
+    "summary": [
+      "{\"passed\":32,\"failed\":[]}"
+    ]
+  },
+  {
+    "suite": "background",
+    "exit": 0,
+    "failures": [],
+    "summary": [
+      "{\"passed\":25,\"failed\":[]}"
+    ]
+  },
+  {
+    "suite": "artwork",
+    "exit": 0,
+    "failures": [],
+    "summary": [
+      "PASS Preview ratio and pane fit 390 9:16"
+    ]
+  }
+]

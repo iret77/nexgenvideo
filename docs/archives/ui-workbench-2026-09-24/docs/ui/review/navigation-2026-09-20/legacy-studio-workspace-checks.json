@@ -1,0 +1,321 @@
+{
+  "results": [
+    {
+      "name": "Timeline has visible clips and nonzero width",
+      "pass": true
+    },
+    {
+      "name": "Empty project permits free editing",
+      "pass": true
+    },
+    {
+      "name": "All supported source types imported",
+      "pass": true
+    },
+    {
+      "name": "Insert free video",
+      "pass": true
+    },
+    {
+      "name": "Insert free image",
+      "pass": true
+    },
+    {
+      "name": "Insert free lottie",
+      "pass": true
+    },
+    {
+      "name": "Insert free audio",
+      "pass": true
+    },
+    {
+      "name": "Free export without pipeline approval",
+      "pass": true
+    },
+    {
+      "name": "Free export completes",
+      "pass": true
+    },
+    {
+      "name": "Separate Postproduction workspace",
+      "pass": true
+    },
+    {
+      "name": "Grade is shared with timeline",
+      "pass": true
+    },
+    {
+      "name": "Curves retain editable points",
+      "pass": true
+    },
+    {
+      "name": "Color wheels retain hue",
+      "pass": true
+    },
+    {
+      "name": "Undo restores prior grade",
+      "pass": true
+    },
+    {
+      "name": "Per-clip audio fade",
+      "pass": true
+    },
+    {
+      "name": "Keyframe insertion",
+      "pass": true
+    },
+    {
+      "name": "Captions become editable timeline titles",
+      "pass": true
+    },
+    {
+      "name": "Sequence review remains in Postproduction",
+      "pass": true
+    },
+    {
+      "name": "Review follows the same montage",
+      "pass": true
+    },
+    {
+      "name": "Project geometry shared with output",
+      "pass": true
+    },
+    {
+      "name": "Export reflects fps and aspect",
+      "pass": true
+    },
+    {
+      "name": "Media content search exposes time segments",
+      "pass": true
+    },
+    {
+      "name": "Independent panels",
+      "pass": true
+    },
+    {
+      "name": "References have all native entity types",
+      "pass": true
+    },
+    {
+      "name": "Take review shows machine findings without mandatory checkboxes",
+      "pass": true
+    },
+    {
+      "name": "Take review records exact revision",
+      "pass": true
+    },
+    {
+      "name": "Blocking preserves shot",
+      "pass": true
+    },
+    {
+      "name": "Settings expose provider/model/pack management",
+      "pass": true
+    },
+    {
+      "name": "Settings agent",
+      "pass": true
+    },
+    {
+      "name": "Settings providers",
+      "pass": true
+    },
+    {
+      "name": "Settings models",
+      "pass": true
+    },
+    {
+      "name": "Settings packs",
+      "pass": true
+    },
+    {
+      "name": "Settings storage",
+      "pass": true
+    },
+    {
+      "name": "Pack mismatch is explicit",
+      "pass": true
+    },
+    {
+      "name": "Recovery creates a distinct project",
+      "pass": true
+    }
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "view": "Medien",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1440,
+      "view": "Storyboard",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1440,
+      "view": "Schnitt",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1440,
+      "view": "Postproduction",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1440,
+      "view": "Export",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "view": "Medien",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "view": "Storyboard",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "view": "Schnitt",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "view": "Postproduction",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 1024,
+      "view": "Export",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "view": "Medien",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "view": "Storyboard",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "view": "Schnitt",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "view": "Postproduction",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 736,
+      "view": "Export",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 500,
+      "view": "Medien",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 500,
+      "view": "Storyboard",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 500,
+      "view": "Schnitt",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 1028
+    },
+    {
+      "width": 500,
+      "view": "Postproduction",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 1028
+    },
+    {
+      "width": 500,
+      "view": "Export",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 320,
+      "view": "Medien",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 320,
+      "view": "Storyboard",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    },
+    {
+      "width": 320,
+      "view": "Schnitt",
+      "overflow": 1,
+      "canvasOverflow": 0,
+      "height": 1382
+    },
+    {
+      "width": 320,
+      "view": "Postproduction",
+      "overflow": 1,
+      "canvasOverflow": 0,
+      "height": 1282
+    },
+    {
+      "width": 320,
+      "view": "Export",
+      "overflow": 0,
+      "canvasOverflow": 0,
+      "height": 850
+    }
+  ]
+}

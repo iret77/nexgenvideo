@@ -1,0 +1,185 @@
+{
+  "invocation": {
+    "cli": "claude-high5",
+    "model": "fable",
+    "resolved_model": "claude-fable-5-1",
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "permission_denials": [],
+    "duration_ms": 412220,
+    "subagents": 0,
+    "cost_usd": 6.9110435,
+    "model_usage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 2961,
+        "outputTokens": 17,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.003046,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-fable-5-1": {
+        "inputTokens": 52,
+        "outputTokens": 32930,
+        "cacheReadInputTokens": 4400950,
+        "cacheCreationInputTokens": 208037,
+        "webSearchRequests": 0,
+        "costUSD": 6.9079975,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 15631,
+        "canonicalModel": "claude-fable-5-1",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  },
+  "review": {
+    "reviewer": "claude-high5 / Fable 5.1 (High)",
+    "summary": "Urteil: Die Makro-Architektur ist tragfähig, die Interaktionslogik in Schnitt und Postproduction ist noch nicht abnahmereif.\n\nGute Grundlagen:\n- Die Titelleiste ist integriert und zeigt fünf Arbeitsräume ohne zweite Navigation.\n- Sidebar, Viewer, Inspector und Timeline sind stabile, dichte Flächen ohne Karten oder dekorative Ränder.\n- Der Pack-Akzent ist klar erkennbar.\n- Medien ist ein echter Organisationsraum. Die Suche ist sauber in Dateiname, Bildinhalt und Transkript getrennt.\n- Storyboard, Animatic und References sind richtig zugeordnet.\n- Postproduction und Export arbeiten auf demselben Schnittstand.\n- Das CLICKDUMMY-Badge und \"Gesprochenes\" sind entfernt.\n\nDie gravierenden Mängel betreffen irreführende Bedienlogik im Overlay, nicht das erlaubte Mock-Rendering:\n- `selected` und `marked` sind zwei konkurrierende Auswahlwahrheiten. Nach dem Teilen löscht Entf die falsche Cliphälfte. Ein per ⌘-Klick abgewählter Clip bleibt Inspector-Ziel.\n- Das Ausblenden von V1 erreicht weder Endkontrolle noch Exportsperre, weil beide eine tote Legacy-Flag lesen.\n- Titel haben keine eigene Auswahl. Entf löscht den Clip, und Spuraktionen auf V2 wirken nicht auf Titel.\n- Einfügen am Abspielkopf erzeugt überlappende Clips.\n- Spur-Locks lassen sich über Keyframes, Reset, LUT und Quelle-tauschen umgehen.\n- Bei Mehrfachauswahl wirken Transformfelder auf alle Clips, Farbregler nur auf einen.\n- Postproduction bietet alle montageverändernden Werkzeuge an. Die Transport-Tastatur ist dort aber tot.\n- Mehrere strukturierte Aufträge wenden nicht die gewählte Option oder das gewählte Objekt an.\n\nKleinere Punkte:\n- Schloss, Kamera und Magnet erscheinen als Unicode-Ersatzglyphen, und das Viewer-Label ist abgeschnitten.\n- Der dreistellige MM:SS:FF-Timecode ist mehrdeutig.\n- Im Produkt-Inspector stehen verbliebene Teststeuerungen.\n- In Produktion wiederholen Gate-Leiste und Statusleiste denselben Phasennamen. \"Audioanalyse\" steht fünfmal auf dem Screen, der Pack-Name zweimal.\n\nEmpfehlung: Zuerst eine einzige Auswahl- und Lock-Wahrheit herstellen. Danach Titel als Timeline-Objekte führen und die Exportsperre an die Spurzustände binden.",
+    "findings": [
+      {
+        "title": "Zwei Auswahlwahrheiten (`selected` und `marked`): nach dem Teilen löscht Entf die falsche Hälfte",
+        "severity": "high",
+        "confidence": "high",
+        "category": "correctness / Auswahl-Inspector-Konsistenz",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 85,
+        "evidence": "- `edit.js:42` setzt beim Teilen nur `n.selected=after.id`. `n.marked` bleibt `[hit.id]` aus dem vorherigen Klick.\n- `studio.js:23` markiert einen Clip als ausgewählt, wenn `marked.includes(c.id)||selected===c.id` gilt. Damit leuchten beide Hälften.\n- `studio.js:85`: `selectedClips()` nutzt `marked`, sobald es nicht leer ist.\n- `studio.js:22`: Beim ⌘-Klick zum Abwählen wird `n.selected=id` trotzdem gesetzt.\n- `studio.js:158`: Nach dem Löschen gilt `n.selected=n.clips[0]?.id`, ohne dass sich der Abspielkopf bewegt.",
+        "impact": "- Auslöser: Clip mit der Rasierklinge oder ⌘K teilen, dann Entf drücken. Der Inspector zeigt die hintere Hälfte, gelöscht wird die vordere.\n- Ein per ⌘-Klick abgewählter Clip bleibt hervorgehoben und Inspector-Ziel. Löschen, Kopieren und Ripple betreffen ihn aber nicht.\n- Nach dem Löschen springt der Inspector auf Clip 1, während der Viewer ein anderes Bild zeigt.\n- Das ist der Kernkonflikt zwischen Auswahl, Inspector und Viewer.",
+        "recommendation": "- Eine Auswahlquelle führen. `selected` ist immer ein Element von `marked`, etwa das zuletzt hinzugefügte.\n- Teilen, Einfügen, Marquee und ⌘-Toggle setzen beide Werte konsistent.\n- Beim Abwählen des Primärclips den nächsten markierten Clip zum Primärclip machen. Ist keiner markiert, die Auswahl leeren.\n- Nach dem Löschen die Auswahl leeren oder den Clip unter dem Abspielkopf wählen.\n- Ein Klick in eine leere Spur hebt die Auswahl auf."
+      },
+      {
+        "title": "Ausgeblendete Videospur blockiert weder Endkontrolle noch Export",
+        "severity": "high",
+        "confidence": "high",
+        "category": "correctness / Export",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 73,
+        "evidence": "- `studio.js:130`: Die Spurkopf-Schalter setzen `tr.hidden`.\n- `studio.js:73`: `finishReady` prüft weiterhin die Legacy-Flag `!S.nle.hidden`.\n- `finish.js:60`: Der blockierende Befund 'Videospur ausgeblendet' hängt ebenfalls an `if(S.nle.hidden)`.\n- Diese Flag wird nur in der überschriebenen Altaktion `nle:hide` gesetzt (`edit.js:44`). Für diese Aktion gibt es keinen Button mehr.\n- `finish.js:61`: Audio liest korrekt `t.hidden`.",
+        "impact": "- Auslöser: V1 per Auge ausblenden und zu Export wechseln.\n- Der Viewer zeigt 'Keine Bildquelle an dieser Position'.\n- 'Exportieren…' bleibt trotzdem aktiv, und die Endkontrolle meldet nichts.\n- Das ist ein unbelegtes Prüfresultat: Die Prüfung gilt als bestanden, obwohl der sichtbare Zustand schwarz ist.\n- Die Selbstreview-Aussage, der Export folge dem tatsächlichen Zustand, gilt nur für Ton.",
+        "recommendation": "- Den Befund und `finishReady` aus den Spurzuständen ableiten. Kriterium: kein sichtbarer, belegter Video-Track an mindestens einer Stelle, oder alle Videospuren sind ausgeblendet.\n- `S.nle.hidden` und `S.nle.muted` aus `finishKey`, Befund und Exportsperre entfernen.\n- Der Befundtext nennt die tatsächlich betroffene Spur statt fest 'V1'."
+      },
+      {
+        "title": "Titel sind keine auswählbaren Timeline-Objekte: Entf löscht den Clip, V2-Spuraktionen ignorieren Titel",
+        "severity": "high",
+        "confidence": "high",
+        "category": "Auswahl / Objektzuordnung",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 24,
+        "evidence": "- `studio.js:24`: Titel werden als `<button data-do=\"studio:title-${i}\" class=\"nle-title-clip\">` ohne `aria-pressed` gerendert, und nur in der Spur mit `t.id==='V2'`.\n- `studio.js:128`: Ein Klick setzt nur `titleIndex` und den Tab. Die Clipauswahl bleibt bestehen.\n- `studio.js:238`: Entf führt `studioAction('delete')` aus, also `selectedClips()`.\n- `studio.js:39`: Der Inspector-Kopf zeigt weiter `clipName(c)`, und `keyframeControls(c)` hängt unter dem Titel-Formular.\n- `studio.js:103`: 'Leere Spur entfernen' zählt nur `n.clips`, Titel zählen nicht.\n- `studio.js:18`: `studioPicture` rendert Titel unabhängig davon, ob die Spur `hidden` oder `lock` ist.",
+        "impact": "- Auslöser: Titel in der Timeline anklicken und Entf drücken. Gelöscht wird der zuvor gewählte Videoclip.\n- Wird V2 entfernt, ausgeblendet oder gesperrt, sind Titel in der Timeline weg oder scheinbar geschützt. Im Viewer und in den Feldern bleiben sie sichtbar und editierbar.\n- Der Inspector-Kopf '1A · Take 1 · V1' steht über einem Formular, das ein anderes Objekt bearbeitet.",
+        "recommendation": "- Titel als eigene Auswahl führen. Die Titelauswahl hebt die Clipauswahl auf.\n- Den Titel-Button mit `aria-pressed` kennzeichnen. Der Inspector-Kopf zeigt den Titeltext und die Zeit.\n- Entf löscht den gewählten Titel.\n- Titel an eine Spur-ID binden. Verbergen und Sperren der Spur wirken auch auf sie.\n- Eine Spur mit Titeln gilt nicht als leer.\n- Die Clip-Keyframes im Titel- und Untertitel-Tab ausblenden."
+      },
+      {
+        "title": "Einfügen am Abspielkopf und Clip-Verschieben erzeugen überlappende Clips auf derselben Spur",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "correctness / Timeline-Semantik",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 84,
+        "evidence": "- `studio.js:84`: `insertAsset` verschiebt im Modus 'insert' nur Clips mit `c.start>=start`. Ein Clip, der den Abspielkopf überspannt, wird nicht geteilt.\n- `studio.js:22`: `nleSelect` legt den Abspielkopf regelmäßig in den angeklickten Clip.\n- `studio.js:236`: Beim Verschieben per Drop gilt `item.start=Math.max(0,item.start+delta)` ohne Kollisionsbehandlung.\n- `studio.js:17`: `studioVisualAt` nimmt bei Gleichstand auf derselben Spur schlicht das erste Array-Element.",
+        "impact": "- Auslöser: Clip anklicken, Quelle wählen, 'Einfügen'. Das ist der Normalfall.\n- Der neue Clip liegt über dem bestehenden.\n- Die Gesamtdauer und der Filmstreifen im Export stimmen nicht mehr mit dem sichtbaren Bild überein.\n- Welcher Clip im Viewer gewinnt, hängt von der Array-Reihenfolge ab.\n- Die geforderte 'Ripple/Overwrite … native Semantik' (UI_PARITY_CONTRACT Z. 56) ist so nicht nachvollziehbar.",
+        "recommendation": "- Beim Insert den überspannten Clip am Abspielkopf teilen und den hinteren Teil mitschieben. Das berücksichtigt Sync-Lock und Locks wie bisher.\n- Verschieben per Drop wirkt als Overwrite auf der Zielspur. Die vorhandene Overwrite-Routine aus `insertAsset` lässt sich dafür wiederverwenden.\n- Alternativ den Drop bei Kollision abweisen und eine Notiz anzeigen."
+      },
+      {
+        "title": "Spur-Lock lässt sich über Keyframes, Reset, LUT, Bypass, Quelle-tauschen und Aufträge umgehen",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "correctness / Locks",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 167,
+        "evidence": "- Folgende Aktionen laufen ohne Lock-Prüfung:\n  - `key-add` (Z. 167)\n  - `key-delete` (Z. 168)\n  - `grade-reset` (Z. 165)\n  - `lut-confirm` (Z. 166)\n  - `swap-confirm` (Z. 161)\n  - `studioSet` für `bypass`, `lut`, `keyValue`, `keyTime`, `keyInterpolation` und `curve-` (Z. 204–207)\n  - `applyTask` für 'color' und 'word' (Z. 184, 189). Beide verändern den gewählten Clip `c`.\n- `render` (Z. 266) deaktiviert bei Lock nur `[data-sx^=clip-]`, `[data-grade]`, `[data-sx^=fx-]` und `[data-sx^=curve-]`.",
+        "impact": "- Auslöser: V1 sperren und einen Clip auf V1 wählen.\n- Regler und Felder sind grau.\n- Aktiv bleiben trotzdem:\n  - 'Keyframe am Abspielkopf'\n  - 'Gruppe zurücksetzen'\n  - 'LUT importieren…'\n  - 'Korrektur umgehen'\n  - 'Quelle austauschen…'\n  - 'An Referenz angleichen…'\n  - 'Füllwörter prüfen…'\n- Alle diese Aktionen verändern den gesperrten Clip. Das Schloss verspricht Schutz, den es nur teilweise gibt.",
+        "recommendation": "- Eine zentrale Prüfung `clipEditable(c)` aus `!lock && !running` einführen.\n- Diese Prüfung in allen mutierenden Zweigen von `studioAction`, `studioSet` und `applyTask` verwenden.\n- Die zugehörigen Buttons bei Lock deaktivieren. Der Inspector-Kopf zeigt dann 'Spur gesperrt'."
+      },
+      {
+        "title": "Mehrfachauswahl: Inspector wirkt je nach Feld auf alle oder nur den Primärclip, Spurwechsel verschiebt Audio auf Videospuren",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "Auswahl-Inspector-Konsistenz",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 201,
+        "evidence": "- Z. 39: Der Kopf zeigt 'N Clips ausgewählt' unter dem Namen des Primärclips.\n- Z. 201: `clip-*` iteriert über `selectedClips()` und setzt `clip[k]=value`. Das gilt auch für `track` und für absolute In/Out-Werte.\n- Z. 38: Das Spur-Select filtert die Spuren nur nach dem Typ des Primärclips.\n- Z. 225: `[data-grade]` wirkt nur auf `nleClip()`.\n- Z. 203: `fx-` wirkt nur auf den Primärclip `c`.\n- Z. 167: Keyframes wirken nur auf den Primärclip `c`.\n- Z. 238: ⌘A markiert alle Clips einschließlich `track-song` auf A1.",
+        "impact": "- Auslöser 1: ⌘A, dann im Tab Video 'Spur' auf V2 stellen. Der Audioclip landet auf V2.\n- Auslöser 2: ⌘A, dann 'Out (s)' ändern. Alle Clips einschließlich des Songs erhalten denselben absoluten Out-Wert.\n- Belichtung, Kurven und Farbräder ändern dagegen nur einen Clip, obwohl der Kopf 'N Clips ausgewählt' zeigt.\n- Der Nutzer kann nicht vorhersagen, worauf eine Eingabe wirkt.",
+        "recommendation": "- Eine einheitliche Regel festlegen. Parameter wirken auf alle typkompatiblen markierten Clips. Das schließt Farb- und Effektregler ein.\n- In, Out und Spur sind bei gemischter Auswahl deaktiviert oder zeigen 'Gemischt'.\n- Der Spurwechsel filtert pro Clip nach dem Spurtyp.\n- Der Kopf nennt 'N Clips' ohne den Namen eines einzelnen Clips."
+      },
+      {
+        "title": "Keyframes konkurrieren mit statischen Feldern und hängen unter jedem Tab",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "Interaktionslogik / Keyframes",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 31,
+        "evidence": "- Z. 18: Sobald ein Keyframe existiert, überschreibt `key(k,default)` in `studioPicture` die Werte `c.scale`, `c.x`, `c.y` und `c.opacity`.\n- Z. 38: Die Transformfelder zeigen und schreiben weiter den statischen Wert `c[k]`.\n- Z. 39: `${body}${keyframeControls(c)}` hängt die Keyframe-Gruppe an jeden Tab, auch an Farbe, Titel, Untertitel und KI sowie an alle Post-Modi.\n- Z. 31: `S.studio.selectedKey` ist ein globaler Index und wird beim Clipwechsel nicht zurückgesetzt.",
+        "impact": "- Auslöser: Keyframe für Deckkraft setzen, dann 'Deckkraft %' im Transformieren-Feld ändern.\n- Das Feld nimmt den Wert an, der Viewer ändert sich nicht. Ein aktives Control bleibt ohne erkennbare Wirkung.\n- Nach einem Clipwechsel erscheint ein fremder Keyframe-Index als ausgewählt. 'Keyframe entfernen' trifft ihn.\n- Im Farbe-Tab stehen Position- und Skalierungs-Keyframes ohne sichtbaren Bezug.",
+        "recommendation": "- Felder keyframebarer Parameter zeigen den Wert am Abspielkopf. Bei vorhandenen Keyframes schreiben sie in den Keyframe an dieser Position oder erzeugen ihn dort. Eine Raute am Feld kennzeichnet das.\n- Die Keyframe-Gruppe erscheint nur im Tab des jeweiligen Parameters: Video für Bildparameter, Ton für Lautstärke.\n- `selectedKey` in `nleSelect` zurücksetzen."
+      },
+      {
+        "title": "Postproduction: montageverändernde Werkzeuge voll aktiv, Transport-Tastatur tot, Endkontrolle doppelt",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "Informationsarchitektur / Arbeitsraum-Zuordnung",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 66,
+        "evidence": "- UI_PARITY_CONTRACT Z. 28: 'Aktionen, die die Montage verändern, etwa Füllwörter entfernen, bleiben am Schnittkontext verankert.'\n- `studio.js:66` rendert in Post dieselbe `nleTimeline()` mit Rasierklinge, Teilen und Spur hinzufügen.\n- `studio.js:238`: Entf, Ripple-Löschen und ⌘V gelten ausdrücklich auch für 'post'.\n- `studio.js:42`: `studioCaptions` bietet 'Füllwörter prüfen…' auch im Post-Modus Untertitel an.\n- `edit.js:55`: Der Tastatur-Handler bricht bei `S.view!=='edit'` ab. Leertaste, Pfeile, V, C und ⌘K wirken in Post nicht. `js:240` `play()` ist ebenfalls nur für 'edit' definiert.\n- `studio.js:60` und `studio.js:62`: 'Endkontrolle' steht als Sidebar-Eintrag und zusätzlich als Button oben rechts (Screenshot ux-postproduction.png).",
+        "impact": "- Post unterscheidet sich vom Schnitt nur durch die Sidebar. Die Phasentrennung ist nicht erkennbar.\n- Ein versehentliches Entf verändert in Post die Montage.\n- Die erwartete Leertaste-Wiedergabe funktioniert in Post dagegen nicht. Dieselben sichtbaren Controls verhalten sich je nach Arbeitsraum gegensätzlich.\n- Die doppelte Endkontrolle widerspricht der Vorgabe, Navigation nicht zu doppeln.",
+        "recommendation": "- In Post die Timeline als Auswahl- und Navigationsfläche führen. Auswahl, Scrubbing und Transport einschließlich Tastatur bleiben möglich.\n- Rasierklinge, Teilen, Entf, Ripple, Einsetzen und Drag-Move in Post deaktivieren oder ausblenden.\n- 'Füllwörter prüfen…' nur im Schnitt anbieten. In Post stattdessen auf den Schnitt mit demselben Clipkontext verweisen.\n- Die Tastaturbedingung in `edit.js:55` auf `['edit','post']` erweitern.\n- Den Endkontrolle-Button im Kopf entfernen, der Sidebar-Eintrag genügt."
+      },
+      {
+        "title": "Strukturierte Aufträge wenden nicht die gewählte Option oder das gewählte Objekt an; veraltete Aufträge sperren ohne Begründung",
+        "severity": "medium",
+        "confidence": "high",
+        "category": "AI-Aufträge / Label-Handler-Übereinstimmung",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 190,
+        "evidence": "- Z. 179: 'entity-edit' bietet als Radio-Optionen ['Licht: Golden Hour','Material: Matt'].\n- Z. 190: `applyTask` setzt unabhängig von der Auswahl immer `e.attributes.Licht='Golden Hour'`. Es leert außerdem `S.anchorAccepted`. Ist 'Licht' gesperrt, passiert nichts, der Auftrag gilt trotzdem als 'Ergebnis übernommen'.\n- Z. 186: 'frame-redo' und 'frame-remix' legen nur ein freies Bild in den Medien-Importen an. Der Anker am Shot bleibt unverändert.\n- Z. 179 und 185: 'audio-sync' nennt 'Referenz: ausgewählter Videoclip', auch wenn ein Audioclip gewählt ist. Der Handler verschiebt alle ungesperrten Audioclips um 0,12 s und ignoriert beide Optionen.\n- Z. 34: Im Ton-Inspector eines Audioclips öffnet 'Musik erzeugen…' den Auftrag 'Musik zum Bild'.\n- Z. 82: 'task-accept' wird bei `t.revision!==S.version`, `t.context!==finishDigest()` oder Budgetüberschreitung deaktiviert. Dem Nutzer wird nur 'Vorschau · noch nicht angewendet' angezeigt.",
+        "impact": "- Die Freigabe im Kontext ist der Kern der AI-Vorgabe. Hier bestätigt der Nutzer Option B und bekommt Option A.\n- Bei gesperrtem Attribut bekommt er gar nichts, liest aber 'übernommen'.\n- Das Ergebnis eines Anker-Auftrags landet außerhalb des References-Kontexts. Das widerspricht dem 'eindeutigen Ausgabeziel' aus UI_PARITY_CONTRACT Z. 58.\n- Ändert der Nutzer während der Vorschau einen Regler, wird der Freigabe-Button grau. Eine Erklärung fehlt, es bleibt nur 'Verwerfen'.",
+        "recommendation": "- `applyTask` wertet die gewählten Optionen aus. Ist nichts anwendbar, wird der Auftrag nicht als 'übernommen' abgeschlossen.\n- 'frame-*' legt eine neue Ankervariante am Shot an. Sie lässt sich annehmen oder verwerfen.\n- Auftragstexte und die Verfügbarkeit von Aufträgen aus dem Typ des gewählten Clips ableiten. 'audio-sync' ist nur verfügbar, wenn eine Bildreferenz und ein Ton gewählt sind.\n- Bei veraltetem Kontext den Grund anzeigen, etwa 'Schnitt geändert' oder 'Budget überschritten', und 'Vorschlag neu prüfen' anbieten."
+      },
+      {
+        "title": "Unicode-Ersatzglyphen für Schloss, Kamera und Magnet; Viewer-Icons verstreut; 'Sequenz 01'-Label abgeschnitten",
+        "severity": "low",
+        "confidence": "high",
+        "category": "Desktop-Charakter / visuelle Klarheit",
+        "file": "docs/ui/build-desktop-production-workbench.py",
+        "line": 34,
+        "evidence": "- Builder Z. 34 ersetzt fehlende Icons: `icons.update({'magnet':'∩','ellipsis':'•••','plus':'+','lock':'▣','unlock':'□','camera':'▧','columns-2':'◫','maximize':'⛶','x':'×'})`.\n- Screenshots ux-schnitt.png und ux-postproduction.png:\n  - Die Spurköpfe zeigen '□' als Sperrschalter.\n  - In der Transportleiste steht '▧' für 'Frame sichern'.\n  - Vier Viewer-Icons sind per `justify-content:space-between` über die volle Breite verteilt (`css:140`).\n  - Direkt unter dem Tab 'Timeline' ist der Text 'Sequenz 01' halb abgeschnitten. Ursache: `studio.css:1` setzt `overflow:hidden`, `studio.css:2` rendert das `small`-Label.",
+        "impact": "- Der Sperrzustand einer Spur ist über '□' und '▣' nicht lesbar. Das Schloss ist aber das Control, das Konflikte verhindern soll.\n- Die verstreuten Einzelglyphen wirken wie Platzhalter, nicht wie eine gruppierte Werkzeugleiste. Das HIG verlangt logisch gruppierte, klare Symbole.\n- Das abgeschnittene Label sieht aus wie ein Renderfehler. Es ist zudem redundant zum Timeline-Kopf 'Sequenz 01'.",
+        "recommendation": "- Die echten Lucide-Pfade für lock, unlock, camera, magnet, columns-2, maximize, ellipsis, plus und x in `lucide-panel-icons.json` aufnehmen.\n- Die Viewer-Werkzeuge rechts als eine Gruppe bündeln. Die Transportsteuerung bleibt zentriert.\n- Das `small`-Label im Einzelviewer entfernen und nur im Vergleichsmodus als 'Original' und 'Bearbeitet' zeigen."
+      },
+      {
+        "title": "Dreistelliger Timecode MM:SS:FF ist mehrdeutig und uneinheitlich",
+        "severity": "low",
+        "confidence": "medium",
+        "category": "Wording / professionelle Medienarbeit",
+        "file": "docs/ui/desktop-production-workbench.js",
+        "line": 25,
+        "evidence": "- `js:25`: `tc` liefert Minuten:Sekunden:Frames.\n- Verwendung in den Screenshots:\n  - ux-medien.png: Dauer eines 3-Sekunden-Takes '00:03:00'\n  - ux-schnitt.png: Timeline-Fuß '7 Clips · 00:20:00' und Inspector 'V1 · 00:03:00'\n  - ux-export.png: '00:00:00 … 00:20:00' und 'Aktuelle Sequenz · 00:20:00'\n- Daneben stehen andere Formate:\n  - '3.0 s' im Storyboard\n  - '00:16' und '03:19' als MM:SS in der Audioanalyse\n  - Lineal '00:02' per `tc().slice(0,5)` in `studio.js:24`",
+        "impact": "- In FCP und Resolve liest man drei oder vier Felder als HH:MM:SS(:FF).\n- '00:20:00' wirkt wie 20 Minuten, '00:03:00' wie 3 Minuten.\n- Bei Dauerangaben in Medien und Export ist das eine echte Fehlinformation, und sie würde in die native Umsetzung wandern.",
+        "recommendation": "- Positionen einheitlich als HH:MM:SS:FF zeigen, wie NLE-üblich.\n- Reine Dauern in Medienliste, Inspector und Export als '3,0 s' oder '0:20' zeigen.\n- Pro Kontext ein einziges Format verwenden."
+      },
+      {
+        "title": "Teststeuerungen im Produkt-Inspector und Rechtsklick ohne Kontextmenü",
+        "severity": "low",
+        "confidence": "medium",
+        "category": "Mock/Produkt-Trennung / Desktop-Konvention",
+        "file": "docs/ui/desktop-production-workbench.studio.js",
+        "line": 57,
+        "evidence": "- Z. 57 und ux-medien.png: Unter 'Dateiaktionen' steht 'Offline-Fall simulieren' gleichrangig neben 'Umbenennen…' und 'Neu verknüpfen…'.\n- Z. 95: In den Einstellungen stehen 'Backend bereit · Demo' und 'Fehlende Version simulieren'.\n- Z. 230: Ein Rechtsklick auf ein Medium ruft direkt `studioAction('asset-rename')` auf.\n- Z. 230 und Z. 101: Ein Rechtsklick auf einen Clip öffnet 'Clip & Bereich' als zentrierten modalen Dialog mit 11 Buttons und 'Schließen'.\n- Z. 90: Das Projektmenü ist ebenfalls ein modaler Dialog.",
+        "impact": "- Die Selbstreview hat Teststeuerung aus der Statusleiste entfernt. Dieselbe Kategorie steht weiter im Inspector und in den Einstellungen. Dort wirkt sie wie Produktfunktion.\n- Ein Rechtsklick, der sofort 'Umbenennen' öffnet, ist ein Label-Handler-Bruch: Erwartet wird ein Menü mit mehreren Aktionen.\n- Als Vorlage legen die modalen Menüs eine falsche native Umsetzung nahe. macOS erwartet hier ein Kontextmenü und ein Pull-down-Menü.",
+        "recommendation": "- Simulationsschalter für Offline, Backend und fehlendes Pack in die äußeren Vorschauoptionen verschieben. Dort liegen bereits die Beispielprojekte.\n- Rechtsklick auf Medium oder Clip öffnet ein kompaktes Kontextmenü am Zeiger. In der Basis existiert dafür ein `context`-Overlay.\n- Das Medien-Kontextmenü enthält die echten Dateiaktionen:\n  - Umbenennen\n  - Verschieben\n  - Löschen\n  - Neu verknüpfen\n  - Dateiort\n- Das Projektmenü als Pull-down unter dem Titel anlegen."
+      }
+    ]
+  }
+}

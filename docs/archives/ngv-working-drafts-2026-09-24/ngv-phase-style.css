@@ -1,0 +1,15 @@
+#ngv-spatial .phase-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:900px}
+#ngv-spatial .phase-form .row,#ngv-spatial .phase-form .error{grid-column:1/-1}
+#ngv-spatial .phase-form textarea{min-height:80px}
+#ngv-spatial .design-board{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:center;margin-bottom:20px}
+#ngv-spatial .palette-chips{display:flex;gap:8px;margin:12px 0}
+#ngv-spatial .palette-chips span{height:32px;width:50px;background:#b58949}
+#ngv-spatial .palette-chips span:nth-child(2){background:#786143}
+#ngv-spatial .palette-chips span:nth-child(3){background:#51616d}
+#ngv-spatial .treatment-beats{display:grid;gap:12px}
+#ngv-spatial .treatment-beats article{padding:16px;border-left:2px solid var(--nf-accent);background:var(--nf-panel)}
+#ngv-spatial .treatment-beats article h2{margin:8px 0}
+#ngv-spatial .check-row{display:flex;align-items:baseline;gap:14px;padding:12px 0;border-bottom:1px solid var(--nf-line)}
+#ngv-spatial .advice{padding:14px;margin:16px 0;background:var(--nf-panel);border-left:2px solid #bc944b}
+#ngv-spatial .advice p{margin:8px 0}
+@media(max-width:800px){#ngv-spatial .phase-form,#ngv-spatial .design-board{grid-template-columns:1fr}}

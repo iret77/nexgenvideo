@@ -1,0 +1,31 @@
+query {
+  repository(owner: "iret77", name: "nexgenvideo") {
+    i433: issue(number: 433) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i434: issue(number: 434) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i437: issue(number: 437) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i438: issue(number: 438) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i439: issue(number: 439) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i440: issue(number: 440) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i442: issue(number: 442) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i443: issue(number: 443) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i444: issue(number: 444) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i445: issue(number: 445) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i447: issue(number: 447) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i448: issue(number: 448) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i468: issue(number: 468) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i475: issue(number: 475) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i476: issue(number: 476) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i479: issue(number: 479) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i480: issue(number: 480) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i481: issue(number: 481) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i482: issue(number: 482) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i483: issue(number: 483) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i484: issue(number: 484) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i485: issue(number: 485) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i486: issue(number: 486) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i488: issue(number: 488) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i489: issue(number: 489) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i490: issue(number: 490) { number title body comments(first: 100) { nodes { body author { login } } } }
+    i492: issue(number: 492) { number title body comments(first: 100) { nodes { body author { login } } } }
+  }
+}
