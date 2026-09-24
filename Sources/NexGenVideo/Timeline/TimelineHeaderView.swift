@@ -10,9 +10,10 @@ final class TimelineHeaderView: NSView {
         .foregroundColor: AppTheme.Text.secondary,
     ]
 
-    /// Rects for mute/hide/sync-lock buttons, indexed by track. Used for hit testing.
+    /// Rects for track controls, indexed by track. Used for hit testing.
     var muteButtonRects: [Int: NSRect] = [:]
     var hideButtonRects: [Int: NSRect] = [:]
+    var editLockButtonRects: [Int: NSRect] = [:]
     var syncLockButtonRects: [Int: NSRect] = [:]
 
     init(editor: EditorViewModel) {
@@ -52,6 +53,7 @@ final class TimelineHeaderView: NSView {
 
         muteButtonRects.removeAll()
         hideButtonRects.removeAll()
+        editLockButtonRects.removeAll()
         syncLockButtonRects.removeAll()
         let stripWidth = AppTheme.Timeline.headerTypeStripWidth
         let iconSize = AppTheme.Timeline.headerIconSize
@@ -81,6 +83,12 @@ final class TimelineHeaderView: NSView {
             let iconY = y + (h - iconSize) / 2
             let rightmostX = headerWidth - iconSize - AppTheme.Spacing.sm
             let syncX = rightmostX - iconSize - AppTheme.Spacing.xs
+            let lockX = syncX - iconSize - AppTheme.Spacing.xs
+
+            editLockButtonRects[i] = drawToggleIcon(
+                x: lockX, y: iconY, size: iconSize, config: iconConfig, context: ctx,
+                active: track.editLocked, onSymbol: "lock.fill", offSymbol: "lock.open"
+            )
 
             syncLockButtonRects[i] = drawToggleIcon(
                 x: syncX, y: iconY, size: iconSize, config: iconConfig, context: ctx,
@@ -135,6 +143,29 @@ final class TimelineHeaderView: NSView {
                     height: AppTheme.BorderWidth.thick
                 )
             )
+        }
+        layoutAcceptanceTrackLockProbes()
+    }
+
+    private func layoutAcceptanceTrackLockProbes() {
+        guard WorkspaceUIAcceptance.isRequested else { return }
+        let prefix = "selection.trackLock."
+        let liveIDs = Set(editor.timeline.tracks.map { prefix + $0.id })
+        for probe in subviews.compactMap({ $0 as? AppRelaunchClickProbeView })
+        where probe.identifier.map({ $0.rawValue.hasPrefix(prefix) && !liveIDs.contains($0.rawValue) }) == true {
+            probe.removeFromSuperview()
+        }
+        for (index, rect) in editLockButtonRects {
+            let identifier = prefix + editor.timeline.tracks[index].id
+            let probe = subviews.compactMap { $0 as? AppRelaunchClickProbeView }.first {
+                $0.identifier?.rawValue == identifier
+            } ?? {
+                let view = AppRelaunchClickProbeView()
+                view.identifier = NSUserInterfaceItemIdentifier(identifier)
+                addSubview(view)
+                return view
+            }()
+            probe.frame = rect
         }
     }
 
@@ -201,6 +232,13 @@ final class TimelineHeaderView: NSView {
         for (ti, rect) in syncLockButtonRects {
             if rect.contains(point) {
                 editor.toggleTrackSyncLock(trackIndex: ti)
+                needsDisplay = true
+                return
+            }
+        }
+        for (ti, rect) in editLockButtonRects {
+            if rect.contains(point) {
+                editor.toggleTrackEditLock(trackIndex: ti)
                 needsDisplay = true
                 return
             }

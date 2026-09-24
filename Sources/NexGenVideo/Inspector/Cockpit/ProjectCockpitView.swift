@@ -147,9 +147,18 @@ struct ProjectSettingsView: View {
                     plainRow("Duration", formatDuration(Double(editor.timeline.totalFrames) / Double(editor.timeline.fps)))
                 }
                 section("Settings") {
-                    menuRow("Resolution", "\(editor.timeline.width) × \(editor.timeline.height)") { qualityMenuItems }
-                    menuRow("Frame Rate", "\(editor.timeline.fps) fps") { fpsMenuItems }
-                    menuRow("Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
+                    menuRow(
+                        "Resolution", "\(editor.timeline.width) × \(editor.timeline.height)",
+                        disabled: !editor.canChangeTimelineSettings
+                    ) { qualityMenuItems }
+                    menuRow(
+                        "Frame Rate", "\(editor.timeline.fps) fps",
+                        disabled: !editor.canChangeTimelineSettings
+                    ) { fpsMenuItems }
+                    menuRow(
+                        "Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height),
+                        disabled: !editor.canChangeTimelineSettings
+                    ) { aspectMenuItems }
                 }
 
                 pluginSection
@@ -320,6 +329,7 @@ struct ProjectSettingsView: View {
 
     private func menuRow<MenuContent: View>(
         _ label: String, _ value: String,
+        disabled: Bool = false,
         @ViewBuilder menu: @escaping () -> MenuContent
     ) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
@@ -348,6 +358,7 @@ struct ProjectSettingsView: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
+            .disabled(disabled)
         }
     }
 

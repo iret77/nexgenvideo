@@ -87,7 +87,12 @@ struct ObjectGraphBreadcrumbTests {
 
     @Test func clipBreadcrumbShowsTrackThenName() {
         let bc = graph().breadcrumb(for: .clip("cl1"))
-        #expect(bc.segments.map(\.label) == ["V2", "Intro.mp4"])
+        #expect(bc.segments.map(\.label) == ["Timeline Clip", "V2", "Intro.mp4"])
+    }
+
+    @Test func mediaBreadcrumbNamesOriginalMedia() {
+        let bc = graph().breadcrumb(for: .mediaAsset("a1"))
+        #expect(bc.segments.map(\.label) == ["Original Media", "Intro.mp4"])
     }
 
     @Test func unresolvedNameFallsBackToIDNotEmpty() {

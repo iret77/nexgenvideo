@@ -118,7 +118,7 @@ final class VideoEngine {
         case .mediaAsset(let id, _, let type):
             textController.textRoot.isHidden = true
             guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
-            if type == .image {
+            if type == .image || type == .document {
                 replacePlayerItem(nil, reason: "imagePreview")
             } else {
                 previewAsset(asset)

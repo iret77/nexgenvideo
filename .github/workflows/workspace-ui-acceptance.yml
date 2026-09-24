@@ -14,6 +14,12 @@ on:
       - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
       - 'Sources/NexGenVideo/UI/AppTheme.swift'
       - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
+      - 'Sources/NexGenVideo/Editor/EditorWindowController.swift'
+      - 'Sources/NexGenVideo/Editor/ViewModel/**'
+      - 'Sources/NexGenVideo/MediaPanel/MediaTab/**'
+      - 'Sources/NexGenVideo/Preview/PreviewContainerView.swift'
+      - 'Sources/NexGenVideo/Preview/SourcePreviewState.swift'
+      - 'Sources/NexGenVideo/Timeline/**'
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}

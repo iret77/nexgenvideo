@@ -56,13 +56,14 @@ extension EditorViewModel {
     func removeTracks(ids: [String]) {
         let set = Set(ids)
         guard timeline.tracks.contains(where: { set.contains($0.id) }) else { return }
+        guard !timeline.tracks.contains(where: { set.contains($0.id) && $0.editLocked }) else { return }
         withTimelineSwap(actionName: set.count == 1 ? "Remove Track" : "Remove Tracks") {
             timeline.tracks.removeAll { set.contains($0.id) }
         }
     }
 
     func pruneEmptyTracks() {
-        timeline.tracks.removeAll(where: \.clips.isEmpty)
+        timeline.tracks.removeAll { $0.clips.isEmpty && !$0.editLocked }
     }
 
     // MARK: - Flag toggles
@@ -75,8 +76,29 @@ extension EditorViewModel {
         toggleTrackFlag(trackIndex: trackIndex, keyPath: \.hidden, onName: "Hide Track", offName: "Show Track")
     }
 
+    func toggleTrackEditLock(trackIndex: Int) {
+        toggleTrackFlag(trackIndex: trackIndex, keyPath: \.editLocked, onName: "Lock Track", offName: "Unlock Track")
+    }
+
     func toggleTrackSyncLock(trackIndex: Int) {
         toggleTrackFlag(trackIndex: trackIndex, keyPath: \.syncLocked, onName: "Sync Lock Track", offName: "Unlock Track Sync")
+    }
+
+    func isClipEditLocked(_ clipID: String) -> Bool {
+        guard let location = findClip(id: clipID) else { return false }
+        return timeline.tracks[location.trackIndex].editLocked
+    }
+
+    var selectedTimelineClipsAreEditLocked: Bool {
+        selectedClipIds.contains(where: isClipEditLocked)
+    }
+
+    var timelineCommandClipsAreEditLocked: Bool {
+        timelineCommandClipIDs.contains(where: isClipEditLocked)
+    }
+
+    var inspectedTimelineClipsAreEditLocked: Bool {
+        timelineInspectorClipIDs.contains(where: isClipEditLocked)
     }
 
     /// Flip a `Bool` on a track, register a reversing undo, and publish the change.
@@ -88,12 +110,35 @@ extension EditorViewModel {
         offName: String
     ) {
         guard timeline.tracks.indices.contains(trackIndex) else { return }
-        let was = timeline.tracks[trackIndex][keyPath: keyPath]
-        timeline.tracks[trackIndex][keyPath: keyPath].toggle()
+        let track = timeline.tracks[trackIndex]
+        let value = !track[keyPath: keyPath]
+        setTrackFlag(
+            trackID: track.id,
+            keyPath: keyPath,
+            value: value,
+            actionName: value ? onName : offName
+        )
+    }
+
+    private func setTrackFlag(
+        trackID: String,
+        keyPath: WritableKeyPath<Track, Bool>,
+        value: Bool,
+        actionName: String
+    ) {
+        guard let trackIndex = timeline.tracks.firstIndex(where: { $0.id == trackID }) else { return }
+        let previous = timeline.tracks[trackIndex][keyPath: keyPath]
+        guard previous != value else { return }
+        timeline.tracks[trackIndex][keyPath: keyPath] = value
         undoManager?.registerUndo(withTarget: self) { vm in
-            vm.timeline.tracks[trackIndex][keyPath: keyPath] = was
+            vm.setTrackFlag(
+                trackID: trackID,
+                keyPath: keyPath,
+                value: previous,
+                actionName: actionName
+            )
         }
-        undoManager?.setActionName(was ? offName : onName)
+        undoManager?.setActionName(actionName)
         notifyTimelineChanged()
     }
 

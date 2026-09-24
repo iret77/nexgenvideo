@@ -104,6 +104,24 @@ extension ToolExecutor {
         guard omittedCount == 0 || omittedCount == partials.count else {
             throw ToolError("Mixed trackIndex: \(omittedCount) of \(partials.count) entries omitted trackIndex. Either set it on every entry or omit it on every entry (to auto-create a shared new track).")
         }
+        if omittedCount == 0 {
+            for (index, partial) in partials.enumerated() {
+                guard let trackID = partial.trackId,
+                      let trackIndex = editor.timeline.tracks.firstIndex(where: { $0.id == trackID }) else {
+                    throw ToolError("entries[\(index)]: target track is unavailable")
+                }
+                guard !editor.timeline.tracks[trackIndex].editLocked else {
+                    throw ToolError("entries[\(index)]: destination track \(trackIndex) is locked")
+                }
+                guard editor.canClearRegion(
+                    trackIndex: trackIndex,
+                    start: partial.startFrame,
+                    end: partial.startFrame + partial.durationFrames
+                ) else {
+                    throw ToolError("entries[\(index)]: overwrite would change a clip linked to a locked track")
+                }
+            }
+        }
 
         let actionName = partials.count == 1 ? "Add Text (Agent)" : "Add Texts (Agent)"
         let (ids, createdTrackInfo, resolvedSpecs) = try withUndoGroup(editor, actionName: actionName) {

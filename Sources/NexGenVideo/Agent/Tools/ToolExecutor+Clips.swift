@@ -148,6 +148,9 @@ extension ToolExecutor {
                     throw ToolError("entries[\(idx)]: track index \(ti) out of range (0..\(editor.timeline.tracks.count - 1))")
                 }
                 let targetType = editor.timeline.tracks[ti].type
+                guard !editor.timeline.tracks[ti].editLocked else {
+                    throw ToolError("entries[\(idx)]: destination track \(ti) is locked")
+                }
                 guard asset.type.isCompatible(with: targetType) else {
                     throw ToolError("entries[\(idx)]: asset type \(asset.type.rawValue) is not compatible with \(targetType.rawValue) track at index \(ti)")
                 }
@@ -172,6 +175,19 @@ extension ToolExecutor {
         let omittedCount = specs.filter { $0.trackId == nil }.count
         guard omittedCount == 0 || omittedCount == specs.count else {
             throw ToolError("Mixed trackIndex: \(omittedCount) of \(specs.count) entries omitted trackIndex. Either set it on every entry or omit it on every entry (to auto-create shared tracks).")
+        }
+        if omittedCount == 0 {
+            for (index, spec) in specs.enumerated() {
+                guard let trackId = spec.trackId,
+                      let trackIndex = editor.timeline.tracks.firstIndex(where: { $0.id == trackId }),
+                      editor.canClearRegion(
+                          trackIndex: trackIndex,
+                          start: spec.startFrame,
+                          end: spec.startFrame + spec.durationFrames
+                      ) else {
+                    throw ToolError("entries[\(index)]: overwrite would change a clip linked to a locked track")
+                }
+            }
         }
 
         let actionName = specs.count == 1 ? "Add Clip (Agent)" : "Add Clips (Agent)"
@@ -274,6 +290,9 @@ extension ToolExecutor {
         guard editor.timeline.tracks.indices.contains(input.trackIndex) else {
             throw ToolError("trackIndex \(input.trackIndex) out of range (0..\(editor.timeline.tracks.count - 1))")
         }
+        guard !editor.timeline.tracks[input.trackIndex].editLocked else {
+            throw ToolError("insert_clips cannot edit locked track \(input.trackIndex)")
+        }
         guard input.atFrame >= 0 else { throw ToolError("atFrame must be >= 0 (got \(input.atFrame))") }
         let targetType = editor.timeline.tracks[input.trackIndex].type
 
@@ -298,6 +317,16 @@ extension ToolExecutor {
         }
 
         let totalPush = specs.reduce(0) { $0 + $1.durationFrames }
+        let needsLinkedAudio = targetType == .video
+            && specs.contains { $0.asset.type == .video && $0.asset.hasAudio }
+        guard !editor.rippleInsertTouchesLockedTrack(
+            trackIndex: input.trackIndex,
+            atFrame: input.atFrame,
+            pushAmount: totalPush,
+            needsLinkedAudio: needsLinkedAudio
+        ) else {
+            throw ToolError("insert_clips cannot move or split clips on a locked track")
+        }
         let tracksBefore = editor.timeline.tracks.count
         let ids = editor.rippleInsertClips(specs: specs, trackIndex: input.trackIndex, atFrame: input.atFrame)
         guard !ids.isEmpty else {
@@ -318,6 +347,9 @@ extension ToolExecutor {
             guard editor.findClip(id: id) != nil else { throw ToolError("Clip not found: \(id)") }
         }
         let expanded = editor.expandToLinkGroup(Set(clipIds))
+        guard !expanded.contains(where: editor.isClipEditLocked) else {
+            throw ToolError("remove_clips cannot remove clips from a locked track")
+        }
         let tracksBefore = Set(editor.timeline.tracks.map(\.id))
         editor.removeClips(ids: expanded)
         let prunedCount = tracksBefore.subtracting(editor.timeline.tracks.map(\.id)).count
@@ -353,6 +385,9 @@ extension ToolExecutor {
             guard let loc = editor.findClip(id: m.clipId) else {
                 throw ToolError("\(path): clip not found: \(m.clipId)")
             }
+            guard !editor.timeline.tracks[loc.trackIndex].editLocked else {
+                throw ToolError("\(path): source track is locked")
+            }
             var destTrackId: String? = nil
             if let ti = m.toTrack {
                 guard editor.timeline.tracks.indices.contains(ti) else {
@@ -360,6 +395,9 @@ extension ToolExecutor {
                 }
                 let srcType = editor.timeline.tracks[loc.trackIndex].type
                 let destType = editor.timeline.tracks[ti].type
+                guard !editor.timeline.tracks[ti].editLocked else {
+                    throw ToolError("\(path): destination track \(ti) is locked")
+                }
                 guard destType.isCompatible(with: srcType) else {
                     throw ToolError("\(path): toTrack \(ti) (\(destType.rawValue)) is incompatible with clip's \(srcType.rawValue) source track")
                 }
@@ -382,23 +420,39 @@ extension ToolExecutor {
             }
         }
         let linkedCount = allMoves.count - parsed.count
+        guard !allMoves.contains(where: { editor.isClipEditLocked($0.clipId) }) else {
+            throw ToolError("move_clips cannot move a linked partner on a locked track")
+        }
+
+        var moves: [(clipId: String, toTrack: Int, toFrame: Int)] = []
+        for m in allMoves {
+            guard let loc = editor.findClip(id: m.clipId) else { continue }
+            let currentTrackIndex = loc.trackIndex
+            let clip = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+            let toTrack: Int
+            if let destinationID = m.destTrackId,
+               let index = editor.timeline.tracks.firstIndex(where: { $0.id == destinationID }) {
+                toTrack = index
+            } else {
+                toTrack = currentTrackIndex
+            }
+            moves.append((m.clipId, toTrack, m.toFrame ?? clip.startFrame))
+        }
+        let movedIDs = Set(moves.map(\.clipId))
+        guard moves.allSatisfy({ move in
+            guard let clip = editor.clipFor(id: move.clipId) else { return false }
+            return editor.canClearRegion(
+                trackIndex: move.toTrack,
+                start: move.toFrame,
+                end: move.toFrame + clip.durationFrames,
+                excluding: movedIDs
+            )
+        }) else {
+            throw ToolError("move_clips destination would change a clip linked to a locked track")
+        }
 
         let moveActionName = parsed.count == 1 ? "Move Clip (Agent)" : "Move Clips (Agent)"
         withUndoGroup(editor, actionName: moveActionName) {
-            var moves: [(clipId: String, toTrack: Int, toFrame: Int)] = []
-            for m in allMoves {
-                guard let loc = editor.findClip(id: m.clipId) else { continue }
-                let currentTrackIdx = loc.trackIndex
-                let currentFrame = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex].startFrame
-                let toTrack: Int
-                if let destId = m.destTrackId,
-                   let idx = editor.timeline.tracks.firstIndex(where: { $0.id == destId }) {
-                    toTrack = idx
-                } else {
-                    toTrack = currentTrackIdx
-                }
-                moves.append((clipId: m.clipId, toTrack: toTrack, toFrame: m.toFrame ?? currentFrame))
-            }
             if !moves.isEmpty { editor.moveClips(moves) }
         }
 
@@ -470,6 +524,10 @@ extension ToolExecutor {
         let partners: Set<String> = propagatesTiming
             ? editor.timingPropagationPartners(of: Set(input.clipIds))
             : []
+        let mutationIds = Set(input.clipIds).union(partners)
+        guard !mutationIds.contains(where: editor.isClipEditLocked) else {
+            throw ToolError("set_clip_properties cannot edit clips on a locked track")
+        }
 
         let setActionName = input.clipIds.count == 1 ? "Set Clip Property (Agent)" : "Set Clip Properties (Agent)"
         let summaries: [String] = withUndoGroup(editor, actionName: setActionName) {
@@ -600,6 +658,9 @@ extension ToolExecutor {
         guard editor.findClip(id: input.clipId) != nil else {
             throw ToolError("Clip not found: \(input.clipId)")
         }
+        guard !editor.isClipEditLocked(input.clipId) else {
+            throw ToolError("set_keyframes cannot edit a clip on a locked track")
+        }
 
         try withUndoGroup(editor, actionName: "Set Keyframes (Agent)") {
             switch input.property {
@@ -637,6 +698,10 @@ extension ToolExecutor {
         let atFrame = try args.requireInt("atFrame")
         guard let loc = editor.findClip(id: clipId) else { throw ToolError("Clip not found: \(clipId)") }
         let clip = editor.timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+        let affected = Set([clipId] + editor.linkedPartnerIds(of: clipId))
+        guard !affected.contains(where: editor.isClipEditLocked) else {
+            throw ToolError("split_clip cannot split clips on a locked track")
+        }
         guard atFrame > clip.startFrame && atFrame < clip.endFrame else {
             throw ToolError("Frame \(atFrame) is outside clip range (\(clip.startFrame)..\(clip.endFrame))")
         }
@@ -833,6 +898,9 @@ extension ToolExecutor {
                 throw ToolError("remove_tracks: track index \(i) out of range (timeline has \(editor.timeline.tracks.count) tracks)")
             }
             let track = editor.timeline.tracks[i]
+            guard !track.editLocked else {
+                throw ToolError("remove_tracks: track \(editor.timelineTrackDisplayLabel(at: i)) is locked")
+            }
             ids.append(track.id)
             removed.append([
                 "trackIndex": i,

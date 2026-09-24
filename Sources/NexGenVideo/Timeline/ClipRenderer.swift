@@ -50,6 +50,7 @@ enum ClipRenderer {
         type: ClipType,
         in rect: NSRect,
         isSelected: Bool,
+        selectionIsActive: Bool = true,
         opacity: CGFloat = 1.0,
         context: CGContext,
         cache: MediaVisualCache? = nil,
@@ -126,7 +127,8 @@ enum ClipRenderer {
         // Border
         if isSelected {
             context.setStrokeColor(
-                AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.high).cgColor
+                (selectionIsActive ? AppTheme.Accent.primaryNSColor : AppTheme.Border.divider)
+                    .withAlphaComponent(AppTheme.Opacity.high).cgColor
             )
             context.setLineWidth(AppTheme.BorderWidth.medium)
             context.addPath(path)

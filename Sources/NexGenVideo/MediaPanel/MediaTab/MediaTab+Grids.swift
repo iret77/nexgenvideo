@@ -292,6 +292,7 @@ extension MediaTab {
                         Button("Delete", role: .destructive) {
                             editor.deleteFolders(ids: [folderId])
                         }
+                        .disabled(!editor.canDeleteFolders(ids: [folderId]))
                     }
                 } else {
                     groupedSectionTitle(title)
@@ -405,6 +406,7 @@ extension MediaTab {
                 folder: folder,
                 isSelected: editor.selectedFolderIds.contains(folder.id),
                 isDropHover: dropTargetFolderId == folder.id,
+                canDelete: editor.canDeleteFolders(ids: [folder.id]),
                 childCount: editor.subfolders(of: folder.id).count + editor.assetsIn(folderId: folder.id).count,
                 isRenaming: Binding(
                     get: { renamingFolderId == folder.id },

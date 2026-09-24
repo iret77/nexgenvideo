@@ -1435,6 +1435,17 @@ extension EditorViewModel {
     @discardableResult
     func placeTextClips(_ specs: [TextClipSpec]) -> [String] {
         guard !specs.isEmpty else { return [] }
+        guard !specs.contains(where: {
+            timeline.tracks.indices.contains($0.trackIndex) && timeline.tracks[$0.trackIndex].editLocked
+        }) else { return [] }
+        guard specs.allSatisfy({ spec in
+            let start = max(0, spec.startFrame)
+            return canClearRegion(
+                trackIndex: spec.trackIndex,
+                start: start,
+                end: start + max(1, spec.durationFrames)
+            )
+        }) else { return [] }
         let canvasW = Double(timeline.width)
         let canvasH = Double(timeline.height)
         var createdIds = [String?](repeating: nil, count: specs.count)

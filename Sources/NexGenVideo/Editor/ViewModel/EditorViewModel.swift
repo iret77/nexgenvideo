@@ -136,7 +136,13 @@ final class EditorViewModel {
     }
     var activeFrame: Int { playheadState.timelineFrame }
     var isPlaying: Bool = false
-    var selectedClipIds: Set<String> = []
+    var selectedClipIds: Set<String> = [] {
+        didSet {
+            if selectedClipIds != oldValue {
+                explicitTimelineInspectionClipID = nil
+            }
+        }
+    }
     var isMarqueeSelecting: Bool = false
     var selectedGap: GapSelection?
     var selectedTimelineRange: TimelineRangeSelection?
@@ -155,17 +161,16 @@ final class EditorViewModel {
     var selectionInspectedObject: InspectedObject? {
         switch activePreviewTab {
         case .timeline:
+            if let id = activeTimelineInspectionClipID {
+                return .clip(id)
+            }
             return InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
                 mediaAssetIDs: [],
                 isMarquee: isMarqueeSelecting
             )
         case .mediaAsset:
-            return InspectedObject.fromSelection(
-                clipIDs: [],
-                mediaAssetIDs: selectedMediaAssetIds,
-                isMarquee: false
-            )
+            return activeSourceAsset.map { .mediaAsset($0.id) }
         }
     }
 
@@ -173,7 +178,7 @@ final class EditorViewModel {
     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
     var selectionContextHint: String? {
-        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
+        if isTimelineBatchSelection {
             return "\(selectedClipIds.count) timeline clips are selected"
         }
         guard let object = inspectedObject else { return nil }
@@ -242,7 +247,13 @@ final class EditorViewModel {
     var previewTabHistory: [String] = [PreviewTab.timeline.id]
     var previewTabHistoryIndex: Int = 0
     var sourcePlayheadFrame: Int = 0 {
-        didSet { playheadState.sourceFrame = sourcePlayheadFrame }
+        didSet {
+            playheadState.sourceFrame = sourcePlayheadFrame
+            guard case .mediaAsset(let id, _, _) = activePreviewTab else { return }
+            var state = sourcePreviewStates[id] ?? SourcePreviewState()
+            state.playheadFrame = sourcePlayheadFrame
+            sourcePreviewStates[id] = state
+        }
     }
     var layoutPreset: LayoutPreset = {
         if let raw = UserDefaults.standard.string(forKey: "layoutPreset"),
@@ -900,6 +911,13 @@ final class EditorViewModel {
         activePreviewTabId = previewTabs.contains { $0.id == state.activePreviewTabId }
             ? state.activePreviewTabId
             : PreviewTab.timeline.id
+        if activePreviewTabId == PreviewTab.timeline.id,
+           case .clip(let id) = inspectedObject,
+           selectedClipIds.count > 1 {
+            explicitTimelineInspectionClipID = id
+        } else {
+            explicitTimelineInspectionClipID = nil
+        }
         currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
         sourcePlayheadFrame = max(0, state.sourceFrame)
         mediaPanelTab = state.mediaPanelTab
@@ -1259,6 +1277,10 @@ final class EditorViewModel {
     // MARK: - Playback
 
     func togglePlayback() {
+        if isSourcePreviewActive {
+            toggleSourcePlayback()
+            return
+        }
         if let videoEngine {
             videoEngine.togglePlayback()
         } else {
@@ -1297,7 +1319,9 @@ final class EditorViewModel {
         } else {
             currentFrame = clamped
         }
-        videoEngine?.seek(to: clamped, mode: mode)
+        if isTimelinePreviewActive {
+            videoEngine?.seek(to: clamped, mode: mode)
+        }
     }
 
     // MARK: - Source playback (for preview tabs)
@@ -1313,13 +1337,26 @@ final class EditorViewModel {
     }
 
     func toggleSourcePlayback() {
+        guard let type = activePreviewTab.clipType,
+              type == .video || type == .audio || type == .lottie else {
+            if isPlaying { pause() }
+            return
+        }
         videoEngine?.togglePlayback()
     }
 
-    func stepForward() { seekToFrame(currentFrame + 1) }
-    func stepBackward() { seekToFrame(currentFrame - 1) }
-    func skipForward(frames: Int = 5) { seekToFrame(currentFrame + frames) }
-    func skipBackward(frames: Int = 5) { seekToFrame(currentFrame - frames) }
+    func stepForward() { seekActivePreview(by: 1) }
+    func stepBackward() { seekActivePreview(by: -1) }
+    func skipForward(frames: Int = 5) { seekActivePreview(by: frames) }
+    func skipBackward(frames: Int = 5) { seekActivePreview(by: -frames) }
+
+    private func seekActivePreview(by delta: Int) {
+        if isTimelinePreviewActive {
+            seekToFrame(currentFrame + delta)
+        } else if canEditActiveSourceRange {
+            seekSourceToFrame(sourcePlayheadFrame + delta)
+        }
+    }
 
     // MARK: - Shared infrastructure
 
@@ -1337,11 +1374,11 @@ final class EditorViewModel {
     func notifyTimelineChanged() {
         pendingRebuildTask?.cancel()
         pendingRebuildTask = nil
-        if isPlaying {
-            videoEngine?.pause()
+        if isTimelinePreviewActive {
+            if isPlaying { videoEngine?.pause() }
+            videoEngine?.syncTextLayers()
+            videoEngine?.rebuild()
         }
-        videoEngine?.syncTextLayers()
-        videoEngine?.rebuild()
     }
 
     /// Coalesce rapid rebuilds. An immediate `notifyTimelineChanged` cancels any pending debounced one.
@@ -1351,8 +1388,10 @@ final class EditorViewModel {
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled, let self else { return }
             self.pendingRebuildTask = nil
-            if self.isPlaying { self.videoEngine?.pause() }
-            self.videoEngine?.rebuild()
+            if self.isTimelinePreviewActive {
+                if self.isPlaying { self.videoEngine?.pause() }
+                self.videoEngine?.rebuild()
+            }
         }
     }
 
@@ -1369,10 +1408,21 @@ final class EditorViewModel {
         trimStartFrame: Int? = nil,
         trimEndFrame: Int? = nil
     ) -> [String] {
-        guard timeline.tracks.indices.contains(trackIndex) else { return [] }
+        guard timeline.tracks.indices.contains(trackIndex),
+              !timeline.tracks[trackIndex].editLocked else { return [] }
         let targetIsVideo = timeline.tracks[trackIndex].type == .video
         let shouldLink = addLinkedAudio && targetIsVideo && asset.type == .video && asset.hasAudio
         let linkGroupId: String? = shouldLink ? UUID().uuidString : nil
+        let audioTrackIdx: Int?
+        if shouldLink {
+            audioTrackIdx = linkedAudioTrackIndex.flatMap { timeline.tracks.indices.contains($0) ? $0 : nil }
+                ?? resolveOrCreateAudioTrack(startFrame: startFrame, duration: durationFrames)
+            guard let audioTrackIdx,
+                  timeline.tracks.indices.contains(audioTrackIdx),
+                  !timeline.tracks[audioTrackIdx].editLocked else { return [] }
+        } else {
+            audioTrackIdx = nil
+        }
         let trimStart = sourceSegment.map { secondsToFrame(seconds: $0.lowerBound, fps: timeline.fps) } ?? 0
         let totalSourceFrames = secondsToFrame(seconds: asset.duration, fps: timeline.fps)
 
@@ -1398,10 +1448,7 @@ final class EditorViewModel {
         sortClips(trackIndex: trackIndex)
         var ids = [clip.id]
 
-        if let gid = linkGroupId {
-            let audioTrackIdx = linkedAudioTrackIndex.flatMap { timeline.tracks.indices.contains($0) ? $0 : nil }
-                ?? resolveOrCreateAudioTrack(startFrame: startFrame, duration: durationFrames)
-            guard timeline.tracks.indices.contains(audioTrackIdx) else { return ids }
+        if let gid = linkGroupId, let audioTrackIdx {
             var audioClip = Clip(mediaRef: asset.id, mediaType: .audio, sourceClipType: asset.type, startFrame: startFrame, durationFrames: durationFrames)
             audioClip.linkGroupId = gid
             applyTrim(&audioClip)
@@ -1522,5 +1569,8 @@ final class EditorViewModel {
 
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+
+    var sourcePreviewStates: [String: SourcePreviewState] = [:]
+    var explicitTimelineInspectionClipID: String?
 
 }

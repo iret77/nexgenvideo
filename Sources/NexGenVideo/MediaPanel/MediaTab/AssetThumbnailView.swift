@@ -52,7 +52,11 @@ struct AssetThumbnailView: View {
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                        .foregroundStyle(
+                            isSelected || isActiveSource
+                                ? AppTheme.Text.primaryColor
+                                : AppTheme.Text.secondaryColor
+                        )
                         .onTapGesture(count: 2) { beginRename() }
                 }
             }
@@ -64,18 +68,59 @@ struct AssetThumbnailView: View {
             )
         }
         .frame(maxWidth: .infinity)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "selection.asset.\(asset.id)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(count: 1) {
-            handleTap()
+            handleTap(modifiers: NSApp.currentEvent?.modifierFlags ?? [])
         }
-        .contextMenu { contextMenuItems }
+        .contextMenu {
+            contextActivation
+            contextMenuItems
+        }
         .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
         .allowsHitTesting(!isSwapDimmed)
     }
 
     @ViewBuilder
+    private var contextActivation: some View {
+        AppTheme.Background.clearColor
+            .frame(width: AppTheme.Spacing.none, height: AppTheme.Spacing.none)
+            .onAppear {
+                editor.activateMediaAsset(asset, preservingSelection: true)
+            }
+    }
+
+    @ViewBuilder
     private var contextMenuItems: some View {
         let ids = contextTargetIds
+        if asset.type != .document {
+            if asset.type == .video || asset.type == .audio || asset.type == .lottie {
+                Button("Mark In") { performSourceAction { $0.markSourceIn() } }
+                Button("Mark Out") { performSourceAction { $0.markSourceOut() } }
+                Button("Clear Source Range") { performSourceAction { $0.clearSourceRange() } }
+                Divider() // app-theme: native-menu-divider
+            }
+            if asset.type.isPlaceable {
+                Button("Insert at Playhead") { performSourceAction { $0.insertActiveSource() } }
+                    .disabled(!canInsertContextAsset)
+                Button("Overwrite at Playhead") { performSourceAction { $0.overwriteActiveSource() } }
+                    .disabled(!canOverwriteContextAsset)
+                Divider() // app-theme: native-menu-divider
+            }
+        }
+        if editor.rememberedSourceAssets.count > 1 {
+            Button("Previous Source") { performSourceAction { $0.activatePreviousSource() } }
+                .disabled(!editor.canActivatePreviousSource)
+            Button("Next Source") { performSourceAction { $0.activateNextSource() } }
+                .disabled(!editor.canActivateNextSource)
+            Divider() // app-theme: native-menu-divider
+        }
         if let onMoveToFolderMenu {
             onMoveToFolderMenu
             Divider() // app-theme: native-menu-divider
@@ -93,6 +138,20 @@ struct AssetThumbnailView: View {
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider() // app-theme: native-menu-divider
         Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
+            .disabled(!editor.canDeleteMediaAssets(ids: Set(ids)))
+    }
+
+    private func performSourceAction(_ action: (EditorViewModel) -> Void) {
+        editor.activateMediaAsset(asset, preservingSelection: true)
+        action(editor)
+    }
+
+    private var canInsertContextAsset: Bool {
+        editor.canInsertSourceAsset(asset)
+    }
+
+    private var canOverwriteContextAsset: Bool {
+        editor.canOverwriteSourceAsset(asset)
     }
 
     private var contextTargetIds: [String] {
@@ -276,6 +335,10 @@ struct AssetThumbnailView: View {
         editor.selectedMediaAssetIds.contains(asset.id)
     }
 
+    private var isActiveSource: Bool {
+        editor.activeSourceAsset?.id == asset.id
+    }
+
     private var isSwapPickMode: Bool {
         editor.pendingSwapClipId != nil
     }
@@ -301,12 +364,14 @@ struct AssetThumbnailView: View {
     private var borderColor: Color {
         if isMissing { return AppTheme.Status.errorColor }
         if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.Accent.primary : AppTheme.Background.clearColor }
-        return isSelected ? AppTheme.Accent.primary : AppTheme.Background.clearColor
+        if isActiveSource { return AppTheme.Accent.primary }
+        guard isSelected else { return AppTheme.Background.clearColor }
+        return AppTheme.Border.primaryColor
     }
 
     private var borderWidth: CGFloat {
         if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.BorderWidth.thick : 0 }
-        return (isMissing || isSelected) ? AppTheme.BorderWidth.thick : 0
+        return (isMissing || isSelected || isActiveSource) ? AppTheme.BorderWidth.thick : 0
     }
 
     private var showsDurationBadge: Bool {
@@ -334,21 +399,16 @@ struct AssetThumbnailView: View {
         isRenaming = false
     }
 
-    private func handleTap() {
+    private func handleTap(modifiers: NSEvent.ModifierFlags) {
         if isSwapPickMode {
             editor.completeMediaSwap(with: asset)
             return
         }
 
-        let shiftHeld = NSEvent.modifierFlags.contains(.shift)
+        let shiftHeld = modifiers.contains(.shift)
 
         if shiftHeld {
-            if editor.selectedMediaAssetIds.contains(asset.id) {
-                editor.selectedMediaAssetIds.remove(asset.id)
-            } else {
-                editor.selectedMediaAssetIds.insert(asset.id)
-            }
-            editor.openPreviewTab(for: asset)   // tab follows, but keep multi-selection intact
+            editor.toggleMediaAssetSelection(asset)
         } else {
             editor.selectMediaAsset(asset)
         }

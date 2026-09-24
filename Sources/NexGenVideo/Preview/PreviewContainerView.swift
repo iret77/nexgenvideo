@@ -7,13 +7,11 @@ struct PreviewContainerView: View {
     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
 
-    @State private var hoveredTabId: String?
-
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             // Theater hides the panel's own chrome — the floating theater transport takes over.
             if !editor.theaterActive {
-                tabBar
+                viewerHeader
                     .padding(.horizontal, AppTheme.Spacing.sm)
                     .panelHeaderBar()
             }
@@ -60,7 +58,7 @@ struct PreviewContainerView: View {
             }
             .clipped()
             if !editor.theaterActive {
-                if !isImage {
+                if isTimeline || supportsSourceTransport {
                     scrubBar
                     transportBar
                 } else {
@@ -171,11 +169,17 @@ struct PreviewContainerView: View {
 
     private func transportControls(duration: Int, compact: Bool) -> some View {
         HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
-            transportButton("backward.end.fill") { seekTo(0) }
+            transportButton("backward.end.fill", acceptanceIdentifier: "preview.seekStart") { seekTo(0) }
             if !compact {
-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+                transportButton(
+                    "backward.frame.fill",
+                    acceptanceIdentifier: "preview.stepBackward"
+                ) { seekTo(playheadFrame - 1) }
             }
-            transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
+            transportButton(
+                editor.isPlaying ? "pause.fill" : "play.fill",
+                acceptanceIdentifier: "preview.playPause"
+            ) {
                 if isTimeline {
                     editor.togglePlayback()
                 } else {
@@ -183,9 +187,12 @@ struct PreviewContainerView: View {
                 }
             }
             if !compact {
-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+                transportButton(
+                    "forward.frame.fill",
+                    acceptanceIdentifier: "preview.stepForward"
+                ) { seekTo(playheadFrame + 1) }
             }
-            transportButton("forward.end.fill") { seekTo(duration) }
+            transportButton("forward.end.fill", acceptanceIdentifier: "preview.seekEnd") { seekTo(duration) }
         }
     }
 
@@ -532,127 +539,62 @@ struct PreviewContainerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Tab bar
+    // MARK: - Viewer context
 
-    private var tabBar: some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            HStack(spacing: AppTheme.Spacing.none) {
-                navButton("chevron.left", enabled: editor.canGoBackPreviewTab, help: "Back") {
-                    editor.goBackPreviewTab()
-                }
-                navButton("chevron.right", enabled: editor.canGoForwardPreviewTab, help: "Forward") {
-                    editor.goForwardPreviewTab()
-                }
-            }
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: AppTheme.Spacing.md) {
-                        ForEach(editor.previewTabs) { tab in
-                            tabItem(for: tab).id(tab.id)
-                        }
-                    }
-                    .padding(.horizontal, AppTheme.Spacing.sm)
-                }
-                .mouseWheelScrollsHorizontally()
-                .onChange(of: editor.activePreviewTabId) { _, newId in
-                    withAnimation(.easeOut(duration: AppTheme.Anim.transition)) {
-                        proxy.scrollTo(newId, anchor: .center)
-                    }
-                }
-            }
-
-            overflowMenu
-
-            UpdateBadgeView()
-
-            ExportButton()
-        }
-    }
-
-    private func tabItem(for tab: PreviewTab) -> some View {
-        let isActive = tab.id == editor.activePreviewTabId
-        let isHovered = hoveredTabId == tab.id
-        return HStack(spacing: AppTheme.Spacing.xs) {
-            Text(tab.displayName)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .semibold : .medium)
-                .foregroundStyle(isActive || isHovered ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-
-            if tab.isCloseable {
-                closeButton(tabId: tab.id)
-            }
-        }
-        .padding(.horizontal, AppTheme.Spacing.xs)
-        .workspaceHeaderContent()
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(isActive ? tab.underlineColor : AppTheme.Background.clearColor)
-                .frame(height: AppTheme.BorderWidth.medium)
-                .padding(.bottom, AppTheme.Spacing.xs)
-        }
-        .fixedSize()
-        .contentShape(Rectangle())
-        .onTapGesture {
-            editor.selectPreviewTab(id: tab.id)
-        }
-        .onHover { hovering in
-            if hovering {
-                hoveredTabId = tab.id
-            } else if hoveredTabId == tab.id {
-                hoveredTabId = nil
-            }
-        }
-        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isActive)
-    }
-
-    private func navButton(_ systemName: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(enabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
-                .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.md)
-                .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .help(help)
-    }
-
-    private var overflowMenu: some View {
-        Menu {
-            Button("Close All Tabs") {
-                withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
-                    editor.closeAllPreviewTabs()
-                }
-            }
-            .disabled(editor.previewTabs.count <= 1)
-        } label: {
-            Image(systemName: "ellipsis")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+    private var viewerHeader: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(isTimeline ? "Film Preview" : "Media Preview")
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .fixedSize()
+            Text(activeObjectName)
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Text(isTimeline ? "Timeline Clip" : "Original Media")
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize()
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-        .help("More")
+        .workspaceHeaderContent()
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                ZStack {
+                    AppRelaunchClickProbe(
+                        identifier: "preview.selectionContext",
+                        acceptanceState: isTimeline && editor.activeTimelineInspectionClipID != nil
+                    )
+                    if let clipID = editor.activeTimelineInspectionClipID {
+                        AppRelaunchClickProbe(
+                            identifier: "preview.selectionContext.\(clipID)",
+                            acceptanceState: isTimeline
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(isTimeline ? "Film Preview, Timeline Clip" : "Media Preview, Original Media"), \(activeObjectName)"
+        )
     }
 
-    private func closeButton(tabId: String) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
-                editor.closePreviewTab(id: tabId)
-            }
-        } label: {
-            Image(systemName: "xmark")
-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.bold)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
-                .hoverHighlight(cornerRadius: AppTheme.Radius.smMd)
+    private var activeObjectName: String {
+        if let asset = activeMediaAsset { return asset.name }
+        if let id = editor.activeTimelineInspectionClipID, let location = editor.findClip(id: id) {
+            return editor.clipDisplayLabel(for: editor.timeline.tracks[location.trackIndex].clips[location.clipIndex])
         }
-        .buttonStyle(.plain)
+        if editor.isTimelineBatchSelection { return "\(editor.selectedClipIds.count) clips" }
+        return "Timeline"
+    }
+
+    private var supportsSourceTransport: Bool {
+        guard let type = editor.activePreviewTab.clipType else { return false }
+        return type == .video || type == .audio || type == .lottie
     }
 
     // MARK: - Scrub bar
@@ -717,6 +659,13 @@ struct PreviewContainerView: View {
             )
         }
         .frame(height: AppTheme.ComponentSize.previewScrubberHeight)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.scrub")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubbing)
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubHovered)
         .onDisappear {
@@ -771,7 +720,11 @@ struct PreviewContainerView: View {
         }
     }
 
-    private func transportButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+    private func transportButton(
+        _ systemName: String,
+        acceptanceIdentifier: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
@@ -780,6 +733,13 @@ struct PreviewContainerView: View {
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
+        .background {
+            if WorkspaceUIAcceptance.isRequested, let acceptanceIdentifier {
+                AppRelaunchClickProbe(identifier: acceptanceIdentifier)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 

@@ -22,6 +22,14 @@ extension EditorViewModel {
         let fps = Double(timeline.fps)
         let targets = targetClipIds.filter { $0 != referenceClipId }
 
+        guard !targets.contains(where: { id in
+            Set([id] + linkedPartnerIds(of: id)).contains(where: isClipEditLocked)
+        }) else {
+            return AudioSyncBatchReport(
+                failures: targets.map { ($0, "Synchronization would edit a locked track.") }
+            )
+        }
+
         guard fps > 0, let refLoc = findClip(id: referenceClipId) else {
             return AudioSyncBatchReport(failures: targets.map { ($0, "Reference clip unavailable.") })
         }

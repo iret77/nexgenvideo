@@ -64,14 +64,21 @@ extension EditorViewModel {
         undoManager?.setActionName("Rename Folder")
     }
 
+    func canDeleteFolders(ids: Set<String>) -> Bool {
+        let allFolderIds = MediaFolderIndex(mediaManifest.folders).idsIncludingDescendants(ids)
+        return canDeleteMediaAssets(ids: assetIds(inFolderIds: allFolderIds))
+    }
+
     func deleteFolders(ids: Set<String>) {
         guard !ids.isEmpty else { return }
         let allFolderIds = MediaFolderIndex(mediaManifest.folders).idsIncludingDescendants(ids)
         guard mediaManifest.folders.contains(where: { allFolderIds.contains($0.id) }) else { return }
+        guard canDeleteFolders(ids: ids) else { return }
 
         let before = mediaLibraryUndoSnapshot()
         let assetIdsToDelete = assetIds(inFolderIds: allFolderIds)
         let clipIdsToRemove = clipIdsReferencingAssets(assetIdsToDelete)
+        guard !clipIdsToRemove.contains(where: isClipEditLocked) else { return }
 
         if !clipIdsToRemove.isEmpty {
             selectedClipIds.subtract(clipIdsToRemove)
@@ -178,9 +185,14 @@ extension EditorViewModel {
             selectedClipIds: selectedClipIds,
             selectedMediaAssetIds: selectedMediaAssetIds,
             selectedFolderIds: selectedFolderIds,
+            inspectedObject: inspectedObject,
+            explicitTimelineInspectionClipID: explicitTimelineInspectionClipID,
             previewTabs: previewTabs,
             activePreviewTabId: activePreviewTabId,
+            previewTabHistory: previewTabHistory,
+            previewTabHistoryIndex: previewTabHistoryIndex,
             sourcePlayheadFrame: sourcePlayheadFrame,
+            sourcePreviewStates: sourcePreviewStates,
             availableMediaPaths: Set(mediaAssets.compactMap { asset in
                 let path = asset.url.standardizedFileURL.path
                 return FileManager.default.fileExists(atPath: path) ? path : nil
@@ -204,8 +216,13 @@ extension EditorViewModel {
         selectedClipIds = snapshot.selectedClipIds
         selectedMediaAssetIds = snapshot.selectedMediaAssetIds
         selectedFolderIds = snapshot.selectedFolderIds
+        inspectedObject = snapshot.inspectedObject
+        explicitTimelineInspectionClipID = snapshot.explicitTimelineInspectionClipID
         previewTabs = snapshot.previewTabs
         activePreviewTabId = snapshot.activePreviewTabId
+        previewTabHistory = snapshot.previewTabHistory
+        previewTabHistoryIndex = snapshot.previewTabHistoryIndex
+        sourcePreviewStates = snapshot.sourcePreviewStates
         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
@@ -220,9 +237,14 @@ struct MediaLibraryUndoSnapshot {
     let selectedClipIds: Set<String>
     let selectedMediaAssetIds: Set<String>
     let selectedFolderIds: Set<String>
+    let inspectedObject: InspectedObject?
+    let explicitTimelineInspectionClipID: String?
     let previewTabs: [PreviewTab]
     let activePreviewTabId: String
+    let previewTabHistory: [String]
+    let previewTabHistoryIndex: Int
     let sourcePlayheadFrame: Int
+    let sourcePreviewStates: [String: SourcePreviewState]
     let availableMediaPaths: Set<String>
 }
 

@@ -63,9 +63,7 @@ struct InspectorView: View {
     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
     /// rule. Batch editing across selected clips stays a first-class NLE feature.
     private var isMultiClipSelection: Bool {
-        editor.activePreviewTab == .timeline
-            && !editor.isMarqueeSelecting
-            && editor.selectedClipIds.count > 1
+        editor.isTimelineBatchSelection
     }
 
     @ViewBuilder
@@ -328,8 +326,12 @@ struct InspectorView: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Button {
-                    if case .clip(let id) = item.1 { editor.selectedClipIds = [id] }
-                    editor.inspectedObject = item.1
+                    if case .clip(let id) = item.1 {
+                        editor.selectedClipIds = [id]
+                        editor.activateTimelineSelection()
+                    } else {
+                        editor.inspectedObject = item.1
+                    }
                 } label: {
                     Text(item.0)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
@@ -586,6 +588,27 @@ struct InspectorView: View {
             .padding(.top, AppTheme.Spacing.smMd)
             .padding(.bottom, AppTheme.Spacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    ZStack {
+                        AppRelaunchClickProbe(
+                            identifier: "inspector.selectionContext",
+                            acceptanceState: {
+                                if case .clip = editor.inspectedObject { return true }
+                                return false
+                            }()
+                        )
+                        if case .clip(let clipID) = editor.inspectedObject {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.selectionContext.\(clipID)",
+                                acceptanceState: editor.timelineInspectorClipIDs == [clipID]
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+                }
+            }
         }
     }
 
@@ -725,6 +748,18 @@ struct InspectorView: View {
     private func clipInspectorContent() -> some View {
         let tabs = availableTabs
         VStack(spacing: AppTheme.Spacing.none) {
+            if editor.inspectedTimelineClipsAreEditLocked {
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    Image(systemName: "lock.fill")
+                    Text("Track Locked")
+                }
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.xs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppTheme.Background.raisedColor)
+            }
             if tabs.count > 1 {
                 tabBar(tabs)
             }
@@ -749,6 +784,26 @@ struct InspectorView: View {
                         }
                         .padding(AppTheme.Spacing.lg)
                     }
+                }
+            }
+            .disabled(editor.inspectedTimelineClipsAreEditLocked)
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    ZStack {
+                        AppRelaunchClickProbe(
+                            identifier: "inspector.clipMutation",
+                            acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
+                        )
+                        if editor.timelineInspectorClipIDs.count == 1,
+                           let clipID = editor.timelineInspectorClipIDs.first {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.clipMutation.\(clipID)",
+                                acceptanceState: !editor.inspectedTimelineClipsAreEditLocked
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
                 }
             }
             if activeTab == .video || activeTab == .audio {
@@ -1262,6 +1317,10 @@ struct InspectorView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                 assetIdentityHeader(asset)
 
+                if editor.activeSourceAsset?.id == asset.id {
+                    sourceControls(asset)
+                }
+
                 fileSection(asset)
 
                 if let gen = asset.generationInput {
@@ -1292,6 +1351,112 @@ struct InspectorView: View {
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func sourceControls(_ asset: MediaAsset) -> some View {
+        if asset.type != .document {
+            metadataSection(title: "Source") {
+                plainMetadataRow(
+                    label: "Playhead",
+                    value: formatTimecode(frame: editor.sourcePlayheadFrame, fps: editor.timeline.fps)
+                )
+                if editor.canEditActiveSourceRange {
+                    VStack(spacing: AppTheme.Spacing.sm) {
+                        sourceRangeRow(
+                            label: "In",
+                            frame: editor.activeSourcePreviewState?.inFrame,
+                            acceptanceIdentifier: "source.markIn"
+                        ) {
+                            editor.markSourceIn()
+                        }
+                        sourceRangeRow(
+                            label: "Out",
+                            frame: editor.activeSourcePreviewState?.outFrame,
+                            acceptanceIdentifier: "source.markOut"
+                        ) {
+                            editor.markSourceOut()
+                        }
+                        Button("Clear Range") { editor.clearSourceRange() }
+                            .buttonStyle(.capsule(.secondary))
+                            .disabled(editor.activeSourcePreviewState?.inFrame == nil
+                                && editor.activeSourcePreviewState?.outFrame == nil)
+                    }
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.sourceRange",
+                                acceptanceState: true
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        }
+                    }
+                }
+                if asset.type.isPlaceable {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Button("Insert") { editor.insertActiveSource() }
+                            .buttonStyle(.capsule(.prominent))
+                            .disabled(!editor.canInsertActiveSource)
+                            .background {
+                                if WorkspaceUIAcceptance.isRequested {
+                                    AppRelaunchClickProbe(identifier: "source.insert")
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                        Button("Overwrite") { editor.overwriteActiveSource() }
+                            .buttonStyle(.capsule(.secondary))
+                            .disabled(!editor.canOverwriteActiveSource)
+                            .background {
+                                if WorkspaceUIAcceptance.isRequested {
+                                    AppRelaunchClickProbe(identifier: "source.overwrite")
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                    }
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(
+                                identifier: "inspector.sourcePlacement",
+                                acceptanceState: editor.canInsertActiveSource
+                                    || editor.canOverwriteActiveSource
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func sourceRangeRow(
+        label: String,
+        frame: Int?,
+        acceptanceIdentifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(label)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+            Spacer()
+            Text(frame.map { formatTimecode(frame: $0, fps: editor.timeline.fps) } ?? "Not Set")
+                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .monospacedDigit()
+            Button("Set", action: action)
+                .buttonStyle(.capsule(.secondary))
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: acceptanceIdentifier)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
     }
 
@@ -1380,10 +1545,11 @@ struct InspectorView: View {
     // MARK: - Helpers
 
     private var selectedVisualClips: [Clip] {
-        guard !editor.selectedClipIds.isEmpty else { return [] }
+        let ids = editor.timelineInspectorClipIDs
+        guard !ids.isEmpty else { return [] }
         var out: [Clip] = []
         for track in editor.timeline.tracks {
-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType.isVisual {
+            for clip in track.clips where ids.contains(clip.id) && clip.mediaType.isVisual {
                 out.append(clip)
             }
         }
@@ -1391,10 +1557,11 @@ struct InspectorView: View {
     }
 
     var selectedAudioClips: [Clip] {
-        guard !editor.selectedClipIds.isEmpty else { return [] }
+        let ids = editor.timelineInspectorClipIDs
+        guard !ids.isEmpty else { return [] }
         var out: [Clip] = []
         for track in editor.timeline.tracks {
-            for clip in track.clips where editor.selectedClipIds.contains(clip.id) && clip.mediaType == .audio {
+            for clip in track.clips where ids.contains(clip.id) && clip.mediaType == .audio {
                 out.append(clip)
             }
         }

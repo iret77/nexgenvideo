@@ -16,7 +16,12 @@ extension EditorViewModel {
         case mismatch(clipFPS: Int, clipWidth: Int, clipHeight: Int)
     }
 
+    var canChangeTimelineSettings: Bool {
+        !timeline.tracks.contains { $0.editLocked && !$0.clips.isEmpty }
+    }
+
     func applyTimelineSettings(fps: Int, width: Int, height: Int) {
+        guard canChangeTimelineSettings else { return }
         let prevFPS = timeline.fps
         let prevWidth = timeline.width
         let prevHeight = timeline.height
@@ -26,7 +31,15 @@ extension EditorViewModel {
         if fps != prevFPS && prevFPS > 0 && fps > 0 {
             let scale = Double(fps) / Double(prevFPS)
             currentFrame = Int((Double(currentFrame) * scale).rounded())
-            sourcePlayheadFrame = Int((Double(sourcePlayheadFrame) * scale).rounded())
+            let scaledSourceFrame = Int((Double(sourcePlayheadFrame) * scale).rounded())
+            sourcePreviewStates = sourcePreviewStates.mapValues { state in
+                SourcePreviewState(
+                    playheadFrame: Int((Double(state.playheadFrame) * scale).rounded()),
+                    inFrame: state.inFrame.map { Int((Double($0) * scale).rounded()) },
+                    outFrame: state.outFrame.map { Int((Double($0) * scale).rounded()) }
+                )
+            }
+            sourcePlayheadFrame = scaledSourceFrame
             for ti in timeline.tracks.indices {
                 let clipIndices = timeline.tracks[ti].clips.indices.sorted {
                     timeline.tracks[ti].clips[$0].startFrame < timeline.tracks[ti].clips[$1].startFrame

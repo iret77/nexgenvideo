@@ -13,7 +13,7 @@ extension EditorViewModel {
     }
 
     func beginMediaSwap(clipId: String) {
-        guard findClip(id: clipId) != nil else { return }
+        guard findClip(id: clipId) != nil, !isClipEditLocked(clipId) else { return }
         pendingSwapClipId = clipId
         revealMediaTools()
     }
@@ -29,6 +29,7 @@ extension EditorViewModel {
 
     func completeMediaSwap(with asset: MediaAsset) {
         guard let clip = pendingSwapClip else { pendingSwapClipId = nil; return }
+        guard !isClipEditLocked(clip.id) else { pendingSwapClipId = nil; return }
         guard clip.mediaType == asset.type else {
             mediaPanelToast = "Can't swap — pick \(clip.mediaType.trackLabel.lowercased()) media to replace this clip."
             return

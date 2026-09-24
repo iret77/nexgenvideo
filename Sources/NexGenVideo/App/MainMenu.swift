@@ -76,6 +76,28 @@ enum MainMenuBuilder {
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         menu.addItem(.separator())
 
+        let markInItem = NSMenuItem(title: "Mark Source In", action: #selector(EditorActions.markSourceIn(_:)), keyEquivalent: "i")
+        markInItem.keyEquivalentModifierMask = []
+        menu.addItem(markInItem)
+
+        let markOutItem = NSMenuItem(title: "Mark Source Out", action: #selector(EditorActions.markSourceOut(_:)), keyEquivalent: "o")
+        markOutItem.keyEquivalentModifierMask = []
+        menu.addItem(markOutItem)
+
+        let clearSourceRangeItem = NSMenuItem(title: "Clear Source Range", action: #selector(EditorActions.clearSourceRange(_:)), keyEquivalent: "x")
+        clearSourceRangeItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(clearSourceRangeItem)
+
+        let insertSourceItem = NSMenuItem(title: "Insert Source at Playhead", action: #selector(EditorActions.insertSourceAtPlayhead(_:)), keyEquivalent: ",")
+        insertSourceItem.keyEquivalentModifierMask = []
+        menu.addItem(insertSourceItem)
+
+        let overwriteSourceItem = NSMenuItem(title: "Overwrite Source at Playhead", action: #selector(EditorActions.overwriteSourceAtPlayhead(_:)), keyEquivalent: ".")
+        overwriteSourceItem.keyEquivalentModifierMask = []
+        menu.addItem(overwriteSourceItem)
+
+        menu.addItem(.separator())
+
         let splitItem = NSMenuItem(title: "Split at Playhead", action: #selector(EditorActions.splitAtPlayhead(_:)), keyEquivalent: "k")
         splitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(splitItem)
@@ -247,6 +269,11 @@ enum MainMenuBuilder {
     func splitAtPlayhead(_ sender: Any?)
     func trimStartToPlayhead(_ sender: Any?)
     func trimEndToPlayhead(_ sender: Any?)
+    func markSourceIn(_ sender: Any?)
+    func markSourceOut(_ sender: Any?)
+    func clearSourceRange(_ sender: Any?)
+    func insertSourceAtPlayhead(_ sender: Any?)
+    func overwriteSourceAtPlayhead(_ sender: Any?)
     func deleteSelectedClips(_ sender: Any?)
     func importMedia(_ sender: Any?)
     func playPause(_ sender: Any?)

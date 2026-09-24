@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+private enum TimelineDropError: Error {
+    case blockedByLock
+}
+
 /// AppKit drawing view; input is delegated to TimelineInputController.
 final class TimelineView: NSView {
     unowned var editor: EditorViewModel
@@ -58,7 +62,68 @@ final class TimelineView: NSView {
     // Safety net for any scroll path that moves the viewport without invalidating.
     override func viewWillDraw() {
         layoutCanvas()
+        layoutAcceptanceClipProbes()
         super.viewWillDraw()
+    }
+
+    private func layoutAcceptanceClipProbes() {
+        guard WorkspaceUIAcceptance.isRequested else { return }
+        let rulerIdentifier = "selection.ruler"
+        let prefix = "selection.clip."
+        let clips = editor.timeline.tracks.enumerated().flatMap { trackIndex, track in
+            track.clips.map { (trackIndex, $0) }
+        }
+        let liveIDs = Set(clips.map { prefix + $0.1.id })
+        for probe in subviews.compactMap({ $0 as? AppRelaunchClickProbeView })
+        where probe.identifier.map({ $0.rawValue.hasPrefix(prefix) && !liveIDs.contains($0.rawValue) }) == true {
+            probe.removeFromSuperview()
+        }
+        let geo = geometry
+        let rulerProbe = subviews.compactMap { $0 as? AppRelaunchClickProbeView }.first {
+            $0.identifier?.rawValue == rulerIdentifier
+        } ?? {
+            let view = AppRelaunchClickProbeView()
+            view.identifier = NSUserInterfaceItemIdentifier(rulerIdentifier)
+            addSubview(view)
+            return view
+        }()
+        let rulerX = geo.xForFrame(96)
+        rulerProbe.frame = NSRect(
+            x: rulerX - AppTheme.BorderWidth.thin,
+            y: visibleRect.minY,
+            width: AppTheme.BorderWidth.thick,
+            height: geo.rulerHeight
+        )
+        if let trackIndex = editor.timeline.tracks.indices.last {
+            let emptyIdentifier = "selection.empty"
+            let emptyProbe = subviews.compactMap { $0 as? AppRelaunchClickProbeView }.first {
+                $0.identifier?.rawValue == emptyIdentifier
+            } ?? {
+                let view = AppRelaunchClickProbeView()
+                view.identifier = NSUserInterfaceItemIdentifier(emptyIdentifier)
+                addSubview(view)
+                return view
+            }()
+            let emptyX = geo.xForFrame(96)
+            emptyProbe.frame = NSRect(
+                x: emptyX - AppTheme.BorderWidth.thin,
+                y: geo.trackY(at: trackIndex),
+                width: AppTheme.BorderWidth.thick,
+                height: geo.trackHeight(at: trackIndex)
+            )
+        }
+        for (trackIndex, clip) in clips {
+            let identifier = prefix + clip.id
+            let probe = subviews.compactMap { $0 as? AppRelaunchClickProbeView }.first {
+                $0.identifier?.rawValue == identifier
+            } ?? {
+                let view = AppRelaunchClickProbeView()
+                view.identifier = NSUserInterfaceItemIdentifier(identifier)
+                addSubview(view)
+                return view
+            }()
+            probe.frame = geo.clipRect(for: clip, trackIndex: trackIndex)
+        }
     }
 
     private func layoutCanvas() {
@@ -314,6 +379,7 @@ final class TimelineView: NSView {
         for (ti, track) in editor.timeline.tracks.enumerated() {
             for clip in track.clips {
                 let isSelected = editor.selectedClipIds.contains(clip.id)
+                let selectionIsActive = editor.isTimelinePreviewActive
                 let clipMissing = editor.isClipMediaOffline(clip)
                 let clipGenerating = editor.isClipMediaGenerating(clip)
 
@@ -325,7 +391,9 @@ final class TimelineView: NSView {
                             drag.isDuplicate ? AppTheme.Opacity.opaque : AppTheme.Opacity.shadow
                         )
                         ClipRenderer.draw(clip, type: clip.mediaType, in: originalRect,
-                                          isSelected: drag.isDuplicate && isSelected, opacity: originalOpacity, context: ctx,
+                                          isSelected: drag.isDuplicate && isSelected,
+                                          selectionIsActive: selectionIsActive,
+                                          opacity: originalOpacity, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
@@ -351,7 +419,8 @@ final class TimelineView: NSView {
                     clipDisplayRects[clip.id] = ghostRect
                     if ghostRect.intersects(dirtyRect) {
                         ClipRenderer.draw(ghostClip, type: clip.mediaType, in: ghostRect,
-                                          isSelected: true, opacity: AppTheme.Opacity.scrim, context: ctx,
+                                          isSelected: true, selectionIsActive: true,
+                                          opacity: AppTheme.Opacity.scrim, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
@@ -376,7 +445,7 @@ final class TimelineView: NSView {
                     clipDisplayRects[clip.id] = previewRect
                     if previewRect.intersects(dirtyRect) {
                         ClipRenderer.draw(previewClip, type: clip.mediaType, in: previewRect,
-                                          isSelected: isSelected, context: ctx,
+                                          isSelected: isSelected, selectionIsActive: selectionIsActive, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
@@ -389,7 +458,7 @@ final class TimelineView: NSView {
                 clipDisplayRects[clip.id] = rect
                 guard rect.intersects(dirtyRect) else { continue }
                 ClipRenderer.draw(clip, type: clip.mediaType, in: rect,
-                                  isSelected: isSelected, context: ctx,
+                                  isSelected: isSelected, selectionIsActive: selectionIsActive, context: ctx,
                                   cache: editor.mediaVisualCache,
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
@@ -770,7 +839,8 @@ final class TimelineView: NSView {
         let clipRect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
         let allowsEditChrome = editor.allowsTimelineEditChrome
 
-        if allowsEditChrome, let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
+        if allowsEditChrome, !editor.isClipEditLocked(clip.id),
+           let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = clip.fadeInterpolation(edge)
             let mk: (String, Interpolation) -> NSMenuItem = { title, interp in
@@ -790,7 +860,7 @@ final class TimelineView: NSView {
         }
 
         // kf menu before clip menu.
-        if allowsEditChrome, clip.mediaType == .audio,
+        if allowsEditChrome, !editor.isClipEditLocked(clip.id), clip.mediaType == .audio,
            let kfFrame = inputController.audioVolumeKfHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = editor.interpolation(clipId: clip.id, property: .volume, atFrame: kfFrame) ?? .smooth
@@ -816,32 +886,53 @@ final class TimelineView: NSView {
             editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
             needsDisplay = true
         }
+        editor.activateTimelineClipContext(clip.id)
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.autoenablesItems = false
-        let targetClipIds = selectedClipIdsInTimelineOrder()
-
-        let singleLinkGroup = editor.selectedClipIds == editor.expandToLinkGroup([clip.id])
+        let targetClipIds = [clip.id]
+        let contextMutationIDs = editor.expandToLinkGroup([clip.id])
+        let mutationAllowed = allowsEditChrome
+            && !contextMutationIDs.contains(where: editor.isClipEditLocked)
+        let selectedTargetClipIds = editor.timeline.tracks.flatMap(\.clips).compactMap { candidate in
+            editor.selectedClipIds.contains(candidate.id) ? candidate.id : nil
+        }
+        let batchMutationAllowed = allowsEditChrome
+            && !editor.selectedTimelineClipsAreEditLocked
 
         // Timeline actions
         var timelineItems: [NSMenuItem] = []
         let copyItem = NSMenuItem(title: "Copy", action: #selector(performCopyClips(_:)), keyEquivalent: "")
         copyItem.target = self
+        copyItem.representedObject = Array(contextMutationIDs)
         timelineItems.append(copyItem)
-        if editor.canPasteClips {
+        if mutationAllowed {
+            let deleteItem = NSMenuItem(title: "Delete", action: #selector(performDeleteClips(_:)), keyEquivalent: "")
+            deleteItem.target = self
+            deleteItem.representedObject = Array(contextMutationIDs)
+            timelineItems.append(deleteItem)
+        }
+        if editor.canPasteClips(atTrack: hit.trackIndex, atFrame: clickFrame) {
             let pasteItem = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
             pasteItem.target = self
             pasteItem.representedObject = ["trackIndex": hit.trackIndex, "frame": clickFrame] as [String: Any]
             timelineItems.append(pasteItem)
         }
-        if editor.canLinkSelected {
-            let item = NSMenuItem(title: "Link", action: #selector(performLink(_:)), keyEquivalent: "")
-            item.target = self
-            timelineItems.append(item)
-        }
-        if editor.canUnlinkSelected {
+        if mutationAllowed, clip.linkGroupId != nil {
             let item = NSMenuItem(title: "Unlink", action: #selector(performUnlink(_:)), keyEquivalent: "")
             item.target = self
+            item.representedObject = targetClipIds
+            timelineItems.append(item)
+        }
+        if batchMutationAllowed, editor.canLinkSelected {
+            let item = NSMenuItem(
+                title: "Link Selected Clips",
+                action: #selector(performLinkSelected(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = selectedTargetClipIds
             timelineItems.append(item)
         }
 
@@ -854,12 +945,13 @@ final class TimelineView: NSView {
         if let aiEditSubmenu = aiEditSubmenu(for: clip.id) {
             let aiEditItem = NSMenuItem(title: "AI Edit", action: nil, keyEquivalent: "")
             aiEditItem.submenu = aiEditSubmenu
+            aiEditItem.isEnabled = mutationAllowed
             aiItems.append(aiEditItem)
         }
 
         // Media
         var mediaItems: [NSMenuItem] = []
-        if clip.mediaType != .text, singleLinkGroup {
+        if mutationAllowed, clip.mediaType != .text {
             let swapItem = NSMenuItem(title: "Swap Media", action: #selector(performSwapMedia(_:)), keyEquivalent: "")
             swapItem.target = self
             swapItem.representedObject = clip.id
@@ -871,15 +963,26 @@ final class TimelineView: NSView {
             item.representedObject = clip.id
             mediaItems.append(item)
         }
-        // Sync
-        var syncItems: [NSMenuItem] = []
-        if let pair = editor.audioSyncSelection() {
-            let syncItem = NSMenuItem(title: "Synchronize", action: #selector(performSynchronize(_:)), keyEquivalent: "")
-            syncItem.target = self
-            syncItem.representedObject = ["referenceClipId": pair.referenceClipId, "targetClipIds": pair.targetClipIds] as [String: Any]
-            syncItems.append(syncItem)
+        if let asset = editor.mediaAssets.first(where: { $0.id == clip.mediaRef }) {
+            let item = NSMenuItem(title: "Open Original Media", action: #selector(performOpenOriginalMedia(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = asset.id
+            mediaItems.append(item)
         }
-
+        var syncItems: [NSMenuItem] = []
+        if batchMutationAllowed, let pair = editor.audioSyncSelection() {
+            let item = NSMenuItem(
+                title: "Synchronize Selected Clips",
+                action: #selector(performSynchronize(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = [
+                "referenceClipId": pair.referenceClipId,
+                "targetClipIds": pair.targetClipIds,
+            ] as [String: Any]
+            syncItems.append(item)
+        }
         for group in [timelineItems, aiItems, mediaItems, syncItems] where !group.isEmpty {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
             group.forEach { menu.addItem($0) }
@@ -894,8 +997,7 @@ final class TimelineView: NSView {
 
     private func emptyAreaMenu(trackIndex: Int, frame: Int, clickedRange: Bool) -> NSMenu? {
         let menu = NSMenu()
-        if editor.canPasteClips,
-           editor.timeline.tracks.indices.contains(trackIndex) {
+        if editor.canPasteClips(atTrack: trackIndex, atFrame: frame) {
             let item = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = ["trackIndex": trackIndex, "frame": frame] as [String: Any]
@@ -927,13 +1029,6 @@ final class TimelineView: NSView {
         menu.addItem(item)
     }
 
-    private func selectedClipIdsInTimelineOrder() -> [String] {
-        let selected = editor.selectedClipIds
-        return editor.timeline.tracks.flatMap(\.clips).compactMap { clip in
-            selected.contains(clip.id) ? clip.id : nil
-        }
-    }
-
     @objc private func performAddClipsToChat(_ sender: Any?) {
         guard let item = sender as? NSMenuItem,
               let clipIds = item.representedObject as? [String] else { return }
@@ -954,7 +1049,17 @@ final class TimelineView: NSView {
     }
 
     @objc private func performCopyClips(_ sender: Any?) {
-        editor.copySelectedClipsToClipboard()
+        guard let item = sender as? NSMenuItem,
+              let clipIds = item.representedObject as? [String] else { return }
+        editor.copyClipsToClipboard(ids: Set(clipIds))
+    }
+
+    @objc private func performDeleteClips(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let clipIds = item.representedObject as? [String] else { return }
+        editor.endTimelineClipContext()
+        editor.removeClips(ids: Set(clipIds))
+        needsDisplay = true
     }
 
     @objc private func performPasteClips(_ sender: Any?) {
@@ -962,17 +1067,24 @@ final class TimelineView: NSView {
               let info = item.representedObject as? [String: Any],
               let trackIndex = info["trackIndex"] as? Int,
               let frame = info["frame"] as? Int else { return }
+        editor.endTimelineClipContext()
         editor.pasteClips(atTrack: trackIndex, atFrame: frame)
         needsDisplay = true
     }
 
-    @objc private func performLink(_ sender: Any?) {
-        editor.linkClips(ids: editor.selectedClipIds)
+    @objc private func performUnlink(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let clipIds = item.representedObject as? [String] else { return }
+        editor.endTimelineClipContext()
+        editor.unlinkClips(ids: Set(clipIds))
         needsDisplay = true
     }
 
-    @objc private func performUnlink(_ sender: Any?) {
-        editor.unlinkClips(ids: editor.selectedClipIds)
+    @objc private func performLinkSelected(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let clipIds = item.representedObject as? [String] else { return }
+        editor.activateTimelineSelection()
+        editor.linkClips(ids: Set(clipIds))
         needsDisplay = true
     }
 
@@ -986,6 +1098,15 @@ final class TimelineView: NSView {
         guard let item = sender as? NSMenuItem,
               let clipId = item.representedObject as? String else { return }
         editor.beginMediaSwap(clipId: clipId)
+    }
+
+    @objc private func performOpenOriginalMedia(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let assetID = item.representedObject as? String,
+              let asset = editor.mediaAssets.first(where: { $0.id == assetID }) else { return }
+        editor.selectMediaAsset(asset)
+        editor.mediaPanelRevealAssetId = asset.id
+        needsDisplay = true
     }
 
     @objc private func performSetVolumeKfInterpolation(_ sender: Any?) {
@@ -1118,37 +1239,72 @@ final class TimelineView: NSView {
         let mods = NSEvent.modifierFlags
 
         let operation: @MainActor () -> Void = {
-            editor.undoManager?.beginUndoGrouping()
+            do {
+                try editor.withTimelineSwap(actionName: "Add Clips") {
+                    let existingIDs = Set(editor.timeline.tracks.flatMap(\.clips).map(\.id))
+                    let plan = editor.resolveDropPlan(
+                        cursor: cursorTarget,
+                        assets: assets,
+                        atFrame: targetFrame,
+                        segments: segments
+                    )
+                    let (visualIdx, audioIdx) = editor.materialize(plan: plan)
+                    let ripple = mods.contains(.command)
 
-            let plan = editor.resolveDropPlan(cursor: cursorTarget, assets: assets, atFrame: targetFrame, segments: segments)
-            let (visualIdx, audioIdx) = editor.materialize(plan: plan)
-            let ripple = mods.contains(.command)
+                    let insert: ([MediaAsset], Int, Int?) -> Void = { assets, trackIdx, linkedAudio in
+                        if ripple {
+                            editor.rippleInsertClips(
+                                assets: assets,
+                                trackIndex: trackIdx,
+                                atFrame: targetFrame,
+                                segments: segments
+                            )
+                        } else {
+                            editor.addClips(
+                                assets: assets,
+                                trackIndex: trackIdx,
+                                startFrame: targetFrame,
+                                linkedAudioTrackIndex: linkedAudio,
+                                segments: segments
+                            )
+                        }
+                    }
 
-            let insert: ([MediaAsset], Int, Int?) -> Void = { assets, trackIdx, linkedAudio in
-                if ripple {
-                    editor.rippleInsertClips(assets: assets, trackIndex: trackIdx, atFrame: targetFrame, segments: segments)
-                } else {
-                    editor.addClips(assets: assets, trackIndex: trackIdx, startFrame: targetFrame, linkedAudioTrackIndex: linkedAudio, segments: segments)
+                    let visualAssets = assets.filter { $0.type.isVisual }
+                    if !visualAssets.isEmpty, let visualIdx {
+                        insert(visualAssets, visualIdx, audioIdx)
+                    }
+                    let audioOnlyAssets = assets.filter { $0.type == .audio }
+                    if !audioOnlyAssets.isEmpty, let audioIdx {
+                        insert(audioOnlyAssets, audioIdx, nil)
+                    }
+
+                    let expectedCount = visualAssets.reduce(0) {
+                        $0 + 1 + ($1.type == .video && $1.hasAudio ? 1 : 0)
+                    } + audioOnlyAssets.count
+                    let createdCount = editor.timeline.tracks
+                        .flatMap(\.clips)
+                        .count { !existingIDs.contains($0.id) }
+                    guard createdCount == expectedCount else { throw TimelineDropError.blockedByLock }
                 }
+            } catch {
+                editor.mediaPanelToast = "Drop blocked — unlock every affected track."
             }
-
-            let visualAssets = assets.filter { $0.type.isVisual }
-            if !visualAssets.isEmpty, let vIdx = visualIdx {
-                insert(visualAssets, vIdx, audioIdx)
-            }
-            let audioOnlyAssets = assets.filter { $0.type == .audio }
-            if !audioOnlyAssets.isEmpty, let aIdx = audioIdx {
-                insert(audioOnlyAssets, aIdx, nil)
-            }
-
-            editor.undoManager?.endUndoGrouping()
-            editor.undoManager?.setActionName("Add Clips")
         }
 
         editor.addClipsWithSettingsCheck(assets: assets, operation: operation)
 
         needsDisplay = true
         return true
+    }
+}
+
+extension TimelineView: NSMenuDelegate {
+    nonisolated func menuDidClose(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            editor.endTimelineClipContext()
+            needsDisplay = true
+        }
     }
 }
 
