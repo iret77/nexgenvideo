@@ -111,6 +111,7 @@ enum WorkspaceUIAcceptance {
             }
             var browserFolderReturnOpened = false
             var hiddenSearchFolderDeleteExcluded = false
+            var workspaceReturnVisibleAssetDeleted = false
             var rootSessionWasIntentional = false
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -266,7 +267,11 @@ enum WorkspaceUIAcceptance {
                               MediaPanelItemKey.folder("acceptance-folder-0")
                           )
                   }),
-                  click(identifier: "media.workspace.browser", in: window) == nil,
+                  click(identifier: "media.browser.folder.acceptance-folder-0", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaCommandFocus == .browser
+                          && editor.selectedFolderIds == ["acceptance-folder-0"]
+                  }),
                   pressKey(keyCode: 36, characters: "\r", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       let opened = editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
@@ -320,6 +325,35 @@ enum WorkspaceUIAcceptance {
                       editor.folder(id: "acceptance-folder-0") != nil
                           && editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
                   }),
+                  click(identifier: "editor.workspace.edit", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .edit
+                          && editor.mediaPanelTab == .assets
+                          && editor.mediaPanelCurrentFolderId == nil
+                          && editor.mediaPanelOrderedItemIds.contains("selection-source")
+                          && !editor.mediaPanelOrderedItemIds.contains("acceptance-bulk-0")
+                  }),
+                  click(identifier: "editor.workspace.media", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.workspaceFocus == .media
+                          && editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                          && editor.mediaPanelOrderedItemIds.contains("acceptance-bulk-0")
+                          && !editor.mediaPanelOrderedItemIds.contains("selection-source")
+                  }),
+                  click(identifier: "selection.asset.acceptance-bulk-0", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaCommandFocus == .browser
+                          && editor.selectedVisibleMediaAssetIDs == ["acceptance-bulk-0"]
+                  }),
+                  pressKey(keyCode: 51, characters: "\u{8}", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      !editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
+                  }),
+                  pressKey(keyCode: 6, characters: "z", modifiers: [.command], in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.mediaAssets.contains { $0.id == "acceptance-bulk-0" }
+                          && editor.mediaPanelCurrentFolderId == "acceptance-folder-0"
+                  }),
                   click(identifier: "media.folder.library", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       editor.mediaPanelCurrentFolderId == nil
@@ -327,6 +361,7 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("native folder and browser selection paths diverged", scale: scale)
             }
+            workspaceReturnVisibleAssetDeleted = true
             editor.publishMediaPanelFolder("acceptance-folder-0", for: .production)
             guard click(identifier: "editor.workspace.production", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
@@ -372,6 +407,7 @@ enum WorkspaceUIAcceptance {
                     "browserRoleRestoredAfterWorkspaceReturn": true,
                     "browserFolderReturnOpened": browserFolderReturnOpened,
                     "hiddenSearchFolderDeleteExcluded": hiddenSearchFolderDeleteExcluded,
+                    "workspaceReturnVisibleAssetDeleted": workspaceReturnVisibleAssetDeleted,
                     "rootSessionWasIntentional": rootSessionWasIntentional,
                     "globalSearchReachedAnotherFolder": true,
                     "browserDeleteExcludedTreeFolder": editor.folder(id: "acceptance-folder-0") != nil,

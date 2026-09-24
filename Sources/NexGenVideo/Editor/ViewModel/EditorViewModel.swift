@@ -899,6 +899,7 @@ final class EditorViewModel {
             mediaPanelTab: mediaPanelTab,
             mediaFolderId: mediaPanelCurrentFolderId
         )
+        mediaPanelOrderedItemIds = []
         workspaceFocus = focus
         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
         isRestoringWorkspacePresentation = true

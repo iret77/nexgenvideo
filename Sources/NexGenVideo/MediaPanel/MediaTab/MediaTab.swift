@@ -156,6 +156,9 @@ struct MediaTab: View {
         .onChange(of: visibleMediaPanelItemIDs, initial: true) { _, ids in
             publishOrderedIds(ids)
         }
+        .onChange(of: editor.workspaceFocus, initial: true) { _, _ in
+            publishOrderedIds(visibleMediaPanelItemIDs)
+        }
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
         .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
         .simultaneousGesture(TapGesture().onEnded {
@@ -211,6 +214,7 @@ struct MediaTab: View {
             session.initializeFolderIfNeeded(editor.mediaPanelCurrentFolderId)
             currentFolderId = session.folderID
             editor.publishMediaPanelFolder(currentFolderId, for: workspace)
+            publishOrderedIds(visibleMediaPanelItemIDs)
             if let target = editor.mediaPanelRevealAssetId, workspace == editor.workspaceFocus {
                 revealAsset(id: target)
                 editor.mediaPanelRevealAssetId = nil
