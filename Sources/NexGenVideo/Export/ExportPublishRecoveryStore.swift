@@ -20,6 +20,7 @@ struct ExportFileIdentity: Codable, Equatable, Sendable {
 
 enum ExportPublishRecoveryStore {
     private struct SimulatedCrash: Error {}
+    private struct SimulatedCommittedCleanupFailure: Error {}
 
     struct Publication: Sendable {
         let targetURL: URL
@@ -89,17 +90,29 @@ enum ExportPublishRecoveryStore {
         AppPaths.recovery.appendingPathComponent("ExportPublish", isDirectory: true)
     }
 
-    static func recoverAll(root: URL = defaultRoot) throws {
+    static func recoverAll(
+        root: URL = defaultRoot,
+        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
+        failCommittedJournalRemovalForTesting: Bool = false
+    ) throws {
         lock.lock()
         defer { lock.unlock() }
-        try recoverAllLocked(root: root)
+        try recoverAllLocked(
+            root: root,
+            failCommittedCleanupAfterBackupRemovalForTesting:
+                failCommittedCleanupAfterBackupRemovalForTesting,
+            failCommittedJournalRemovalForTesting:
+                failCommittedJournalRemovalForTesting
+        )
     }
 
     static func publish(
         _ publications: [Publication],
         root: URL = defaultRoot,
         isCancelled: @Sendable () -> Bool = { false },
-        crashAfterMutationForTesting: Int? = nil
+        crashAfterMutationForTesting: Int? = nil,
+        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
+        failCommittedJournalRemovalForTesting: Bool = false
     ) throws -> Result {
         guard let jobID = publications.first?.jobID,
               UUID(uuidString: jobID) != nil,
@@ -213,10 +226,6 @@ enum ExportPublishRecoveryStore {
                 mutationCount += 1
                 if mutationCount == crashAfterMutationForTesting { throw SimulatedCrash() }
             }
-            journal.phase = .committed
-            try write(journal, to: journalURL)
-            try recoverCommitted(journal, journalURL: journalURL)
-            return Result(publications: publications)
         } catch {
             let publicationError = error
             if error is SimulatedCrash { throw error }
@@ -230,9 +239,24 @@ enum ExportPublishRecoveryStore {
             }
             throw publicationError
         }
+
+        journal.phase = .committed
+        try write(journal, to: journalURL)
+        try recoverCommitted(
+            journal,
+            journalURL: journalURL,
+            failAfterBackupRemovalForTesting:
+                failCommittedCleanupAfterBackupRemovalForTesting,
+            failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
+        )
+        return Result(publications: publications)
     }
 
-    private static func recoverAllLocked(root: URL) throws {
+    private static func recoverAllLocked(
+        root: URL,
+        failCommittedCleanupAfterBackupRemovalForTesting: Int? = nil,
+        failCommittedJournalRemovalForTesting: Bool = false
+    ) throws {
         let fm = FileManager.default
         guard fm.fileExists(atPath: root.path) else { return }
         try ensureRoot(root)
@@ -251,7 +275,13 @@ enum ExportPublishRecoveryStore {
             case .prepared:
                 try recoverPrepared(journal, journalURL: url)
             case .committed:
-                try recoverCommitted(journal, journalURL: url)
+                try recoverCommitted(
+                    journal,
+                    journalURL: url,
+                    failAfterBackupRemovalForTesting:
+                        failCommittedCleanupAfterBackupRemovalForTesting,
+                    failJournalRemovalForTesting: failCommittedJournalRemovalForTesting
+                )
             }
         }
     }
@@ -340,7 +370,12 @@ enum ExportPublishRecoveryStore {
         try fm.removeItem(at: journalURL)
     }
 
-    private static func recoverCommitted(_ journal: Journal, journalURL: URL) throws {
+    private static func recoverCommitted(
+        _ journal: Journal,
+        journalURL: URL,
+        failAfterBackupRemovalForTesting: Int? = nil,
+        failJournalRemovalForTesting: Bool = false
+    ) throws {
         let fm = FileManager.default
         for target in journal.targets {
             let targetURL = URL(fileURLWithPath: target.targetPath)
@@ -352,6 +387,7 @@ enum ExportPublishRecoveryStore {
                 throw ToolError("A committed export changed before publish recovery completed.")
             }
         }
+        var removedBackupCount = 0
         for target in journal.targets {
             let backupURL = URL(fileURLWithPath: target.backupPath)
             let backupState = try ExportQueue.PathState.capture(backupURL)
@@ -361,6 +397,10 @@ enum ExportPublishRecoveryStore {
                 identity: target.initialIdentity
             ), backupState.exists {
                 try fm.removeItem(at: backupURL)
+                removedBackupCount += 1
+                if removedBackupCount == failAfterBackupRemovalForTesting {
+                    throw SimulatedCommittedCleanupFailure()
+                }
             } else if backupState.exists {
                 try preserveConflict(backupURL, transactionID: journal.transactionID)
             }
@@ -375,6 +415,9 @@ enum ExportPublishRecoveryStore {
             } else if temporaryState.exists {
                 try preserveConflict(temporaryURL, transactionID: journal.transactionID)
             }
+        }
+        if failJournalRemovalForTesting {
+            throw SimulatedCommittedCleanupFailure()
         }
         try fm.removeItem(at: journalURL)
     }

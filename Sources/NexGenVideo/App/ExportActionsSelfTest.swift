@@ -87,40 +87,31 @@ enum ExportActionsSelfTest {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        let ids = [completed, cancellable].flatMap { job in
-            ["cancel", "retry", "reveal"].map { "export.job.\(job.id).\($0)" }
-        }
-        guard await waitUntil(timeout: .seconds(5), {
-            ids.allSatisfy {
-                AppRelaunchSelfTest.isClickProbeReady(identifier: $0, in: window)
-            }
-        }) else {
-            throw ToolError("The native Export queue actions were not all visible and clickable.")
-        }
+        try await verifyActions(for: [completed, cancellable], window: window)
 
         let initialCount = queue.jobs(ownerKey: ownerKey).count
-        try click(job: completed, action: "cancel", window: window)
-        try click(job: completed, action: "retry", window: window)
+        try await click(job: completed, action: "cancel", window: window)
+        try await click(job: completed, action: "retry", window: window)
         await settleActions()
         guard completed.status == .completed,
               queue.jobs(ownerKey: ownerKey).count == initialCount else {
             throw ToolError("Completed-job disabled actions changed queue state.")
         }
 
-        try click(job: cancellable, action: "retry", window: window)
-        try click(job: cancellable, action: "reveal", window: window)
+        try await click(job: cancellable, action: "retry", window: window)
+        try await click(job: cancellable, action: "reveal", window: window)
         guard cancellable.status == .pending,
               queue.jobs(ownerKey: ownerKey).count == initialCount,
               revealedURL == nil else {
             throw ToolError("Pending-job disabled actions changed queue state.")
         }
-        try click(job: cancellable, action: "cancel", window: window)
+        try await click(job: cancellable, action: "cancel", window: window)
         guard await waitUntil(timeout: .seconds(2), { cancellable.status == .cancelled }) else {
             throw ToolError("The visible Cancel action did not cancel its bound job.")
         }
 
-        try click(job: cancellable, action: "cancel", window: window)
-        try click(job: cancellable, action: "reveal", window: window)
+        try await click(job: cancellable, action: "cancel", window: window)
+        try await click(job: cancellable, action: "reveal", window: window)
         await settleActions()
         guard cancellable.status == .cancelled,
               queue.jobs(ownerKey: ownerKey).count == initialCount,
@@ -128,7 +119,7 @@ enum ExportActionsSelfTest {
             throw ToolError("Cancelled-job disabled actions changed queue state.")
         }
 
-        try click(job: completed, action: "reveal", window: window)
+        try await click(job: completed, action: "reveal", window: window)
         guard await waitUntil(timeout: .seconds(2), {
             revealedURL == completedURL.standardizedFileURL
         }) else {
@@ -136,16 +127,8 @@ enum ExportActionsSelfTest {
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        guard await waitUntil(timeout: .seconds(2), {
-            AppRelaunchSelfTest.isClickProbeReady(
-                identifier: "export.job.\(cancellable.id).retry",
-                in: window
-            )
-        }) else {
-            throw ToolError("The Export window did not regain its retry action after Reveal.")
-        }
 
-        try click(job: cancellable, action: "retry", window: window)
+        try await click(job: cancellable, action: "retry", window: window)
         guard await waitUntil(timeout: .seconds(2), {
             queue.jobs(ownerKey: ownerKey).count == initialCount + 1
         }), let retried = queue.jobs(ownerKey: ownerKey).first(where: {
@@ -153,6 +136,7 @@ enum ExportActionsSelfTest {
         }), retried.status == .pending else {
             throw ToolError("The visible Retry action did not enqueue its bound source.")
         }
+        try await verifyActions(for: [completed, cancellable, retried], window: window)
 
         queue.cancel(jobID: retried.id)
         ExportCoordinator.endExport()
@@ -180,8 +164,39 @@ enum ExportActionsSelfTest {
         exit(0)
     }
 
-    private static func click(job: ExportJob, action: String, window: NSWindow) throws {
+    private static func verifyActions(for jobs: [ExportJob], window: NSWindow) async throws {
+        for job in jobs {
+            for action in ["cancel", "retry", "reveal"] {
+                try await prepareAction(job: job, action: action, window: window)
+            }
+        }
+    }
+
+    private static func prepareAction(
+        job: ExportJob,
+        action: String,
+        window: NSWindow
+    ) async throws {
         let identifier = "export.job.\(job.id).\(action)"
+        var failure = "the native action remained clipped or had no hit target"
+        guard await waitUntil(timeout: .seconds(5), {
+            if let scrollFailure = AppRelaunchSelfTest.scrollClickProbeToVisible(
+                identifier: identifier,
+                in: window
+            ) {
+                failure = scrollFailure
+                return false
+            }
+            failure = "the native action remained clipped or had no hit target"
+            return AppRelaunchSelfTest.isClickProbeReady(identifier: identifier, in: window)
+        }) else {
+            throw ToolError("\(identifier): \(failure)")
+        }
+    }
+
+    private static func click(job: ExportJob, action: String, window: NSWindow) async throws {
+        let identifier = "export.job.\(job.id).\(action)"
+        try await prepareAction(job: job, action: action, window: window)
         if let failure = AppRelaunchSelfTest.postMouseClick(
             identifier: identifier,
             in: window

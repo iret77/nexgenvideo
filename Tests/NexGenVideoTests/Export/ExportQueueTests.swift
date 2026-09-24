@@ -732,6 +732,135 @@ struct ExportQueueTests {
         }
     }
 
+    @Test("committed publish cleanup failures preserve the new FCPXML generation")
+    func committedPublishCleanupFailuresPreservePublishedGroup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "export-committed-cleanup-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for failureIndex in [1, 2] {
+            let fixture = try makePublishRecoveryFixture(
+                root: root.appendingPathComponent("backup-\(failureIndex)", isDirectory: true)
+            )
+            #expect(throws: (any Error).self) {
+                _ = try ExportPublishRecoveryStore.publish(
+                    fixture.publications,
+                    root: fixture.recovery,
+                    failCommittedCleanupAfterBackupRemovalForTesting: failureIndex
+                )
+            }
+            try expectPublishedRecoveryFixture(fixture)
+
+            try ExportPublishRecoveryStore.recoverAll(root: fixture.recovery)
+            try ExportPublishRecoveryStore.recoverAll(root: fixture.recovery)
+            try expectPublishedRecoveryFixture(fixture, journalExists: false)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.recovery.path).isEmpty)
+        }
+
+        let journalFixture = try makePublishRecoveryFixture(
+            root: root.appendingPathComponent("journal", isDirectory: true)
+        )
+        #expect(throws: (any Error).self) {
+            _ = try ExportPublishRecoveryStore.publish(
+                journalFixture.publications,
+                root: journalFixture.recovery,
+                failCommittedJournalRemovalForTesting: true
+            )
+        }
+        try expectPublishedRecoveryFixture(journalFixture)
+
+        for _ in 0..<2 {
+            #expect(throws: (any Error).self) {
+                try ExportPublishRecoveryStore.recoverAll(
+                    root: journalFixture.recovery,
+                    failCommittedJournalRemovalForTesting: true
+                )
+            }
+            try expectPublishedRecoveryFixture(journalFixture)
+        }
+        try ExportPublishRecoveryStore.recoverAll(root: journalFixture.recovery)
+        try ExportPublishRecoveryStore.recoverAll(root: journalFixture.recovery)
+        try expectPublishedRecoveryFixture(journalFixture, journalExists: false)
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: journalFixture.recovery.path).isEmpty
+        )
+    }
+
+    private struct PublishRecoveryFixture {
+        let recovery: URL
+        let document: URL
+        let media: URL
+        let publications: [ExportPublishRecoveryStore.Publication]
+    }
+
+    private func makePublishRecoveryFixture(root: URL) throws -> PublishRecoveryFixture {
+        let recovery = root.appendingPathComponent("recovery", isDirectory: true)
+        let document = root.appendingPathComponent("timeline.fcpxml")
+        let media = root.appendingPathComponent("timeline Media", isDirectory: true)
+        let jobID = UUID().uuidString.lowercased()
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try Data("old-document".utf8).write(to: document)
+        try Data("old-media".utf8).write(to: media.appendingPathComponent("clip.mov"))
+
+        let temporaryDocument = ExportQueue.DestinationBinding.makeTemporaryURL(
+            url: document,
+            jobID: jobID
+        )
+        let temporaryMedia = ExportQueue.DestinationBinding.makeTemporaryURL(
+            url: media,
+            jobID: jobID
+        )
+        try Data("new-document".utf8).write(to: temporaryDocument)
+        try FileManager.default.createDirectory(at: temporaryMedia, withIntermediateDirectories: true)
+        try Data("new-media".utf8).write(to: temporaryMedia.appendingPathComponent("clip.mov"))
+
+        return try PublishRecoveryFixture(
+            recovery: recovery,
+            document: document,
+            media: media,
+            publications: [
+                ExportPublishRecoveryStore.Publication(
+                    targetURL: document,
+                    temporaryURL: temporaryDocument,
+                    initialState: ExportQueue.PathState.capture(document),
+                    initialIdentity: ExportFileIdentity.capture(document),
+                    publishedState: ExportQueue.PathState.capture(temporaryDocument),
+                    publishedIdentity: ExportFileIdentity.capture(temporaryDocument),
+                    jobID: jobID,
+                    expectsDirectory: false
+                ),
+                ExportPublishRecoveryStore.Publication(
+                    targetURL: media,
+                    temporaryURL: temporaryMedia,
+                    initialState: ExportQueue.PathState.capture(media),
+                    initialIdentity: ExportFileIdentity.capture(media),
+                    publishedState: ExportQueue.PathState.capture(temporaryMedia),
+                    publishedIdentity: ExportFileIdentity.capture(temporaryMedia),
+                    jobID: jobID,
+                    expectsDirectory: true
+                ),
+            ]
+        )
+    }
+
+    private func expectPublishedRecoveryFixture(
+        _ fixture: PublishRecoveryFixture,
+        journalExists: Bool = true
+    ) throws {
+        #expect(try Data(contentsOf: fixture.document) == Data("new-document".utf8))
+        #expect(
+            try Data(contentsOf: fixture.media.appendingPathComponent("clip.mov"))
+                == Data("new-media".utf8)
+        )
+        let records = try FileManager.default.contentsOfDirectory(
+            at: fixture.recovery,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "json" }
+        #expect(records.count == (journalExists ? 1 : 0))
+    }
+
     private func currentAttempt(id: String, dataRoot: URL) throws -> DeliveryAttemptV1 {
         let url = dataRoot.appendingPathComponent("delivery/jobs/\(id)/current.v1.json")
         return try JSONDecoder().decode(DeliveryAttemptV1.self, from: Data(contentsOf: url))
