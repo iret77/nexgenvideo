@@ -15,11 +15,17 @@ hashes and sizes. The lock maps every path exactly once to a candidate source fa
 license, and archive checksum from Blender v5.2.2's official dependency manifest. That candidate
 mapping does not by itself prove which sources produced the wheel binaries.
 
-Public distribution is blocked until binary provenance is proven, the resulting Corresponding
-Source and notice set is hash-pinned and shipped for the native inventory, Python runtime/build
-inputs, and wheels, and the combined distribution has been reviewed.
+Public distribution is blocked until the upstream wheel/build-input provenance gap is resolved and
+the resulting Corresponding Source and notice set is hash-pinned and shipped for the Blender build
+recipes/patches, static and transitive dependency candidates, native inventory, Python runtime/build
+inputs, and wheels. No generic external legal-review approval is part of this technical gate.
 `scripts/verify_bpy_runtime.py --distribution` gates releases, dry runs, public app artifacts, and
 the cross-runner acceptance ZIP before the runtime can leave its build job.
+
+The stable release tag targets the exact app build commit, so the repository's GPL-3.0 source and
+build scripts remain available through that tag's source archives. The separately published managed-
+runtime source archive preserves the third-party sources, recipes, patches, provenance, and notices
+that are not supplied merely by the NexGenVideo repository snapshot.
 
 Primary sources:
 
@@ -28,3 +34,6 @@ Primary sources:
 - <https://raw.githubusercontent.com/blender/blender/v5.2.2/build_files/build_environment/cmake/versions.cmake>
 - <https://github.com/astral-sh/python-build-standalone/releases/tag/20260901>
 - <https://www.python.org/downloads/release/python-31315/>
+- <https://www.blender.org/about/license/>
+- <https://www.gnu.org/licenses/gpl-faq.en.html#AnonFTPAndSendSources>
+- <https://www.gnu.org/licenses/gpl-faq.en.html#MustSourceBuildToMatchExactHashOfBinary>

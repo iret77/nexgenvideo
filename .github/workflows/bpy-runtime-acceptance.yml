@@ -18,7 +18,7 @@ concurrency:
 jobs:
   source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +34,24 @@ jobs:
           python3 -m unittest \
             scripts.test_verify_bpy_runtime \
             scripts.test_bpy_runtime_workflow
+          OUTPUT="$RUNNER_TEMP/bpy-source-closure"
+          python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+          python3 scripts/verify_bpy_source_closure.py \
+            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" \
+            --require-distributable
+          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar" | awk '{print $1}')" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
+          [ "$(stat -c %s "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar")" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
+          [ "$(sha256sum "$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" | awk '{print $1}')" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-source-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/bpy-source-closure/*
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     needs: source
@@ -45,6 +63,10 @@ jobs:
           ref: ${{ inputs.source_sha }}
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-bpy-source-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/bpy-source-closure
       - name: Import existing Developer ID identity
         env:
           CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
@@ -96,11 +118,16 @@ jobs:
           set -euo pipefail
           APP=.build/NexGenVideo.app
           PYTHON="$APP/Contents/Helpers/BpyRuntime/python/bin/python3.13"
+          SUPERVISOR="$APP/Contents/Helpers/NexGenVideoBpySupervisor"
           codesign --verify --strict --verbose=2 "$APP"
           codesign -d --entitlements :- "$PYTHON" > "$RUNNER_TEMP/python-entitlements.plist"
           [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/python-entitlements.plist")" = true ]
           ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$RUNNER_TEMP/python-entitlements.plist"
+          codesign --verify --strict --verbose=2 "$SUPERVISOR"
+          codesign -d --entitlements :- "$SUPERVISOR" > "$RUNNER_TEMP/supervisor-entitlements.plist"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/supervisor-entitlements.plist")" = true ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/supervisor-entitlements.plist")" = true ]
           for slot in 0 1; do
             XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
             ENTITLEMENTS="$RUNNER_TEMP/xpc-entitlements-$slot.plist"
@@ -118,7 +145,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: managed-bpy-notarized-${{ inputs.source_sha }}
-          path: ${{ runner.temp }}/NexGenVideo-bpy-notarized.zip
+          path: |
+            ${{ runner.temp }}/NexGenVideo-bpy-notarized.zip
+            ${{ runner.temp }}/bpy-source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.tar
+            ${{ runner.temp }}/bpy-source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
           if-no-files-found: error
           retention-days: 7
 
@@ -157,6 +187,27 @@ jobs:
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
           chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Prove pre-lease and post-exec host-crash cleanup
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          for mode in before-authorization after-authorization; do
+            set +e
+            env NGV_SELFTEST_BPY_HOST_CRASH="$mode" \
+              "$APP/Contents/MacOS/NexGenVideo" \
+              > "$RUNNER_TEMP/evidence/host-crash-$mode.log" 2>&1
+            status=$?
+            set -e
+            [ "$status" -ne 0 ]
+            for _ in $(seq 1 200); do
+              if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null; then
+                break
+              fi
+              sleep 0.05
+            done
+            ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null
+          done
       - name: Run real bpy acceptance without ambient Blender or Python
         run: |
           set -euo pipefail
@@ -216,9 +267,15 @@ jobs:
             and .outOfMemoryState == "resourceLimited"
             and .structuralLimitState == "resourceLimited"
             and .storageLimitState == "resourceLimited"
+            and .aggregateByteLimitState == "resourceLimited"
+            and .resourceScanErrorState == "crashed"
+            and .containerSiblingWriteDenied == true
+            and .supervisorSignalDenied == true
+            and .resourceSupervisorRecovered == true
             and .crashState == "crashed"
             and .serviceRecoveryRevision == "revision-e"
             and .parentDeathJobFailedClosed == true
+            and .execveOrphanReaped == true
             and .threeRealDocuments == true
             and .thirdDocumentInitiallyDenied == true
             and .slotReusedAfterClose == true

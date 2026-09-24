@@ -52,7 +52,8 @@
     ],
     "inventoryEvidence": "Pinned-wheel ZIP central directory and RECORD, verified 2026-09-24",
     "officialBuildManifest": "https://raw.githubusercontent.com/blender/blender/v5.2.2/build_files/build_environment/cmake/versions.cmake",
-    "sourceMappingStatus": "candidate-families-from-official-v5.2.2-build-manifest; blocked-until-wheel-binary-provenance-and-notice-closure",
+    "officialBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1",
+    "sourceMappingStatus": "official-v5.2.2-release-input candidates; upstream wheel metadata links Blender 5.2.2 source but does not publish a per-wheel dependency/build-input attestation",
     "candidateSourceFamilies": [
       {"name":"OpenEXR","version":"3.4.10","license":"BSD-3-Clause","url":"https://github.com/AcademySoftwareFoundation/openexr/archive/v3.4.10.tar.gz","manifestHash":"8926ba09c4e4cd21c7a0fa2d2b39fa82","manifestHashType":"MD5","libraries":["bpy/lib/libIex.dylib","bpy/lib/libIlmThread.dylib","bpy/lib/libOpenEXR.dylib","bpy/lib/libOpenEXRCore.dylib","bpy/lib/libOpenEXRUtil.dylib"]},
       {"name":"Imath","version":"3.2.2","license":"BSD-3-Clause","url":"https://github.com/AcademySoftwareFoundation/Imath/archive/v3.2.2.tar.gz","manifestHash":"e29f25ce926ac53d8e0a52197299f61b","manifestHashType":"MD5","libraries":["bpy/lib/libImath.dylib"]},
@@ -74,7 +75,7 @@
       {"name":"OpenUSD","version":"26.03","license":"TOST-1.0","url":"https://github.com/PixarAnimationStudios/OpenUSD/archive/v26.03.tar.gz","manifestHash":"cc6d6bffdcdd038f60e2fe4726b08673","manifestHashType":"MD5","libraries":["bpy/lib/libusd_ms.dylib"]}
     ]
   },
-  "distributionStatus": "blocked-pending-corresponding-source-review",
+  "distributionStatus": "blocked-pending-corresponding-source-provenance",
   "verifiedAt": "2026-09-24",
   "runtime": {
     "name": "python-build-standalone",
@@ -108,7 +109,7 @@
     {"name":"zlib","version":"1.3.2","license":"Zlib","url":"https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz","sha256":"bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"}
   ],
   "wheels": [
-    {"name":"bpy","version":"5.2.2","license":"GPL-3.0-or-later","filename":"bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","sha256":"e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7","size":245172189,"metadata":{"url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl.metadata","sha256":"05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084","license":"GPL-3.0","requiresPython":"==3.13.*","requiresDist":["cattrs","cython","numpy<3.0,>=2.2","requests","zstandard"]},"source":{"url":"https://download.blender.org/source/blender-5.2.2.tar.xz","sha256":"56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e"}},
+    {"name":"bpy","version":"5.2.2","license":"GPL-3.0-or-later","filename":"bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl","sha256":"e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7","size":245172189,"metadata":{"url":"https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl.metadata","sha256":"05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084","license":"GPL-3.0","requiresPython":"==3.13.*","requiresDist":["cattrs","cython","numpy<3.0,>=2.2","requests","zstandard"],"sourceCodeURLs":["https://download.blender.org/source/","https://projects.blender.org/blender/blender"]},"source":{"url":"https://download.blender.org/source/blender-5.2.2.tar.xz","sha256":"56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e"}},
     {"name":"numpy","version":"2.5.3","license":"BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0","filename":"numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl","url":"https://files.pythonhosted.org/packages/ab/2a/98282aa5b8f58b1157d440bb6282eed47e3632a5de53a714fbab17e659fe/numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl","sha256":"f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09","size":5439695,"source":{"url":"https://files.pythonhosted.org/packages/13/01/11703282db468b85f6f7b8c7f22d058de5970d5c7e60a3a8aaa313c3de36/numpy-2.5.3.tar.gz","sha256":"df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563"}},
     {"name":"cattrs","version":"26.2.0","license":"MIT","filename":"cattrs-26.2.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/f5/4d/6b8460462012a52075ba97932197f8c141be71b8e5f7e918af08ee73424b/cattrs-26.2.0-py3-none-any.whl","sha256":"c680f17cd1df3a1c038ad1db8d90a9c595568cc54c4e8098e7ceb8d7b9bd826b","size":74830,"source":{"url":"https://files.pythonhosted.org/packages/d6/b2/42f4524e5479b090040b5fd8bb316dd8c65a079bb6492494ce2079dc91be/cattrs-26.2.0.tar.gz","sha256":"3cf49f69df8326bcf17a3cb3d3d3ec4a856858fe3a7473746c9044c317d3ba55"}},
     {"name":"Cython","version":"3.3.0","license":"Apache-2.0","filename":"cython-3.3.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/bf/77/67b0b24e45073a699610e50f00c18474ff9b09ea29ecc95083bdf5e60acd/cython-3.3.0-py3-none-any.whl","sha256":"9b24b5c8cd536946b62086fcafee6d5509d3f549f72d553d2336af87ffbe0da1","size":1349151,"source":{"url":"https://files.pythonhosted.org/packages/a9/d8/4981ef716ad0e3ff0d3ef383aefc6b03c4a88dee33b272bf8e0d833001ca/cython-3.3.0.tar.gz","sha256":"eed0d93fbca7087f143b42c34b05a825849bdf17f101572c2105acfa49aa88b8"}},
@@ -121,9 +122,29 @@
     {"name":"urllib3","version":"2.8.0","license":"MIT","filename":"urllib3-2.8.0-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl","sha256":"0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3","size":135717,"source":{"url":"https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz","sha256":"63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"}},
     {"name":"certifi","version":"2026.7.22","license":"MPL-2.0","filename":"certifi-2026.7.22-py3-none-any.whl","url":"https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl","sha256":"62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775","size":136983,"source":{"url":"https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz","sha256":"741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"}}
   ],
+  "sourceClosurePlan": {
+    "schema": "nexgenvideo/bpy-source-closure-plan/1",
+    "builder": "scripts/assemble_bpy_source_closure.py",
+    "validator": "scripts/verify_bpy_source_closure.py",
+    "binaryCorrespondence": {
+      "wheel": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "wheelSHA256": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+      "wheelMetadataSHA256": "05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084",
+      "releaseSourceSHA256": "56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e",
+      "releaseBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1"
+    },
+    "contents": [
+      "NexGenVideo source and build scripts at the exact release-tag commit",
+      "Blender 5.2.2 release source including build recipes and patches",
+      "every release dependency declared by the exact Blender 5.2.2 versions manifest, including static and transitive candidates",
+      "python-build-standalone source and declared CPython build inputs",
+      "every installed wheel source archive and wheel license/notice file",
+      "the exact pinned bpy wheel RECORD/native inventory and PyPI metadata linkage evidence"
+    ],
+    "publication": "Publish the validated source archive and manifest beside every public binary artifact and retain matching version/hash instructions. Bit-identical rebuild output is not required."
+  },
   "distributionBlockers": [
-    "Prove that every native library in the pinned wheel was built from the candidate family/version recorded from Blender v5.2.2's official build manifest; filenames and the Blender tag alone do not prove binary provenance.",
-    "Fetch, SHA-256/size-pin, and ship the Corresponding Source and required license/notice set for the Python runtime and build inputs, every wheel, and the proven 43-library native inventory.",
-    "Obtain legal review of combined-app distribution obligations. The process boundary is not treated as a GPL exception."
+    "Blender's published bpy 5.2.2 metadata links the exact release source, but upstream does not publish a per-wheel build record that identifies the dependency archives, patches, and build flags used for the pinned macOS arm64 wheel. Resolve that actual provenance gap against official release/build records; filename-family matching is insufficient.",
+    "Run the prepared source-closure builder in Actions, commit the resulting archive/manifest SHA-256 and size pins plus notice/provenance evidence, validate it against the exact pinned wheel RECORD, and publish the Corresponding Source archive and manifest beside every public binary artifact."
   ]
 }

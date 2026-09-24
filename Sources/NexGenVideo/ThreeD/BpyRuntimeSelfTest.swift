@@ -27,6 +27,20 @@ enum BpyRuntimeSelfTest {
     private static var retainedProjects: [VideoProject] = []
 
     static func scheduleIfRequested() {
+        if let mode = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_HOST_CRASH"],
+           ["before-authorization", "after-authorization"].contains(mode) {
+            DispatchQueue.main.async {
+                do {
+                    try runHostCrashProbe(mode: mode)
+                } catch {
+                    FileHandle.standardError.write(
+                        Data("SELFTEST_BPY_HOST_CRASH_FAIL \(error.localizedDescription)\n".utf8)
+                    )
+                    Darwin.exit(1)
+                }
+            }
+            return
+        }
         guard let outputPath = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"],
               !outputPath.isEmpty else {
             return
@@ -47,6 +61,49 @@ enum BpyRuntimeSelfTest {
                 Darwin.exit(1)
             }
         }
+    }
+
+    private static func runHostCrashProbe(mode: String) throws {
+        let project = VideoProject()
+        retainedProjects = [project]
+        project.makeWindowControllers()
+        guard let session = BpyRuntimeHost.shared.session(for: project) else {
+            throw BpyRuntimeError.unavailable("The crash probe could not reserve a runtime slot.")
+        }
+        _ = try session.ready()
+        let jobID = UUID()
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = try? session.runJob(
+                id: jobID,
+                expectedRevision: nil,
+                source: """
+                import os
+                import sys
+                os.execv(sys.executable, [sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
+                """,
+                timeoutSeconds: 120,
+                diagnosticDeferExecutionAuthorization: mode == "before-authorization"
+            )
+        }
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            if let response = try? session.status(jobID: jobID),
+               response.state == .running,
+               response.activeProcessIdentifier.map({ $0 > 1 }) == true {
+                if mode == "before-authorization",
+                   response.activeProcessAuthorizationID != nil,
+                   response.activeWorkerProcessIdentifier == nil {
+                    _ = Darwin.kill(getpid(), SIGKILL)
+                }
+                if mode == "after-authorization",
+                   response.activeProcessAuthorizationID == nil,
+                   response.activeWorkerProcessIdentifier.map({ $0 > 1 }) == true {
+                    _ = Darwin.kill(getpid(), SIGKILL)
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw BpyRuntimeError.timedOut
     }
 
     static func applicationWillTerminate() {
@@ -432,7 +489,11 @@ enum BpyRuntimeSelfTest {
         }
 
         let parentDeathID = UUID()
-        let parentDeathSource = "while True: pass"
+        let parentDeathSource = """
+        import os
+        import sys
+        os.execv(sys.executable, [sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
+        """
         let parentDeathBox = BpySelfTestBox()
         let parentDeathFinished = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -491,7 +552,7 @@ enum BpyRuntimeSelfTest {
                 timeoutSeconds: 30,
                 memoryBytes: 6 * 1_024 * 1_024 * 1_024,
                 inputBytes: 1_024 * 1_024,
-                outputBytes: 1_024 * 1_024,
+                outputBytes: 2 * 1_024 * 1_024,
                 stdoutBytes: 65_536,
                 objects: 1,
                 vertices: 8,
@@ -505,6 +566,42 @@ enum BpyRuntimeSelfTest {
             serviceName: originalSlot
         )
         _ = try constrained.ready()
+        let containerScope = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import errno
+            import os
+            sibling = session_root.parent / 'hostile-container-sibling'
+            try:
+                sibling.write_bytes(b'escaped')
+            except OSError as error:
+                if error.errno not in (errno.EPERM, errno.EACCES):
+                    raise
+            else:
+                raise RuntimeError('worker wrote outside its per-process Seatbelt root')
+            try:
+                os.kill(os.getppid(), 0)
+            except OSError as error:
+                if error.errno not in (errno.EPERM, errno.EACCES):
+                    raise
+            else:
+                raise RuntimeError('worker signalled its native supervisor')
+            bpy.data.objects.new('CONTAINER_SIBLING_AND_SIGNAL_BLOCKED', None)
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard containerScope.response.state == .awaitingConfirmation,
+              let containerVerificationURL = containerScope.stagedOutputs["verification.json"],
+              let containerNames = try verificationObject(containerVerificationURL)["objectNames"] as? [String],
+              containerNames.contains("CONTAINER_SIBLING_AND_SIGNAL_BLOCKED") else {
+            throw BpyRuntimeError.invalidOutput("The per-process OS write scope was not enforced.")
+        }
+        guard let containerScopeID = containerScope.response.jobID else {
+            throw BpyRuntimeError.invalidOutput("The OS-boundary probe omitted its Job ID.")
+        }
+        _ = try constrained.cancel(jobID: containerScopeID)
         let structuralLimit = try constrained.runJob(
             id: UUID(),
             expectedRevision: nil,
@@ -524,13 +621,60 @@ enum BpyRuntimeSelfTest {
             source: """
             bpy.context.scene.render.resolution_x = 64
             bpy.context.scene.render.resolution_y = 64
+            package = output_dir / 'HostileFixture.app' / 'Contents' / 'Resources'
+            package.mkdir(parents=True)
             for index in range(70):
-                (output_dir / f'overflow-{index:02d}.json').write_bytes(b'x' * 40000)
+                (package / f'overflow-{index:02d}.json').write_bytes(b'x')
             """
         )
         guard storageLimit.response.state == .resourceLimited else {
             throw BpyRuntimeError.invalidOutput("Aggregate disk/file limits were not terminal.")
         }
+        let aggregateBytes = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import os
+            home = Path(os.environ['HOME'])
+            (home / 'large.bin').write_bytes(b'x' * 1800000)
+            (home / 'aggregate.bin').write_bytes(b'x' * 500000)
+            """
+        )
+        guard aggregateBytes.response.state == .resourceLimited else {
+            throw BpyRuntimeError.invalidOutput("Aggregate bytes outside outputs were not terminal.")
+        }
+        let scanError = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            import os
+            blocked = Path(os.environ['HOME']) / 'unreadable'
+            blocked.mkdir()
+            (blocked / 'payload').write_bytes(b'x')
+            blocked.chmod(0)
+            while True:
+                pass
+            """,
+            timeoutSeconds: 5
+        )
+        guard scanError.response.state == .crashed else {
+            throw BpyRuntimeError.invalidOutput("A resource-scan error did not fail closed.")
+        }
+        let afterResourceFailure = try constrained.runJob(
+            id: UUID(),
+            expectedRevision: nil,
+            source: """
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
+            """
+        )
+        guard afterResourceFailure.response.state == .awaitingConfirmation else {
+            throw BpyRuntimeError.invalidOutput("The resource supervisor did not recover for a healthy job.")
+        }
+        guard let recoveredJobID = afterResourceFailure.response.jobID else {
+            throw BpyRuntimeError.invalidOutput("The healthy resource probe omitted its Job ID.")
+        }
+        _ = try constrained.cancel(jobID: recoveredJobID)
         constrained.close()
 
         guard let reusedSession = BpyRuntimeHost.shared.session(for: projectC),
@@ -572,6 +716,11 @@ enum BpyRuntimeSelfTest {
             "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
             "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
+            "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
+            "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
+            "containerSiblingWriteDenied": true,
+            "supervisorSignalDenied": true,
+            "resourceSupervisorRecovered": true,
             "crashState": crashed.response.state?.rawValue ?? "",
             "duplicateJoined": duplicate.response.joinedExistingJob,
             "changedDuplicateRejected": true,
@@ -579,6 +728,7 @@ enum BpyRuntimeSelfTest {
             "closeBeforeOpenReleased": true,
             "serviceRecoveryRevision": reopened.confirmedRevision ?? "",
             "parentDeathJobFailedClosed": true,
+            "execveOrphanReaped": true,
             "threeRealDocuments": true,
             "thirdDocumentInitiallyDenied": true,
             "slotReusedAfterClose": true,

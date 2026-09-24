@@ -161,6 +161,26 @@ jobs:
             jq -e 'any(.assets[]; .name == "NexGenVideo.dmg")' \
               "$STATE_DIR/release.json" >/dev/null \
               || { echo "::error::release $TAG exists without NexGenVideo.dmg"; exit 1; }
+            jq -e 'any(.assets[]; .name == "NexGenVideo-bpy-5.2.2-corresponding-source.tar")' \
+              "$STATE_DIR/release.json" >/dev/null \
+              || { echo "::error::release $TAG exists without Corresponding Source"; exit 1; }
+            jq -e 'any(.assets[]; .name == "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json")' \
+              "$STATE_DIR/release.json" >/dev/null \
+              || { echo "::error::release $TAG exists without the Corresponding Source manifest"; exit 1; }
+            gh release download "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+              --pattern "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" \
+              --dir "$STATE_DIR"
+            [ "$(sha256sum "$STATE_DIR/NexGenVideo-bpy-5.2.2-corresponding-source.tar" | awk '{print $1}')" = \
+              "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ] \
+              || { echo "::error::release $TAG has the wrong Corresponding Source"; exit 1; }
+            [ "$(stat -c %s "$STATE_DIR/NexGenVideo-bpy-5.2.2-corresponding-source.tar")" = \
+              "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ] \
+              || { echo "::error::release $TAG has the wrong Corresponding Source size"; exit 1; }
+            [ "$(sha256sum "$STATE_DIR/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" | awk '{print $1}')" = \
+              "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ] \
+              || { echo "::error::release $TAG has the wrong Corresponding Source manifest"; exit 1; }
           fi
           HAS_APPCAST=false
           if python3 - "$REL_VERSION" <<'PY'
@@ -309,8 +329,39 @@ jobs:
           fi
           python3 scripts/release_preflight.py "$REL_VERSION" "$CATALOG_DIR/catalog.json"
 
-  release:
+  source-closure:
     needs: release-gate
+    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble and validate exact Corresponding Source
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/bpy-source-closure"
+          python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+          ARCHIVE="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar"
+          MANIFEST="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          python3 scripts/verify_bpy_source_closure.py \
+            "$ARCHIVE" "$MANIFEST" --require-distributable
+          [ "$(sha256sum "$ARCHIVE" | awk '{print $1}')" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.sha256 Runtime/bpy/runtime-lock.json)" ]
+          [ "$(stat -c %s "$ARCHIVE")" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.size Runtime/bpy/runtime-lock.json)" ]
+          [ "$(sha256sum "$MANIFEST" | awk '{print $1}')" = \
+            "$(jq -r .distributionClosure.publicSourceAsset.manifestSHA256 Runtime/bpy/runtime-lock.json)" ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpy-corresponding-source-${{ github.sha }}
+          path: ${{ runner.temp }}/bpy-source-closure/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [release-gate, source-closure]
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
     runs-on: xcode-27
@@ -319,6 +370,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bpy-corresponding-source-${{ github.sha }}
+          path: .build/source-closure
 
       - uses: ./.github/actions/setup-xcode-27
 
@@ -814,6 +870,8 @@ jobs:
           path: |
             .build/NexGenVideo.dmg
             .build/plugins/*.ngvpack.zip
+            .build/source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.tar
+            .build/source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
           if-no-files-found: error
           retention-days: 7
 
@@ -851,6 +909,8 @@ jobs:
           # release shipped a pack fix (#168).
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
             .build/NexGenVideo.dmg \
+            .build/source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/source-closure/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json \
             --draft \
             --title "NexGenVideo $TAG" \
             --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \

@@ -34,6 +34,7 @@ let package = Package(
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
         .executable(name: "NexGenVideoDiagnostics", targets: ["NexGenVideoDiagnostics"]),
         .executable(name: "NexGenVideoBpyService", targets: ["NexGenVideoBpyService"]),
+        .executable(name: "NexGenVideoBpySupervisor", targets: ["NexGenVideoBpySupervisor"]),
         // The first loadable pack — built as a dynamic library, then assembled +
         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
@@ -66,6 +67,11 @@ let package = Package(
             name: "NexGenVideoBpyService",
             dependencies: ["BpyRuntimeProtocol"],
             path: "Sources/NexGenVideoBpyService",
+            linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
+        ),
+        .executableTarget(
+            name: "NexGenVideoBpySupervisor",
+            path: "Sources/NexGenVideoBpySupervisor",
             linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
         ),
         .target(name: "HangStackSampler", path: "Sources/HangStackSampler"),

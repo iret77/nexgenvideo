@@ -53,6 +53,17 @@ class BpyRuntimeLockTests(unittest.TestCase):
         ):
             self.assertEqual(MODULE.main(), 2)
 
+    def test_source_closure_plan_is_versioned(self):
+        plan = self.lock["sourceClosurePlan"]
+        self.assertEqual(plan["schema"], "nexgenvideo/bpy-source-closure-plan/1")
+        self.assertEqual(plan["builder"], "scripts/assemble_bpy_source_closure.py")
+        self.assertEqual(plan["validator"], "scripts/verify_bpy_source_closure.py")
+
+    def test_distribution_blockers_name_facts_not_generic_legal_approval(self):
+        blockers = "\n".join(self.lock["distributionBlockers"]).lower()
+        self.assertNotIn("legal review", blockers)
+        self.assertIn("per-wheel build record", blockers)
+
 
 if __name__ == "__main__":
     unittest.main()

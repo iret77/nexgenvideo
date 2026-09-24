@@ -21,10 +21,6 @@ def write_manifest(path, payload):
 
 
 def apply_limits(config):
-    try:
-        os.setpgid(0, 0)
-    except PermissionError:
-        pass
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_FSIZE, (config["outputBytes"], config["outputBytes"]))
     resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))

@@ -247,6 +247,9 @@ if [ "$MODE" = "fast" ]; then
     codesign --force --sign "$SIGN_IDENTITY" \
       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
       "$BPY_RUNTIME/python/bin/python3.13"
+    codesign --force --sign "$SIGN_IDENTITY" \
+      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
     for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
       codesign --force --sign "$SIGN_IDENTITY" \
         --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
@@ -275,6 +278,9 @@ if [ "$MODE" = "dev" ]; then
     codesign --force --sign - \
       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
       "$BPY_RUNTIME/python/bin/python3.13"
+    codesign --force --sign - \
+      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
     for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
       codesign --force --sign - \
         --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
@@ -304,6 +310,10 @@ if [ "$INCLUDE_BPY_RUNTIME" = true ]; then
     --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
     --sign "$SIGN_IDENTITY" \
     "$BPY_RUNTIME/python/bin/python3.13"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+    --sign "$SIGN_IDENTITY" \
+    "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
   for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
     codesign --force --options runtime --timestamp \
       --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \

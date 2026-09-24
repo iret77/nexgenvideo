@@ -97,14 +97,26 @@ def validate_distribution_closure(lock, families):
     notices = closure.get("noticeFiles", [])
     if not notices:
         fail("ready distribution must include a notice inventory")
-    evidence_names = [Path(provenance.get("path", "")).name]
+    coverage = closure.get("noticeCoverage", {})
+    evidence_names = [
+        Path(provenance.get("path", "")).name,
+        Path(coverage.get("path", "")).name,
+    ]
     evidence_names += [Path(item.get("path", "")).name for item in notices]
     if len(evidence_names) != len(set(evidence_names)):
         fail("distribution evidence filenames must be unique")
     for index, item in enumerate(notices):
         validate_repository_evidence(item, f"distribution notice {index}")
-    if not closure.get("reviewReference", "").strip():
-        fail("ready distribution must name its combined-distribution review")
+    validate_repository_evidence(coverage, "distribution notice coverage")
+    public_source = closure.get("publicSourceAsset", {})
+    if public_source.get("filename") != "NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            or public_source.get("manifestFilename") \
+            != "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json" \
+            or not SHA256.fullmatch(public_source.get("sha256", "")) \
+            or type(public_source.get("size")) is not int \
+            or public_source["size"] <= 0 \
+            or not SHA256.fullmatch(public_source.get("manifestSHA256", "")):
+        fail("ready distribution must pin the public Corresponding Source asset")
 
 
 def validate(lock):
@@ -129,6 +141,10 @@ def validate(lock):
         "build_files/build_environment/cmake/versions.cmake"
     ):
         fail("unexpected Blender dependency-manifest evidence")
+    if layout.get("officialBuildManifestSHA256") != (
+        "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1"
+    ):
+        fail("unexpected Blender dependency-manifest hash")
     families = layout.get("candidateSourceFamilies", [])
     family_names = [family.get("name") for family in families]
     if not family_names or len(family_names) != len(set(family_names)):
@@ -152,6 +168,14 @@ def validate(lock):
         fail("unexpected CPython runtime pin")
     validate_artifact(runtime.get("artifact", {}), "runtime artifact", True)
     validate_artifact(runtime.get("source", {}), "runtime source")
+    plan = lock.get("sourceClosurePlan", {})
+    correspondence = plan.get("binaryCorrespondence", {})
+    if plan.get("schema") != "nexgenvideo/bpy-source-closure-plan/1" \
+            or plan.get("builder") != "scripts/assemble_bpy_source_closure.py" \
+            or plan.get("validator") != "scripts/verify_bpy_source_closure.py" \
+            or correspondence.get("releaseBuildManifestSHA256") \
+            != layout.get("officialBuildManifestSHA256"):
+        fail("source-closure plan is incomplete")
 
     wheels = lock.get("wheels", [])
     names = {item.get("name") for item in wheels}
@@ -167,12 +191,23 @@ def validate(lock):
         "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7"
     ):
         fail("bpy version/hash drift")
+    if correspondence != {
+        "wheel": bpy["filename"],
+        "wheelSHA256": bpy["sha256"],
+        "wheelMetadataSHA256": bpy["metadata"]["sha256"],
+        "releaseSourceSHA256": bpy["source"]["sha256"],
+        "releaseBuildManifestSHA256": layout["officialBuildManifestSHA256"],
+    }:
+        fail("source-closure binary correspondence drift")
     metadata = bpy.get("metadata", {})
     validate_artifact(metadata, "bpy wheel metadata")
     if metadata.get("license") != "GPL-3.0" or metadata.get("requiresPython") != "==3.13.*" \
             or set(metadata.get("requiresDist", [])) != {
         "cattrs", "cython", "numpy<3.0,>=2.2", "requests", "zstandard",
-    }:
+    } or metadata.get("sourceCodeURLs") != [
+        "https://download.blender.org/source/",
+        "https://projects.blender.org/blender/blender",
+    ]:
         fail("bpy wheel metadata drift")
 
     build_inputs = lock.get("pythonBuildInputs", [])

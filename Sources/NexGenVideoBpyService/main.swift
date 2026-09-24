@@ -93,36 +93,73 @@ private func processTree(root: pid_t) -> [pid_t] {
 }
 
 private func stopProcess(_ process: Process) {
-    let processIdentifier = process.processIdentifier
-    guard processIdentifier > 1 else { return }
-    _ = Darwin.kill(-processIdentifier, SIGSTOP)
-    _ = Darwin.kill(processIdentifier, SIGSTOP)
-    let descendants = processTree(root: processIdentifier)
-    descendants.forEach { _ = Darwin.kill($0, SIGSTOP) }
-    descendants.reversed().forEach { _ = Darwin.kill($0, SIGKILL) }
-    _ = Darwin.kill(-processIdentifier, SIGKILL)
-    _ = Darwin.kill(processIdentifier, SIGKILL)
+    guard process.processIdentifier > 1, process.isRunning else { return }
+    process.terminate()
 }
 
-private func directoryUsage(_ root: URL) throws -> (bytes: UInt64, files: Int) {
-    guard let values = FileManager.default.enumerator(
-        at: root,
-        includingPropertiesForKeys: nil,
-        options: [.skipsPackageDescendants]
-    ) else {
-        return (0, 0)
-    }
+private struct DirectoryUsage {
+    let bytes: UInt64
+    let files: Int
+    let limitReason: String?
+}
+
+private func directoryUsage(
+    _ roots: [URL],
+    byteLimit: UInt64,
+    fileLimit: Int
+) throws -> DirectoryUsage {
     var bytes: UInt64 = 0
     var files = 0
-    while let url = values.nextObject() as? URL {
-        var status = stat()
-        guard lstat(url.path, &status) == 0 else { continue }
-        files += 1
-        if (status.st_mode & S_IFMT) == S_IFREG, status.st_size > 0 {
-            bytes += UInt64(status.st_size)
+    for root in roots {
+        var rootStatus = stat()
+        guard lstat(root.path, &rootStatus) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        guard (rootStatus.st_mode & S_IFMT) == S_IFDIR else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let rootBytes = rootStatus.st_blocks > 0 ? UInt64(rootStatus.st_blocks) * 512 : 0
+        guard rootBytes <= byteLimit - min(bytes, byteLimit) else {
+            return .init(bytes: byteLimit &+ 1, files: files, limitReason: "disk")
+        }
+        bytes += rootBytes
+        var enumerationError: Error?
+        guard let values = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        while let url = values.nextObject() as? URL {
+            var status = stat()
+            guard lstat(url.path, &status) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            files += 1
+            if files > fileLimit {
+                return .init(bytes: bytes, files: files, limitReason: "file-count")
+            }
+            let allocated = status.st_blocks > 0 ? UInt64(status.st_blocks) * 512 : 0
+            let logical = (status.st_mode & S_IFMT) == S_IFREG && status.st_size > 0
+                ? UInt64(status.st_size)
+                : 0
+            let size = max(allocated, logical)
+            guard size <= byteLimit - min(bytes, byteLimit) else {
+                return .init(bytes: byteLimit &+ 1, files: files, limitReason: "disk")
+            }
+            bytes += size
+        }
+        if let enumerationError { throw enumerationError }
+        if bytes > byteLimit {
+            return .init(bytes: bytes, files: files, limitReason: "disk")
         }
     }
-    return (bytes, files)
+    return .init(bytes: bytes, files: files, limitReason: nil)
 }
 
 private func fingerprint(
@@ -293,8 +330,13 @@ private struct AutoexecManifest: Decodable {
     let autorunMarkerPresent: Bool
 }
 
-private struct ManagedProcessResult {
+private struct SupervisorWorkerIdentity: Decodable {
     let processIdentifier: Int32
+    let startAbsoluteTime: UInt64
+}
+
+private struct ManagedProcessResult {
+    let workerProcessIdentifier: Int32
     let exitStatus: Int32
     let duration: Double
     let peakMemoryBytes: UInt64
@@ -321,6 +363,12 @@ private final class ServiceSession: @unchecked Sendable {
     private var activeProcess: Process?
     private var activeProcessStartAbsoluteTime: UInt64?
     private var activeProcessExecutable: String?
+    private var activeProcessJobID: UUID?
+    private var activeProcessAuthorizationID: UUID?
+    private var activeProcessAuthorizationURL: URL?
+    private var activeProcessAuthorizationToken: String?
+    private var activeProcessAuthorized = false
+    private var activeWorkerProcessIdentifier: Int32?
     private var runtimeIdentity: BpyRuntimeIdentity?
     private var coldStartSeconds: Double?
     private var servicePeakMemoryBytes: UInt64 = 0
@@ -616,6 +664,31 @@ private final class ServiceSession: @unchecked Sendable {
         }
     }
 
+    func authorize(_ request: BpyAuthorizeProcessRequest) throws -> BpyServiceResponse {
+        try lock.access {
+            guard !closed,
+                  let job = jobs[request.jobID],
+                  job.state == .running,
+                  activeProcessJobID == request.jobID,
+                  activeProcessAuthorizationID == request.authorizationID,
+                  activeProcess?.processIdentifier == request.processIdentifier,
+                  activeProcess?.isRunning == true,
+                  activeProcessStartAbsoluteTime == request.processStartAbsoluteTime,
+                  processUsage(request.processIdentifier)?.startAbsoluteTime
+                    == request.processStartAbsoluteTime,
+                  activeProcessExecutable == request.processExecutable,
+                  let authorizationURL = activeProcessAuthorizationURL,
+                  let authorizationToken = activeProcessAuthorizationToken else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            if !activeProcessAuthorized {
+                try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
+                activeProcessAuthorized = true
+            }
+            return response(for: job)
+        }
+    }
+
     func output(_ request: BpyReadOutputRequest) throws -> (BpyServiceResponse, Data) {
         guard isSafeName(request.name), request.maximumBytes > 0,
               request.maximumBytes <= 4 * 1_024 * 1_024 else {
@@ -721,8 +794,9 @@ private final class ServiceSession: @unchecked Sendable {
             }
             try Data(source.utf8).write(to: sourceURL, options: .atomic)
             let confirmedURL = try writeConfirmedCheckpoint(for: job)
+            let writableRoot = jobWorkerDirectory(job.id)
             var jobConfiguration = baseConfiguration(
-                processRoot: directory,
+                processRoot: writableRoot,
                 cpuSeconds: job.timeoutSeconds
             ).merging([
                 "jobID": job.id.uuidString,
@@ -739,7 +813,7 @@ private final class ServiceSession: @unchecked Sendable {
             let worker = try runManagedProcess(
                 mode: "job",
                 configuration: jobConfig,
-                processRoot: directory,
+                processRoot: writableRoot,
                 deadline: deadline,
                 job: job
             )
@@ -782,8 +856,8 @@ private final class ServiceSession: @unchecked Sendable {
                     "descendant_peak_count": Double(
                         max(worker.peakDescendantCount, verification.process.peakDescendantCount)
                     ),
-                    "worker_process_identifier": Double(worker.processIdentifier),
-                    "verifier_process_identifier": Double(verification.process.processIdentifier),
+                    "worker_process_identifier": Double(worker.workerProcessIdentifier),
+                    "verifier_process_identifier": Double(verification.process.workerProcessIdentifier),
                     "objects": Double(verification.manifest.objects),
                     "vertices": Double(verification.manifest.vertices),
                     "polygons": Double(verification.manifest.polygons),
@@ -856,19 +930,21 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func enforceStoredResources(_ job: JobRecord) throws {
-        let usage = try directoryUsage(root)
-        guard usage.bytes <= request.limits.diskBytes,
-              usage.files <= request.limits.files else {
-            lock.access {
-                guard job.state == .running else { return }
-                job.state = .resourceLimited
-                job.message = usage.bytes > request.limits.diskBytes
-                    ? "job exceeded the disk limit"
-                    : "job exceeded the file-count limit"
-                job.terminalAt = Date()
-            }
-            throw CocoaError(.fileWriteOutOfSpace)
+        let usage = try directoryUsage(
+            workerWritableRoots(job.id),
+            byteLimit: request.limits.diskBytes,
+            fileLimit: request.limits.files
+        )
+        guard let reason = usage.limitReason else { return }
+        lock.access {
+            guard job.state == .running else { return }
+            job.state = .resourceLimited
+            job.message = reason == "disk"
+                ? "job exceeded the disk limit"
+                : "job exceeded the file-count limit"
+            job.terminalAt = Date()
         }
+        throw CocoaError(.fileWriteOutOfSpace)
     }
 
     private func enforceServiceMemory(_ job: JobRecord) throws {
@@ -889,7 +965,7 @@ private final class ServiceSession: @unchecked Sendable {
         job: JobRecord,
         deadline: Double
     ) throws -> (manifest: VerificationManifest, process: ManagedProcessResult, autoexecPositive: Bool) {
-        let verificationRoot = jobDirectory(job.id).appendingPathComponent("verification", isDirectory: true)
+        let verificationRoot = verificationDirectory(job.id)
         try? FileManager.default.removeItem(at: verificationRoot)
         try FileManager.default.createDirectory(at: verificationRoot, withIntermediateDirectories: true)
         let manifestURL = verificationRoot.appendingPathComponent("manifest.json")
@@ -946,7 +1022,7 @@ private final class ServiceSession: @unchecked Sendable {
         guard manifest.schema == "nexgenvideo/bpy-verification/1",
               manifest.jobID == job.id.uuidString,
               manifest.fingerprint == job.fingerprint,
-              manifest.processIdentifier == result.processIdentifier,
+              manifest.processIdentifier == result.workerProcessIdentifier,
               manifest.pythonVersion == "3.13.15",
               manifest.bpyVersion == "5.2.2",
               URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath()
@@ -964,7 +1040,7 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func runAutoexecPositiveControl(job: JobRecord, deadline: Double) throws -> Bool {
-        let controlRoot = jobDirectory(job.id).appendingPathComponent("autoexec-positive", isDirectory: true)
+        let controlRoot = autoexecDirectory(job.id)
         try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
         let manifestURL = controlRoot.appendingPathComponent("manifest.json")
         let config = try writeConfiguration(
@@ -992,7 +1068,7 @@ private final class ServiceSession: @unchecked Sendable {
         )
         guard manifest.schema == "nexgenvideo/bpy-autoexec-positive/1",
               manifest.jobID == job.id.uuidString,
-              manifest.processIdentifier == result.processIdentifier,
+              manifest.processIdentifier == result.workerProcessIdentifier,
               manifest.autorunMarkerPresent else {
             throw CocoaError(.fileReadCorruptFile)
         }
@@ -1000,7 +1076,7 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func probeRuntime() throws -> ProbeManifest {
-        let probeRoot = root.appendingPathComponent("probe", isDirectory: true)
+        let probeRoot = root.appendingPathComponent("probe-worker", isDirectory: true)
         try? FileManager.default.removeItem(at: probeRoot)
         try FileManager.default.createDirectory(at: probeRoot, withIntermediateDirectories: true)
         let manifestURL = probeRoot.appendingPathComponent("manifest.json")
@@ -1023,7 +1099,7 @@ private final class ServiceSession: @unchecked Sendable {
             ProbeManifest.self,
             from: Data(contentsOf: manifestURL)
         )
-        guard manifest.processIdentifier == result.processIdentifier else {
+        guard manifest.processIdentifier == result.workerProcessIdentifier else {
             throw CocoaError(.executableLoad)
         }
         try? FileManager.default.removeItem(at: probeRoot)
@@ -1038,6 +1114,7 @@ private final class ServiceSession: @unchecked Sendable {
         job: JobRecord?
     ) throws -> ManagedProcessResult {
         guard FileManager.default.isExecutableFile(atPath: pythonURL.path),
+              FileManager.default.isExecutableFile(atPath: supervisorURL.path),
               FileManager.default.fileExists(atPath: workerURL.path),
               FileManager.default.fileExists(atPath: sitePackagesURL.path) else {
             throw CocoaError(.executableNotLoadable)
@@ -1059,9 +1136,37 @@ private final class ServiceSession: @unchecked Sendable {
             let data = handle.availableData
             if !data.isEmpty { log.append(data) }
         }
+        let controlRoot = root.appendingPathComponent(
+            "process-control/\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
+        let authorizationURL = controlRoot.appendingPathComponent("authorized")
+        let identityURL = controlRoot.appendingPathComponent("worker.json")
+        let authorizationID = UUID()
+        let authorizationToken = (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+        guard let serviceUsage = processUsage(getpid()) else {
+            throw CocoaError(.executableLoad)
+        }
+        if job == nil {
+            try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
+        }
         let process = Process()
-        process.executableURL = pythonURL
-        process.arguments = ["-I", "-S", workerURL.path, mode, configuration.path]
+        process.executableURL = supervisorURL
+        process.arguments = [
+            "supervise",
+            String(getpid()),
+            String(serviceUsage.startAbsoluteTime),
+            authorizationURL.path,
+            authorizationToken,
+            identityURL.path,
+            processRoot.path,
+            pythonURL.path,
+            workerURL.path,
+            mode,
+            configuration.path,
+        ]
         process.currentDirectoryURL = processRoot
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
@@ -1080,7 +1185,7 @@ private final class ServiceSession: @unchecked Sendable {
         ]
         let began = ProcessInfo.processInfo.systemUptime
         try process.run()
-        let processIdentifier = process.processIdentifier
+        let supervisorProcessIdentifier = process.processIdentifier
         lock.access { activeProcess = process }
         defer {
             if process.isRunning {
@@ -1094,12 +1199,19 @@ private final class ServiceSession: @unchecked Sendable {
                     activeProcess = nil
                     activeProcessStartAbsoluteTime = nil
                     activeProcessExecutable = nil
+                    activeProcessJobID = nil
+                    activeProcessAuthorizationID = nil
+                    activeProcessAuthorizationURL = nil
+                    activeProcessAuthorizationToken = nil
+                    activeProcessAuthorized = false
+                    activeWorkerProcessIdentifier = nil
                 }
             }
+            try? FileManager.default.removeItem(at: controlRoot)
         }
         var initialUsage: ProcessUsage?
         for _ in 0..<20 where initialUsage == nil && process.isRunning {
-            initialUsage = processUsage(processIdentifier)
+            initialUsage = processUsage(supervisorProcessIdentifier)
             if initialUsage == nil { Thread.sleep(forTimeInterval: 0.005) }
         }
         guard let initialUsage else {
@@ -1110,25 +1222,49 @@ private final class ServiceSession: @unchecked Sendable {
         lock.access {
             guard activeProcess === process else { return }
             activeProcessStartAbsoluteTime = initialUsage.startAbsoluteTime
-            activeProcessExecutable = pythonURL.resolvingSymlinksInPath().path
+            activeProcessExecutable = supervisorURL.resolvingSymlinksInPath().path
+            activeProcessJobID = job?.id
+            activeProcessAuthorizationID = job == nil ? nil : authorizationID
+            activeProcessAuthorizationURL = job == nil ? nil : authorizationURL
+            activeProcessAuthorizationToken = job == nil ? nil : authorizationToken
+            activeProcessAuthorized = job == nil
         }
         var peakMemory = initialUsage.physicalFootprint
         var peakDisk: UInt64 = 0
         var peakFiles = 0
         var peakDescendants = 0
         var limitReason: String?
+        var workerIdentity: SupervisorWorkerIdentity?
         while process.isRunning {
             let now = ProcessInfo.processInfo.systemUptime
-            let descendants = processTree(root: processIdentifier)
-            peakDescendants = max(peakDescendants, descendants.count)
-            if let usage = processUsage(processIdentifier) {
-                peakMemory = max(peakMemory, usage.physicalFootprint)
+            let descendants = processTree(root: supervisorProcessIdentifier)
+            let unexpectedDescendants = max(0, descendants.count - 1)
+            peakDescendants = max(peakDescendants, unexpectedDescendants)
+            let processFootprint = ([supervisorProcessIdentifier] + descendants)
+                .compactMap { processUsage($0)?.physicalFootprint }
+                .reduce(UInt64(0), +)
+            peakMemory = max(peakMemory, processFootprint)
+            if workerIdentity == nil,
+               let data = try? Data(contentsOf: identityURL),
+               let decoded = try? JSONDecoder().decode(SupervisorWorkerIdentity.self, from: data),
+               processUsage(decoded.processIdentifier)?.startAbsoluteTime == decoded.startAbsoluteTime {
+                workerIdentity = decoded
+                lock.access {
+                    if activeProcess === process {
+                        activeWorkerProcessIdentifier = decoded.processIdentifier
+                    }
+                }
             }
             let serviceFootprint = processUsage(getpid())?.physicalFootprint ?? 0
             lock.access {
                 servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint)
             }
-            let disk = try directoryUsage(root)
+            let resourceRoots = job.map { workerWritableRoots($0.id) } ?? [processRoot]
+            let disk = try directoryUsage(
+                resourceRoots,
+                byteLimit: request.limits.diskBytes,
+                fileLimit: request.limits.files
+            )
             peakDisk = max(peakDisk, disk.bytes)
             peakFiles = max(peakFiles, disk.files)
             if lock.access({ closed || activeProcess !== process }) {
@@ -1144,13 +1280,10 @@ private final class ServiceSession: @unchecked Sendable {
             } else if serviceFootprint > request.limits.memoryBytes {
                 limitReason = "service-memory"
                 stopProcess(process)
-            } else if peakDisk > request.limits.diskBytes {
-                limitReason = "disk"
+            } else if let resourceReason = disk.limitReason {
+                limitReason = resourceReason
                 stopProcess(process)
-            } else if peakFiles > request.limits.files {
-                limitReason = "file-count"
-                stopProcess(process)
-            } else if !descendants.isEmpty {
+            } else if unexpectedDescendants > 0 {
                 limitReason = "process-count"
                 stopProcess(process)
             }
@@ -1163,8 +1296,12 @@ private final class ServiceSession: @unchecked Sendable {
         let remainingErrors = errors.fileHandleForReading.readDataToEndOfFile()
         log.append(remainingOutput)
         log.append(remainingErrors)
+        if workerIdentity == nil,
+           let data = try? Data(contentsOf: identityURL) {
+            workerIdentity = try? JSONDecoder().decode(SupervisorWorkerIdentity.self, from: data)
+        }
         return ManagedProcessResult(
-            processIdentifier: processIdentifier,
+            workerProcessIdentifier: workerIdentity?.processIdentifier ?? -1,
             exitStatus: process.terminationStatus,
             duration: ProcessInfo.processInfo.systemUptime - began,
             peakMemoryBytes: peakMemory,
@@ -1335,7 +1472,8 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func response(for job: JobRecord) -> BpyServiceResponse {
-        .init(
+        let ownsActiveProcess = activeProcessJobID == job.id
+        return .init(
             ok: true,
             jobID: job.id,
             state: job.state,
@@ -1348,9 +1486,13 @@ private final class ServiceSession: @unchecked Sendable {
             metrics: job.metrics,
             jobFingerprint: job.fingerprint,
             resultExpired: job.resultExpired,
-            activeProcessIdentifier: activeProcess?.processIdentifier,
-            activeProcessStartAbsoluteTime: activeProcessStartAbsoluteTime,
-            activeProcessExecutable: activeProcessExecutable
+            activeProcessIdentifier: ownsActiveProcess ? activeProcess?.processIdentifier : nil,
+            activeProcessStartAbsoluteTime: ownsActiveProcess ? activeProcessStartAbsoluteTime : nil,
+            activeProcessExecutable: ownsActiveProcess ? activeProcessExecutable : nil,
+            activeProcessAuthorizationID: ownsActiveProcess && !activeProcessAuthorized
+                ? activeProcessAuthorizationID
+                : nil,
+            activeWorkerProcessIdentifier: ownsActiveProcess ? activeWorkerProcessIdentifier : nil
         )
     }
 
@@ -1376,6 +1518,11 @@ private final class ServiceSession: @unchecked Sendable {
         runtimeRoot.appendingPathComponent("worker.py")
     }
 
+    private var supervisorURL: URL {
+        runtimeRoot.deletingLastPathComponent()
+            .appendingPathComponent("NexGenVideoBpySupervisor")
+    }
+
     private var sitePackagesURL: URL {
         runtimeRoot.appendingPathComponent("site-packages")
     }
@@ -1393,7 +1540,24 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func outputDirectory(_ jobID: UUID) -> URL {
-        jobDirectory(jobID).appendingPathComponent("outputs", isDirectory: true)
+        jobWorkerDirectory(jobID).appendingPathComponent("outputs", isDirectory: true)
+    }
+
+    private func jobWorkerDirectory(_ jobID: UUID) -> URL {
+        jobDirectory(jobID).appendingPathComponent("worker", isDirectory: true)
+    }
+
+    private func verificationDirectory(_ jobID: UUID) -> URL {
+        jobDirectory(jobID).appendingPathComponent("verification", isDirectory: true)
+    }
+
+    private func autoexecDirectory(_ jobID: UUID) -> URL {
+        jobDirectory(jobID).appendingPathComponent("autoexec-positive", isDirectory: true)
+    }
+
+    private func workerWritableRoots(_ jobID: UUID) -> [URL] {
+        [jobWorkerDirectory(jobID), verificationDirectory(jobID), autoexecDirectory(jobID)]
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private func mediaType(_ extensionName: String) -> String? {
@@ -1527,6 +1691,18 @@ private final class BpyRuntimeService: NSObject, BpyRuntimeServiceProtocol, @unc
             reply(encoded(session.status(request.jobID)))
         } catch {
             reply(failure("invalid status request"))
+        }
+    }
+
+    func authorizeProcess(_ data: Data, withReply reply: @escaping (Data) -> Void) {
+        do {
+            let request = try JSONDecoder().decode(BpyAuthorizeProcessRequest.self, from: data)
+            guard let session = session(request.sessionID) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            reply(encoded(try session.authorize(request)))
+        } catch {
+            reply(failure("process authorization rejected"))
         }
     }
 
@@ -1665,6 +1841,14 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             return
         }
         service.jobStatus(request, withReply: reply)
+    }
+
+    func authorizeProcess(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyAuthorizeProcessRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable"))
+            return
+        }
+        service.authorizeProcess(request, withReply: reply)
     }
 
     func readOutput(_ request: Data, withReply reply: @escaping (Data, Data) -> Void) {

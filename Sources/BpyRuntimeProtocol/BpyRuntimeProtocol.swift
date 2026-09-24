@@ -11,6 +11,7 @@ public let bpyRuntimeServiceNames = [
     func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
     func runJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func jobStatus(_ request: Data, withReply reply: @escaping (Data) -> Void)
+    func authorizeProcess(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func readOutput(_ request: Data, withReply reply: @escaping (Data, Data) -> Void)
     func confirmJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func cancelJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
@@ -198,6 +199,31 @@ public struct BpyJobReference: Codable, Sendable, Equatable {
     }
 }
 
+public struct BpyAuthorizeProcessRequest: Codable, Sendable, Equatable {
+    public let sessionID: UUID
+    public let jobID: UUID
+    public let authorizationID: UUID
+    public let processIdentifier: Int32
+    public let processStartAbsoluteTime: UInt64
+    public let processExecutable: String
+
+    public init(
+        sessionID: UUID,
+        jobID: UUID,
+        authorizationID: UUID,
+        processIdentifier: Int32,
+        processStartAbsoluteTime: UInt64,
+        processExecutable: String
+    ) {
+        self.sessionID = sessionID
+        self.jobID = jobID
+        self.authorizationID = authorizationID
+        self.processIdentifier = processIdentifier
+        self.processStartAbsoluteTime = processStartAbsoluteTime
+        self.processExecutable = processExecutable
+    }
+}
+
 public struct BpySessionReference: Codable, Sendable, Equatable {
     public let sessionID: UUID
 
@@ -330,6 +356,8 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
     public var activeProcessIdentifier: Int32?
     public var activeProcessStartAbsoluteTime: UInt64?
     public var activeProcessExecutable: String?
+    public var activeProcessAuthorizationID: UUID?
+    public var activeWorkerProcessIdentifier: Int32?
 
     public init(
         ok: Bool,
@@ -347,7 +375,9 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         resultExpired: Bool = false,
         activeProcessIdentifier: Int32? = nil,
         activeProcessStartAbsoluteTime: UInt64? = nil,
-        activeProcessExecutable: String? = nil
+        activeProcessExecutable: String? = nil,
+        activeProcessAuthorizationID: UUID? = nil,
+        activeWorkerProcessIdentifier: Int32? = nil
     ) {
         self.ok = ok
         self.jobID = jobID
@@ -365,5 +395,7 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         self.activeProcessIdentifier = activeProcessIdentifier
         self.activeProcessStartAbsoluteTime = activeProcessStartAbsoluteTime
         self.activeProcessExecutable = activeProcessExecutable
+        self.activeProcessAuthorizationID = activeProcessAuthorizationID
+        self.activeWorkerProcessIdentifier = activeWorkerProcessIdentifier
     }
 }

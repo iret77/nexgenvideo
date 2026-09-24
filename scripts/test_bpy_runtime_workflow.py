@@ -28,6 +28,11 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn('.outOfMemoryState == "resourceLimited"', text)
         self.assertIn('.structuralLimitState == "resourceLimited"', text)
         self.assertIn('.storageLimitState == "resourceLimited"', text)
+        self.assertIn('.aggregateByteLimitState == "resourceLimited"', text)
+        self.assertIn('.resourceScanErrorState == "crashed"', text)
+        self.assertIn(".supervisorSignalDenied == true", text)
+        self.assertIn("NGV_SELFTEST_BPY_HOST_CRASH", text)
+        self.assertIn("verify_bpy_source_closure.py", text)
         self.assertIn(".appDelegateShutdown == true", text)
         self.assertIn(".jobMetrics.worker_process_identifier != .jobMetrics.verifier_process_identifier", text)
 
@@ -96,6 +101,10 @@ class BpyRuntimeWorkflowTests(unittest.TestCase):
         self.assertIn("activeProcessStartAbsoluteTime", client)
         self.assertIn("terminateLeasedProcess", client)
         self.assertIn("rotateFromConfirmedState", client)
+        supervisor = (ROOT / "Sources/NexGenVideoBpySupervisor/main.swift").read_text()
+        self.assertIn("(deny file-write*)", supervisor)
+        self.assertIn("(deny process-signal)", supervisor)
+        self.assertIn("parentIsAlive", supervisor)
 
     def test_ready_distribution_requires_repository_evidence(self):
         verifier = (ROOT / "scripts/verify_bpy_runtime.py").read_text()

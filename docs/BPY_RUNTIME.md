@@ -13,6 +13,9 @@ Sandbox container and has no network, user-selected-file, Keychain, application-
 exception entitlement. The Python executable is signed only with App Sandbox inheritance. Provider
 keys are absent from its allowlisted environment. A worker receives private staged inputs and an
 in-memory-confirmed scene copy; it receives no project path and cannot write canonical project truth.
+Before Python starts, a signed native supervisor applies an additional Seatbelt profile that denies
+network, fork, outbound process signals, and every write outside that process's private write root.
+The inherited XPC container is therefore not the worker's write boundary.
 
 Native stdout and stderr are bounded diagnostic streams only. The service derives state from the
 process exit observed by `Process`, not from worker output. After a zero exit, a fresh verifier opens
@@ -24,21 +27,29 @@ separate isolated `use_scripts=true` process proves the fixture can trigger it.
 
 The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, and
 `RLIMIT_NPROC=0` limits before importing bpy. The service additionally monitors worker physical
-footprint, its own physical footprint, total private-session bytes and files, wall deadline, and the
-live descendant tree. A violation stops the process group, exact PID, and observed descendants and
-does not yield a candidate. The verifier rejects excessive evaluated objects/vertices/polygons and
+footprint, its own physical footprint, total bytes and files across every worker-writable root, wall
+deadline, and the live descendant tree. Recursive accounting includes package descendants, fails
+closed on traversal errors, counts the greater of logical size and allocated blocks plus directory
+storage, and stops as soon as a byte or file bound is crossed. A violation asks
+the exact native supervisor to terminate its directly owned worker and does not yield a candidate.
+The verifier rejects excessive evaluated objects/vertices/polygons and
 render dimensions/pixels; PNG dimensions and total outputs are checked again in native code.
 
 These are layered, bounded controls rather than a claim of a race-free general-purpose Python
 sandbox. `RLIMIT_AS` remains enabled because current XNU carries an address-space size limit in the
 VM map; acceptance records the configured limit and an over-allocation outcome so the shipped macOS
 behavior is measured. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
-identity. Process-tree polling and kill order are cleanup and evidence around that barrier, not a
-replacement for it. While a job is running, the service sends the trusted host an exact PID,
-bundled-executable path, and process-start-time lease. XPC loss lets the host stop and revalidate
-that exact leased process before killing its process group; no worker-writable registry, global
-process scan, or unrelated app configuration participates. Recovery remains blocked if the leased
-identity cannot be observed exiting within the bounded kill check.
+identity. Process-tree polling is cleanup and evidence around that barrier, not a replacement for
+it. The service launches a native supervisor while Python is still gated. The host
+must record the supervisor's exact PID, bundled executable, XNU start time, and
+one-use authorization ID before the service releases the gate. The supervisor is Python's direct
+parent, so an in-place `execve` does not change ownership; it also verifies the service parent's PID
+and start time and kills/reaps its exact child if that parent dies. On XPC invalidation the service
+terminates the supervisor through its live `Process` handle; the host can independently send SIGTERM
+only after rechecking the in-memory lease's PID, XNU start time, and executable. The supervisor owns
+the only SIGKILL path and validates its unreaped direct child's PID/start identity first. No
+worker-writable registry, global process scan, unrelated PID, or app configuration participates, and
+an app restart does not need the lost in-memory lease to reap an old worker.
 
 Primary platform references:
 
@@ -91,27 +102,36 @@ and native library against its wheel `RECORD` hash and size. CI extracts wheels 
 absent from assembly and from the installed app.
 
 Public distribution remains fail-closed while `distributionStatus` is
-`blocked-pending-corresponding-source-review`. The lock maps all 43 paths exactly once to candidate
+`blocked-pending-corresponding-source-provenance`. The lock maps all 43 paths exactly once to candidate
 source families, versions, URLs, SPDX licenses, and archive checksums from Blender v5.2.2's official
 dependency manifest. Those MD5 or SHA-256 values identify Blender's candidates but are not accepted
 as the final SHA-256 distribution closure. That is research evidence, not binary provenance: the remaining work is to prove the
-pinned wheel used those exact candidates, hash-pin and ship the proven Corresponding Source plus
-required notices, and review the combined distribution. The Blender source tarball alone is not
+pinned wheel used those exact candidates, then hash-pin and ship the matching Corresponding Source
+plus required notices. The Blender source tarball alone is not
 treated as proof of that closure.
 
 Changing `distributionStatus` to `ready` also requires a complete `distributionClosure`: one
 SHA-256- and size-pinned archive mapping every Python-build-standalone source, wheel source, CPython
 build input, and bpy native candidate exactly once (shared archives may name multiple components),
-repository-hashed wheel-provenance and notice evidence, and a combined-distribution review
-reference. Declared URLs and existing SHA-256 pins must match the lock; MD5-only Blender-manifest
+repository-hashed wheel-provenance and notice/coverage evidence, plus the exact public source asset.
+Declared URLs and existing SHA-256 pins must match the lock; MD5-only Blender-manifest
 candidates gain a final SHA-256 pin in this closure. Staging then embeds all archives and evidence,
 and bundle verification rehashes them.
 
 Each `sourceArchives` entry carries `components`, `filename`, `url`, `sha256`, and `size`.
 Component IDs are `python-build-standalone`, `wheel:<lock name>`,
 `python-build-input:<lock name>`, and `bpy-native:<candidate-family name>`. The remaining closure
-keys are `wheelBinaryProvenance` (`path`, `sha256`), nonempty `noticeFiles` entries with the same
-shape, and `reviewReference`. Evidence paths live under `Runtime/bpy/compliance/`.
+keys are `wheelBinaryProvenance`, `noticeCoverage`, and nonempty `noticeFiles` entries (`path`,
+`sha256`), plus `publicSourceAsset` (`filename`, `manifestFilename`, `sha256`, `size`,
+`manifestSHA256`). Evidence paths live under `Runtime/bpy/compliance/`.
+
+The deterministic source builder additionally preserves every dependency in the exact Blender 5.2.2
+release manifest, including static/transitive candidates, the complete release build recipe/patch
+inventory, every installed wheel source and notice, and python-build-standalone/CPython inputs. Its
+validator binds these to the exact wheel hash, metadata hash, and `RECORD`. This establishes real
+release/build-input correspondence without imposing a bit-identical rebuilt-binary hash requirement.
+The stable release tag itself targets the exact build commit and supplies NexGenVideo's GPL source;
+the managed-runtime archive supplies the third-party closure not contained in that repository snapshot.
 
 The distribution gate runs before release builds, including dry runs, and before the managed-runtime
 acceptance build/transfer ZIP. Regular public CI does not upload the app or transfer it to the runtime
@@ -122,17 +142,19 @@ and release bundles continue to require the runtime; readiness is never synthesi
 ## Prepared Actions acceptance
 
 `.github/workflows/bpy-runtime-acceptance.yml` is manual and SHA-bound. Once the source/notice gate is
-truthfully ready, it builds and unit-tests on `xcode-27`, assembles the pinned runtime, signs and
-notarizes the app, then relocates and runs it on `macos-26` arm64. No local execution is an acceptance
-substitute.
+truthfully ready, its Linux preflight first rebuilds and independently validates the exact pinned
+Corresponding Source asset. It then builds and unit-tests on `xcode-27`, assembles the pinned runtime,
+signs and notarizes the app, and transfers the matching source asset with it before relocation and
+execution on `macos-26` arm64. No local execution is an acceptance substitute.
 
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also
 covers exact and changed duplicate payloads, forged native stdout plus an infinite loop, a persistent
-thread, ctypes stdout, a kernel-blocked fork, memory over-allocation, timeout, cancellation, worker
-crash, service kill/reopen from the confirmed host checkpoint, denied-file host positive controls,
+thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, memory over-allocation, timeout,
+cancellation, worker crash, service and host kill/reopen cleanup, denied-file host positive controls,
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
-geometry, and a perspective Cycles render.
+geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,
+and a perspective Cycles render.
 
 Evidence separates host-observed open-to-ready and job durations from service-observed cold start,
 worker/verifier wall times, worker/verifier/service footprints, disk/file peaks, and descendant peak.

@@ -52,14 +52,9 @@ private func terminateLeasedProcess(_ lease: BpyProcessLease) -> Bool {
           processExecutable(lease.processIdentifier) == lease.executable else {
         return true
     }
-    _ = Darwin.kill(-lease.processIdentifier, SIGSTOP)
-    _ = Darwin.kill(lease.processIdentifier, SIGSTOP)
-    guard processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
-          processExecutable(lease.processIdentifier) == lease.executable else {
-        return true
+    guard Darwin.kill(lease.processIdentifier, SIGTERM) == 0 || errno == ESRCH else {
+        return false
     }
-    _ = Darwin.kill(-lease.processIdentifier, SIGKILL)
-    _ = Darwin.kill(lease.processIdentifier, SIGKILL)
     let deadline = Date().addingTimeInterval(5)
     while Date() < deadline {
         guard processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
@@ -235,7 +230,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         inputs: [BpyApprovedInputCopy] = [],
         timeoutSeconds: Int? = nil,
         diagnosticDeniedPaths: [String] = [],
-        diagnosticAutoexecPositiveControl: Bool = false
+        diagnosticAutoexecPositiveControl: Bool = false,
+        diagnosticDeferExecutionAuthorization: Bool = false
     ) throws -> BpyRuntimeJobResult {
         submissionLock.lock()
         defer { submissionLock.unlock() }
@@ -324,7 +320,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
             jobID: id,
             fingerprint: fingerprint,
             response: response,
-            timeoutSeconds: timeout
+            timeoutSeconds: timeout,
+            diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization
         )
         cache(result, for: id)
         return result
@@ -334,9 +331,15 @@ final class BpyRuntimeSession: @unchecked Sendable {
         jobID: UUID,
         fingerprint: String,
         response initialResponse: BpyServiceResponse,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        diagnosticDeferExecutionAuthorization: Bool
     ) throws -> BpyRuntimeJobResult {
         var response = initialResponse
+        if diagnosticDeferExecutionAuthorization,
+           response.activeProcessAuthorizationID != nil {
+            while true { Thread.sleep(forTimeInterval: 0.05) }
+        }
+        response = try authorizeProcessIfNeeded(response, jobID: jobID)
         let joinedExistingJob = response.joinedExistingJob
         let deadline = Date().addingTimeInterval(
             TimeInterval(timeoutSeconds + 15)
@@ -349,6 +352,11 @@ final class BpyRuntimeSession: @unchecked Sendable {
                   response.jobFingerprint == fingerprint else {
                 throw BpyRuntimeError.rejected(response.message ?? "The 3D job disappeared.")
             }
+            if diagnosticDeferExecutionAuthorization,
+               response.activeProcessAuthorizationID != nil {
+                while true { Thread.sleep(forTimeInterval: 0.05) }
+            }
+            response = try authorizeProcessIfNeeded(response, jobID: jobID)
         }
         response.joinedExistingJob = joinedExistingJob
         if response.state == .awaitingConfirmation {
@@ -1047,7 +1055,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
 
     private func recordProcessLease(_ response: BpyServiceResponse, transportID: UUID) {
         let expectedExecutable = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/BpyRuntime/python/bin/python3")
+            .appendingPathComponent("Contents/Helpers/NexGenVideoBpySupervisor")
             .resolvingSymlinksInPath().path
         lock.lock()
         defer { lock.unlock() }
@@ -1056,7 +1064,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
            let startAbsoluteTime = response.activeProcessStartAbsoluteTime,
            let executable = response.activeProcessExecutable,
            processIdentifier > 1,
-           URL(fileURLWithPath: executable).resolvingSymlinksInPath().path == expectedExecutable {
+           URL(fileURLWithPath: executable).resolvingSymlinksInPath().path == expectedExecutable,
+           processStartAbsoluteTime(processIdentifier) == startAbsoluteTime,
+           processExecutable(processIdentifier) == expectedExecutable {
             activeProcessLease = .init(
                 transportID: transportID,
                 processIdentifier: processIdentifier,
@@ -1066,6 +1076,50 @@ final class BpyRuntimeSession: @unchecked Sendable {
         } else if response.state?.isTerminal == true || response.state == .awaitingConfirmation {
             activeProcessLease = nil
         }
+    }
+
+    private func authorizeProcessIfNeeded(
+        _ response: BpyServiceResponse,
+        jobID: UUID
+    ) throws -> BpyServiceResponse {
+        guard let authorizationID = response.activeProcessAuthorizationID else { return response }
+        guard response.jobID == jobID,
+              let processIdentifier = response.activeProcessIdentifier,
+              let startAbsoluteTime = response.activeProcessStartAbsoluteTime,
+              let executable = response.activeProcessExecutable else {
+            throw BpyRuntimeError.invalidOutput("The 3D service returned an incomplete process authorization.")
+        }
+        let transportID = currentSessionID()
+        lock.lock()
+        let lease = activeProcessLease
+        lock.unlock()
+        guard lease?.transportID == transportID,
+              lease?.processIdentifier == processIdentifier,
+              lease?.startAbsoluteTime == startAbsoluteTime,
+              lease?.executable == executable,
+              processStartAbsoluteTime(processIdentifier) == startAbsoluteTime,
+              processExecutable(processIdentifier) == executable else {
+            throw BpyRuntimeError.invalidOutput("The 3D process could not be bound to the host lease.")
+        }
+        let request = BpyAuthorizeProcessRequest(
+            sessionID: transportID,
+            jobID: jobID,
+            authorizationID: authorizationID,
+            processIdentifier: processIdentifier,
+            processStartAbsoluteTime: startAbsoluteTime,
+            processExecutable: executable
+        )
+        let authorized = try call { service, reply in
+            service.authorizeProcess(try Self.encode(request), withReply: reply)
+        }
+        guard authorized.ok,
+              authorized.jobID == jobID,
+              authorized.activeProcessAuthorizationID == nil else {
+            throw BpyRuntimeError.rejected(
+                authorized.message ?? "The 3D process authorization was rejected."
+            )
+        }
+        return authorized
     }
 
     private static func fingerprint(
