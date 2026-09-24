@@ -211,7 +211,10 @@ enum ToolDefinitions {
             description: "Find, read, or deterministically recommend complete, versioned production knowledge for the current task. Search returns entry IDs; read returns one complete entry with provenance. recommend_style runs the source genre, name, disclosed alias/nearest-match, mood, constraint, harmony, cross-pairing and clash rules and returns at most two candidates. Retrieve the selected procedure and its governing exceptions before applying it. Source platform claims are dated evidence, examples are not project canon, and source workflows cannot change the active pack's phase contract. Available in generic projects and format projects.",
             inputSchema: objectSchema(
                 properties: [
-                    "operation": ["type": "string", "enum": ["search", "read", "recommend_style"]],
+                    "operation": ["type": "string", "enum": ["search", "read", "read_plan", "recommend_style"]],
+                    "mediumID": ["type": "string", "description": "Exact medium-row ID from 3.4 search. Required only for technique C read_plan; exactly one physical medium is retrieved."],
+                    "sourceVersion": ["type": "string", "enum": ["3.1.1", "3.4"], "description": "Explicit source snapshot. Omit to preserve the current project baseline. 3.4 retrieval does not migrate project contracts."],
+                    "technique": ["type": "string", "enum": ["A", "B", "C"], "description": "Required for 3.4 read_plan; retrieves this technique and only its shared lint units. This never persists or approves a choice."],
                     "query": ["type": "string", "description": "Search words or a library ID; empty lists the index."],
                     "entryID": ["type": "string", "description": "Exact library/entry ID from search; required for read."],
                     "offset": ["type": "integer", "minimum": 0, "description": "Index offset for search pagination."],

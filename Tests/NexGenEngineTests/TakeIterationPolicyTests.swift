@@ -37,12 +37,37 @@ struct TakeIterationPolicyTests {
         #expect(try TakeIterationAssessmentV1.assess(rolls: differentAxis, currentPromptRevisionID: "e", policy: .init()).recommendation != .modelLimitEligible)
     }
 
-    @Test func duplicateEventsCannotInventABatchAndAnAcceptedCandidateBreaksFailure() throws {
+    @Test func duplicateEventsCannotInventABatchAndThreeFailuresOutweighOneOutlier() throws {
         let roll = batch("a")[0]
         #expect(throws: (any Error).self) { try TakeIterationAssessmentV1.assess(rolls: Array(repeating: roll, count: 4), currentPromptRevisionID: "a", policy: .init()) }
         let rolls = Array(batch("a").prefix(3)) + [.init(eventID: "good", promptRevisionID: "a", reviewed: true, rejectedAxis: nil)]
         let result = try TakeIterationAssessmentV1.assess(rolls: rolls, currentPromptRevisionID: "a", policy: .init())
-        #expect(result.recommendation == .chooseCandidate)
-        #expect(result.completedFailedIterations == 0)
+        #expect(result.recommendation == .reviseOneVariable)
+        #expect(result.completedFailedIterations == 1)
     }
+
+    @Test func overfullRevisionCannotBeReportedAsOneFourRollBatch() throws {
+        let rolls = batch("a") + [.init(eventID: "fifth", promptRevisionID: "a", reviewed: true, rejectedAxis: "identity")]
+        #expect(throws: (any Error).self) {
+            try TakeIterationAssessmentV1.assess(rolls: rolls, currentPromptRevisionID: "a", policy: .init())
+        }
+    }
+
+    @Test func oneOrTwoOutliersAndMixedAxesDoNotFailTheBatch() throws {
+        for rejected in 1...2 {
+            let rolls = (0..<4).map { index in
+                TakeIterationRollV1(eventID: "r-\(index)", promptRevisionID: "a", reviewed: true,
+                                    rejectedAxis: index < rejected ? "camera" : nil)
+            }
+            let result = try TakeIterationAssessmentV1.assess(rolls: rolls, currentPromptRevisionID: "a", policy: .init())
+            #expect(result.completedFailedIterations == 0)
+            #expect(result.recommendation == .chooseCandidate)
+        }
+        let split = (0..<4).map { index in
+            TakeIterationRollV1(eventID: "r-\(index)", promptRevisionID: "a", reviewed: true,
+                                rejectedAxis: index < 2 ? "camera" : "identity")
+        }
+        #expect(try TakeIterationAssessmentV1.assess(rolls: split, currentPromptRevisionID: "a", policy: .init()).completedFailedIterations == 0)
+    }
+
 }

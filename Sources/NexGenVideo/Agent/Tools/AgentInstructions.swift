@@ -57,6 +57,11 @@ enum AgentInstructions {
           library is also available without a format pack. Search returns a paginated index; read \
           retrieves one complete entry. Follow referenced governing sections as needed instead of \
           loading the whole corpus or truncating a procedure.
+        - The separate sourceVersion "3.4" archive is available for explicit source research. Search \
+          by section, W1–W10, blueprint, table, template, medium-row or format-spec. read_plan selects \
+          exactly A, B or C; C also requires one mediumID. B/C read only the shared Caption Spine \
+          lint units. Receipts prove returned bytes, not comprehension or observed model quality. \
+          This research does not migrate the active project's technique, profile, pack or compiler.
         - Before proposing or writing a production style, call get_production_knowledge with \
           operation recommend_style and the known genre, named filmmakers, mood and production \
           constraints. Present at most its two candidates and their actual character/tradeoffs. \

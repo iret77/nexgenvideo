@@ -84,15 +84,20 @@ public struct TakeIterationAssessmentV1: Codable, Sendable, Equatable {
             if groups[roll.promptRevisionID] == nil { order.append(roll.promptRevisionID) }
             groups[roll.promptRevisionID, default: []].append(roll)
         }
+        guard groups.values.allSatisfy({ $0.count <= policy.rollsPerPrompt }) else {
+            throw TakeIterationError.invalid("A prompt revision exceeds its declared roll batch. Reconcile its policy before assessing failures.")
+        }
         let iterations: [Iteration] = order.map { id in
             let group = groups[id] ?? []
             let pending = group.filter { !$0.reviewed }.count
             let accepted = group.contains { $0.reviewed && $0.rejectedAxis == nil }
-            let axes = Set(group.compactMap(\.rejectedAxis))
-            let failed = group.count >= policy.rollsPerPrompt && pending == 0 && !accepted && axes.count == 1
+            let axisCounts = Dictionary(grouping: group.compactMap(\.rejectedAxis), by: { $0 }).mapValues(\.count)
+            let threshold = policy.rollsPerPrompt == 4 ? 3 : policy.rollsPerPrompt
+            let failedAxis = group.count == policy.rollsPerPrompt && pending == 0
+                ? axisCounts.keys.sorted().first(where: { axisCounts[$0, default: 0] >= threshold }) : nil
             let channels = Set(group.compactMap(\.controlChannel))
             return Iteration(promptRevisionID: id, rolls: group.count, pendingReviews: pending,
-                hasAcceptedCandidate: accepted, failedAxis: failed ? axes.first : nil,
+                hasAcceptedCandidate: accepted, failedAxis: failedAxis,
                 cleanRewrite: group.allSatisfy(\.cleanRewrite) && channels.count == 1,
                 controlChannel: channels.count == 1 ? channels.first : nil)
         }
@@ -102,7 +107,7 @@ public struct TakeIterationAssessmentV1: Codable, Sendable, Equatable {
         let clean = failures.filter(\.cleanRewrite)
         let cleanChannels = Set(clean.compactMap(\.controlChannel))
         let recommendation: Recommendation
-        if current?.hasAcceptedCandidate == true { recommendation = .chooseCandidate }
+        if current?.hasAcceptedCandidate == true && current?.failedAxis == nil { recommendation = .chooseCandidate }
         else if (current?.pendingReviews ?? 0) > 0 { recommendation = .reviewPending }
         else if iterations.count >= policy.iterationsBeforeSimplification { recommendation = .simplifyShot }
         else if clean.count >= policy.cleanFailuresBeforeModelLimit && cleanChannels.count >= policy.channelsBeforeModelLimit {

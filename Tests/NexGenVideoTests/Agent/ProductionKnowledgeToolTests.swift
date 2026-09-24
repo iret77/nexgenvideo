@@ -90,4 +90,25 @@ struct ProductionKnowledgeToolTests {
         #expect(ozu.contains("the 360° assembly happens in the NLE, not inside a take"))
         #expect(ozu.contains("state the axis in every one of those prompts"))
     }
+
+    @Test("3.4 tool reads actual selected bytes and receipts without replacing legacy reads")
+    func archiveTechniqueToolRead() throws {
+        let executor = ToolExecutor(editorProvider: { nil })
+        let result = try text(executor.getProductionKnowledge([
+            "operation": "read_plan", "sourceVersion": "3.4", "technique": "B",
+        ]))
+        #expect(result.contains("video-prompting-2754d80e7b56-u11921"))
+        #expect(!result.contains("Form — eight elements"))
+        #expect(result.contains("utf8Bytes"))
+        #expect(result.contains("Semantic findings remain unmeasured"))
+        let runbook = try text(executor.getProductionKnowledge([
+            "operation": "read", "sourceVersion": "3.4", "entryID": "W10",
+        ]))
+        #expect(runbook.lowercased().contains("animatic"))
+        #expect(runbook.contains("4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012"))
+        #expect(throws: (any Error).self) {
+            try executor.getProductionKnowledge(["operation": "read_plan", "sourceVersion": "3.4", "technique": "C"])
+        }
+    }
+
 }
