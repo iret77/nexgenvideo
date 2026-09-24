@@ -69,6 +69,18 @@ enum ReferenceHosting: Equatable {
 @MainActor
 final class GenerationService {
 
+    private enum MireloSpendRecoveryKind: String, Hashable {
+        case resumable
+        case acceptanceUnknown
+        case conflict
+        case orphan
+    }
+
+    private struct MireloSpendRecoveryIssue: Hashable {
+        let kind: MireloSpendRecoveryKind
+        let detail: String
+    }
+
     private struct MireloReconciliationOperation {
         let assetID: String
         let transactionID: String
@@ -2093,6 +2105,9 @@ final class GenerationService {
                 onFailure: onFailure
             )
         }
+        defer {
+            try? refreshMireloSpendRecovery(editor: editor, store: store)
+        }
         var executionWasApproved = false
         do {
             let sourceReceipts: [MireloSourceReceipt]
@@ -2208,7 +2223,8 @@ final class GenerationService {
                     try self.recordMireloSubmittedIfNeeded(
                         accepted,
                         authorization: authorization,
-                        editor: editor
+                        editor: editor,
+                        store: store
                     )
                 }
             )
@@ -2261,7 +2277,8 @@ final class GenerationService {
                 try? recordMireloSubmittedIfNeeded(
                     current,
                     authorization: authorization,
-                    editor: editor
+                    editor: editor,
+                    store: store
                 )
             }
             if !executionWasApproved {
@@ -2427,6 +2444,9 @@ final class GenerationService {
             projectHome: workingRoot,
             editor: editor
         )
+        defer {
+            try? refreshMireloSpendRecovery(editor: editor, store: store)
+        }
         guard var record = try store.load(
             projectKey: projectKey,
             logicalJobID: transactionID
@@ -2488,7 +2508,8 @@ final class GenerationService {
                 try self.recordMireloSubmittedIfNeeded(
                     accepted,
                     authorization: authorization,
-                    editor: editor
+                    editor: editor,
+                    store: store
                 )
             }
         )
@@ -2559,7 +2580,8 @@ final class GenerationService {
                 try recordMireloSubmittedIfNeeded(
                     record,
                     authorization: authorization,
-                    editor: editor
+                    editor: editor,
+                    store: store
                 )
             }
             if record.state == .completed,
@@ -2626,27 +2648,21 @@ final class GenerationService {
         )
         var submissions: [(MireloExecutionRecord, GenerationAuthorization)] = []
         var releases: [(MireloExecutionRecord, GenerationAuthorization)] = []
-        var issues: [String] = []
+        var reconciliationIssues: [MireloSpendRecoveryIssue] = []
         for record in records {
             guard let transactionID = record.spendTransactionID else { continue }
-            let hasSubmissionRisk = record.providerJobID != nil
-                || record.state == .submitting
-                || record.state == .acceptanceUnknown
+            if MireloExecutionCoordinator.shared.hasActiveFlight(
+                authorityID: record.authorityID
+            ) {
+                continue
+            }
             let events = editor.generationLog.spendEvents.filter {
                 $0.transactionId == transactionID
             }
             guard !events.isEmpty else {
-                if hasSubmissionRisk {
-                    issues.append(
-                        "Authority \(record.logicalJobID) has provider acceptance evidence but no reservation in this project copy."
-                    )
-                }
                 continue
             }
             guard grouped[transactionID]?.count == 1 else {
-                issues.append(
-                    "Multiple Mirelo authority records claim reservation \(transactionID)."
-                )
                 continue
             }
             guard let first = events.first,
@@ -2663,9 +2679,6 @@ final class GenerationService {
                         && $0.transport == first.transport
                         && $0.endpoint == first.endpoint
                   }) else {
-                issues.append(
-                    "Authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
-                )
                 continue
             }
             let authorization = Self.mireloReconciliationAuthorization(
@@ -2678,40 +2691,23 @@ final class GenerationService {
                     guard submitted.count == 1,
                           submitted[0].providerRequestId == providerJobID,
                           events.last?.kind != .released else {
-                        issues.append(
-                            "Authority \(record.logicalJobID) names a different provider job than reservation \(transactionID)."
-                        )
                         continue
                     }
                     continue
                 }
                 guard events.last?.kind == .reserved else {
-                    issues.append(
-                        "Authority \(record.logicalJobID) cannot attach its provider job to reservation \(transactionID)."
-                    )
                     continue
                 }
                 submissions.append((record, authorization))
                 continue
             }
             guard !events.contains(where: { $0.kind == .submitted }) else {
-                issues.append(
-                    "Authority \(record.logicalJobID) lost the provider job identity recorded by reservation \(transactionID)."
-                )
                 continue
             }
             if record.state == .failed {
                 if events.last?.kind == .reserved {
                     releases.append((record, authorization))
-                } else if events.last?.kind != .released {
-                    issues.append(
-                        "Rejected authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
-                    )
                 }
-            } else if record.state == .submitting || record.state == .acceptanceUnknown {
-                issues.append(
-                    "Authority \(record.logicalJobID) has unresolved Mirelo acceptance for reservation \(transactionID)."
-                )
             }
         }
         for (record, authorization) in submissions {
@@ -2720,12 +2716,15 @@ final class GenerationService {
                 try recordMireloSubmittedIfNeeded(
                     record,
                     authorization: authorization,
-                    editor: editor
+                    editor: editor,
+                    store: store,
+                    refreshRecovery: false
                 )
             } catch {
-                issues.append(
-                    "Authority \(record.logicalJobID) could not persist its accepted provider job: \(error.localizedDescription)"
-                )
+                reconciliationIssues.append(.init(
+                    kind: .conflict,
+                    detail: "Authority \(record.logicalJobID) could not persist its accepted provider job: \(error.localizedDescription)"
+                ))
             }
         }
         for (record, authorization) in releases {
@@ -2737,12 +2736,157 @@ final class GenerationService {
                     note: record.lastError
                 )
             } catch {
-                issues.append(
-                    "Rejected authority \(record.logicalJobID) could not release its reservation: \(error.localizedDescription)"
-                )
+                reconciliationIssues.append(.init(
+                    kind: .conflict,
+                    detail: "Rejected authority \(record.logicalJobID) could not release its reservation: \(error.localizedDescription)"
+                ))
             }
         }
+        let issues = reconciliationIssues + mireloSpendRecoveryIssues(
+            records: records,
+            editor: editor
+        )
         reportMireloSpendRecovery(issues, editor: editor)
+    }
+
+    func refreshMireloSpendRecovery(
+        editor: EditorViewModel,
+        store suppliedStore: MireloExecutionStore? = nil
+    ) throws {
+        guard let projectKey = editor.projectId else { return }
+        let projectHasMireloEvidence = editor.generationLog.spendEvents.contains {
+            $0.provider == .mirelo
+        } || editor.mediaManifest.entries.contains {
+            $0.mireloExecutionTransactionId != nil
+                || $0.generationInput?.model.hasPrefix("mirelo/") == true
+        }
+        guard projectHasMireloEvidence
+                || editor.mireloSpendRecoveryMessage != nil else { return }
+        let store: MireloExecutionStore
+        do {
+            if let suppliedStore {
+                store = suppliedStore
+            } else {
+                store = try mireloStoreProvider()
+            }
+        } catch {
+            if projectHasMireloEvidence || editor.mireloSpendRecoveryMessage != nil {
+                throw error
+            }
+            return
+        }
+        let records: [MireloExecutionRecord]
+        do {
+            records = try store.all(projectKey: projectKey).filter {
+                $0.approvedAt != nil && $0.spendTransactionID != nil
+            }
+        } catch {
+            if projectHasMireloEvidence || editor.mireloSpendRecoveryMessage != nil {
+                throw error
+            }
+            return
+        }
+        reportMireloSpendRecovery(
+            mireloSpendRecoveryIssues(records: records, editor: editor),
+            editor: editor
+        )
+    }
+
+    private func mireloSpendRecoveryIssues(
+        records: [MireloExecutionRecord],
+        editor: EditorViewModel
+    ) -> [MireloSpendRecoveryIssue] {
+        let grouped = Dictionary(grouping: records) { $0.spendTransactionID ?? "" }
+        var issues: [MireloSpendRecoveryIssue] = []
+        for record in records {
+            guard let transactionID = record.spendTransactionID else { continue }
+            if MireloExecutionCoordinator.shared.hasActiveFlight(
+                authorityID: record.authorityID
+            ) {
+                continue
+            }
+            let events = editor.generationLog.spendEvents.filter {
+                $0.transactionId == transactionID
+            }
+            let hasSubmissionRisk = record.providerJobID != nil
+                || record.state == .submitting
+                || record.state == .acceptanceUnknown
+            guard !events.isEmpty else {
+                if hasSubmissionRisk {
+                    issues.append(.init(
+                        kind: .orphan,
+                        detail: "Authority \(record.logicalJobID) has submission evidence but no reservation in this project copy."
+                    ))
+                }
+                continue
+            }
+            guard grouped[transactionID]?.count == 1 else {
+                issues.append(.init(
+                    kind: .conflict,
+                    detail: "Multiple Mirelo authority records claim reservation \(transactionID)."
+                ))
+                continue
+            }
+            guard let first = events.first,
+                  first.kind == .reserved,
+                  first.provider == .mirelo,
+                  first.transport == .api,
+                  let authorityModel = Self.mireloAuthorityModelID(record),
+                  first.model == authorityModel,
+                  first.endpoint == record.operation.createPath
+                    || first.endpoint == String(authorityModel.dropFirst("mirelo/".count)),
+                  events.allSatisfy({
+                    $0.model == first.model
+                        && $0.provider == first.provider
+                        && $0.transport == first.transport
+                        && $0.endpoint == first.endpoint
+                  }) else {
+                issues.append(.init(
+                    kind: .conflict,
+                    detail: "Authority \(record.logicalJobID) conflicts with reservation \(transactionID)."
+                ))
+                continue
+            }
+            if let providerJobID = record.providerJobID {
+                let submitted = events.filter { $0.kind == .submitted }
+                guard submitted.count == 1,
+                      submitted[0].providerRequestId == providerJobID,
+                      events.last?.kind != .released else {
+                    issues.append(.init(
+                        kind: .conflict,
+                        detail: "Authority \(record.logicalJobID) and reservation \(transactionID) do not name the same accepted provider job."
+                    ))
+                    continue
+                }
+                continue
+            }
+            if events.contains(where: { $0.kind == .submitted }) {
+                issues.append(.init(
+                    kind: .conflict,
+                    detail: "Authority \(record.logicalJobID) lost the provider job recorded by reservation \(transactionID)."
+                ))
+                continue
+            }
+            if record.state == .submitting || record.state == .acceptanceUnknown {
+                issues.append(.init(
+                    kind: record.operation.usesIdempotencyKey
+                        ? .resumable
+                        : .acceptanceUnknown,
+                    detail: "Authority \(record.logicalJobID) has unresolved Mirelo acceptance for reservation \(transactionID)."
+                ))
+            } else if record.state == .failed, events.last?.kind != .released {
+                issues.append(.init(
+                    kind: .conflict,
+                    detail: "Rejected authority \(record.logicalJobID) is still attached to reservation \(transactionID)."
+                ))
+            }
+        }
+        return Array(Set(issues)).sorted {
+            if $0.kind.rawValue == $1.kind.rawValue {
+                return $0.detail < $1.detail
+            }
+            return $0.kind.rawValue < $1.kind.rawValue
+        }
     }
 
     private static func mireloAuthorityModelID(
@@ -2783,23 +2927,54 @@ final class GenerationService {
     }
 
     private func reportMireloSpendRecovery(
-        _ issues: [String],
+        _ reportedIssues: [MireloSpendRecoveryIssue],
         editor: EditorViewModel
     ) {
-        let fingerprint = issues.sorted().joined(separator: "\n")
+        let issues = Array(Set(reportedIssues)).sorted {
+            if $0.kind.rawValue == $1.kind.rawValue {
+                return $0.detail < $1.detail
+            }
+            return $0.kind.rawValue < $1.kind.rawValue
+        }
+        let fingerprint = issues.map {
+            "\($0.kind.rawValue):\($0.detail)"
+        }.joined(separator: "\n")
         guard !fingerprint.isEmpty else {
             editor.mireloSpendRecoveryMessage = nil
             editor.mireloSpendRecoveryNoticeFingerprint = nil
             return
         }
         for issue in issues {
-            Log.generation.error("Mirelo spend recovery: \(issue)")
+            Log.generation.error("Mirelo spend recovery: \(issue.detail)")
         }
-        let count = issues.count
-        let message = "Budget stop: \(count) Mirelo "
-            + "\(count == 1 ? "job has" : "jobs have") spend evidence that this project copy "
-            + "cannot account for. Open the project copy that created the job or restore its "
-            + "matching Recovery copy before generating again."
+        var guidance: [String] = []
+        let resumable = issues.filter { $0.kind == .resumable }.count
+        if resumable > 0 {
+            guidance.append(
+                "\(resumable) Mirelo \(resumable == 1 ? "job has" : "jobs have") unresolved acceptance. Resume the same job from its media item or with run_mirelo_audio; do not create a new logical job."
+            )
+        }
+        let acceptanceUnknown = issues.filter {
+            $0.kind == .acceptanceUnknown
+        }.count
+        if acceptanceUnknown > 0 {
+            guidance.append(
+                "Mirelo acceptance is unknown for \(acceptanceUnknown) non-idempotent \(acceptanceUnknown == 1 ? "job" : "jobs"). Check Mirelo usage; NexGenVideo cannot safely retry or release this authority."
+            )
+        }
+        let conflicts = issues.filter { $0.kind == .conflict }.count
+        if conflicts > 0 {
+            guidance.append(
+                "\(conflicts) Mirelo spend \(conflicts == 1 ? "record conflicts" : "records conflict") with host authority. NexGenVideo cannot safely repair this in-app; retain the project and its Recovery copy for diagnosis."
+            )
+        }
+        let orphans = issues.filter { $0.kind == .orphan }.count
+        if orphans > 0 {
+            guidance.append(
+                "Host authority contains \(orphans) submitted Mirelo \(orphans == 1 ? "job" : "jobs") absent from this copy. Continue in the originating project or Recovery copy if it still exists. If it was discarded, no safe in-app recovery exists."
+            )
+        }
+        let message = "Budget stop: " + guidance.joined(separator: " ")
         editor.mireloSpendRecoveryMessage = message
         guard editor.mireloSpendRecoveryNoticeFingerprint != fingerprint else { return }
         editor.mireloSpendRecoveryNoticeFingerprint = fingerprint
@@ -3116,7 +3291,9 @@ final class GenerationService {
     private func recordMireloSubmittedIfNeeded(
         _ record: MireloExecutionRecord,
         authorization: GenerationAuthorization,
-        editor: EditorViewModel
+        editor: EditorViewModel,
+        store: MireloExecutionStore,
+        refreshRecovery: Bool = true
     ) throws {
         guard let providerJobID = record.providerJobID,
               let transactionID = authorization.transactionId else { return }
@@ -3127,6 +3304,9 @@ final class GenerationService {
                 throw GenerationRequestError.storage(
                     "The Mirelo provider job does not match the project spend record."
                 )
+            }
+            if refreshRecovery {
+                try refreshMireloSpendRecovery(editor: editor, store: store)
             }
             return
         }
@@ -3139,6 +3319,9 @@ final class GenerationService {
             money: authorization.estimate,
             note: "Mirelo preflight: \(record.preflight.credits) credits. Monetary conversion is not published."
         )
+        if refreshRecovery {
+            try refreshMireloSpendRecovery(editor: editor, store: store)
+        }
     }
 
     private func releaseNativeMireloReservationIfRejected(

@@ -1057,6 +1057,12 @@ extension ToolExecutor {
         workingRoot: URL,
         workingCopyKey: String
     ) async throws -> ToolResult {
+        defer {
+            try? editor.generationService.refreshMireloSpendRecovery(
+                editor: editor,
+                store: store
+            )
+        }
         do {
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             var outcome = try await MireloExecutionCoordinator.shared.execute(
@@ -1071,12 +1077,20 @@ extension ToolExecutor {
                         authorization: authorization,
                         editor: editor
                     )
+                    try editor.generationService.refreshMireloSpendRecovery(
+                        editor: editor,
+                        store: store
+                    )
                 }
             )
             try mireloRecordSubmittedIfNeeded(
                 outcome.record,
                 authorization: authorization,
                 editor: editor
+            )
+            try editor.generationService.refreshMireloSpendRecovery(
+                editor: editor,
+                store: store
             )
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             let artifacts: [MireloArtifact]

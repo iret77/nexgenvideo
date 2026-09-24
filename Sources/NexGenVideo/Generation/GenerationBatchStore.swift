@@ -178,27 +178,157 @@ enum GenerationBatchStore {
         try authority.recordSpendEvent(event, authorization: authorization)
     }
 
-    static func reconcileRuntime(_ snapshots: [Snapshot], editor: EditorViewModel) throws {
+    @discardableResult
+    static func reconcileRuntime(
+        _ snapshots: [Snapshot],
+        editor: EditorViewModel,
+        authority supplied: GenerationExecutionAuthorityStore? = nil
+    ) throws -> [Snapshot] {
         guard let home = editor.workingRoot else {
             throw GenerationRequestError.storage("The generation batch project is closed.")
         }
-        var changedLog = false
-        for event in snapshots.flatMap(\.authoritySpendEvents) {
-            if let existing = editor.generationLog.spendEvents.first(where: { $0.id == event.id }) {
+        let authority = try supplied ?? .live()
+        var reconciledSnapshots = snapshots
+        for index in reconciledSnapshots.indices where reconciledSnapshots[index].authorityAvailable {
+            let snapshot = reconciledSnapshots[index]
+            var repairedEvents = snapshot.authoritySpendEvents
+            for execution in snapshot.journal.executions {
+                guard let transactionID = execution.transactionID else { continue }
+                let projectEvents = editor.generationLog.spendEvents.filter {
+                    $0.transactionId == transactionID
+                }
+                guard projectEvents.last?.kind == .released else { continue }
+                let authorityEvents = repairedEvents.filter {
+                    $0.transactionId == transactionID
+                }
+                if authorityEvents.contains(where: { $0.id == projectEvents.last?.id }) {
+                    continue
+                }
+                guard authorityEvents.count == 1,
+                      authorityEvents[0].kind == .reserved,
+                      projectEvents.count == 2,
+                      projectEvents[0] == authorityEvents[0],
+                      let release = projectEvents.last else {
+                    throw GenerationRequestError.storage(
+                        "The project release conflicts with its approved generation authority."
+                    )
+                }
+                try authority.recordSpendEvent(
+                    release,
+                    authorization: GenerationBatchAuthorization(
+                        batchID: snapshot.batch.id,
+                        itemID: execution.itemID
+                    )
+                )
+                repairedEvents.append(release)
+            }
+            if repairedEvents != snapshot.authoritySpendEvents {
+                reconciledSnapshots[index] = Snapshot(
+                    batch: snapshot.batch,
+                    journal: snapshot.journal,
+                    authorityAvailable: true,
+                    authoritySpendEvents: repairedEvents,
+                    recoveredOutputs: snapshot.recoveredOutputs
+                )
+            }
+        }
+
+        var nextLog = editor.generationLog
+        let authorityEvents = reconciledSnapshots.flatMap(\.authoritySpendEvents)
+        for event in authorityEvents {
+            if let existing = nextLog.spendEvents.first(where: { $0.id == event.id }) {
                 guard existing == event else {
                     throw GenerationRequestError.storage("A project spend event conflicts with its execution authority.")
                 }
             } else {
-                editor.generationLog.spendEvents.append(event)
-                changedLog = true
+                nextLog.spendEvents.append(event)
             }
         }
-        _ = try GenerationBudgetGuard.verifiedSpend(log: editor.generationLog,
-            generatedAssets: editor.mediaAssets, requireCompleteMoney: false)
-        if changedLog { try editor.persistGenerationLog() }
+
+        var releasedTransactions: Set<String> = []
+        for transactionID in Set(authorityEvents.filter { $0.kind == .released }.map(\.transactionId)) {
+            let events = nextLog.spendEvents.filter { $0.transactionId == transactionID }
+            guard events.count == 2,
+                  events.first?.kind == .reserved,
+                  events.last?.kind == .released else {
+                throw GenerationRequestError.storage(
+                    "Released batch authority conflicts with submitted or charged project spend."
+                )
+            }
+            releasedTransactions.insert(transactionID)
+        }
+
+        let releasedAssets = editor.mediaAssets.filter { asset in
+            guard let transactionID = asset.generationInput?.spendTransactionId else {
+                return false
+            }
+            return releasedTransactions.contains(transactionID)
+        }
+        guard releasedAssets.allSatisfy({
+            !FileManager.default.fileExists(atPath: $0.url.path)
+        }) else {
+            throw GenerationRequestError.storage(
+                "Released batch authority is attached to generated project media."
+            )
+        }
+        var nextManifest = editor.mediaManifest
+        for index in nextManifest.entries.indices {
+            guard let transactionID = nextManifest.entries[index]
+                .generationInput?.spendTransactionId,
+                  releasedTransactions.contains(transactionID) else { continue }
+            guard let url = editor.mediaResolver.expectedURL(
+                for: nextManifest.entries[index].id
+            ), !FileManager.default.fileExists(atPath: url.path) else {
+                throw GenerationRequestError.storage(
+                    "Released batch authority conflicts with existing project media."
+                )
+            }
+            nextManifest.entries[index].generationInput = nil
+        }
+        nextLog.entries.removeAll { entry in
+            entry.spendTransactionId.map(releasedTransactions.contains) == true
+        }
+        let projectedInputs = editor.mediaAssets.compactMap { asset -> GenerationInput? in
+            guard let input = asset.generationInput,
+                  let transactionID = input.spendTransactionId,
+                  releasedTransactions.contains(transactionID) else {
+                return asset.generationInput
+            }
+            return nil
+        }
+        _ = try GenerationBudgetGuard.spendSnapshot(
+            log: nextLog,
+            generatedInputs: projectedInputs
+        )
+
+        if nextLog != editor.generationLog || nextManifest != editor.mediaManifest {
+            guard let key = editor.openWorkingCopyKey else {
+                throw GenerationRequestError.storage(
+                    "Recovered batch spend needs a live working copy."
+                )
+            }
+            let manifestData = try JSONEncoder().encode(nextManifest)
+            let logData = try JSONEncoder().encode(nextLog)
+            try ProjectWorkingCopy.transact(key: key) { staging in
+                try manifestData.write(
+                    to: staging.appendingPathComponent(Project.manifestFilename),
+                    options: .atomic
+                )
+                try logData.write(
+                    to: staging.appendingPathComponent(Project.generationLogFilename),
+                    options: .atomic
+                )
+            }
+            for asset in releasedAssets {
+                asset.generationInput = nil
+            }
+            editor.mediaManifest = nextManifest
+            editor.generationLog = nextLog
+            editor.onPipelineChanged?()
+        }
 
         var changedMedia = false
-        for receipt in snapshots.flatMap(\.recoveredOutputs) {
+        for receipt in reconciledSnapshots.flatMap(\.recoveredOutputs) {
             guard case .project(let path) = receipt.asset.source else { continue }
             let url = try ProjectLocalFile.resolve(path, dataRoot: home)
             if let asset = editor.mediaAssets.first(where: { $0.id == receipt.asset.id }) {
@@ -240,6 +370,7 @@ enum GenerationBatchStore {
             try ProjectWorkingCopy.markDirty(key: key)
             editor.onPipelineChanged?()
         }
+        return reconciledSnapshots
     }
 
     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {

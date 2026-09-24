@@ -1,5 +1,22 @@
 import Foundation
 
+private final class MireloFlightActivityIndex: @unchecked Sendable {
+    private let lock = NSLock()
+    private var authorityIDs: Set<String> = []
+
+    func insert(_ authorityID: String) {
+        lock.withLock { _ = authorityIDs.insert(authorityID) }
+    }
+
+    func remove(_ authorityID: String) {
+        lock.withLock { _ = authorityIDs.remove(authorityID) }
+    }
+
+    func contains(_ authorityID: String) -> Bool {
+        lock.withLock { authorityIDs.contains(authorityID) }
+    }
+}
+
 struct MireloExecutionOutcome: Sendable, Equatable {
     let record: MireloExecutionRecord
     let terminalResponse: Data
@@ -31,6 +48,11 @@ actor MireloExecutionCoordinator {
     private var inFlight: [String: Flight] = [:]
     private var retiring: [String: RetiringFlight] = [:]
     private var settlementWaiters: [String: [UUID: SettlementWaiter]] = [:]
+    nonisolated private let activityIndex = MireloFlightActivityIndex()
+
+    nonisolated func hasActiveFlight(authorityID: String) -> Bool {
+        activityIndex.contains(authorityID)
+    }
 
     func prepare(
         store: MireloExecutionStore,
@@ -222,6 +244,7 @@ actor MireloExecutionCoordinator {
                 result: result
             )
         }
+        activityIndex.insert(authorityID)
         inFlight[authorityID] = Flight(
             id: flightID,
             task: task,
@@ -275,6 +298,9 @@ actor MireloExecutionCoordinator {
             for waiter in waiters.values {
                 waiter.continuation.resume()
             }
+        }
+        if inFlight[authorityID] == nil, retiring[authorityID] == nil {
+            activityIndex.remove(authorityID)
         }
     }
 

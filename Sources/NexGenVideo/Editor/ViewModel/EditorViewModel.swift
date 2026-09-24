@@ -1333,5 +1333,6 @@ final class EditorViewModel {
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
     var mireloSpendRecoveryMessage: String?
     @ObservationIgnored var mireloSpendRecoveryNoticeFingerprint: String?
+    @ObservationIgnored var onWorkingCopyReloadCompleted: ((Result<Void, Error>) -> Void)?
 
 }

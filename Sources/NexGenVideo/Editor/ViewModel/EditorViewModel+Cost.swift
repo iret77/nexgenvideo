@@ -169,7 +169,9 @@ extension EditorViewModel {
         placeholders: [MediaAsset],
         preserveMireloExecutionIdentity: Bool = false,
         allowDetachedManifest: Bool = false,
-        note: String?
+        note: String?,
+        projectWriter: ((String, Data, Data) throws -> Void)? = nil,
+        batchWriter: ((GenerationSpendEvent, GenerationBatchAuthorization, EditorViewModel) throws -> Void)? = nil
     ) throws {
         guard let transactionID = authorization.transactionId else { return }
         guard
@@ -180,6 +182,48 @@ extension EditorViewModel {
             )
         }
         try authorization.projectMutationScope?.requireCurrent(editor: self)
+        let existingEvents = generationLog.spendEvents.filter {
+            $0.transactionId == transactionID
+        }
+        if existingEvents.last?.kind == .released {
+            guard existingEvents.count == 2,
+                  let reserved = existingEvents.first,
+                  let released = existingEvents.last,
+                  reserved.kind == .reserved,
+                  reserved.model == authorization.target.modelId,
+                  reserved.provider == authorization.target.provider,
+                  reserved.transport == authorization.target.transport,
+                  reserved.endpoint == authorization.target.endpoint,
+                  released.model == reserved.model,
+                  released.provider == reserved.provider,
+                  released.transport == reserved.transport,
+                  released.endpoint == reserved.endpoint,
+                  generationLog.entries.allSatisfy {
+                    $0.spendTransactionId != transactionID
+                  },
+                  mediaAssets.allSatisfy {
+                    $0.generationInput?.spendTransactionId != transactionID
+                  },
+                  mediaManifest.entries.allSatisfy({
+                    $0.generationInput?.spendTransactionId != transactionID
+                  }) else {
+                throw GenerationRequestError.storage(
+                    "The released generation remains attached to project media or activity."
+                )
+            }
+            if let batch = authorization.batchItem {
+                if let batchWriter {
+                    try batchWriter(released, batch, self)
+                } else {
+                    try GenerationBatchStore.recordSpendEvent(
+                        released,
+                        authorization: batch,
+                        editor: self
+                    )
+                }
+            }
+            return
+        }
         let matchingAssets = mediaAssets.filter {
             $0.generationInput?.spendTransactionId == transactionID
         }
@@ -220,9 +264,7 @@ extension EditorViewModel {
                 "The unsubmitted reservation conflicts with existing project media."
             )
         }
-        let transactionEvents = generationLog.spendEvents.filter {
-            $0.transactionId == transactionID
-        }
+        let transactionEvents = existingEvents
         guard transactionEvents.count == 1,
               let first = transactionEvents.first,
               transactionEvents.last?.kind == .reserved,
@@ -265,24 +307,21 @@ extension EditorViewModel {
             log: nextLog,
             generatedInputs: projectedInputs
         )
-        if let batch = authorization.batchItem {
-            try GenerationBatchStore.recordSpendEvent(
-                releaseEvent,
-                authorization: batch,
-                editor: self
-            )
-        }
         let manifestData = try JSONEncoder().encode(nextManifest)
         let logData = try JSONEncoder().encode(nextLog)
-        try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
-            try manifestData.write(
-                to: staging.appendingPathComponent(Project.manifestFilename),
-                options: .atomic
-            )
-            try logData.write(
-                to: staging.appendingPathComponent(Project.generationLogFilename),
-                options: .atomic
-            )
+        if let projectWriter {
+            try projectWriter(workingCopyKey, manifestData, logData)
+        } else {
+            try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
+                try manifestData.write(
+                    to: staging.appendingPathComponent(Project.manifestFilename),
+                    options: .atomic
+                )
+                try logData.write(
+                    to: staging.appendingPathComponent(Project.generationLogFilename),
+                    options: .atomic
+                )
+            }
         }
         for asset in expectedAssets.values {
             asset.generationInput = nil
@@ -293,6 +332,17 @@ extension EditorViewModel {
         mediaManifest = nextManifest
         generationLog = nextLog
         onPipelineChanged?()
+        if let batch = authorization.batchItem {
+            if let batchWriter {
+                try batchWriter(releaseEvent, batch, self)
+            } else {
+                try GenerationBatchStore.recordSpendEvent(
+                    releaseEvent,
+                    authorization: batch,
+                    editor: self
+                )
+            }
+        }
     }
 
     func releaseUnsubmittedSpendReservation(

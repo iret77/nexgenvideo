@@ -6,6 +6,18 @@ import Testing
 @Suite("Generation batch single-use execution")
 @MainActor
 struct GenerationBatchTests {
+    private struct ReleaseContext {
+        let root: URL
+        let editor: EditorViewModel
+        let batch: GenerationBatch
+        let item: GenerationBatch.Item
+        let authority: GenerationExecutionAuthorityStore
+        let authorityRoot: URL
+        let asset: MediaAsset
+        let authorization: GenerationAuthorization
+        let reservation: GenerationSpendEvent
+    }
+
     private func fixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-batch-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: root)
@@ -40,6 +52,90 @@ struct GenerationBatchTests {
             MediaAsset(id: "output-\(item.id)-\(index)", url: root.appendingPathComponent(Project.mediaDirectoryName + "/fixture-\(index).png"),
                 type: .image, name: item.purpose, duration: 1, generationInput: input).toManifestEntry(projectURL: root)
         }
+    }
+
+    private func releaseContext() async throws -> ReleaseContext {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-release-authority-\(UUID().uuidString)"
+        )
+        let authority = try GenerationExecutionAuthorityStore(
+            root: authorityRoot,
+            hostID: UUID().uuidString
+        )
+        let approved = try await GenerationBatchStore.approve(
+            batch,
+            editor: editor,
+            authority: authority
+        )
+        let item = batch.payload.items[0]
+        let transactionID = UUID().uuidString
+        let entries = placeholders(item, transaction: transactionID)
+        let entry = try #require(entries.first)
+        let home = try #require(editor.workingRoot)
+        let asset = MediaAsset(
+            entry: entry,
+            resolvedURL: home.appendingPathComponent(
+                Project.mediaDirectoryName + "/fixture-0.png"
+            )
+        )
+        editor.mediaAssets = [asset]
+        editor.persistMediaAsset(asset)
+        let reservation = GenerationSpendEvent(
+            transactionId: transactionID,
+            kind: .reserved,
+            model: item.package.payload.target.modelId,
+            provider: item.package.payload.target.provider,
+            transport: item.package.payload.target.transport,
+            endpoint: item.package.payload.target.endpoint,
+            money: item.package.payload.estimate
+        )
+        editor.generationLog.spendEvents = [reservation]
+        try editor.persistGenerationLog()
+        _ = try GenerationBatchStore.update(
+            approved,
+            editor: editor,
+            authority: authority,
+            addingSpendEvents: [reservation]
+        ) {
+            try $0.beginSubmission(
+                itemID: item.id,
+                packageID: item.package.id,
+                transactionID: transactionID,
+                placeholders: entries,
+                batch: batch
+            )
+        }
+        let authorization = GenerationAuthorization(
+            transactionId: transactionID,
+            target: item.package.payload.target,
+            estimate: item.package.payload.estimate,
+            projectMutationScope: try GenerationProjectMutationScope(
+                projectHome: home,
+                editor: editor
+            ),
+            generationPackage: item.package,
+            batchItem: GenerationBatchAuthorization(
+                batchID: batch.id,
+                itemID: item.id
+            )
+        )
+        return ReleaseContext(
+            root: root,
+            editor: editor,
+            batch: batch,
+            item: item,
+            authority: authority,
+            authorityRoot: authorityRoot,
+            asset: asset,
+            authorization: authorization,
+            reservation: reservation
+        )
+    }
+
+    private func cleanup(_ context: ReleaseContext) {
+        cleanup(context.root)
+        try? FileManager.default.removeItem(at: context.authorityRoot)
     }
 
     @Test func duplicateSubmissionsCannotReuseAnItemOrAnotherItemsReservation() async throws {
@@ -381,5 +477,143 @@ struct GenerationBatchTests {
         try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
         #expect(editor.mediaAssets.contains(where: { $0.id == entry.id && $0.generationStatus == .none }))
         #expect(editor.mediaManifest.entries.contains(entry))
+    }
+
+    @Test func releaseProjectWriteFailureLeavesAuthorityAndProjectReserved() async throws {
+        let context = try await releaseContext()
+        defer { cleanup(context) }
+        var batchWriteAttempted = false
+
+        #expect(throws: (any Error).self) {
+            try context.editor.releaseUnsubmittedSpendReservation(
+                authorization: context.authorization,
+                placeholders: [context.asset],
+                note: "Preparation failed.",
+                projectWriter: { _, _, _ in
+                    throw CocoaError(.fileWriteUnknown)
+                },
+                batchWriter: { _, _, _ in
+                    batchWriteAttempted = true
+                }
+            )
+        }
+
+        #expect(!batchWriteAttempted)
+        #expect(context.asset.generationInput?.spendTransactionId
+            == context.authorization.transactionId)
+        #expect(context.editor.generationLog.spendEvents.map(\.kind) == [.reserved])
+        let authorityRecord = try context.authority.load(
+            projectKey: context.batch.payload.projectKey,
+            batchID: context.batch.id
+        )
+        #expect(authorityRecord.spendEvents.map(\.kind) == [.reserved])
+    }
+
+    @Test func projectReleaseRepairsMissingAuthorityReleaseIdempotently() async throws {
+        let context = try await releaseContext()
+        defer { cleanup(context) }
+
+        #expect(throws: (any Error).self) {
+            try context.editor.releaseUnsubmittedSpendReservation(
+                authorization: context.authorization,
+                placeholders: [context.asset],
+                note: "Preparation failed.",
+                batchWriter: { _, _, _ in
+                    throw CocoaError(.fileWriteUnknown)
+                }
+            )
+        }
+        #expect(context.asset.generationInput == nil)
+        #expect(context.editor.generationLog.spendEvents.map(\.kind)
+            == [.reserved, .released])
+        let home = try #require(context.editor.workingRoot)
+        var snapshots = try GenerationBatchStore.all(
+            home: home,
+            authority: context.authority
+        )
+        snapshots = try GenerationBatchStore.reconcileRuntime(
+            snapshots,
+            editor: context.editor,
+            authority: context.authority
+        )
+        _ = try GenerationBatchStore.reconcileRuntime(
+            snapshots,
+            editor: context.editor,
+            authority: context.authority
+        )
+
+        let authorityRecord = try context.authority.load(
+            projectKey: context.batch.payload.projectKey,
+            batchID: context.batch.id
+        )
+        #expect(authorityRecord.spendEvents.map(\.kind) == [.reserved, .released])
+        #expect(authorityRecord.spendEvents.last
+            == context.editor.generationLog.spendEvents.last)
+    }
+
+    @Test func authorityReleaseDetachesStaleProjectPlaceholderIdempotently() async throws {
+        let context = try await releaseContext()
+        defer { cleanup(context) }
+        let release = GenerationSpendEvent(
+            transactionId: context.reservation.transactionId,
+            kind: .released,
+            model: context.reservation.model,
+            provider: context.reservation.provider,
+            transport: context.reservation.transport,
+            endpoint: context.reservation.endpoint,
+            money: context.reservation.money,
+            note: "Preparation failed."
+        )
+        try context.authority.recordSpendEvent(
+            release,
+            authorization: GenerationBatchAuthorization(
+                batchID: context.batch.id,
+                itemID: context.item.id
+            )
+        )
+        let home = try #require(context.editor.workingRoot)
+        var snapshots = try GenerationBatchStore.all(
+            home: home,
+            authority: context.authority
+        )
+        try FileManager.default.createDirectory(
+            at: context.asset.url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("unexpected generated bytes".utf8).write(to: context.asset.url)
+        let beforeLog = context.editor.generationLog
+        let beforeManifest = context.editor.mediaManifest
+        #expect(throws: (any Error).self) {
+            try GenerationBatchStore.reconcileRuntime(
+                snapshots,
+                editor: context.editor,
+                authority: context.authority
+            )
+        }
+        #expect(context.editor.generationLog == beforeLog)
+        #expect(context.editor.mediaManifest == beforeManifest)
+        #expect(context.asset.generationInput != nil)
+        try FileManager.default.removeItem(at: context.asset.url)
+        snapshots = try GenerationBatchStore.reconcileRuntime(
+            snapshots,
+            editor: context.editor,
+            authority: context.authority
+        )
+        _ = try GenerationBatchStore.reconcileRuntime(
+            snapshots,
+            editor: context.editor,
+            authority: context.authority
+        )
+
+        #expect(context.asset.generationInput == nil)
+        #expect(context.editor.mediaManifest.entries.first?.generationInput == nil)
+        #expect(context.editor.generationLog.spendEvents.map(\.kind)
+            == [.reserved, .released])
+        let persistedLog = try JSONDecoder().decode(
+            GenerationLog.self,
+            from: Data(contentsOf: home
+                .appendingPathComponent(Project.generationLogFilename))
+        )
+        #expect(persistedLog == context.editor.generationLog)
     }
 }

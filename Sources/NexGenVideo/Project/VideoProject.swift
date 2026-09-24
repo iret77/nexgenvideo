@@ -778,10 +778,12 @@ final class VideoProject: NSDocument {
                 self.editorViewModel.agentService.loadSessions(from: home)
                 self.editorViewModel.mediaAssets.removeAll()
                 self.restoreAssetsFromManifest()
+                self.editorViewModel.onWorkingCopyReloadCompleted?(.success(()))
             case .failure(let error):
                 Log.project.error(
                     "discard recovery reload failed: \(error.localizedDescription)"
                 )
+                self.editorViewModel.onWorkingCopyReloadCompleted?(.failure(error))
                 self.presentError(error)
             }
         }

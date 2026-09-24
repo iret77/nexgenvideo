@@ -329,22 +329,46 @@ struct MireloProviderTests {
             record: prepared,
             spendTransactionID: spendTransactionID
         )
-        if state == .failed {
+        switch state {
+        case .prepared:
+            return current
+        case .failed:
             return try store.update(current) {
                 $0.state = .failed
                 $0.lastError = lastError
             }
-        }
-        guard state == .accepted, let providerJobID else {
+        case .submitting:
+            return try store.update(current) {
+                $0.state = .submitting
+                $0.lastError = lastError
+            }
+        case .acceptanceUnknown:
+            current = try store.update(current) {
+                $0.state = .submitting
+            }
+            return try store.update(current) {
+                $0.state = .acceptanceUnknown
+                $0.lastError = lastError
+            }
+        case .accepted:
+            guard let providerJobID else {
+                throw GenerationRequestError.storage(
+                    "An accepted authority fixture needs a provider job id."
+                )
+            }
+            current = try store.update(current) {
+                $0.state = .submitting
+            }
+            current = try store.update(current) {
+                $0.state = .accepted
+                $0.providerJobID = providerJobID
+                $0.lastProviderStatus = "accepted"
+            }
             return current
-        }
-        current = try store.update(current) {
-            $0.state = .submitting
-        }
-        return try store.update(current) {
-            $0.state = .accepted
-            $0.providerJobID = providerJobID
-            $0.lastProviderStatus = "accepted"
+        case .pollingInterrupted, .providerSucceeded, .completed:
+            throw GenerationRequestError.storage(
+                "The authority fixture helper does not synthesize terminal provider evidence."
+            )
         }
     }
 
@@ -368,6 +392,17 @@ struct MireloProviderTests {
         let key = document.editorViewModel.openWorkingCopyKey
         document.editorViewModel.releaseWorkingCopy()
         return key
+    }
+
+    @MainActor
+    private func discardAndAwaitReload(_ editor: EditorViewModel) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            editor.onWorkingCopyReloadCompleted = { result in
+                editor.onWorkingCopyReloadCompleted = nil
+                continuation.resume(with: result)
+            }
+            editor.discardRecoveredWork()
+        }
     }
 
     private func writeProjectState(
@@ -2179,17 +2214,14 @@ struct MireloProviderTests {
             state: .accepted,
             providerJobID: "authority-conflict-job"
         )
-        let unknown = try await authorityRecord(
+        _ = try await authorityRecord(
             store: executionStore,
             projectKey: projectKey,
             logicalID: "37373737-3737-4737-8737-373737373737",
             spendTransactionID: unknownTransactionID,
-            state: .prepared
+            state: .acceptanceUnknown,
+            lastError: "Provider acceptance is unknown."
         )
-        _ = try executionStore.update(unknown) {
-            $0.state = .acceptanceUnknown
-            $0.lastError = "Provider acceptance is unknown."
-        }
         var log = GenerationLog()
         log.spendEvents = [
             GenerationSpendEvent(
@@ -2252,7 +2284,9 @@ struct MireloProviderTests {
         #expect(editor.generationLog.spendEvents.filter {
             $0.transactionId == unknownTransactionID
         }.map(\.kind) == [.reserved])
-        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot account") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("unresolved acceptance") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("cannot safely repair") == true)
+        #expect(editor.mireloSpendRecoveryMessage?.contains("originating project") == true)
         let eventCount = editor.generationLog.spendEvents.count
         #expect(throws: GenerationBudgetError.self) {
             _ = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
@@ -2304,7 +2338,7 @@ struct MireloProviderTests {
         #expect(document.editorViewModel.generationLog.spendEvents.isEmpty)
         #expect(document.editorViewModel.mireloSpendRecoveryMessage != nil)
         #expect(document.editorViewModel.mediaPanelToast?.message.contains(
-            "Open the project copy"
+            "no safe in-app recovery exists"
         ) == true)
         _ = releaseProject(document)
     }
@@ -2358,14 +2392,7 @@ struct MireloProviderTests {
         #expect(document.editorViewModel.generationLog.spendEvents.contains {
             $0.kind == .submitted && $0.providerRequestId == "discarded-recovery-job"
         })
-        document.editorViewModel.discardRecoveredWork()
-        for _ in 0..<500 {
-            if document.editorViewModel.generationLog.spendEvents.isEmpty,
-               document.editorViewModel.mireloSpendRecoveryMessage != nil {
-                break
-            }
-            await Task.yield()
-        }
+        try await discardAndAwaitReload(document.editorViewModel)
         #expect(document.editorViewModel.generationLog.spendEvents.isEmpty)
         #expect(document.editorViewModel.mireloSpendRecoveryMessage != nil)
         _ = releaseProject(document)
@@ -2522,6 +2549,230 @@ struct MireloProviderTests {
         #expect(FixtureURLProtocol.requests().filter { $0.url == createURL }.count == 1)
     }
 
+    @Test("cancel reconciliation ignores a second live Mirelo flight")
+    @MainActor
+    func cancelledJobDoesNotClassifyParallelFlightAsRecovery() async throws {
+        try await publishFixtureCatalog()
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirelo-parallel-cancel-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        let projectKey = try #require(editor.projectId)
+        let (executionStore, storeRoot) = try store()
+        let fixtureSession = session()
+        let executeGate = FixtureGate()
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let createGate = FixtureGate()
+        let preflightURL = baseURL.appendingPathComponent(
+            MireloOperation.textToSFX.preflightPath
+        )
+        FixtureURLProtocol.install([
+            preflightURL: [.init(data: try fixture("preflight-v3"))],
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"parallel-job","status":"queued"}"#.utf8),
+                gate: createGate
+            )],
+        ])
+        let parallelID = "42424242-4242-4242-8242-424242424242"
+        defer {
+            MireloCapabilityCatalog.shared.clear()
+            fixtureSession.invalidateAndCancel()
+            editor.generationService.mireloBeforeFirstExecute = nil
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+            try? FileManager.default.removeItem(at: storeRoot)
+        }
+        _ = try await authorityRecord(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalID: parallelID,
+            spendTransactionID: parallelID,
+            state: .prepared
+        )
+        editor.generationLog.spendEvents.append(GenerationSpendEvent(
+            transactionId: parallelID,
+            kind: .reserved,
+            model: "mirelo/sfx-1.6",
+            provider: .mirelo,
+            transport: .api,
+            endpoint: MireloOperation.textToSFX.createPath
+        ))
+        try editor.persistGenerationLog()
+        let client = MireloClient(
+            apiKey: "fixture-key",
+            baseURL: baseURL,
+            session: fixtureSession
+        )
+        editor.generationService.mireloStoreProvider = { executionStore }
+        editor.generationService.mireloAPIKeyProvider = { "fixture-key" }
+        editor.generationService.mireloClientProvider = { _ in client }
+        editor.generationService.mireloBeforeFirstExecute = {
+            await executeGate.wait()
+        }
+        let active = Task {
+            try await MireloExecutionCoordinator.shared.execute(
+                store: executionStore,
+                projectKey: projectKey,
+                logicalJobID: parallelID,
+                client: client
+            )
+        }
+        await createGate.waitUntilStarted()
+        let submission = await GenerationController.submit(
+            try firstRunRequest(),
+            editor: editor,
+            quoteLoader: { _, _ in testMoney() }
+        )
+        let outcome = try submission.get()
+        let cancelledTransactionID = try #require(editor.mediaAssets.first {
+            $0.id == outcome.placeholderId
+        }?.generationInput?.spendTransactionId)
+        await executeGate.waitUntilStarted()
+        #expect(editor.generationService.cancelGeneration(
+            placeholderId: outcome.placeholderId
+        ))
+        await executeGate.open()
+        await editor.generationService.waitForGeneration(
+            placeholderId: outcome.placeholderId
+        )
+
+        #expect(editor.mireloSpendRecoveryMessage == nil)
+        #expect(editor.generationLog.spendEvents.filter {
+            $0.transactionId == cancelledTransactionID
+        }.map(\.kind) == [.reserved, .released])
+        active.cancel()
+        await createGate.open()
+        _ = await active.result
+        _ = try await MireloExecutionCoordinator.shared.awaitSettlement(
+            store: executionStore,
+            projectKey: projectKey,
+            logicalJobID: parallelID
+        )
+        try editor.generationService.refreshMireloSpendRecovery(
+            editor: editor,
+            store: executionStore
+        )
+        #expect(editor.mireloSpendRecoveryMessage?.contains(
+            "unresolved acceptance"
+        ) == true)
+    }
+
+    @Test("native resume clears only its unknown acceptance issue")
+    @MainActor
+    func unknownResumeKeepsIndependentConflict() async throws {
+        let createURL = baseURL.appendingPathComponent("v3/text-to-sfx/generations")
+        let pollURL = baseURL.appendingPathComponent(
+            "v3/text-to-sfx/generations/resumed-unknown-job"
+        )
+        FixtureURLProtocol.install([
+            createURL: [.init(
+                status: 202,
+                data: Data(#"{"id":"resumed-unknown-job","status":"queued"}"#.utf8)
+            )],
+            pollURL: [.init(data: try fixture("v3-succeeded"))],
+        ])
+        let context = try await nativeContext(
+            logicalID: "43434343-4343-4343-8343-434343434343",
+            preflight: affordablePreflight()
+        )
+        let conflictID = "44444444-4444-4444-8444-444444444444"
+        defer {
+            context.editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: context.workingCopyKey)
+            try? FileManager.default.removeItem(at: context.project)
+            try? FileManager.default.removeItem(at: context.storeRoot)
+        }
+        let prepared = try #require(context.store.load(
+            projectKey: context.projectKey,
+            logicalJobID: context.logicalID
+        ))
+        let submitting = try context.store.update(prepared) {
+            $0.state = .submitting
+        }
+        _ = try context.store.update(submitting) {
+            $0.state = .acceptanceUnknown
+            $0.lastError = "Provider acceptance is unknown."
+        }
+        _ = try await authorityRecord(
+            store: context.store,
+            projectKey: context.projectKey,
+            logicalID: conflictID,
+            spendTransactionID: conflictID,
+            state: .accepted,
+            providerJobID: "authority-conflict-job"
+        )
+        context.editor.generationLog.spendEvents.append(contentsOf: [
+            GenerationSpendEvent(
+                transactionId: conflictID,
+                kind: .reserved,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath
+            ),
+            GenerationSpendEvent(
+                transactionId: conflictID,
+                kind: .submitted,
+                model: "mirelo/sfx-1.6",
+                provider: .mirelo,
+                transport: .api,
+                endpoint: MireloOperation.textToSFX.createPath,
+                providerRequestId: "ledger-conflict-job"
+            ),
+        ])
+        try context.editor.persistGenerationLog()
+        let service = context.editor.generationService
+        try service.refreshMireloSpendRecovery(
+            editor: context.editor,
+            store: context.store
+        )
+        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
+            "unresolved acceptance"
+        ) == true)
+        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
+            "cannot safely repair"
+        ) == true)
+        let fixtureSession = session()
+        defer { fixtureSession.invalidateAndCancel() }
+        let client = MireloClient(
+            apiKey: "fixture-key",
+            baseURL: baseURL,
+            session: fixtureSession
+        )
+        let wav = wavFixture()
+        try await service.performNativeMireloResume(
+            asset: context.asset,
+            editor: context.editor,
+            store: context.store,
+            client: client,
+            approveCreditChange: { _, _ in false },
+            download: { _ in
+                let file = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("resumed-unknown-\(UUID().uuidString).wav")
+                try wav.write(to: file, options: .atomic)
+                return file
+            }
+        )
+
+        #expect(context.editor.generationLog.spendEvents.contains {
+            $0.transactionId == context.logicalID
+                && $0.kind == .submitted
+                && $0.providerRequestId == "resumed-unknown-job"
+        })
+        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
+            "unresolved acceptance"
+        ) == false)
+        #expect(context.editor.mireloSpendRecoveryMessage?.contains(
+            "cannot safely repair"
+        ) == true)
+    }
+
     @Test("unsubmitted shared reservation releases persisted and memory-only placeholders atomically")
     @MainActor
     func sharedReservationReleaseHandlesPartiallyPersistedPlaceholders() throws {
@@ -2614,6 +2865,121 @@ struct MireloProviderTests {
         #expect(persistedLog.spendEvents.filter {
             $0.transactionId == transactionID && $0.kind == .released
         }.count == 1)
+    }
+
+    @Test("undo restore strips released spend without changing active or charged inputs")
+    @MainActor
+    func undoRestoreDoesNotReviveReleasedSpend() throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "released-spend-undo-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingCopyKey = try #require(editor.openWorkingCopyKey)
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: workingCopyKey)
+            try? FileManager.default.removeItem(at: package)
+        }
+        let released = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+            modelId: "fal-ai/stable-audio-25/text-to-audio",
+            provider: .fal,
+            transport: .api,
+            endpoint: "released-fixture",
+            editor: editor
+        )
+        let active = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+            modelId: "fal-ai/stable-audio-25/text-to-audio",
+            provider: .fal,
+            transport: .api,
+            endpoint: "active-fixture",
+            editor: editor
+        )
+        let charged = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+            modelId: "fal-ai/stable-audio-25/text-to-audio",
+            provider: .fal,
+            transport: .api,
+            endpoint: "charged-fixture",
+            editor: editor
+        )
+        try editor.recordSpendEvent(
+            authorization: charged,
+            kind: .submitted,
+            providerRequestId: "charged-job"
+        )
+        try editor.recordSpendEvent(
+            authorization: charged,
+            kind: .charged,
+            money: testMoney()
+        )
+        let media = try editor.prepareWorkingMediaDirectory()
+        func asset(
+            id: String,
+            authorization: GenerationAuthorization
+        ) throws -> MediaAsset {
+            var input = GenerationInput(
+                prompt: id,
+                model: authorization.target.modelId,
+                duration: 5,
+                aspectRatio: ""
+            )
+            input.spendTransactionId = try #require(authorization.transactionId)
+            return MediaAsset(
+                id: id,
+                url: media.appendingPathComponent("\(id).wav"),
+                type: .audio,
+                name: id,
+                duration: 5,
+                generationInput: input
+            )
+        }
+        let releasedAsset = try asset(id: "released", authorization: released)
+        let activeAsset = try asset(id: "active", authorization: active)
+        let chargedAsset = try asset(id: "charged", authorization: charged)
+        let detachedReleasedPlaceholder = try asset(
+            id: releasedAsset.id,
+            authorization: released
+        )
+        editor.mediaAssets = [releasedAsset, activeAsset, chargedAsset]
+        for value in editor.mediaAssets { editor.persistMediaAsset(value) }
+        let undoManager = UndoManager()
+        editor.undoManager = undoManager
+
+        editor.deleteMediaAssets(ids: [releasedAsset.id])
+        try editor.releaseUnsubmittedSpendReservation(
+            authorization: released,
+            placeholders: [detachedReleasedPlaceholder],
+            note: "Preparation failed."
+        )
+        #expect(releasedAsset.generationInput?.spendTransactionId
+            == released.transactionId)
+        undoManager.undo()
+
+        #expect(editor.mediaAssets.first {
+            $0.id == releasedAsset.id
+        }?.generationInput == nil)
+        #expect(editor.mediaManifest.entries.first {
+            $0.id == releasedAsset.id
+        }?.generationInput == nil)
+        #expect(editor.mediaAssets.first {
+            $0.id == activeAsset.id
+        }?.generationInput?.spendTransactionId == active.transactionId)
+        #expect(editor.mediaAssets.first {
+            $0.id == chargedAsset.id
+        }?.generationInput?.spendTransactionId == charged.transactionId)
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
+            log: editor.generationLog,
+            generatedInputs: editor.mediaAssets.compactMap(\.generationInput)
+        )
+        #expect(snapshot.activeReservationCount == 1)
+        undoManager.redo()
+        #expect(!editor.mediaAssets.contains { $0.id == releasedAsset.id })
+        undoManager.undo()
+        #expect(editor.mediaAssets.first {
+            $0.id == releasedAsset.id
+        }?.generationInput == nil)
     }
 
     @Test("first-run definitive create rejection releases its reservation once")
@@ -2763,6 +3129,8 @@ struct MireloProviderTests {
         try Fixtures.prepareProjectPackage(at: package)
         let editor = EditorViewModel()
         editor.projectURL = package
+        let undoManager = UndoManager()
+        editor.undoManager = undoManager
         let workingCopyKey = try #require(editor.openWorkingCopyKey)
         let (executionStore, storeRoot) = try store()
         let fixtureSession = session()
@@ -2825,7 +3193,8 @@ struct MireloProviderTests {
         }
         await executeGate.waitUntilStarted()
         agentTask.cancel()
-        editor.deleteMediaAssets(ids: [try #require(placeholderID)])
+        let removedID = try #require(placeholderID)
+        editor.deleteMediaAssets(ids: [removedID])
         await executeGate.open()
         let result = try await agentTask.value
 
@@ -2837,6 +3206,21 @@ struct MireloProviderTests {
         try assertReleasedOnce(editor)
         #expect(failureCount == 1)
         #expect(FixtureURLProtocol.requests().allSatisfy { $0.url != createURL })
+        undoManager.undo()
+        let restored = try #require(editor.mediaAssets.first {
+            $0.id == removedID
+        })
+        #expect(restored.generationInput?.spendTransactionId == nil)
+        #expect(editor.mediaManifest.entries.first {
+            $0.id == removedID
+        }?.generationInput?.spendTransactionId == nil)
+        undoManager.redo()
+        #expect(!editor.mediaAssets.contains { $0.id == removedID })
+        undoManager.undo()
+        #expect(editor.mediaAssets.first {
+            $0.id == removedID
+        }?.generationInput?.spendTransactionId == nil)
+        try assertReleasedOnce(editor)
     }
 
     @Test("working-copy reload ends an approved cancelled agent generation")
@@ -2908,14 +3292,7 @@ struct MireloProviderTests {
         }
         await executeGate.waitUntilStarted()
         agentTask.cancel()
-        editor.discardRecoveredWork()
-        for _ in 0..<500 {
-            if editor.generationLog.spendEvents.isEmpty,
-               editor.mediaAssets.isEmpty {
-                break
-            }
-            await Task.yield()
-        }
+        try await discardAndAwaitReload(editor)
         #expect(editor.generationLog.spendEvents.isEmpty)
         #expect(editor.mediaAssets.isEmpty)
         await executeGate.open()

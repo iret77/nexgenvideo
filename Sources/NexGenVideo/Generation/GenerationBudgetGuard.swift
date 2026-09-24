@@ -60,6 +60,7 @@ enum GenerationBudgetGuard {
             projectHome: workingRoot,
             editor: editor
         )
+        try editor.generationService.refreshMireloSpendRecovery(editor: editor)
         if let recoveryMessage = editor.mireloSpendRecoveryMessage {
             throw GenerationBudgetError.blocked(recoveryMessage)
         }
@@ -163,6 +164,7 @@ enum GenerationBudgetGuard {
             projectHome: workingRoot,
             editor: editor
         )
+        try editor.generationService.refreshMireloSpendRecovery(editor: editor)
         if let recoveryMessage = editor.mireloSpendRecoveryMessage {
             throw GenerationBudgetError.blocked(recoveryMessage)
         }

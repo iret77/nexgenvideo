@@ -198,8 +198,35 @@ extension EditorViewModel {
     }
 
     func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) {
+        let releasedTransactions = Set(
+            Dictionary(grouping: generationLog.spendEvents, by: \.transactionId)
+                .compactMap { transactionID, events in
+                    guard events.count == 2,
+                          events[0].kind == .reserved,
+                          events[1].kind == .released,
+                          events[1].model == events[0].model,
+                          events[1].provider == events[0].provider,
+                          events[1].transport == events[0].transport,
+                          events[1].endpoint == events[0].endpoint else {
+                        return nil
+                    }
+                    return transactionID
+                }
+        )
+        var restoredManifest = snapshot.mediaManifest
+        for index in restoredManifest.entries.indices {
+            guard let transactionID = restoredManifest.entries[index]
+                .generationInput?.spendTransactionId,
+                  releasedTransactions.contains(transactionID) else { continue }
+            restoredManifest.entries[index].generationInput = nil
+        }
+        for asset in snapshot.mediaAssets {
+            guard let transactionID = asset.generationInput?.spendTransactionId,
+                  releasedTransactions.contains(transactionID) else { continue }
+            asset.generationInput = nil
+        }
         timeline = snapshot.timeline
-        mediaManifest = snapshot.mediaManifest
+        mediaManifest = restoredManifest
         mediaAssets = snapshot.mediaAssets
         selectedClipIds = snapshot.selectedClipIds
         selectedMediaAssetIds = snapshot.selectedMediaAssetIds
