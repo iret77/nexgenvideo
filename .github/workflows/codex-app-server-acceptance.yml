@@ -318,7 +318,7 @@ jobs:
             .typed_image_tool_result == true and
             .nexgen_tool_round_trip == true and
             .warm_dialogue == true and
-            .cancel_turn_id_confirmed == true and
+            .cancel_turn_id_captured == true and
             .cancel_interrupted == true and
             .process_termination_confirmed == true and
             .scratch_removed == true and
@@ -331,9 +331,10 @@ jobs:
             .real_tool_executor_exercised == true and
             .dialog_consumer_follow_up == true and
             .spend_consumer_declined_without_provider_generation == true and
+            .spend_consumer_evidence_source == "deterministic_fake_driver" and
             .provider_generation_calls == 0 and
             .distinct_project_roots_and_editors == true and
-            .stale_project_generation_rejected == true and
+            .stale_callback_rejected_after_project_switch == true and
             .first_chat_not_injected_into_second_project == true and
             .evidence_payload_redacted == true
           ' "$NGV_CODEX_ACCEPTANCE_EVIDENCE" >/dev/null

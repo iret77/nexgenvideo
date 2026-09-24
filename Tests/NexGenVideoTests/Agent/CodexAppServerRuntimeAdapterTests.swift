@@ -18,6 +18,10 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
     var scriptedEvents: [CodexAppServerInbound] = []
     var completeAfterToolResponse = false
     var completeInterrupt = true
+    var pauseAtOperation: String?
+    private var pausedContinuation: CheckedContinuation<Void, Never>?
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var didPause = false
     private(set) var isolationChecks = 0
     private(set) var calls: [Call] = []
     private(set) var responses: [[String: Any]] = []
@@ -31,6 +35,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
     }
 
     func start(home: URL, scratch: URL) async throws {
+        await pauseIfRequested("start")
         if let startError { throw startError }
     }
 
@@ -42,6 +47,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
         calls.append(.init(method: method, params: params))
         operations.append("request:\(method)")
+        await pauseIfRequested("request:\(method)")
         switch method {
         case "thread/start":
             return [
@@ -101,6 +107,26 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
 
     func emit(_ event: CodexAppServerInbound) {
         continuation.yield(event)
+    }
+
+    func waitUntilPaused() async {
+        if didPause { return }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func releasePausedOperation() {
+        pausedContinuation?.resume()
+        pausedContinuation = nil
+    }
+
+    private func pauseIfRequested(_ operation: String) async {
+        guard pauseAtOperation == operation else { return }
+        await withCheckedContinuation { continuation in
+            pausedContinuation = continuation
+            didPause = true
+            enteredContinuation?.resume()
+            enteredContinuation = nil
+        }
     }
 }
 
@@ -270,6 +296,34 @@ struct CodexAppServerRuntimeAdapterTests {
                 fileManager: .default
             )
         }
+    }
+
+    @Test("runtime scratch walk terminates at the root without a Git ancestor")
+    func scratchRootWithoutGitAncestorTerminates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-codex-clean-ancestor-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let nested = root.appendingPathComponent("runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try CodexAppServerRuntimeAdapter.requireUnversionedScratchRoot(
+            nested,
+            fileManager: .default
+        )
+    }
+
+    @Test("the production location selector checks the actual temporary root")
+    func liveLocationsSelectAnUnversionedScratchRoot() throws {
+        let session = sessionRequest(sessionID: UUID())
+        let locations = try CodexAppServerRuntimeAdapter.liveLocations(session)
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+
+        #expect(locations.scratch.deletingLastPathComponent() == temporaryRoot)
+        #expect(locations.scratch.lastPathComponent.contains(session.runtimeGenerationID.uuidString))
     }
 
     @Test("text, real image data, namespaced tool result, and usage preserve the host contract")
@@ -626,6 +680,7 @@ struct CodexAppServerRuntimeAdapterTests {
         if let evidencePath = ProcessInfo.processInfo.environment["NGV_CODEX_ACCEPTANCE_EVIDENCE"] {
             try mergeLiveEvidence([
                 "spend_consumer_declined_without_provider_generation": declinedWithoutGeneration,
+                "spend_consumer_evidence_source": "deterministic_fake_driver",
                 "provider_generation_calls": providerGenerationCalls,
             ], at: evidencePath)
         }
@@ -986,6 +1041,78 @@ struct CodexAppServerRuntimeAdapterTests {
                 currentMessage: retry
             ))
         }
+    }
+
+    @Test("cancel during startup, thread open, or replay prevents a new paid turn")
+    func cancellationBeforeTurnSubmissionStopsFurtherMutations() async throws {
+        for operation in ["start", "request:thread/start", "request:thread/injectItems"] {
+            let driver = FakeCodexAppServerDriver()
+            driver.pauseAtOperation = operation
+            let sessionID = UUID()
+            let adapter = makeAdapter(driver)
+            let isReplay = operation == "request:thread/injectItems"
+            let session = sessionRequest(sessionID: sessionID)
+            if isReplay {
+                try adapter.resume(session)
+            } else {
+                try adapter.start(session)
+            }
+            let previous = AgentRuntimeMessage(role: .user, content: [.text("Earlier")])
+            let current = AgentRuntimeMessage(role: .user, content: [.text("Continue")])
+            let stream = try adapter.send(.init(
+                sessionID: sessionID,
+                turnID: UUID(),
+                messages: isReplay ? [previous, current] : [current],
+                currentMessage: current
+            ))
+
+            await driver.waitUntilPaused()
+            adapter.cancel(sessionID: sessionID)
+            driver.releasePausedOperation()
+            let events = await collectCodexEvents(stream)
+            let expectedRequests: [String]
+            switch operation {
+            case "start": expectedRequests = []
+            case "request:thread/start": expectedRequests = ["thread/start"]
+            default: expectedRequests = ["thread/start", "thread/injectItems"]
+            }
+
+            #expect(driver.calls.map(\.method) == expectedRequests)
+            #expect(driver.stopCount == 1)
+            #expect(codexTerminals(events) == [.cancelled])
+        }
+    }
+
+    @Test("cancel after turn submission interrupts its returned provider ID")
+    func cancellationWaitsForSubmittedTurnIdentifier() async throws {
+        let driver = FakeCodexAppServerDriver()
+        driver.pauseAtOperation = "request:turn/start"
+        let sessionID = UUID()
+        let adapter = makeAdapter(driver)
+        try adapter.start(sessionRequest(sessionID: sessionID))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Wait")])
+        let stream = try adapter.send(.init(
+            sessionID: sessionID,
+            turnID: UUID(),
+            messages: [current],
+            currentMessage: current
+        ))
+
+        await driver.waitUntilPaused()
+        adapter.cancel(sessionID: sessionID)
+        #expect(driver.stopCount == 0)
+        driver.releasePausedOperation()
+        let events = await collectCodexEvents(stream)
+        let interrupt = try #require(driver.calls.first { $0.method == "turn/interrupt" })
+        let stopDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while driver.stopCount == 0, ContinuousClock.now < stopDeadline {
+            await Task.yield()
+        }
+
+        #expect(interrupt.params["threadId"] as? String == "thread-1")
+        #expect(interrupt.params["turnId"] as? String == "provider-turn-1")
+        #expect(driver.stopCount == 1)
+        #expect(codexTerminals(events) == [.cancelled])
     }
 
     private func makeAdapter(_ driver: FakeCodexAppServerDriver) -> CodexAppServerRuntimeAdapter {

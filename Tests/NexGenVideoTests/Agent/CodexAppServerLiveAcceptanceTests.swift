@@ -342,7 +342,7 @@ struct CodexAppServerLiveAcceptanceTests {
                     && typedToolResultObserved
                     && firstDriver.sentTypedImageToolResult,
                 "warm_dialogue": warmDialogueSucceeded,
-                "cancel_turn_id_confirmed": !cancelTurnID.isEmpty,
+                "cancel_turn_id_captured": !cancelTurnID.isEmpty,
                 "cancel_interrupted": cancelledTurnWasInterrupted,
                 "process_termination_confirmed": firstDriver.terminationConfirmed,
                 "scratch_removed": scratchRemoved,
@@ -560,7 +560,7 @@ struct CodexAppServerLiveAcceptanceTests {
                 "real_tool_executor_exercised": receivedFirstTimeline && receivedSecondTimeline,
                 "dialog_consumer_follow_up": dialogueFollowUpSucceeded,
                 "distinct_project_roots_and_editors": crossedChatAndProjectBoundary,
-                "stale_project_generation_rejected": firstProjectCallbackSucceeded
+                "stale_callback_rejected_after_project_switch": firstProjectCallbackSucceeded
                     && staleGenerationWasRejected,
                 "first_chat_not_injected_into_second_project": firstChatWasNotInjected,
             ], at: evidencePath)
