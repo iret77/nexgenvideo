@@ -7,6 +7,7 @@ struct ColorField: View {
     let displayColor: Color
     let onUserChange: (Color) -> Void
     var supportsOpacity: Bool = true
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: open) {
@@ -19,6 +20,21 @@ struct ColorField: View {
                 )
         }
         .buttonStyle(.plain)
+        .focused($isFocused)
+        .inspectorControlChrome(focused: isFocused)
+        .accessibilityLabel("Color")
+        .accessibilityValue(colorAccessibilityValue)
+    }
+
+    private var colorAccessibilityValue: String {
+        guard let color = NSColor(displayColor).usingColorSpace(.sRGB) else { return "Color" }
+        return String(
+            format: "Red %.0f%%, green %.0f%%, blue %.0f%%, opacity %.0f%%",
+            Double(color.redComponent) * 100,
+            Double(color.greenComponent) * 100,
+            Double(color.blueComponent) * 100,
+            Double(color.alphaComponent) * 100
+        )
     }
 
     private func open() {

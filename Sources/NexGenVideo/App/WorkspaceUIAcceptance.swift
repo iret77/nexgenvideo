@@ -12,6 +12,10 @@ enum WorkspaceUIAcceptance {
         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
     }
 
+    private static var inspectorRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_INSPECTOR_UI_ACCEPTANCE"] == "1"
+    }
+
     static func runIfRequested() {
         guard isRequested else { return }
         guard let evidencePath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_EVIDENCE"],
@@ -213,6 +217,15 @@ enum WorkspaceUIAcceptance {
                   returnedFrames == initialEditFrames else {
                 fail("edit workspace did not settle before panel controls", scale: scale)
             }
+            if inspectorRequested {
+                await captureInspectorCases(
+                    editor: editor,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    scale: scale
+                )
+            }
             guard click(identifier: "editor.panel.sidebar", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
@@ -373,6 +386,209 @@ enum WorkspaceUIAcceptance {
         exit(1)
     }
 
+    private static func captureInspectorCases(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        let originalAssets = editor.mediaAssets
+        let originalClipIDs = editor.selectedClipIds
+        let originalObject = editor.inspectedObject
+        let originalMediaTab = editor.mediaPanelTab(for: .edit)
+        let image = MediaAsset(
+            id: "inspector-image",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
+            type: .image,
+            name: "Inspector reference"
+        )
+        let audio = MediaAsset(
+            id: "inspector-audio",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.wav"),
+            type: .audio,
+            name: "Inspector audio"
+        )
+        editor.mediaAssets.append(contentsOf: [image, audio])
+
+        let cases: [(family: String, clipIDs: Set<String>, tab: String?)] = [
+            ("text", ["inspector-text"], nil),
+            ("video", ["inspector-image-1"], "Video"),
+            ("effects", ["inspector-image-1"], "Adjust"),
+            ("ai", ["inspector-image-1"], "AI Edit"),
+            ("audio", ["inspector-audio-clip"], nil),
+            ("mixed", ["inspector-image-1", "inspector-image-2"], nil),
+            ("asset", [], nil),
+        ]
+        for item in cases {
+            editor.selectedClipIds = item.clipIDs
+            if item.family == "asset" {
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    return editor.selectedClipIds.isEmpty && editor.inspectedObject == nil
+                }) else {
+                    fail("could not clear the clip inspection before asset inspection", scale: scale)
+                }
+                editor.inspectedObject = .mediaAsset(image.id)
+            } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
+                editor.inspectedObject = .clip(clipID)
+            } else {
+                editor.inspectedObject = nil
+            }
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+                    && editor.selectedClipIds == item.clipIDs
+                    && (item.family != "asset" || editor.inspectedObject == .mediaAsset(image.id))
+            }) else {
+                fail("inspector \(item.family) did not settle", scale: scale)
+            }
+            if let tab = item.tab {
+                let identifier = "inspector.tab.\(tab)"
+                if probeState(identifier: identifier, in: window) != true {
+                    guard click(identifier: identifier, in: window) == nil,
+                          await waitUntil(timeout: .seconds(5), {
+                              host.layoutSubtreeIfNeeded()
+                              return probeState(identifier: identifier, in: window) == true
+                          }) else {
+                        fail("inspector tab \(tab) did not activate", scale: scale)
+                    }
+                }
+            }
+            let capturesKeyframes = item.family == "video" || item.family == "audio"
+            if capturesKeyframes, probeState(identifier: "inspector.keyframes", in: window) != false {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close", scale: scale)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+                fail("could not capture inspector \(item.family)", scale: scale)
+            }
+            var fields: [String: Any] = ["family": item.family, "screenshot": name]
+            if capturesKeyframes { fields["keyframes"] = "closed" }
+            emit("inspector", scale: scale, fields: fields)
+            if capturesKeyframes {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == true
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not open", scale: scale)
+                }
+                let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
+                    ? [.volume]
+                    : [.position, .scale, .rotation, .opacity, .crop]
+                guard let root = window.contentView else {
+                    fail("inspector \(item.family) window content was unavailable", scale: scale)
+                }
+                let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
+                let sideEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: openName,
+                    inspectorWidthTarget: nil,
+                    scale: scale
+                )
+                guard let splitState = inspectorSplitState(in: root),
+                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
+                }
+                splitState.splitView.setPosition(
+                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - AppTheme.Layout.inspectorMin)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) did not reach minimum width", scale: scale)
+                }
+                let stackedName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open-stacked.png"
+                let stackedEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: stackedName,
+                    inspectorWidthTarget: AppTheme.Layout.inspectorMin,
+                    scale: scale
+                )
+                splitState.splitView.setPosition(
+                    splitState.originalPosition,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - originalInspectorFrame.width)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) width did not restore", scale: scale)
+                }
+                let layoutEvidence = [sideEvidence, stackedEvidence]
+                guard layoutEvidence.compactMap({ $0["mode"] as? String }) == ["side", "stacked"] else {
+                    fail("inspector \(item.family) did not exercise both keyframe layouts", scale: scale)
+                }
+                emit(
+                    "inspector",
+                    scale: scale,
+                    fields: [
+                        "family": item.family,
+                        "keyframes": "open",
+                        "laneLayoutEvidence": layoutEvidence,
+                        "screenshot": openName,
+                    ]
+                )
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close again", scale: scale)
+                }
+            }
+        }
+        let captionIdentifier = "media.tab.Captions"
+        if probeState(identifier: captionIdentifier, in: window) != true {
+            guard click(identifier: captionIdentifier, in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.mediaPanelTab(for: .edit) == .captions
+                          && probeState(identifier: captionIdentifier, in: window) == true
+                  }) else {
+                fail("caption form did not activate", scale: scale)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        host.layoutSubtreeIfNeeded()
+        let captionName = "scale-\(scaleLabel(scale))-inspector-caption.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(captionName)) else {
+            fail("could not capture caption form", scale: scale)
+        }
+        emit("inspector", scale: scale, fields: ["family": "caption", "screenshot": captionName])
+        editor.setMediaPanelTab(originalMediaTab, for: .edit)
+        editor.selectedClipIds = originalClipIDs
+        editor.inspectedObject = originalObject
+        editor.mediaAssets = originalAssets
+    }
+
     private static func makeProjectFixture(scale: Double) throws -> URL {
         let title = scale == 1.25
             ? "An exceptionally long project name for the final picture lock"
@@ -385,7 +601,40 @@ enum WorkspaceUIAcceptance {
             at: projectURL,
             withIntermediateDirectories: true
         )
-        try JSONEncoder().encode(Timeline()).write(
+        var timeline = Timeline()
+        if inspectorRequested {
+            var textClip = Clip(mediaRef: "inspector-title", startFrame: 0, durationFrames: 90)
+            textClip.id = "inspector-text"
+            textClip.mediaType = .text
+            textClip.sourceClipType = .text
+            textClip.textContent = "Inspector title"
+
+            var firstImage = Clip(mediaRef: "inspector-image", startFrame: 100, durationFrames: 90)
+            firstImage.id = "inspector-image-1"
+            firstImage.mediaType = .image
+            firstImage.sourceClipType = .image
+
+            var secondImage = Clip(mediaRef: "inspector-image", startFrame: 200, durationFrames: 90)
+            secondImage.id = "inspector-image-2"
+            secondImage.mediaType = .image
+            secondImage.sourceClipType = .image
+            secondImage.speed = 1.5
+            secondImage.transform.centerX = 0.6
+            secondImage.transform.rotation = 30
+            secondImage.opacity = 0.5
+
+            var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
+            audioClip.id = "inspector-audio-clip"
+            audioClip.mediaType = .audio
+            audioClip.sourceClipType = .audio
+
+            timeline.tracks = [
+                Track(type: .text, clips: [textClip]),
+                Track(type: .image, clips: [firstImage, secondImage]),
+                Track(type: .audio, clips: [audioClip]),
+            ]
+        }
+        try JSONEncoder().encode(timeline).write(
             to: projectURL.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )
@@ -430,6 +679,7 @@ enum WorkspaceUIAcceptance {
         defaults.set(scale, forKey: AppTheme.Typography.scaleKey)
         defaults.set(true, forKey: "mediaPanelVisible")
         defaults.set(true, forKey: "inspectorPanelVisible")
+        defaults.set(false, forKey: "keyframesPanelVisible")
         resetSplitAutosaveDefaults()
     }
 
@@ -620,6 +870,236 @@ enum WorkspaceUIAcceptance {
             result.append(contentsOf: probes(in: child, identifier: identifier))
         }
         return result
+    }
+
+    private struct InspectorSplitState {
+        let splitView: NSSplitView
+        let dividerIndex: Int
+        let originalPosition: CGFloat
+    }
+
+    private static func inspectorSplitState(in root: NSView) -> InspectorSplitState? {
+        guard var child = findView(in: root, accessibilityIdentifier: "inspectorPanel") else {
+            return nil
+        }
+        while let parent = child.superview {
+            if let splitView = parent as? NSSplitView,
+               splitView.isVertical,
+               let index = splitView.subviews.firstIndex(where: { $0 === child }),
+               index > 0 {
+                return InspectorSplitState(
+                    splitView: splitView,
+                    dividerIndex: index - 1,
+                    originalPosition: splitView.subviews[index - 1].frame.maxX
+                )
+            }
+            child = parent
+        }
+        return nil
+    }
+
+    private static func findView(
+        in view: NSView,
+        accessibilityIdentifier: String
+    ) -> NSView? {
+        if view.accessibilityIdentifier() == accessibilityIdentifier,
+           view.window != nil,
+           !view.isHiddenOrHasHiddenAncestor {
+            return view
+        }
+        for child in view.subviews {
+            if let match = findView(in: child, accessibilityIdentifier: accessibilityIdentifier) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func visibleGeometryProbe(
+        identifier: String,
+        in window: NSWindow,
+        containedBy bounds: NSRect
+    ) -> NSView? {
+        guard let root = window.contentView else { return nil }
+        return probes(in: root, identifier: identifier).first { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && frame.minX >= bounds.minX - AppTheme.BorderWidth.thin
+                && frame.maxX <= bounds.maxX + AppTheme.BorderWidth.thin
+        }
+    }
+
+    private static func captureKeyframeLayoutEvidence(
+        family: String,
+        properties: [AnimatableProperty],
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        screenshotName: String,
+        inspectorWidthTarget: CGFloat?,
+        scale: Double
+    ) async -> [String: Any] {
+        host.layoutSubtreeIfNeeded()
+        guard let root = window.contentView,
+              let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
+              let panelProbe = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.panel",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let firstProperty = properties.first,
+              let firstLabel = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.lane.\(firstProperty.rawValue).label",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let scrollView = enclosingScrollView(for: firstLabel),
+              let documentView = scrollView.documentView else {
+            fail("inspector \(family) keyframe layout geometry was unavailable", scale: scale)
+        }
+        let originalScrollOrigin = scrollView.contentView.bounds.origin
+        let rulerProbe = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        let rulerOverlay = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler.overlay",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        guard let rulerProbe, let rulerOverlay else {
+            fail("inspector \(family) ruler geometry was unavailable", scale: scale)
+        }
+        documentView.scrollToVisible(rulerProbe.convert(rulerProbe.bounds, to: documentView))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        let rulerFrame = rulerProbe.convert(rulerProbe.bounds, to: root)
+        let rulerOverlayFrame = rulerOverlay.convert(rulerOverlay.bounds, to: root)
+        let rulerClipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+        guard visibleFrame(rulerFrame, inside: rulerClipFrame, and: inspectorFrame),
+              matchingFrame(rulerOverlayFrame, rulerFrame) else {
+            fail("inspector \(family) ruler overlay was outside its drawing area", scale: scale)
+        }
+
+        var laneEvidence: [[String: Any]] = []
+        var detectedModes = Set<String>()
+        for property in properties {
+            let prefix = "inspector.keyframes.lane.\(property.rawValue)"
+            guard let label = visibleGeometryProbe(
+                identifier: "\(prefix).label",
+                in: window,
+                containedBy: inspectorFrame
+            ), let track = visibleGeometryProbe(
+                identifier: "\(prefix).track",
+                in: window,
+                containedBy: inspectorFrame
+            ), let overlay = visibleGeometryProbe(
+                identifier: "\(prefix).overlay",
+                in: window,
+                containedBy: inspectorFrame
+            ), enclosingScrollView(for: label) === scrollView,
+               enclosingScrollView(for: track) === scrollView,
+               enclosingScrollView(for: overlay) === scrollView else {
+                fail("inspector \(family) \(property.rawValue) geometry was unavailable", scale: scale)
+            }
+            let target = label.convert(label.bounds, to: documentView)
+                .union(track.convert(track.bounds, to: documentView))
+                .union(overlay.convert(overlay.bounds, to: documentView))
+            documentView.scrollToVisible(target)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            try? await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+
+            let clipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+            let labelFrame = label.convert(label.bounds, to: root)
+            let trackFrame = track.convert(track.bounds, to: root)
+            let overlayFrame = overlay.convert(overlay.bounds, to: root)
+            let side = labelFrame.maxX + AppTheme.Spacing.sm
+                <= trackFrame.minX + AppTheme.BorderWidth.thin
+            let stacked = labelFrame.maxY + AppTheme.Spacing.xs
+                <= trackFrame.minY + AppTheme.BorderWidth.thin
+            guard side != stacked,
+                  visibleFrame(labelFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(trackFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(overlayFrame, inside: clipFrame, and: inspectorFrame),
+                  matchingFrame(overlayFrame, trackFrame),
+                  abs(trackFrame.minX - rulerFrame.minX) <= AppTheme.BorderWidth.thin,
+                  abs(trackFrame.maxX - rulerFrame.maxX) <= AppTheme.BorderWidth.thin else {
+                fail("inspector \(family) \(property.rawValue) layout geometry was invalid", scale: scale)
+            }
+            detectedModes.insert(side ? "side" : "stacked")
+            laneEvidence.append([
+                "clipFrame": frameDescription(clipFrame),
+                "labelFrame": frameDescription(labelFrame),
+                "overlayFrame": frameDescription(overlayFrame),
+                "property": property.rawValue,
+                "trackFrame": frameDescription(trackFrame),
+                "visible": true,
+            ])
+        }
+        guard detectedModes.count == 1, let mode = detectedModes.first else {
+            fail("inspector \(family) keyframe lanes disagreed on layout", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshotName)) else {
+            fail("could not capture inspector \(family) \(mode) keyframes", scale: scale)
+        }
+        let panelFrame = panelProbe.convert(panelProbe.bounds, to: root)
+        scrollView.contentView.scroll(to: originalScrollOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        var evidence: [String: Any] = [
+            "inspectorFrame": frameDescription(inspectorFrame),
+            "laneEvidence": laneEvidence,
+            "mode": mode,
+            "panelFrame": frameDescription(panelFrame),
+            "reachableLaneLabels": properties.map(\.rawValue),
+            "rulerFrame": frameDescription(rulerFrame),
+            "rulerOverlayFrame": frameDescription(rulerOverlayFrame),
+            "screenshot": screenshotName,
+        ]
+        if let inspectorWidthTarget {
+            evidence["inspectorWidthTarget"] = Double(inspectorWidthTarget)
+        }
+        return evidence
+    }
+
+    private static func visibleFrame(
+        _ frame: NSRect,
+        inside clipFrame: NSRect,
+        and inspectorFrame: NSRect
+    ) -> Bool {
+        frame.width > 0
+            && frame.height > 0
+            && clipFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+            && inspectorFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+    }
+
+    private static func matchingFrame(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.minX - rhs.minX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.minY - rhs.minY) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxX - rhs.maxX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxY - rhs.maxY) <= AppTheme.BorderWidth.thin
+    }
+
+    private static func enclosingScrollView(for view: NSView) -> NSScrollView? {
+        var ancestor = view.superview
+        while let current = ancestor {
+            if let scrollView = current as? NSScrollView { return scrollView }
+            ancestor = current.superview
+        }
+        return nil
     }
 
     private static func panelDiagnostics(in root: NSView) -> [[String: Any]] {

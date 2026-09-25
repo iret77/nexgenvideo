@@ -9,6 +9,11 @@ on:
       - 'Sources/NexGenVideo/App/main.swift'
       - 'Sources/NexGenVideo/Agent/AgentService.swift'
       - 'Sources/NexGenVideo/Editor/TitleBarView.swift'
+      - 'Sources/NexGenVideo/Inspector/**'
+      - 'Sources/NexGenVideo/MediaPanel/CaptionsTab/CaptionTab.swift'
+      - 'Sources/NexGenVideo/MediaPanel/MediaPanelView.swift'
+      - 'Sources/NexGenVideo/UI/AppTheme.swift'
+      - 'Sources/NexGenVideo/UI/SegmentedTabBar.swift'
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}

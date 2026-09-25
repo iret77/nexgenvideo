@@ -24,6 +24,7 @@ struct ColorWheelControl: View {
                 range: masterRange,
                 gradient: AppTheme.Slider.lumaGradient,
                 defaultValue: masterDefault,
+                accessibilityName: "\(title) level",
                 onChanged: onMasterChanged,
                 onCommit: onMasterCommit
             )

@@ -79,6 +79,7 @@ struct TextTab: View {
                 range: 12...300,
                 format: "%.0f",
                 valueSuffix: " pt",
+                accessibilityName: "Text size",
                 fieldWidth: 50,
                 onChanged: { newVal in
                     editor.applyTextStyle(clipId: clip.id) { $0.fontSize = newVal }
@@ -99,6 +100,7 @@ struct TextTab: View {
                 displayMultiplier: 100,
                 format: "%.0f",
                 valueSuffix: "%",
+                accessibilityName: "Text opacity",
                 fieldWidth: 50,
                 onChanged: { newVal in
                     editor.applyClipProperty(clipId: clip.id) { $0.opacity = newVal }
@@ -177,20 +179,10 @@ struct TextTab: View {
         setEnabled: @escaping (inout TextStyle, Bool) -> Void,
         setColor: @escaping (inout TextStyle, TextStyle.RGBA) -> Void
     ) -> some View {
-        InspectorRow(icon: icon, label: label) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                ColorField(
-                    displayColor: color,
-                    onUserChange: { new in
-                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
-                            setColor(&$0, TextStyle.RGBA(new))
-                        }
-                    }
-                )
-                .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
-                .disabled(!enabled)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            InspectorRow(icon: icon, label: label) {
                 Toggle(
-                    "",
+                    label,
                     isOn: Binding(
                         get: { enabled },
                         set: { new in editor.commitTextStyle(clipId: clip.id) { setEnabled(&$0, new) } }
@@ -200,7 +192,20 @@ struct TextTab: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                .accessibilityLabel(label)
             }
+            InspectorFormRow(label: "Color") {
+                ColorField(
+                    displayColor: color,
+                    onUserChange: { new in
+                        editor.debouncedCommitTextStyle(clipId: clip.id, key: debounceKey) {
+                            setColor(&$0, TextStyle.RGBA(new))
+                        }
+                    }
+                )
+                .disabled(!enabled)
+            }
+            .padding(.leading, AppTheme.Spacing.lgXl)
         }
     }
 
