@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI-Spec — Generation batch review</title>
+<meta name="ui-spec-viewports" content="1400x900">
+<meta name="ui-spec-agent-widths" content="240,400,640">
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #090a0c;
+    --base: #101114;
+    --surface: #17191d;
+    --raised: #1e2126;
+    --prominent: #292d33;
+    --field: #111317;
+    --border: rgba(255,255,255,.14);
+    --border-strong: rgba(255,255,255,.23);
+    --text: rgba(255,255,255,1);
+    --text-2: rgba(255,255,255,.80);
+    --text-3: rgba(255,255,255,.62);
+    --muted: rgba(255,255,255,.50);
+    --accent: #f2a044;
+    --accent-dim: rgba(242,160,68,.13);
+    --warning: #e6ad45;
+    --s-xxs: 3px;
+    --s-xs: 5px;
+    --s-sm: 7px;
+    --s-sm-md: 9px;
+    --s-md: 11px;
+    --s-md-lg: 13px;
+    --s-lg: 15px;
+    --s-xl: 21px;
+    --s-xl-xxl: 25px;
+    --s-xxl: 30px;
+    --r-xs: 4px;
+    --r-sm: 6px;
+    --r-md: 9px;
+    --r-lg: 12px;
+    --hair: 1px;
+    --f-xxs: 11px;
+    --f-xs: 12px;
+    --f-md: 13px;
+    --f-lg: 15px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-2);
+    font: 400 var(--f-md)/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  }
+  body { padding: var(--s-xxl); }
+  .doc { width: min(100%, 1460px); margin: 0 auto; }
+  #spec {
+    padding: var(--s-xl-xxl) var(--s-xxl);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-lg);
+    background: #121318;
+  }
+  h1 { margin: 0 0 var(--s-sm); color: var(--text); font-size: 25px; font-weight: 600; }
+  h2 {
+    margin: var(--s-xxl) 0 var(--s-sm-md);
+    padding-bottom: var(--s-sm);
+    border-bottom: var(--hair) solid var(--border);
+    color: var(--text);
+    font-size: var(--f-lg);
+    font-weight: 600;
+  }
+  h3 { margin: var(--s-xl) 0 var(--s-xs); color: var(--text); font-size: var(--f-md); font-weight: 600; }
+  p, li { max-width: 98ch; }
+  p { margin: var(--s-xs) 0; }
+  ul, ol { margin: var(--s-xs) 0; padding-left: var(--s-xl); }
+  li { margin: var(--s-xs) 0; }
+  strong { color: var(--text); }
+  code {
+    padding: 1px var(--s-xs);
+    border-radius: var(--r-xs);
+    color: #efc494;
+    background: rgba(255,255,255,.05);
+    font: 500 var(--f-xs)/1.4 "SF Mono", ui-monospace, monospace;
+  }
+  .lead { max-width: 88ch; color: var(--text); font-size: var(--f-lg); }
+  .callout {
+    margin-top: var(--s-md-lg);
+    padding: var(--s-md-lg) var(--s-lg);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+    background: var(--accent-dim);
+  }
+  .tree {
+    max-width: 780px;
+    padding: var(--s-md-lg) var(--s-lg);
+    overflow: auto;
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text-2);
+    background: var(--field);
+    font: 500 var(--f-xs)/1.55 "SF Mono", ui-monospace, monospace;
+  }
+  .spec-table { width: 100%; margin-top: var(--s-sm); border-collapse: collapse; table-layout: fixed; }
+  .spec-table th, .spec-table td {
+    padding: var(--s-sm-md) var(--s-md);
+    border-bottom: var(--hair) solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  .spec-table th { color: var(--text-3); font-size: var(--f-xs); font-weight: 600; }
+  .spec-table td:first-child { width: 20%; color: var(--text); font-weight: 600; }
+
+  #mockups {
+    margin-top: 46px;
+    padding: var(--s-xl-xxl);
+    border-radius: var(--r-lg);
+    background: radial-gradient(circle at 70% 0%, rgba(242,160,68,.12), transparent 30%), #0d0e11;
+  }
+  #mockups h2 { margin-top: 0; border: 0; font-size: 20px; }
+  .matrix { display: grid; gap: var(--s-xl); }
+  .state { padding-top: var(--s-xl); border-top: var(--hair) solid var(--border); }
+  .state:first-child { padding-top: 0; border-top: 0; }
+  .state h3 { margin-top: 0; }
+  .panels { display: flex; align-items: flex-start; gap: var(--s-xl); overflow-x: auto; padding-bottom: var(--s-sm); }
+  .panel-shell { flex: 0 0 auto; }
+  .panel-shell.w240 { width: 240px; }
+  .panel-shell.w400 { width: 400px; }
+  .panel-shell.w640 { width: 640px; }
+  .width-label { margin-bottom: var(--s-xs); color: var(--text-3); font-size: var(--f-xxs); }
+  .panel {
+    display: grid;
+    grid-template-rows: auto minmax(0,1fr) auto auto;
+    height: 540px;
+    overflow: hidden;
+    border: var(--hair) solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--base);
+  }
+  .conversation {
+    display: flex;
+    gap: var(--s-xs);
+    align-items: center;
+    padding: var(--s-sm-md) var(--s-md);
+    border-bottom: var(--hair) solid var(--border);
+  }
+  .conversation strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conversation span { margin-left: auto; color: var(--warning); font-size: var(--f-xxs); white-space: nowrap; }
+  .transcript { min-height: 0; padding: var(--s-md); overflow: hidden; color: var(--text-3); }
+  .turn { max-width: 44ch; margin-bottom: var(--s-md); }
+  .turn b { color: var(--text-2); }
+  .status {
+    padding: var(--s-sm) var(--s-md);
+    border-top: var(--hair) solid var(--border);
+    color: var(--warning);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+  }
+  .dock { padding: var(--s-sm-md) var(--s-md); border-top: var(--hair) solid var(--border); }
+  .batch {
+    display: grid;
+    grid-template-rows: auto minmax(0,1fr) auto;
+    gap: var(--s-sm-md);
+    height: 318px;
+    overflow: hidden;
+    padding: var(--s-md);
+    border: var(--hair) solid rgba(242,160,68,.35);
+    border-radius: var(--r-md);
+    background: var(--raised);
+  }
+  .batch-head { display: grid; gap: var(--s-xs); }
+  .batch-title { display: flex; gap: var(--s-sm); align-items: baseline; color: var(--text); font-weight: 600; }
+  .batch-title span:first-child { color: var(--accent); }
+  .route-summary { color: var(--text-3); font-size: var(--f-xxs); }
+  .batch-body { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+  .group-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    justify-content: space-between;
+    padding: var(--s-xs) 0;
+    color: var(--text-3);
+    background: var(--raised);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .item { padding: var(--s-sm) 0; border-top: var(--hair) solid var(--border); }
+  .item-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: var(--s-sm); align-items: start; }
+  .number {
+    display: grid;
+    place-items: center;
+    min-width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--prominent);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+  }
+  .purpose { min-width: 0; }
+  .purpose b { display: block; overflow-wrap: anywhere; color: var(--text); font-size: var(--f-xs); }
+  .meta { color: var(--text-3); font-size: var(--f-xxs); }
+  .price { color: var(--text); font-size: var(--f-xs); font-weight: 600; white-space: nowrap; }
+  .price.unknown { color: var(--warning); }
+  .row-actions { display: flex; flex-wrap: wrap; gap: var(--s-xs); margin-top: var(--s-xs); }
+  .thumbs { display: flex; gap: var(--s-xs); margin-top: var(--s-xs); }
+  .thumb {
+    position: relative;
+    width: 54px;
+    height: 32px;
+    overflow: hidden;
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-xs);
+    background: linear-gradient(135deg,#25394a,#91674d 48%,#16191d 49%);
+  }
+  .thumb.alt { background: linear-gradient(135deg,#522d38,#c29377 47%,#20252b 48%); }
+  .thumb.location { background: linear-gradient(165deg,#314252 0 42%,#c47e47 43% 57%,#27231f 58%); }
+  .thumb::after { content: ""; position: absolute; inset: auto 7px 0; height: 70%; border-radius: 50% 50% 0 0; background: rgba(12,12,14,.58); }
+  .details {
+    margin: var(--s-sm) 0 0 31px;
+    padding: var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--field);
+  }
+  .details-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--s-sm); }
+  .detail-label { color: var(--text-3); font-size: var(--f-xxs); }
+  .detail-value { color: var(--text-2); font-size: var(--f-xs); overflow-wrap: anywhere; }
+  .button {
+    display: inline-block;
+    padding: var(--s-xs) var(--s-sm-md);
+    border: var(--hair) solid var(--border);
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--prominent);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .button.primary { border-color: transparent; color: #181512; background: #f4eee5; }
+  .button.disabled { color: var(--muted); background: var(--prominent); opacity: .6; }
+  .batch-footer { display: grid; gap: var(--s-sm); padding-top: var(--s-sm); border-top: var(--hair) solid var(--border); }
+  .total { display: flex; gap: var(--s-sm); align-items: baseline; justify-content: space-between; color: var(--text); font-weight: 600; }
+  .reason { color: var(--warning); font-size: var(--f-xxs); }
+  .decision-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--s-xs); }
+  .decision-actions .decline { margin-right: auto; }
+  .w240 .panel { height: 610px; }
+  .w240 .dock { padding: var(--s-sm); }
+  .w240 .batch { height: 318px; padding: var(--s-sm-md); }
+  .w240 .item-row { grid-template-columns: auto minmax(0,1fr); }
+  .w240 .price { grid-column: 2; }
+  .w240 .details { margin-left: 0; }
+  .w240 .details-grid { grid-template-columns: minmax(0,1fr); }
+  .w240 .total { align-items: flex-start; }
+  .w240 .decision-actions { justify-content: stretch; }
+  .w240 .decision-actions .button { flex: 1 1 auto; text-align: center; }
+  .w240 .decision-actions .decline { margin-right: 0; }
+  .w240 .decision-actions .primary,
+  .w240 .decision-actions .disabled { flex-basis: 100%; order: -1; }
+  .w640 .transcript, .w640 .dock { padding-inline: var(--s-xl); }
+  body.capture-mockups #spec { display: none; }
+</style>
+</head>
+<body>
+<main class="doc">
+  <section id="spec">
+    <h1>Generation batch review</h1>
+    <p class="lead">Normative treatment for a compact, readable manifest in the existing Agent decision Dock. The reviewer
+      can identify every output, reference and cost before approval without reading request JSON or
+      losing Remove, Decline or Approve below a scroll boundary.</p>
+
+    <div class="callout"><strong>Binding relationship.</strong> This document specializes
+      <code>agent-chat.html</code>, <code>generation-batches.md</code> and
+      <code>generation-package-review.md</code>. Their ownership, spending, package identity,
+      conversation binding and in-flow Dock rules remain authoritative.</div>
+
+    <h2>Remove diagnosis</h2>
+    <p>The reported interaction is not attributed to an overlay. Source inspection found two concrete
+      faults in the previous card: the card and its body independently used the same maximum height
+      without reserving header/footer space, and the shared busy state disabled Remove and Decline
+      during pricing or route recovery. The replacement measures fixed regions once, gives only the
+      body the remainder, and reserves the global edit lock for the approval commit. Supported-runner
+      evidence must still activate the real Remove control by pointer and keyboard.</p>
+
+    <h2>Surface and ownership</h2>
+    <pre class="tree">Agent panel (persistent in-flow siblings)
+├── Conversation Bar
+├── Transcript (its own scroll view)
+├── Live Status
+└── Composer Dock
+    └── Generation batch decision
+        ├── Header: count + shared output, destination and route summary
+        ├── Body: the only batch scroll view
+        │   ├── Group heading
+        │   └── Compact numbered item → optional inline detail
+        └── Footer: total/blocker + Decline + Approve</pre>
+    <ul>
+      <li>The decision replaces the composer and stays a normal Dock sibling. It is never a modal,
+        transcript overlay, second approval surface or user-authored turn.</li>
+      <li>The header and footer never scroll. The body receives the available decision height after
+        measured header, footer and theme spacing are subtracted. There is no nested item scroll.</li>
+      <li>Only an actual approval commit disables all mutations. Package recovery stays visible,
+        blocks approval and its own duplicate recovery, but Remove and Decline remain available.
+        Unknown pricing never disables Remove or Decline.</li>
+    </ul>
+
+    <h2>Manifest projection</h2>
+    <table class="spec-table">
+      <tr><th>Region</th><th>Required visible information</th></tr>
+      <tr><td>Header</td><td>“Review N generations”, common output count and destination, plus compact
+        shared route counts such as “12 × Nano Banana Pro · Runway API”. Common information appears once
+        here; item rows show only output, destination or route deviations.</td></tr>
+      <tr><td>Group</td><td>Character, Ensemble, Location, Prop, Look or Other and retained count.
+        Grouping is a view-only projection from a leading purpose label. It never changes manifest
+        order, item identity or canonical bytes. Global manifest numbers remain visible after grouping.</td></tr>
+      <tr><td>Collapsed item</td><td>Stable manifest number, full readable purpose, output count,
+        destination or route only when it deviates from shared context, thumbnail strip, per-item price
+        or explicit unknown-price state, a labeled Details disclosure and a labeled Remove action.</td></tr>
+      <tr><td>Expanded item</td><td>Ordered reference roles with real project-media thumbnails and an
+        Open reference action; full route, output count, destination and price; then a Request details
+        disclosure for compiled prompt, exact parameters, hashes, route evidence and package identity.</td></tr>
+      <tr><td>Footer</td><td>Verified total and retained generation count. If any price is unknown,
+        name the number of blocked items and recovery action. Decline remains enabled. Approve remains
+        visible, unmistakably disabled, and carries a visible reason outside the disabled control.</td></tr>
+    </table>
+
+    <h2>Interaction and state</h2>
+    <ul>
+      <li>Remove targets the item ID, not its displayed group position. The host atomically creates a
+        new manifest, transfers the originating conversation/tool binding to the new manifest ID, then
+        publishes the new pending state. Count, groups, total and approval eligibility update together.</li>
+      <li>Removing the last item resolves exactly like Decline: no submission, no empty manifest and a
+        completion routed to the owning conversation. Decline always returns to that same conversation.</li>
+      <li>Expanded state is view-local and keyed by item ID. Removing an expanded item clears only that
+        stale key. Route or pricing recovery preserves expansion when the item identity remains.</li>
+      <li>Reference thumbnails use current project media matched by the immutable reference receipt.
+        Missing previews show a labeled media placeholder, never a filename pretending to be an image.
+        Opening a reference selects the actual project asset; it does not approve or alter the package.</li>
+      <li>Approve binds the exact retained manifest ID. It is disabled while any retained item has no
+        verified monetary ceiling, while recovery is running or while commit is running. A visible
+        blocker states why. Existing #529 Retry pricing and route-change recovery remain in item detail.</li>
+      <li>Errors remain inline in the footer and release controls after the failed operation completes.
+        No optimistic UI may leave the manifest identity and conversation origin out of sync.</li>
+    </ul>
+
+    <h2>Keyboard and accessibility</h2>
+    <table class="spec-table">
+      <tr><th>Control</th><th>Contract</th></tr>
+      <tr><td>Batch group</td><td>Named “Review N generations”; count and total are read before items.</td></tr>
+      <tr><td>Item</td><td>One accessibility group named with number and purpose. Reading order is
+        summary, references, price, Details, Remove. Grouping and color are redundant cues.</td></tr>
+      <tr><td>Details</td><td>Space/Return expands or collapses in place. Focus remains on the disclosure.</td></tr>
+      <tr><td>Reference</td><td>Every thumbnail is a labeled button: “Open [role], [filename]”. The image
+        has an accessible description even when its preview is unavailable.</td></tr>
+      <tr><td>Remove</td><td>Visible text and an accessibility name containing item number and purpose.
+        Tab/Shift-Tab reaches it; Space/Return executes the same handler as pointer click.</td></tr>
+      <tr><td>Decision</td><td>Escape performs the visible Decline action when the decision is editable.
+        Disabled Approve remains discoverable with the adjacent spoken blocker.</td></tr>
+    </table>
+
+    <h2>Responsive and scale contract</h2>
+    <table class="spec-table">
+      <tr><th>Condition</th><th>Behavior</th></tr>
+      <tr><td>240 pt</td><td>Item price moves below the purpose; metadata and actions wrap; details use
+        one column. All labeled footer actions fit without horizontal scrolling.</td></tr>
+      <tr><td>400 pt</td><td>Number, purpose and price share the summary row. Reference thumbnails remain
+        compact and request details stay collapsed until chosen.</td></tr>
+      <tr><td>640 pt</td><td>Extra width becomes readable inset and two-column detail. It never creates a
+        dense gallery or a second action column detached from an item.</td></tr>
+      <tr><td>Large text</td><td>Rows grow and wrap; body scroll range grows. Header/footer remain in flow,
+        fully readable and actionable. No text is clipped to preserve row height.</td></tr>
+      <tr><td>1 / 13 / 50</td><td>One item uses the same grammar and may fit without scrolling. Thirteen and
+        fifty use lazy rows in the one body scroll; footer geometry and action hit regions do not move.</td></tr>
+    </table>
+
+    <h2>Implementation constraints</h2>
+    <ul>
+      <li>Native UI uses <code>AppTheme</code> for every spacing, font, weight, radius, border, opacity,
+        icon frame, shadow, color, animation and component dimension. Missing tokens are added first.</li>
+      <li>A layout primitive computes the body allocation from the decision bound and measured fixed
+        regions. Do not restore two competing <code>maxHeight</code> frames or derive Dock size from
+        transcript scroll geometry.</li>
+      <li>The existing package, manifest, recovery, journal, spend log and Agent conversation bindings
+        remain the only authorities. The projection introduces no editable copy or second identity.</li>
+      <li>All visible controls perform their label. Shared disabled styles remove active contrast and
+        hover response. Technical IDs and request evidence stay behind Request details.</li>
+    </ul>
+
+    <h2>Acceptance criteria</h2>
+    <ul>
+      <li>At 1, 13 and 50 items, short and long purposes, closed and open details, 240/400/640-point
+        panels and increased text size, actions are not covered and horizontal scrolling is absent.</li>
+      <li>Before approval, the reviewer can identify what is generated, the real visual references,
+        route deviations and the verified total without expanding JSON detail or reading the transcript.</li>
+      <li>With unknown pricing, Approve is visible and disabled with a reason while Remove and Decline
+        respond by pointer and keyboard. Removing the last unknown item can make the retained total valid.</li>
+      <li>Removing first, middle and last items preserves global numbering semantics, new manifest
+        identity, owner conversation and correct final resolution. Decline submits nothing.</li>
+      <li>Runtime evidence on the supported Actions runner activates Remove by a real UI click and by a
+        keyboard event, observes count/identity changes, and proves the controls are not blocked by
+        layout, hit-testing or main-thread work.</li>
+    </ul>
+  </section>
+
+  <section id="mockups">
+    <h2>Full-surface states</h2>
+    <p>Each mockup keeps Conversation Bar, Transcript, Live Status and Dock as in-flow siblings.
+      Thumbnail art stands in for the real project media the native view loads.</p>
+    <div class="matrix" id="matrix"></div>
+  </section>
+</main>
+<script>
+  const items = [
+    ["Character", "Mara — front identity sheet", "€0.18", "thumb", "Nano Banana Pro · Runway API"],
+    ["Character", "Mara — three-quarter identity sheet", "€0.18", "thumb alt", "Nano Banana Pro · Runway API"],
+    ["Character", "Mara — profile identity sheet with the approved coat silhouette", "€0.18", "thumb", "Nano Banana Pro · Runway API"],
+    ["Character", "Band — wide ensemble anchor", "€0.18", "thumb alt", "Nano Banana Pro · Runway API"],
+    ["Location", "Rooftop — dusk establishing view", "€0.18", "thumb location", "Nano Banana Pro · Runway API"],
+    ["Location", "Rooftop — reverse skyline view", "€0.18", "thumb location", "Nano Banana Pro · Runway API"],
+    ["Location", "Stairwell — sodium-vapor landing", "€0.18", "thumb location", "Nano Banana Pro · Runway API"],
+    ["Prop", "Chrome microphone — hero angle", "€0.18", "thumb alt", "Nano Banana Pro · Runway API"],
+    ["Prop", "Cassette recorder — continuity sheet", "€0.18", "thumb", "Nano Banana Pro · Runway API"],
+    ["Character", "Drummer — front identity sheet", "€0.18", "thumb alt", "Nano Banana Pro · Runway API"],
+    ["Character", "Guitarist — front identity sheet", "€0.18", "thumb", "Nano Banana Pro · Runway API"],
+    ["Location", "Backstage corridor — long-lens anchor", "€0.18", "thumb location", "Nano Banana Pro · Runway API"],
+    ["Prop", "Mara's silver lighter — insert sheet", "Price unavailable", "thumb alt", "Imagen 4 · Google AI API"]
+  ];
+
+  function visibleItems(count) {
+    if (count === 1) return [items[0]];
+    if (count === 13) return items;
+    return Array.from({length: 50}, (_, i) => {
+      const base = items[i % items.length];
+      return [base[0], base[1] + (i >= items.length ? ` — variant ${Math.floor(i / items.length) + 1}` : ""),
+        i === 49 ? "Price unavailable" : "€0.18", base[3],
+        i === 49 ? "Imagen 4 · Google AI API" : "Nano Banana Pro · Runway API"];
+    });
+  }
+
+  function row(item, index, expanded) {
+    const unknown = item[2] === "Price unavailable";
+    return `<div class="item">
+      <div class="item-row">
+        <span class="number">${index + 1}</span>
+        <div class="purpose"><b>${item[1]}</b>${item[4].includes("Google") ? `<span class="meta">${item[4]}</span>` : ""}
+          <div class="thumbs"><span class="${item[3]}" title="Real project reference"></span><span class="thumb location" title="Real style reference"></span></div>
+          <div class="row-actions"><span class="button">${expanded ? "Hide details" : "Details"}</span><span class="button">Remove</span></div>
+        </div>
+        <span class="price${unknown ? " unknown" : ""}">${item[2]}</span>
+      </div>
+      ${expanded ? `<div class="details"><div class="details-grid">
+        <div><div class="detail-label">References</div><div class="detail-value">Image reference · Mara-front.png<br>Style reference · dusk-grade.jpg<br><span class="button">Open reference</span></div></div>
+        <div><div class="detail-label">Route</div><div class="detail-value">${item[4]}<br>1 output · Media library</div></div>
+      </div><div class="row-actions"><span class="button">Request details</span></div></div>` : ""}
+    </div>`;
+  }
+
+  function groups(count, openIndex) {
+    const values = visibleItems(count);
+    const names = ["Character", "Location", "Prop", "Other"];
+    return names.map(name => {
+      const matches = values.map((value,index) => ({value,index})).filter(entry => entry.value[0] === name);
+      if (!matches.length) return "";
+      return `<section><div class="group-title"><span>${name}</span><span>${matches.length}</span></div>${matches.map(entry => row(entry.value, entry.index, entry.index === openIndex)).join("")}</section>`;
+    }).join("");
+  }
+
+  function panel(width, count, openIndex, priced) {
+    const unknown = priced ? 0 : 1;
+    const total = priced ? (count * .18).toFixed(2) : ((count - unknown) * .18).toFixed(2);
+    return `<div class="panel-shell w${width}"><div class="width-label">${width} pt · ${count} item${count === 1 ? "" : "s"}</div>
+      <article class="panel" aria-label="${width} point Agent panel with ${count} batch item${count === 1 ? "" : "s"}">
+        <header class="conversation"><strong>Bible image generation</strong><span>Needs action</span></header>
+        <div class="transcript"><div class="turn"><b>Agent</b><br>I prepared the independent Bible views. Review the visual references and total before generation.</div></div>
+        <div class="status">◇ Action required · generation batch</div>
+        <div class="dock"><section class="batch" aria-label="Review ${count} generations">
+          <header class="batch-head"><div class="batch-title"><span>▣</span><span>Review ${count} generations</span></div><div class="route-summary">1 output each · Media library</div><div class="route-summary">${count - unknown} × Nano Banana Pro · Runway API${unknown ? " · 1 route differs" : ""}</div></header>
+          <div class="batch-body">${groups(count, openIndex)}</div>
+          <footer class="batch-footer"><div class="total"><span>Estimated total</span><span>${priced ? `€${total}` : `€${total} + 1 unknown`}</span></div>
+            ${priced ? "" : `<div class="reason">Approve unavailable: 1 retained item has no verified price.</div>`}
+            <div class="decision-actions"><span class="button decline">Decline</span>${priced ? "" : `<span class="button">Retry pricing</span>`}<span class="button${priced ? " primary" : " disabled"}">Approve ${count} generation${count === 1 ? "" : "s"}${priced ? ` · €${total}` : ""}</span></div>
+          </footer>
+        </section></div>
+      </article></div>`;
+  }
+
+  const states = [
+    ["Single item · detail open", "One item uses the same summary grammar and exposes real references before technical detail.", 1, 0, true],
+    ["Thirteen items · one unknown price", "The reported Bible scale stays grouped and numbered; actions and the pricing blocker remain fixed below the one scroll body.", 13, 4, false],
+    ["Fifty items · compact overview", "The maximum manifest keeps lazy compact rows and unchanged footer geometry.", 50, -1, false]
+  ];
+  document.querySelector("#matrix").innerHTML = states.map(state => `<section class="state"><h3>${state[0]}</h3><p>${state[1]}</p><div class="panels">${[240,400,640].map(width => panel(width,state[2],state[3],state[4])).join("")}</div></section>`).join("");
+  if (new URLSearchParams(location.search).get("capture") === "mockups") {
+    document.body.classList.add("capture-mockups");
+  }
+  document.body.dataset.renderReady = "true";
+</script>
+</body>
+</html>

@@ -6,6 +6,28 @@ import Testing
 @Suite("Generation batch single-use execution")
 @MainActor
 struct GenerationBatchTests {
+    @MainActor
+    private final class PendingQuoteFixture {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private(set) var didStart = false
+
+        func quote(
+            _ target: ResolvedGenerationTarget,
+            _ input: GenerationPricingInput
+        ) async -> GenerationMoney {
+            _ = target
+            _ = input
+            didStart = true
+            await withCheckedContinuation { continuation = $0 }
+            return GenerationPackageFixture.money(0.40)
+        }
+
+        func finish() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
     private func runwayInput(
         _ model: String,
         count: Int = 1,
@@ -59,6 +81,241 @@ struct GenerationBatchTests {
             MediaAsset(id: "output-\(item.id)-\(index)", url: root.appendingPathComponent(Project.mediaDirectoryName + "/fixture-\(index).png"),
                 type: .image, name: item.purpose, duration: 1, generationInput: input).toManifestEntry(projectURL: root)
         }
+    }
+
+    private func waitUntil(_ predicate: () -> Bool) async {
+        for _ in 0..<100 where !predicate() { await Task.yield() }
+    }
+
+    @Test func reviewProjectionGroupsAndNumbersOneThirteenAndFiftyItems() async throws {
+        let (root, _, fixtureBatch) = try await fixture()
+        defer { cleanup(root) }
+        let package = fixtureBatch.payload.items[0].package
+        let thirteenPurposes = [
+            "Character Mara — front",
+            "Character Mara — profile",
+            "Ensemble Band — wide",
+            "Location Rooftop — dusk",
+            "Location Stairwell — landing",
+            "Prop Microphone — hero",
+            "Prop Cassette recorder — continuity",
+            "Look Lighting anchor",
+            "Character Drummer — front",
+            "Character Guitarist — front",
+            "Location Corridor — long lens",
+            "Prop Silver lighter — insert",
+            "Unclassified texture study",
+        ]
+        for count in [1, 13, 50] {
+            let purposes = (0..<count).map { thirteenPurposes[$0 % thirteenPurposes.count] }
+            let batch = try GenerationBatch(payload: .init(
+                nonce: UUID(),
+                projectKey: package.payload.binding.projectKey,
+                phase: nil,
+                items: purposes.map {
+                    .init(id: UUID().uuidString, purpose: $0, package: package)
+                }
+            ))
+            let projection = GenerationBatchReviewProjection(
+                batch: batch,
+                modelName: { _ in "Fixture image" }
+            )
+            #expect(projection.itemCount == count)
+            #expect(projection.sections.flatMap(\.items).count == count)
+            #expect(projection.sections.flatMap(\.items).map(\.manifestIndex).sorted() == Array(0..<count))
+            #expect(projection.routes == [
+                .init(id: projection.routes[0].id, label: "Fixture image · fal.ai API", count: count),
+            ])
+            #expect(projection.commonOutputCount == 1)
+            #expect(projection.commonDestinationLabel == "Media library")
+            #expect(projection.totalEUR == batch.totalEUR)
+            #expect(projection.unknownPriceCount == 0)
+        }
+        let thirteen = try GenerationBatch(payload: .init(
+            nonce: UUID(),
+            projectKey: package.payload.binding.projectKey,
+            phase: nil,
+            items: thirteenPurposes.map {
+                .init(id: UUID().uuidString, purpose: $0, package: package)
+            }
+        ))
+        let projection = GenerationBatchReviewProjection(
+            batch: thirteen,
+            modelName: { _ in "Fixture image" }
+        )
+        #expect(projection.sections.map(\.group) == [.character, .ensemble, .location, .prop, .look, .other])
+        #expect(projection.sections.first(where: { $0.group == .character })?.items.map(\.manifestIndex) == [0, 1, 8, 9])
+        #expect(try GenerationBatch(payload: thirteen.payload) == thirteen)
+    }
+
+    @Test func recoveryBlocksApprovalButNeverRemoveOrDecline() {
+        let controls = GenerationBatchReviewControls(
+            hasVerifiedTotal: true,
+            hasRetryablePricingFailure: true,
+            isCommitting: false,
+            isRecovering: true
+        )
+        #expect(controls.canEdit)
+        #expect(!controls.canRetryPricing)
+        #expect(!controls.canApprove)
+        let committing = GenerationBatchReviewControls(
+            hasVerifiedTotal: true,
+            hasRetryablePricingFailure: false,
+            isCommitting: true,
+            isRecovering: false
+        )
+        #expect(!committing.canEdit)
+        #expect(!committing.canApprove)
+    }
+
+    @Test func removingARecoveringUnknownItemKeepsThePricedRemainderAtomic() async throws {
+        let (root, editor, pricedBatch) = try await fixture()
+        defer { cleanup(root) }
+        let first = pricedBatch.payload.items[0]
+        let unpriced = try first.package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .priceQueryUnavailable,
+                provider: first.package.payload.target.provider,
+                endpoint: first.package.payload.target.endpoint,
+                detail: "fixture pricing outage"
+            )
+        )
+        let snapshot = try await GenerationPackageInputs.restore(package: first.package, editor: editor)
+        try await GenerationPackageInputs.persist(package: unpriced, snapshot: snapshot, editor: editor)
+        let batch = try pricedBatch.replacingPackage(itemID: first.id, with: unpriced)
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        try editor.generationBatchCoordinator.present(batch, recoveries: recoveries)
+        let quote = PendingQuoteFixture()
+        let retry = Task { @MainActor in
+            await editor.generationBatchCoordinator.retryPricing(
+                editor: editor,
+                quoteLoader: quote.quote
+            )
+        }
+        await waitUntil { quote.didStart }
+        #expect(editor.generationBatchCoordinator.recoveringItemIDs.contains(first.id))
+        editor.generationBatchCoordinator.remove(itemID: first.id, editor: editor)
+        let reduced = try #require(editor.generationBatchCoordinator.pending)
+        #expect(reduced.id != batch.id)
+        #expect(reduced.payload.items.count == 2)
+        #expect(reduced.totalEUR == 0.50)
+        #expect(!editor.generationBatchCoordinator.recoveringItemIDs.contains(first.id))
+        quote.finish()
+        await retry.value
+        #expect(editor.generationBatchCoordinator.pending == reduced)
+        #expect(editor.generationBatchCoordinator.error == nil)
+        #expect(!editor.generationBatchCoordinator.isRecovering)
+    }
+
+    @Test func removingTheLastItemResolvesWithoutAnEmptyManifest() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let item = batch.payload.items[0]
+        let single = try GenerationBatch(payload: .init(
+            nonce: batch.payload.nonce,
+            projectKey: batch.payload.projectKey,
+            phase: batch.payload.phase,
+            items: [item],
+            requestSHA256: batch.payload.requestSHA256
+        ))
+        let recovery = GenerationBatchRecovery(options: []) { _, _ in item.package }
+        try editor.generationBatchCoordinator.present(single, recoveries: [item.id: recovery])
+        editor.generationBatchCoordinator.remove(itemID: item.id, editor: editor)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        #expect(!editor.generationBatchCoordinator.isRecovering)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func declineResolvesImmediatelyWhilePricingRecoveryFinishesInTheBackground() async throws {
+        let (root, editor, pricedBatch) = try await fixture()
+        defer { cleanup(root) }
+        let first = pricedBatch.payload.items[0]
+        let unpriced = try first.package.replacingPricing(
+            estimate: nil,
+            failure: .init(
+                reason: .priceQueryUnavailable,
+                provider: first.package.payload.target.provider,
+                endpoint: first.package.payload.target.endpoint,
+                detail: "fixture pricing outage"
+            )
+        )
+        let snapshot = try await GenerationPackageInputs.restore(package: first.package, editor: editor)
+        try await GenerationPackageInputs.persist(package: unpriced, snapshot: snapshot, editor: editor)
+        let batch = try pricedBatch.replacingPackage(itemID: first.id, with: unpriced)
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        try editor.generationBatchCoordinator.present(batch, recoveries: recoveries)
+        let quote = PendingQuoteFixture()
+        let retry = Task { @MainActor in
+            await editor.generationBatchCoordinator.retryPricing(
+                editor: editor,
+                quoteLoader: quote.quote
+            )
+        }
+        await waitUntil { quote.didStart }
+        editor.generationBatchCoordinator.decline(editor: editor)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        #expect(!editor.generationBatchCoordinator.isRecovering)
+        #expect(editor.generationBatchCoordinator.error == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        quote.finish()
+        await retry.value
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        #expect(editor.generationBatchCoordinator.error == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func changedManifestAndDeclineStayBoundToTheOriginConversation() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let service = editor.agentService
+        service.newChat()
+        let originSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: originSessionID,
+            mcpSessionID: UUID()
+        )
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        let suspended = try service.presentGenerationBatch(
+            batch,
+            recoveries: recoveries,
+            origin: origin,
+            editor: editor
+        )
+        let marker = try #require(suspended.content.compactMap { block -> String? in
+            guard case .text(let value) = block else { return nil }
+            return value
+        }.first)
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(toolUseId: "batch-tool", content: [.text(marker)], isError: false),
+        ])]
+        service.newChat()
+        let otherSessionID = try #require(service.currentSessionId)
+        editor.generationBatchCoordinator.remove(
+            itemID: batch.payload.items[1].id,
+            editor: editor
+        )
+        let changed = try #require(editor.generationBatchCoordinator.pending)
+        #expect(changed.id != batch.id)
+        editor.generationBatchCoordinator.decline(editor: editor)
+        #expect(service.currentSessionId == otherSessionID)
+        let originSession = try #require(service.sessions.first { $0.id == originSessionID })
+        let result = originSession.messages.flatMap(\.blocks).compactMap { block -> [ToolResult.Block]? in
+            guard case .toolResult(let id, let content, let isError) = block,
+                  id == "batch-tool", !isError else { return nil }
+            return content
+        }.first
+        #expect(result?.contains(where: { block in
+            guard case .text(let text) = block else { return false }
+            return text == "The user declined the generation batch. No batch item was submitted."
+        }) == true)
+        #expect(service.sessionAttention(for: originSessionID) == .unreadResult)
     }
 
     @Test func duplicateSubmissionsCannotReuseAnItemOrAnotherItemsReservation() async throws {
