@@ -106,6 +106,7 @@ enum AgentTranscriptProjection {
         var resultMessage: AgentMessage?
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
+        let streamingMessageID = isRunning ? messages.last(where: { $0.role == .assistant })?.id : nil
 
         for message in messages {
             switch message.role {
@@ -135,8 +136,18 @@ enum AgentTranscriptProjection {
                     }
                 }
             case .assistant:
+                if message.isIncompleteAPIResponse, message.id != streamingMessageID {
+                    notices.append(.notice(.init(
+                        id: message.id,
+                        text: String(localized: "Response interrupted. This partial answer is not included in the agent’s context. Send a new request to continue.")
+                    )))
+                }
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
                 let persistentBlocks = message.blocks.filter { block in
+                    if message.isIncompleteAPIResponse {
+                        if case .text = block { return true }
+                        return false
+                    }
                     if case .thinking = block { return false }
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
@@ -183,7 +194,8 @@ enum AgentTranscriptProjection {
         var thinkingSummaries: [String] = []
 
         for message in turn where message.role == .assistant {
-            let hasActivityTool = message.blocks.contains(where: isActivityTool)
+            let hasActivityTool = !message.isIncompleteAPIResponse
+                && message.blocks.contains(where: isActivityTool)
             for block in message.blocks {
                 switch block {
                 case .thinking(let block):
@@ -193,6 +205,7 @@ enum AgentTranscriptProjection {
                     let status = compactStatus(text)
                     if !status.isEmpty, statuses.last != status { statuses.append(status) }
                 case .toolUse(let id, let name, let inputJSON):
+                    guard !message.isIncompleteAPIResponse else { continue }
                     guard ToolRunPresentation.baseName(for: name) != ToolName.showBlocks.rawValue else {
                         continue
                     }

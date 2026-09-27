@@ -134,6 +134,36 @@ struct AnthropicThinkingTests {
         #expect(replay.count == 2)
         #expect(replay.allSatisfy { $0.role == .user })
         #expect(restored.isIncompleteAPIResponse)
+        let turns = AgentTranscriptProjection.turns(messages: [restored], isStreaming: false)
+        let items = try #require(turns.first?.items)
+        guard case .assistantResult(let partialResult)? = items.first,
+              case .notice(let notice)? = items.last else {
+            Issue.record("Partial text must remain visible with a durable interruption notice")
+            return
+        }
+        #expect(partialResult.blocks == [.text("A partial answer")])
+        #expect(!notice.text.isEmpty)
+        let live = AgentTranscriptProjection.turns(messages: [restored], isStreaming: true)
+        for item in live.flatMap(\.items) {
+            if case .notice = item { Issue.record("The live response must not be marked interrupted") }
+            if case .activity(let activity) = item { #expect(activity.steps.isEmpty) }
+        }
+        var completed = restored
+        completed.isIncompleteAPIResponse = false
+        let finished = AgentTranscriptProjection.turns(messages: [completed], isStreaming: false)
+        let activities = finished.flatMap(\.items).compactMap { item -> AgentActivity? in
+            guard case .activity(let activity) = item else { return nil }
+            return activity
+        }
+        #expect(activities.first?.steps.map(\.id) == ["not-run"])
+        #expect(activities.first?.statuses == ["A partial answer"])
+        for item in items {
+            if case .activity(let activity) = item {
+                #expect(activity.steps.isEmpty)
+                #expect(activity.statuses.isEmpty)
+                #expect(!activity.isRunning)
+            }
+        }
     }
 
     @Test("thinking without a tool has a neutral completed detail label")
