@@ -43,6 +43,7 @@ enum WorkspaceUIAcceptance {
                 switch scenario {
                 case "cards": await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
                 case "analysis": await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
+                case "provenance": await captureAssetProvenance(evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -740,6 +741,158 @@ enum WorkspaceUIAcceptance {
         editor.selectedClipIds = originalClipIDs
         editor.inspectedObject = originalObject
         editor.mediaAssets = originalAssets
+    }
+
+    private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {
+        let projectURL: URL
+        let document: VideoProject
+        do {
+            projectURL = try makeProvenanceFixture(scale: scale)
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not load provenance fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        editor.setWorkspaceFocus(.media)
+        guard let home = editor.workingRoot, let originalBytes = try? treeSnapshot(at: home),
+              let savedBytes = try? treeSnapshot(at: projectURL) else {
+            fail("provenance fixture has no working copy", scale: scale)
+        }
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let log = editor.generationLog
+        let canUndo = document.undoManager?.canUndo ?? false
+        let edited = document.isDocumentEdited
+        let host = NSHostingView(rootView: InspectorView().interfaceStyle().environment(editor))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 650),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func text(_ id: String) -> String? {
+            (findProbe(in: host, identifier: id) as? AppRelaunchClickProbeView)?.acceptanceText
+        }
+        var expectedRows: [String: String] = [:]
+        func reject(_ reason: String) -> Never {
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-provenance-failed.png"))
+            emit("provenance-diagnostic", scale: scale, fields: ["reason": reason,
+                "expected": expectedRows, "actual": expectedRows.keys.sorted().map { key in
+                    ["id": key, "text": text(key) ?? "missing"]
+                }, "selection": editor.selectedMediaAssetIds.sorted(), "keyWindow": window.isKeyWindow])
+            fail(reason, scale: scale)
+        }
+        let cases: [(id: String, family: String)] = [
+            ("fixture-498", "imported"), ("fixture-492", "generated"),
+            ("fixture-495", "enhanced"), ("fixture-489", "offline"),
+        ]
+        var screenshots: [String] = []
+        for item in cases {
+            guard let asset = editor.mediaAssets.first(where: { $0.id == item.id }) else { reject("provenance asset missing") }
+            editor.selectMediaAsset(asset)
+            let prefix = "asset.\(asset.id)."
+            let isGenerated = item.family == "generated" || item.family == "enhanced"
+            let expected: [String: String] = isGenerated ? [
+                "Model ID": "native-image-fixture", "Provider": item.family == "generated" ? "fal.ai" : "Higgsfield",
+                "Route": item.family == "generated" ? "API" : "MCP", "Generation receipt": "Unavailable",
+                "Booked cost": item.family == "generated" ? "0.25 EUR" : "0.50 EUR",
+                "Provider job": "native-job-\(asset.id)",
+            ] : ["Source": "Imported media", "Generation route": "Not applicable"]
+            expectedRows = Dictionary(uniqueKeysWithValues: expected.map { (prefix + "origin." + $0.key, $0.value) })
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return window.isKeyWindow && text(prefix + "identity") == asset.libraryDisplayName
+                    && probeState(identifier: prefix + "identity", in: window) == (item.family == "offline")
+                    && expected.allSatisfy { text(prefix + "origin." + $0.key) == $0.value }
+            }) else { reject("\(item.family) identity or recorded origin did not render correctly") }
+            if item.family == "offline" {
+                guard probeState(identifier: prefix + "relink", in: window) == true,
+                      probeState(identifier: prefix + "reveal", in: window) == false else {
+                    reject("offline asset did not enable relink and disable file reveal")
+                }
+            }
+            let anchor = prefix + "origin." + (isGenerated ? "Model ID" : "Source")
+            guard await revealProbe(anchor, in: window) else { reject("\(item.family) origin is unreachable") }
+            let name = "scale-\(scaleLabel(scale))-provenance-\(item.family).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else { reject("could not capture provenance") }
+            screenshots.append(name)
+            if isGenerated {
+                guard await revealProbe(prefix + "origin.Booked cost", in: window) else { reject("recorded cost is unreachable") }
+                let costName = "scale-\(scaleLabel(scale))-provenance-\(item.family)-cost.png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(costName)) else { reject("could not capture recorded cost") }
+                screenshots.append(costName)
+            }
+            if item.family == "generated" {
+                guard text(prefix + "origin.References") == "Not applicable — no reference inputs" else {
+                    reject("generated asset invented reference inputs")
+                }
+            } else if item.family == "enhanced" {
+                guard let receipt = asset.generationInput?.referenceReceipts?.first,
+                      text(prefix + "origin.Source SHA-256") == receipt.sourceSHA256,
+                      await revealProbe(prefix + "original.fixture-498", in: window) else {
+                    reject("enhanced asset lost its exact source revision")
+                }
+                let referenceName = "scale-\(scaleLabel(scale))-provenance-enhanced-reference.png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(referenceName)) else { reject("could not capture source revision") }
+                screenshots.append(referenceName)
+                if let reason = click(identifier: prefix + "original.fixture-498", in: window) {
+                    reject("show original: \(reason)")
+                }
+                guard await waitUntil(timeout: .seconds(5), {
+                    editor.selectedMediaAssetIds == ["fixture-498"]
+                        && text("asset.fixture-498.origin.Source") == "Imported media"
+                }) else { reject("Show Original selected the wrong asset") }
+            }
+        }
+        guard editor.timeline == timeline, editor.mediaManifest == manifest, editor.generationLog == log,
+              document.isDocumentEdited == edited, (document.undoManager?.canUndo ?? false) == canUndo,
+              (try? treeSnapshot(at: home)) == originalBytes,
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("provenance inspection changed project data, costs or undo")
+        }
+        emit("asset-provenance", scale: scale, fields: [
+            "families": cases.map { $0.family }, "syntheticReceipts": true, "exactOriginRendered": true,
+            "originalSelected": true, "offlineActionsCorrect": true, "projectUnchanged": true,
+            "screenshots": screenshots,
+        ])
+    }
+
+    private static func makeProvenanceFixture(scale: Double) throws -> URL {
+        let project = try makeProjectFixture(scale: scale)
+        let manifestURL = project.appendingPathComponent(Project.manifestFilename)
+        var manifest = try JSONDecoder().decode(MediaManifest.self, from: Data(contentsOf: manifestURL))
+        var log = GenerationLog()
+        let sourceHash = try FileDigest.sha256(of: project.appendingPathComponent("media/fixture-498.png"))
+        for index in [492, 495] {
+            guard let offset = manifest.entries.firstIndex(where: { $0.id == "fixture-\(index)" }) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            var input = GenerationInput(prompt: "Synthetic historical provenance fixture", model: "native-image-fixture",
+                duration: 0, aspectRatio: "16:9")
+            input.generationPackageID = String(repeating: "0", count: 64)
+            input.spendTransactionId = "native-transaction-\(index)"
+            input.referenceReceipts = index == 492 ? [] : [GenerationReferenceReceipt(
+                assetID: "fixture-498", displayName: "Acceptance Source 498.png", type: "image",
+                sourceSHA256: sourceHash, submittedSHA256: sourceHash)]
+            manifest.entries[offset].generationInput = input
+            manifest.entries[offset].name = index == 492
+                ? "A generated image with a deliberately long original project filename.png"
+                : "An enhanced image with an exact original-source revision and a long name.png"
+            log.spendEvents.append(GenerationSpendEvent(transactionId: "native-transaction-\(index)",
+                kind: .charged, model: input.model, provider: index == 492 ? .fal : .higgsfield,
+                transport: index == 492 ? .api : .mcp, endpoint: "native-fixture",
+                providerRequestId: "native-job-fixture-\(index)",
+                money: GenerationMoney(nativeAmount: index == 492 ? 0.25 : 0.5, nativeCurrency: "EUR",
+                    eurAmount: index == 492 ? 0.25 : 0.5, eurPerNativeUnit: 1,
+                    exchangeRateDate: "2026-01-01", pricingSource: "synthetic acceptance fixture",
+                    exchangeRateSource: "identity")))
+        }
+        try JSONEncoder().encode(manifest).write(to: manifestURL)
+        try JSONEncoder().encode(log).write(to: project.appendingPathComponent(Project.generationLogFilename))
+        try FileManager.default.removeItem(at: project.appendingPathComponent("media/fixture-489.png"))
+        return project
     }
 
     private static func captureProjectCards(evidenceURL: URL, scale: Double) async {

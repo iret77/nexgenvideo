@@ -1323,12 +1323,14 @@ struct InspectorView: View {
                 Button("Relink…", systemImage: "link") { editor.presentRelinkPanel(for: asset) }
                     .buttonStyle(.inlineAction())
                     .disabled(asset.isGenerating)
+                    .background { assetAcceptanceProbe(asset, part: "relink", enabled: !asset.isGenerating) }
             }
             Button("Reveal in Finder", systemImage: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([asset.url])
             }
             .buttonStyle(.inlineAction())
             .disabled(editor.isMediaOffline(asset.id) || asset.isGenerating)
+            .background { assetAcceptanceProbe(asset, part: "reveal", enabled: !editor.isMediaOffline(asset.id) && !asset.isGenerating) }
         }
     }
 
@@ -1360,6 +1362,17 @@ struct InspectorView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background { assetAcceptanceProbe(asset, part: "identity", enabled: editor.isMediaOffline(asset.id)) }
+    }
+
+    @ViewBuilder
+    private func assetAcceptanceProbe(_ asset: MediaAsset, part: String, enabled: Bool) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "asset.\(asset.id).\(part)", acceptanceState: enabled,
+                acceptanceText: asset.libraryDisplayName)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
     }
 
     private var aiBadge: some View {

@@ -71,6 +71,13 @@ struct AssetProvenanceSection: View {
                             if let current = editor.mediaAssets.first(where: { $0.id == reference.assetID }) {
                                 Button("Show Original") { editor.selectMediaAsset(current) }
                                     .buttonStyle(.inlineAction())
+                                    .background {
+                                        if WorkspaceUIAcceptance.isRequested {
+                                            AppRelaunchClickProbe(identifier: "asset.\(asset.id).original.\(current.id)")
+                                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                                .allowsHitTesting(false)
+                                        }
+                                    }
                             } else {
                                 row("Original", "Unavailable in this library")
                             }
@@ -140,5 +147,12 @@ struct AssetProvenanceSection: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "asset.\(asset.id).origin.\(label)", acceptanceText: value)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
