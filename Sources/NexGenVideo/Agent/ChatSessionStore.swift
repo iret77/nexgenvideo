@@ -23,6 +23,22 @@ struct ChatSessionDraft: Codable, Equatable {
     }
 }
 
+struct ChatSessionDecision: Codable, Equatable {
+    let dialog: AgentDialog
+    let origin: ToolCallOrigin
+    var draft: AgentDialogDraft
+    var selections: [String: Set<String>]
+
+    func belongs(to sessionID: UUID) -> Bool {
+        guard dialog.purpose == .chatClarification else { return false }
+        switch origin {
+        case .direct: return true
+        case .inAppChat(let id), .embeddedRuntime(let id, _): return id == sessionID
+        case .externalMCP: return false
+        }
+    }
+}
+
 struct ChatSession: Codable, Identifiable {
     let id: UUID
     var title: String
@@ -33,8 +49,9 @@ struct ChatSession: Codable, Identifiable {
     /// the project can `--resume` the exact conversation instead of starting the agent from scratch.
     var claudeSessionId: String?
     var draft: ChatSessionDraft?
+    var decision: ChatSessionDecision?
 
-    var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false }
+    var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false || decision != nil }
 
     init(id: UUID = UUID(), title: String = "New chat", messages: [AgentMessage] = [], isOpen: Bool = true) {
         self.id = id
@@ -44,9 +61,10 @@ struct ChatSession: Codable, Identifiable {
         self.isOpen = isOpen
         self.claudeSessionId = nil
         self.draft = nil
+        self.decision = nil
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId, draft }
+    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -57,6 +75,7 @@ struct ChatSession: Codable, Identifiable {
         self.isOpen = try c.decodeIfPresent(Bool.self, forKey: .isOpen) ?? true
         self.claudeSessionId = try c.decodeIfPresent(String.self, forKey: .claudeSessionId)
         self.draft = try c.decodeIfPresent(ChatSessionDraft.self, forKey: .draft)
+        self.decision = try c.decodeIfPresent(ChatSessionDecision.self, forKey: .decision)
     }
 }
 

@@ -15,7 +15,7 @@
           "heading": "Agent",
           "items": [
             "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details.",
-            "The agent surface uses named tasks, a current result, and a separate diagnostic transcript. Caption edits, music revisions, and pack commands can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history. Open decision inputs survive panel reopening and failed intake completion. Malformed dialog schemas are rejected before presentation and can be corrected without leaving a pending approval."
+            "The agent surface uses named tasks, a current result, and a separate diagnostic transcript. Caption edits, music revisions, and pack commands can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history. Open decision inputs survive panel reopening and failed intake completion. Session-owned clarification dialogs and their drafts restore after project reload without submitting an answer. Malformed dialog schemas are rejected before presentation and can be corrected without leaving a pending approval."
           ]
         },
         {

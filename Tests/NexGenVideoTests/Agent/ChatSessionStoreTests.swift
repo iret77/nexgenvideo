@@ -29,6 +29,73 @@ struct ChatSessionStoreTests {
         let session = try decoder.decode(ChatSession.self, from: Data(json.utf8))
         #expect(session.claudeSessionId == nil)
         #expect(session.draft == nil)
+        #expect(session.decision == nil)
+    }
+
+    @Test("Open decisions reload in their owning session without sending or approving")
+    @MainActor
+    func openDecisionSurvivesReloadWithoutExecution() throws {
+        for embedded in [false, true] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+            try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let service = AgentService(refreshBackendStatusOnInit: false)
+            service.loadSessions(from: nil)
+            let id = try #require(service.currentSessionId)
+            let origin: ToolCallOrigin = embedded
+                ? .embeddedRuntime(chatSessionID: id, mcpSessionID: UUID())
+                : .inAppChat(sessionID: id)
+            let dialog = try AgentDialog.parse([
+                "title": "Revise the chorus", "textField": ["placeholder": "Direction"],
+                "sections": [["id": "pace", "label": "Pace", "type": "choices", "options": [
+                    ["id": "slow", "label": "Slower"], ["id": "fast", "label": "Faster"],
+                ]]],
+            ])
+            try service.presentDialog(dialog, origin: origin)
+            service.dialogDraft = AgentDialogDraft(toggles: ["keep": true], direction: "Preserve the ending",
+                customValues: ["style": "Muted"], fileURLs: [URL(fileURLWithPath: "/tmp/reference.png")])
+            service.dialogChoiceSelections = ["pace": ["slow"]]
+            let saved = try #require(service.sessions.first { $0.id == id })
+            #expect(saved.hasPersistedContent)
+            #expect(saved.decision?.origin == origin)
+            try #require(ChatSessionStore.encodeSession(saved)).write(
+                to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+            let restored = AgentService(refreshBackendStatusOnInit: false)
+            var writes = 0
+            restored.onSessionsChanged = { writes += 1 }
+            restored.onDraftChanged = { writes += 1 }
+            restored.loadSessions(from: home)
+            #expect(restored.currentSessionId == id)
+            #expect(restored.pendingDialog == dialog)
+            #expect(restored.dialogDraft.direction == "Preserve the ending")
+            #expect(restored.dialogDraft.fileURLs == [URL(fileURLWithPath: "/tmp/reference.png")])
+            #expect(restored.dialogDraft.customValues == ["style": "Muted"])
+            #expect(restored.dialogDraft.toggles == ["keep": true])
+            #expect(restored.dialogChoiceSelections == ["pace": ["slow"]])
+            #expect(restored.messages.isEmpty)
+            #expect(!restored.isStreaming)
+            #expect(restored.isComposerBlocked)
+            #expect(writes == 0)
+            #expect(throws: ToolError.self) { try restored.presentDialog(dialog, origin: origin) }
+            restored.abandonDialog()
+            #expect(restored.sessions.first { $0.id == id }?.decision == nil)
+            #expect(restored.messages.isEmpty)
+        }
+    }
+
+    @Test("A saved decision cannot claim another session or an external MCP connection")
+    func decisionRequiresItsOriginalSession() throws {
+        let owner = UUID()
+        let dialog = try AgentDialog.parse(["title": "Direction", "textField": [:]])
+        for origin in [ToolCallOrigin.inAppChat(sessionID: UUID()),
+                       .embeddedRuntime(chatSessionID: UUID(), mcpSessionID: UUID()),
+                       .externalMCP(sessionID: owner)] {
+            let saved = ChatSessionDecision(dialog: dialog, origin: origin,
+                draft: AgentDialogDraft(), selections: [:])
+            #expect(!saved.belongs(to: owner))
+        }
     }
 
     @Test("An unsent task survives disk reload without starting the agent")

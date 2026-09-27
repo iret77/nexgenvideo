@@ -294,6 +294,7 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
+            clearSavedDecision(id: oldValue?.id)
             dialogChoiceSelections = [:]
             dialogDraft = AgentDialogDraft()
             dialogSubmissionError = nil
@@ -376,7 +377,9 @@ final class AgentService {
     /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
     /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
     /// range selects its choice here, and the card's chip reflects it. Keyed by sectionId → option ids.
-    var dialogChoiceSelections: [String: Set<String>] = [:]
+    var dialogChoiceSelections: [String: Set<String>] = [:] {
+        didSet { persistDecisionDraft() }
+    }
 
     /// The pending dialog's canvas projection, or nil when there's nothing to project (plain card).
     var pendingDialogProjection: AgentDialog.Projection? {
@@ -2407,7 +2410,8 @@ final class AgentService {
         _claudeRuntime = nil
         composerStates.removeAll()
         let loadedSessions = ChatSessionStore.load(from: projectURL).filter(\.hasPersistedContent)
-        let resumeID = loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
+        let resumeID = loadedSessions.first { $0.isOpen && $0.decision?.belongs(to: $0.id) == true }?.id
+            ?? loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
         sessions = loadedSessions
             .map {
                 var session = $0
@@ -2432,7 +2436,10 @@ final class AgentService {
         pendingFunction = nil
         composerHeight = Self.preferredComposerHeight
         composerWantsFocus = false
-        if let resumeID { restoreComposerState(for: resumeID) }
+        if let resumeID {
+            restoreComposerState(for: resumeID)
+            restoreDecision(for: resumeID)
+        }
         streamError = nil
         toolExecutor?.resetFeedbackState()
     }
@@ -2539,6 +2546,7 @@ final class AgentService {
         currentSessionId = id
         messages = sessions[idx].messages
         restoreComposerState(for: id)
+        restoreDecision(for: id)
         isStreaming = false
         _claudeRuntime?.stop()
         _claudeRuntime = nil
@@ -3151,6 +3159,43 @@ final class AgentService {
         return obj
     }
 
+    private func clearSavedDecision(id: String?) {
+        guard !isRestoringComposer, let id,
+              let owner = dialogOrigins[id]?.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }),
+              sessions[index].decision?.dialog.id == id else { return }
+        sessions[index].decision = nil
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func persistDecisionDraft() {
+        guard !isRestoringComposer, let dialog = pendingDialog,
+              let origin = dialogOrigins[dialog.id],
+              let owner = origin.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }) else { return }
+        let decision = ChatSessionDecision(dialog: dialog, origin: origin,
+            draft: dialogDraft, selections: dialogChoiceSelections)
+        guard decision.belongs(to: owner), sessions[index].decision != decision else { return }
+        sessions[index].decision = decision
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func restoreDecision(for id: UUID) {
+        guard pendingDialog == nil,
+              let saved = sessions.first(where: { $0.id == id })?.decision,
+              saved.belongs(to: id) else { return }
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
+        dialogOrigins[saved.dialog.id] = saved.origin
+        suspendToolCalls(from: saved.origin)
+        pendingDialog = saved.dialog
+        dialogDraft = saved.draft
+        dialogChoiceSelections = saved.selections
+    }
+
     private func persistComposerDraft() {
         guard !isRestoringComposer, let id = currentSessionId,
               let index = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -3338,7 +3383,9 @@ final class AgentService {
     }
     private var isRestoringComposer = false
     var onDraftChanged: (@MainActor () -> Void)?
-    var dialogDraft = AgentDialogDraft()
+    var dialogDraft = AgentDialogDraft() {
+        didSet { persistDecisionDraft() }
+    }
 
 }
 

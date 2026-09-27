@@ -3,7 +3,7 @@ import Foundation
 import NexGenEngine
 import UniformTypeIdentifiers
 
-struct AgentDialogDraft: Equatable {
+struct AgentDialogDraft: Codable, Equatable {
     var toggles: [String: Bool] = [:]
     var direction = ""
     var customValues: [String: String] = [:]
