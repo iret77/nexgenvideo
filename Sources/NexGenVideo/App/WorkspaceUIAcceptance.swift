@@ -780,12 +780,12 @@ enum WorkspaceUIAcceptance {
             fail("pinned Musicvideo startup lost its phases, Track intake or pack identity", scale: scale)
         }
         let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
-            PipelinePanelView().frame(width: 540)
+            PipelinePanelView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
             VStack(spacing: AppTheme.Spacing.lg) {
                 PipelinePanelView(presentation: .phaseDock, viewedPhase: "analysis")
                 AgentPanelView()
             }
-        }.interfaceStyle().environment(editor).frame(width: 1380, height: 950))
+        }.interfaceStyle().environment(editor).frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -883,7 +883,7 @@ enum WorkspaceUIAcceptance {
         let canUndo = document.undoManager?.canUndo ?? false
         let edited = document.isDocumentEdited
         let host = NSHostingView(rootView: InspectorView().interfaceStyle().environment(editor)
-            .frame(width: 440, height: 650))
+            .frame(width: AppTheme.Acceptance.inspectorViewport.width, height: AppTheme.Acceptance.inspectorViewport.height))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 650),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
