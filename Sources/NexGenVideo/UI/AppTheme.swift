@@ -378,7 +378,7 @@ enum AppTheme {
         static let cockpitLabelWidth: CGFloat = 76
         static let cockpitMessageMaxWidth: CGFloat = 320
         static let packSurfaceRowHeight: CGFloat = 68
-        static let analysisTimelineViewportHeight: CGFloat = 112
+        static let analysisTimelineViewportHeight: CGFloat = 320
         // Badge masters are 728×193 (~3.77) — a wide header band. 224pt keeps them ≤ native @2x.
         static let pluginBadgeWidth: CGFloat = 224
         static let pluginBadgeAspect: CGFloat = 728.0 / 193.0

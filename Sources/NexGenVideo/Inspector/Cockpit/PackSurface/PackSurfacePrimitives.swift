@@ -310,3 +310,70 @@ struct StructureHierarchyList: View {
             .monospacedDigit()
     }
 }
+
+
+struct AnalysisEnergyTimeline: View {
+    let duration: Double
+    let samples: [AnalysisSurfaceData.EnergySample]
+    var selectedSection: AnalysisSurfaceData.Section?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("Measured energy · normalized RMS")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Canvas { context, size in
+                guard duration.isFinite, duration > 0 else { return }
+                if let selectedSection {
+                    let start = CGFloat(selectedSection.start / duration) * size.width
+                    let end = CGFloat(selectedSection.end / duration) * size.width
+                    context.fill(Path(CGRect(x: start, y: 0, width: max(0, end - start), height: size.height)),
+                        with: .color(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint)))
+                }
+                var path = Path()
+                for (index, sample) in samples.enumerated() {
+                    let point = CGPoint(x: CGFloat(sample.t / duration) * size.width,
+                        y: CGFloat(1 - sample.rms) * size.height)
+                    if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+                context.stroke(path, with: .color(AppTheme.Accent.timecodeColor), lineWidth: AppTheme.BorderWidth.thin)
+            }
+            .frame(height: AppTheme.ComponentSize.packSurfaceRowHeight)
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .accessibilityLabel("Measured energy over \(PackSurfaceFormat.mmss(duration))")
+        }
+    }
+}
+
+
+struct AnalysisWaveformTimeline: View {
+    let samples: [Float]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("Source waveform · amplitude envelope")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Canvas { context, size in
+                guard !samples.isEmpty else { return }
+                var path = Path()
+                let columns = max(1, Int(size.width.rounded(.up)))
+                for column in 0..<columns {
+                    let first = column * samples.count / columns
+                    let end = min(samples.count, max(first + 1, (column + 1) * samples.count / columns))
+                    guard first < end else { continue }
+                    let amplitude = CGFloat(1 - (samples[first..<end].min() ?? 1)) * size.height / 2
+                    let x = CGFloat(column) * size.width / CGFloat(columns)
+                    path.move(to: CGPoint(x: x, y: size.height / 2 - amplitude))
+                    path.addLine(to: CGPoint(x: x, y: size.height / 2 + amplitude))
+                }
+                context.stroke(path, with: .color(AppTheme.Text.secondaryColor), lineWidth: AppTheme.BorderWidth.hairline)
+            }
+            .frame(height: AppTheme.ComponentSize.packSurfaceRowHeight)
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .accessibilityLabel("Waveform from the verified analyzed track")
+        }
+    }
+}

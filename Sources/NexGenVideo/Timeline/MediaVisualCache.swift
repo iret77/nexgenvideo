@@ -162,7 +162,7 @@ final class MediaVisualCache {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
     }
 
-    private nonisolated static func loadOrGenerateWaveform(url: URL) async -> [Float]? {
+    nonisolated static func loadOrGenerateWaveform(url: URL) async -> [Float]? {
         let cacheKey = diskCacheKey(for: url)
         if let cacheKey, let cached = loadWaveform(key: cacheKey) { return cached }
 

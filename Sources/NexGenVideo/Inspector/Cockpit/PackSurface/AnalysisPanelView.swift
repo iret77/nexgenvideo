@@ -47,6 +47,8 @@ struct DeclarativePackSurfaceView: View {
     private struct LoadedSurface: Sendable, Equatable {
         let document: PackSurfaceDocument
         let analysis: AnalysisSurfaceData?
+        let sourceURL: URL?
+        let waveform: [Float]?
     }
 
     private enum LoadState: Equatable {
@@ -149,11 +151,9 @@ struct DeclarativePackSurfaceView: View {
                 visibility: sectionsVisibility,
                 analysis: loaded.analysis
             )
-            if beats.isEmpty {
-                analysisStatus(loaded.analysis)
-                degradedBanner
-            } else {
-                analysisStatus(loaded.analysis)
+            analysisStatus(loaded.analysis)
+            if beats.isEmpty { degradedBanner }
+            if duration.isFinite, duration > 0 {
                 labelledBlock(title, detail: provenance(loaded.analysis, beats: beats, downbeats: downbeats)) {
                     HStack {
                         Stepper("Zoom: \(analysisZoom)×", value: $analysisZoom, in: 1...8)
@@ -163,10 +163,29 @@ struct DeclarativePackSurfaceView: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     GeometryReader { geometry in
                         ScrollView(.horizontal) {
-                            BeatTimeline(duration: duration, beats: beats, downbeats: downbeats,
-                                sections: sections, selectedSectionIndex: selectedAnalysisSection?.index,
-                                onSelectSection: { selectedAnalysisSection = $0 })
-                                .frame(width: geometry.size.width * CGFloat(analysisZoom))
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                                BeatTimeline(duration: duration, beats: beats, downbeats: downbeats,
+                                    sections: sections, selectedSectionIndex: selectedAnalysisSection?.index,
+                                    onSelectSection: { selectedAnalysisSection = $0 })
+                                if loaded.analysis?.durationS == duration, let waveform = loaded.waveform,
+                                   !waveform.isEmpty, waveform.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
+                                    AnalysisWaveformTimeline(samples: waveform)
+                                } else {
+                                    Text("Source waveform unavailable.")
+                                        .interfaceFont(size: AppTheme.Typography.metadata)
+                                        .foregroundStyle(AppTheme.Text.mutedColor)
+                                }
+                                if let analysis = loaded.analysis, analysis.durationS == duration,
+                                   let energy = analysis.measuredEnergy {
+                                    AnalysisEnergyTimeline(duration: duration, samples: energy,
+                                        selectedSection: selectedAnalysisSection)
+                                } else {
+                                    Text("Measured energy unavailable.")
+                                        .interfaceFont(size: AppTheme.Typography.metadata)
+                                        .foregroundStyle(AppTheme.Text.mutedColor)
+                                }
+                            }
+                            .frame(width: geometry.size.width * CGFloat(analysisZoom))
                         }
                     }
                     .frame(height: AppTheme.ComponentSize.analysisTimelineViewportHeight)
@@ -473,10 +492,15 @@ struct DeclarativePackSurfaceView: View {
                 pattern: surface.dataFile
             ), let bytes = try? Data(contentsOf: url),
                let document = try? PackSurfaceDocument(data: bytes) else { return nil }
-            return LoadedSurface(
-                document: document,
-                analysis: try? JSONDecoder().decode(AnalysisSurfaceData.self, from: bytes)
-            )
+            let analysis = try? JSONDecoder().decode(AnalysisSurfaceData.self, from: bytes)
+            let sourceURL = analysis?.verifiedSourceURL(dataRoot: root)
+            let waveform: [Float]?
+            if let sourceURL {
+                waveform = await MediaVisualCache.loadOrGenerateWaveform(url: sourceURL)
+            } else {
+                waveform = nil
+            }
+            return LoadedSurface(document: document, analysis: analysis, sourceURL: sourceURL, waveform: waveform)
         }.value
         guard token == loadToken else { return }
         guard let loaded else {
