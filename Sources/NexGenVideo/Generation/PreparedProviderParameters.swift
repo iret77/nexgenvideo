@@ -21,6 +21,7 @@ struct PreparedProviderParameters: Sendable {
             used = [video.sourceVideoURL, video.startFrameURL, video.endFrameURL].compactMap { $0 }
                 + video.referenceImageURLs + video.referenceVideoURLs + video.referenceAudioURLs
         case .image(let image): used = image.imageURLs
+        case .audio(let audio): used = [audio.videoURL].compactMap { $0 }
         default: throw GenerationRequestError.optionsInvalid("The prepared request has the wrong media type.")
         }
         guard used.count == slots.count, Set(used) == Set(slots), Set(slots).count == slots.count,
@@ -46,6 +47,9 @@ struct PreparedProviderParameters: Sendable {
         case .image(let value):
             return .image(ImageGenerationParams(prompt: value.prompt, aspectRatio: value.aspectRatio,
                 resolution: value.resolution, quality: value.quality, imageURLs: value.imageURLs.map(resolve), numImages: value.numImages))
+        case .audio(var value):
+            value.videoURL = value.videoURL.map(resolve)
+            return .audio(value)
         default:
             throw GenerationRequestError.optionsInvalid("The prepared request has the wrong media type.")
         }

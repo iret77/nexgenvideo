@@ -204,7 +204,7 @@ enum GenerationController {
     enum PreparedSubmission {
         case video(VideoGenerationSubmission, PreparedProviderParameters)
         case image(ImageGenerationSubmission, PreparedProviderParameters)
-        case audio(AudioGenerationSubmission)
+        case audio(AudioGenerationSubmission, PreparedProviderParameters)
         case music(MusicGenerationSubmission)
         case upscale(GenerationRequest.UpscaleSubmission)
 
@@ -226,7 +226,17 @@ enum GenerationController {
                     throw GenerationRequestError.optionsInvalid("The image output count does not match the prepared request.")
                 }
                 self = .image(value, parameters)
-            case .audio(let make): self = .audio(make(compiledPrompt))
+            case .audio(let make):
+                let value = make(compiledPrompt)
+                let parameters = try PreparedProviderParameters(referenceCount: value.references.count) { slots in
+                    var params = value.params
+                    if params.videoURL == nil { params.videoURL = slots.first }
+                    return .audio(params)
+                }
+                guard value.params.prompt == compiledPrompt, value.genInput.prompt == compiledPrompt else {
+                    throw GenerationRequestError.optionsInvalid("The audio request does not contain the compiled prompt.")
+                }
+                self = .audio(value, parameters)
             case .music(let make): self = .music(make(compiledPrompt))
             case .upscale(let run): self = .upscale(run)
             }
@@ -254,7 +264,7 @@ enum GenerationController {
         guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
         try generation.destination.requireCurrent(editor: editor)
         guard let package = try makePackage(generation, estimate: estimate) else {
-            throw GenerationRequestError.optionsInvalid("This operation does not support a visual generation package.")
+            throw GenerationRequestError.optionsInvalid("This operation does not support a generation package.")
         }
         try await package.requireCurrentContext(editor: editor)
         try generation.attachReview(package)
@@ -271,6 +281,8 @@ enum GenerationController {
             input = video.genInput; parameters = prepared; modality = "video"; count = 1
         case .image(let image, let prepared):
             input = image.genInput; parameters = prepared; modality = "image"; count = image.numImages
+        case .audio(let audio, let prepared):
+            input = audio.genInput; parameters = prepared; modality = "audio"; count = 1
         default: return nil
         }
         let references = generation.references?.receipts ?? []
@@ -394,6 +406,12 @@ enum GenerationController {
                         )
                     }
                 }
+            case .audio(let audio, _):
+                guard audio.genInput.model == target.modelId else {
+                    throw GenerationRequestError.optionsInvalid("The audio request changed its approved model.")
+                }
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: audio.references,
+                    trim: audio.trimmedSourceOverride, preprocess: audio.preprocessRef)
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
@@ -462,6 +480,8 @@ enum GenerationController {
                 }
             } else if case .image(let image, _) = prepared {
                 try referenceSnapshot?.requireIdentity(image.references)
+            } else if case .audio(let audio, _) = prepared {
+                try referenceSnapshot?.requireIdentity(audio.references)
             }
             try generation.scope?.requireCurrent(editor: editor)
         } catch { return .failure(.gate(error.localizedDescription)) }
@@ -484,6 +504,7 @@ enum GenerationController {
         } catch { return .failure(.budget(error.localizedDescription)) }
         do {
             try await referenceSnapshot?.requireUnchanged()
+            if let message = generation.preflight?() { throw GenerationRequestError.optionsInvalid(message) }
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             try generation.destination.requireCurrent(editor: editor)
@@ -618,10 +639,10 @@ enum GenerationController {
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
-        case .audio(let submission):
+        case .audio(let submission, let parameters):
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
-                authorization: authorization,
+                authorization: authorization, preparedParameters: parameters,
                 onComplete: audioOnComplete(request, editor: editor, then: onSuccess),
                 onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
@@ -671,7 +692,7 @@ enum GenerationController {
                 resolution = params.resolution
                 quality = params.quality
             }
-        case .audio(let submission):
+        case .audio(let submission, _):
             let params = submission.params
             duration = params.durationSeconds.map(Double.init) ?? duration
         case .music(let submission):
