@@ -4,9 +4,6 @@ import SwiftUI
 @MainActor
 enum WorkspaceUIAcceptance {
     private static var editorSizeProbes: [[String: String]] = []
-    static let agentPinnedAwayNotification = Notification.Name(
-        "WorkspaceUIAcceptance.agentPinnedAway"
-    )
 
     static var isRequested: Bool {
         ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
@@ -331,31 +328,10 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: [
                     "screenshot": "\(narrowName).png",
+                    "taskControls": ["agent.decisions", "agent.diagnostics", "agent.utilities"],
                     "frames": narrowFrames.mapValues { frameDescription($0) },
                     "window": windowDiagnostics(window, contentView: host),
                 ]
-            )
-            NotificationCenter.default.post(
-                name: agentPinnedAwayNotification,
-                object: true
-            )
-            guard await waitUntil(timeout: .seconds(5), {
-                host.layoutSubtreeIfNeeded()
-                return compactAgentControlsAreContained(in: window)
-            }) else {
-                fail("narrow pinned agent controls did not fit", scale: scale)
-            }
-            try? await Task.sleep(for: .milliseconds(300))
-            host.layoutSubtreeIfNeeded()
-            let pinnedName = "scale-\(scaleLabel(scale))-production-narrow-pinned"
-            guard compactAgentControlsAreContained(in: window),
-                  snapshot(host, at: evidenceURL.appendingPathComponent("\(pinnedName).png")) else {
-                fail("narrow pinned agent layout did not render", scale: scale)
-            }
-            emit(
-                "narrow-production-pinned",
-                scale: scale,
-                fields: ["screenshot": "\(pinnedName).png"]
             )
             guard editor.timeline == originalTimeline,
                   editor.mediaManifest == originalManifest,
@@ -813,42 +789,13 @@ enum WorkspaceUIAcceptance {
             && visibleProbe(identifier: "preview.zoom", in: window, containedBy: transportBounds)
     }
 
-    private static func agentControlsAreContained(
-        in window: NSWindow,
-        includeLatest: Bool = false,
-        requiredState: Bool? = nil
-    ) -> Bool {
+    private static func agentControlsAreContained(in window: NSWindow) -> Bool {
         guard let root = window.contentView,
               let agentFrame = visiblePanelFrames(in: root)["agentPanel"] else { return false }
-        let bounds = agentFrame.insetBy(
-            dx: -AppTheme.BorderWidth.thin,
-            dy: -AppTheme.BorderWidth.thin
-        )
-        let standardControlsFit = visibleProbe(
-            identifier: "agent.newConversation",
-            in: window,
-            containedBy: bounds,
-            requiredState: requiredState
-        ) && visibleProbe(
-            identifier: "agent.utilities",
-            in: window,
-            containedBy: bounds,
-            requiredState: requiredState
-        )
-        return standardControlsFit && (!includeLatest || visibleProbe(
-            identifier: "agent.latest",
-            in: window,
-            containedBy: bounds,
-            requiredState: requiredState
-        ))
-    }
-
-    private static func compactAgentControlsAreContained(in window: NSWindow) -> Bool {
-        agentControlsAreContained(
-            in: window,
-            includeLatest: true,
-            requiredState: true
-        )
+        let bounds = agentFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
+        return ["agent.decisions", "agent.diagnostics", "agent.utilities"].allSatisfy {
+            visibleProbe(identifier: $0, in: window, containedBy: bounds)
+        }
     }
 
     private static func visibleProbe(

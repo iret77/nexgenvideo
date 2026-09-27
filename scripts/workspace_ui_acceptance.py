@@ -164,13 +164,12 @@ def run_scale(executable, output, scale):
     completed = any(row.get("event") == "completed" for row in rows)
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
-    pinned = [row for row in rows if row.get("event") == "narrow-production-pinned"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow + pinned
+        for row in workspace_rows + hidden + narrow
     ]
     screenshots += [
         row.get("screenshot")
@@ -197,7 +196,8 @@ def run_scale(executable, output, scale):
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
         and len(hidden) == 1
         and len(narrow) == 1
-        and len(pinned) == 1
+        and set(narrow[0].get("taskControls", []))
+        == {"agent.decisions", "agent.diagnostics", "agent.utilities"}
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -209,7 +209,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 7 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

@@ -15,7 +15,7 @@
           "heading": "Agent",
           "items": [
             "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details.",
-            "Starter tasks, caption edits, music revisions, and pack commands with required arguments can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history."
+            "The agent surface uses named tasks, a current result, and a separate diagnostic transcript. Caption edits, music revisions, and pack commands can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history."
           ]
         },
         {
