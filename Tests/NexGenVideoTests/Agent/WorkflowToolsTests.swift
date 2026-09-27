@@ -1294,6 +1294,10 @@ struct WorkflowToolsTests {
         ).approval
         #expect(!nativeReadiness.isReady)
         #expect(nativeReadiness.blocker?.contains("no analysis artifact") == true)
+        let userMessage = try #require(nativeReadiness.userMessage)
+        #expect(userMessage.contains("artifact"))
+        #expect(!userMessage.contains(dataRoot.path))
+        #expect(!userMessage.contains("run_phase"))
         do {
             try await NativeGateWriter.approve(
                 projectDir: FrameInventory.projectHome(of: dataRoot),
@@ -1541,6 +1545,14 @@ struct WorkflowToolsTests {
         let reconciliation = h.editor.pipelineAgentHarness.reconcile(editor: h.editor)
         #expect(!reconciliation.isReady)
         #expect(h.editor.agentService.pendingDialog?.title == "Existing story")
+        let intakeReadiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot), phase: "brief",
+            declaredPack: h.editor.declaredPluginName, declaredBinding: h.editor.declaredPluginBinding,
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        ).approval
+        #expect(!intakeReadiness.isReady)
+        #expect(intakeReadiness.userMessage?.contains("Existing story") == true)
+        #expect(intakeReadiness.userMessage?.contains("host-owned") == false)
         let blocked = await h.runRaw(
             "write_brief",
             args: validBriefArgs(dataRoot: dataRoot)

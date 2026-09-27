@@ -29,7 +29,7 @@
           "items": [
             "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review.",
             "The analysis timeline aligns verified source waveforms and recorded RMS energy with beats and sections, with shared zoom, horizontal scrolling, hierarchy selection, and verified-source listening.",
-            "Artifact workspaces keep the current pipeline phase and guarded approval controls visible in a compact phase dock."
+            "Artifact workspaces keep the current pipeline phase and guarded approval controls visible in a compact phase dock, with named pending decisions and readable structural blockers."
           ]
         }
       ]

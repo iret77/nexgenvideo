@@ -313,11 +313,18 @@ struct PipelinePanelView: View {
 
     private func nextActionDescription(for phase: String) -> String {
         if gateWriting { return "Saving the phase decision…" }
+        if let dialog = editor.agentService.pendingDialog {
+            return "Complete ‘\(dialog.title)’ in the current controls."
+        }
+        if editor.agentService.pendingSpendApproval != nil { return "Review the pending generation cost before continuing." }
+        if editor.generationBatchCoordinator.pending != nil { return "Review the pending generation batch before continuing." }
+        if editor.agentService.pendingGateApproval != nil { return "Resolve the pending phase approval in the current controls." }
         if editor.agentService.isComposerBlocked { return "Complete the current input or approval in the agent controls." }
         if approvalPhase != phase { return "Checking phase readiness…" }
         if !mutationReadiness.isReady { return "Phase controls are unavailable. Resolve the project or workflow error before continuing." }
         if approvalReadiness.isReady { return "Review this phase’s artifact, then approve it to continue." }
-        return "Complete this phase’s artifact before approval. Open its working surface or the agent controls to continue."
+        return approvalReadiness.userMessage
+            ?? "Complete this phase’s artifact before approval. Open its working surface or the agent controls to continue."
     }
 
     private func approvalIsEnabled(for phase: String, isNext: Bool, runningPhase: String?) -> Bool {
