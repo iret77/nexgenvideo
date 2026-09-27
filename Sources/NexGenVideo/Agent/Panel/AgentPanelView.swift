@@ -672,6 +672,10 @@ struct AgentPanelView: View {
                 AgentDialogCard(
                     dialog: dialog,
                     externalSelections: $service.dialogChoiceSelections,
+                    externalDraft: Binding(
+                        get: { service.pendingDialog?.id == dialog.id ? service.dialogDraft : AgentDialogDraft() },
+                        set: { if service.pendingDialog?.id == dialog.id { service.dialogDraft = $0 } }
+                    ),
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
                     libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,

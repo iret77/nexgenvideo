@@ -295,6 +295,7 @@ final class AgentService {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
             dialogChoiceSelections = [:]
+            dialogDraft = AgentDialogDraft()
             dialogSubmissionError = nil
             submittingDialogID = nil
         }
@@ -1164,10 +1165,14 @@ final class AgentService {
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
+        let preservedDraft = dialogDraft
+        let preservedSelections = dialogChoiceSelections
         submittingDialogID = nil
         pendingDialog = nil
         guard let editor else {
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = "The project is unavailable. Reopen it and try again."
             return
         }
@@ -1181,6 +1186,8 @@ final class AgentService {
         )
         if let failure = reconciliation.failure {
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = failure
             return
         }
@@ -3331,6 +3338,7 @@ final class AgentService {
     }
     private var isRestoringComposer = false
     var onDraftChanged: (@MainActor () -> Void)?
+    var dialogDraft = AgentDialogDraft()
 
 }
 

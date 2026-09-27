@@ -3,6 +3,13 @@ import Foundation
 import NexGenEngine
 import UniformTypeIdentifiers
 
+struct AgentDialogDraft: Equatable {
+    var toggles: [String: Bool] = [:]
+    var direction = ""
+    var customValues: [String: String] = [:]
+    var fileURLs: [URL] = []
+}
+
 /// The user's structured answer to a presented dialog.
 struct AgentDialogResult: Sendable, Equatable {
     var selectedLabels: [String: [String]]

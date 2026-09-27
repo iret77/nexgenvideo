@@ -5,6 +5,39 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned() throws {
+        let service = AgentService()
+        let dialog = AgentDialog(
+            id: "identity-intake", title: "Character 1", symbol: "person",
+            intro: nil, costHint: nil, confirmLabel: "Attach", textField: nil,
+            sections: [], fileIntake: AgentDialog.FileIntake(
+                accept: ["image"], prompt: nil, allowsMultiple: true,
+                attachAs: "character", namePrompt: "Character name",
+                required: false, completionLabel: "Done"
+            ), purpose: .workflowIntake
+        )
+        try service.presentDialog(dialog)
+        let draft = AgentDialogDraft(
+            toggles: ["reference": false], direction: "Lead singer",
+            customValues: ["style": "Hand drawn"],
+            fileURLs: [URL(fileURLWithPath: "/tmp/lead-singer.png")]
+        )
+        service.dialogDraft = draft
+        service.dialogChoiceSelections = ["style": ["custom"]]
+
+        service.completeDialog(dialog)
+
+        #expect(service.pendingDialog?.id == dialog.id)
+        #expect(service.dialogSubmissionError != nil)
+        #expect(service.dialogDraft == draft)
+        #expect(service.dialogChoiceSelections == ["style": ["custom"]])
+        #expect(service.submittingDialogID == nil)
+        #expect(service.messages.isEmpty)
+        service.abandonDialog()
+        #expect(service.dialogDraft == AgentDialogDraft())
+        #expect(service.dialogChoiceSelections.isEmpty)
+    }
+
     @Test func malformedDecisionFieldsNeverBecomeAConfirmablePartialDialog() {
         let invalid: [[String: Any]] = [
             ["title": "Choose", "textField": [:], "sections": "unsupported"],
