@@ -69,6 +69,7 @@ private extension NSLayoutConstraint.Priority {
 /// Neutral divider with a larger hit area for panel resizing.
 class PaddedDividerSplitViewController: NSSplitViewController {
     fileprivate var hadSavedFrames = false
+    fileprivate var pendingAutosaveName: String?
 
     override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
@@ -609,16 +610,19 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         vc.splitView.isVertical = isVertical
         vc.splitView.dividerStyle = .thin
         vc.hadSavedFrames = SplitAutosave.hasSavedFrames(autosave)
-        vc.splitView.autosaveName = autosave
+        vc.pendingAutosaveName = autosave
         return vc
     }
 
     /// Default positions apply per split: each is skipped independently once it has autosaved frames.
     private func positionIfUnsaved(_ controller: NSSplitViewController, _ apply: (NSSplitView) -> Void) {
-        guard let controller = controller as? PaddedDividerSplitViewController,
-              !controller.hadSavedFrames else {
-            return
+        guard let controller = controller as? PaddedDividerSplitViewController else { return }
+        if let name = controller.pendingAutosaveName {
+            // Restoring before the items have their mounted bounds can persist a minimum-height layout.
+            controller.splitView.autosaveName = name
+            controller.pendingAutosaveName = nil
         }
+        guard !controller.hadSavedFrames else { return }
         apply(controller.splitView)
     }
 

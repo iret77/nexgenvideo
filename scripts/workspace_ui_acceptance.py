@@ -120,38 +120,46 @@ def run_scale(executable, output, scale):
     label = str(round(scale * 100))
     log_path = output / f"scale-{label}.log"
     started = time.monotonic()
-    try:
-        process = subprocess.run(
-            [executable],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env={
-                **os.environ,
-                "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
-                "NGV_WORKSPACE_UI_EVIDENCE": str(output.resolve()),
-                "NGV_WORKSPACE_UI_SCALE": str(scale),
-                "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
-            },
-            timeout=90,
-            check=False,
-            text=True,
-        )
-        log_path.write_text(process.stdout)
-    except subprocess.TimeoutExpired as error:
-        output_text = error.stdout or ""
-        if isinstance(output_text, bytes):
-            output_text = output_text.decode(errors="replace")
-        log_path.write_text(output_text)
-        return {
-            "completed": False,
-            "elapsedSeconds": time.monotonic() - started,
-            "exitCode": None,
-            "reason": "runtime-timeout",
-            "scale": scale,
-        }
+    case_results = []
+    output_chunks = []
+    for scenario in ("workspace", "cards", "analysis"):
+        case_started = time.monotonic()
+        try:
+            process = subprocess.run(
+                [executable],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env={
+                    **os.environ,
+                    "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
+                    "NGV_WORKSPACE_UI_EVIDENCE": str(output.resolve()),
+                    "NGV_WORKSPACE_UI_SCALE": str(scale),
+                    "NGV_WORKSPACE_UI_CASE": scenario,
+                    "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
+                },
+                timeout=90,
+                check=False,
+                text=True,
+            )
+            case_output = process.stdout
+            code = process.returncode
+        except subprocess.TimeoutExpired as error:
+            case_output = error.stdout or ""
+            if isinstance(case_output, bytes):
+                case_output = case_output.decode(errors="replace")
+            code = 124
+        output_chunks.append(case_output)
+        case_results.append({
+            "case": scenario,
+            "exitCode": code,
+            "elapsedSeconds": time.monotonic() - case_started,
+        })
+    output_text = "\n".join(output_chunks)
+    log_path.write_text(output_text)
+    return_code = next((item["exitCode"] for item in case_results if item["exitCode"] != 0), 0)
 
     rows = []
-    for line in process.stdout.splitlines():
+    for line in output_text.splitlines():
         try:
             row = json.loads(line)
         except ValueError:
@@ -161,7 +169,7 @@ def run_scale(executable, output, scale):
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
     workspaces = {row.get("workspace") for row in workspace_rows}
-    completed = any(row.get("event") == "completed" for row in rows)
+    completed = sum(row.get("event") == "completed" for row in rows) == 3
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
@@ -194,7 +202,7 @@ def run_scale(executable, output, scale):
         for name in screenshots
     )
     valid = (
-        process.returncode == 0
+        return_code == 0
         and completed
         and workspaces == EXPECTED_WORKSPACES
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
@@ -239,7 +247,8 @@ def run_scale(executable, output, scale):
         "completed": valid,
         "elapsedSeconds": time.monotonic() - started,
         "events": rows,
-        "exitCode": process.returncode,
+        "exitCode": return_code,
+        "cases": case_results,
         "reason": "completed" if valid else "invalid-evidence",
         "scale": scale,
         "screenshots": screenshots,

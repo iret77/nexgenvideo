@@ -32,6 +32,16 @@ enum WorkspaceUIAcceptance {
         let evidenceURL = URL(fileURLWithPath: evidencePath, isDirectory: true)
         emit("started", scale: scale)
         Task { @MainActor in
+            let scenario = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace"
+            if scenario != "workspace" {
+                switch scenario {
+                case "cards": await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
+                case "analysis": await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
+                default: fail("unknown native acceptance case", scale: scale)
+                }
+                emit("completed", scale: scale, fields: ["case": scenario])
+                exit(0)
+            }
             let document: VideoProject
             let window: NSWindow
             let host: NSView
@@ -362,8 +372,6 @@ enum WorkspaceUIAcceptance {
                 ]
             )
             window.orderOut(nil)
-            await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
-            await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
             emit("completed", scale: scale)
             exit(0)
         }
@@ -685,24 +693,47 @@ enum WorkspaceUIAcceptance {
         defer { window.orderOut(nil); window.contentView = nil }
         let firstID = "home.project.\(entries[0].id)"
         let secondID = "home.project.\(entries[1].id)"
+        var previousFrame: NSRect?
+        let clock = ContinuousClock()
+        var stableSince = clock.now
         guard await waitUntil(timeout: .seconds(5), {
             host.layoutSubtreeIfNeeded()
-            return window.isKeyWindow && findProbe(in: host, identifier: firstID) != nil
+            guard window.isKeyWindow, let probe = findProbe(in: host, identifier: firstID) else { return false }
+            let frame = probe.convert(probe.bounds, to: nil)
+            if frame != previousFrame || frame.width <= 0 || frame.height <= 0 {
+                previousFrame = frame
+                stableSince = clock.now
+                return false
+            }
+            return clock.now - stableSince >= .milliseconds(300)
         }), let first = findProbe(in: host, identifier: firstID),
         let second = findProbe(in: host, identifier: secondID) else {
             fail("native project cards did not appear", scale: scale)
+        }
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-project-cards-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("project-card-diagnostic", scale: scale, fields: [
+                "reason": reason, "first": frameDescription(first.bounds), "second": frameDescription(second.bounds),
+                "opened": opened.map(\.lastPathComponent), "keyWindow": window.isKeyWindow,
+                "available": probeState(identifier: firstID, in: window) == true,
+                "unavailable": probeState(identifier: secondID, in: window) == false, "screenshot": name,
+            ])
+            fail(reason, scale: scale)
         }
         // The former 150-point grid cell contained a 142 × 113.6-point card inside 4-point padding.
         guard abs(first.bounds.width - 213) <= 1,
               abs(first.bounds.height - 170.4) <= 1,
               first.bounds.size == second.bounds.size,
               probeState(identifier: firstID, in: window) == true,
-              probeState(identifier: secondID, in: window) == false,
-              click(identifier: firstID, in: window) == nil,
-              await waitUntil(timeout: .seconds(5), { opened == [available] }),
-              click(identifier: secondID, in: window) == nil else {
-            fail("project-card size or accessible open action changed", scale: scale)
+              probeState(identifier: secondID, in: window) == false else {
+            reject("project-card size or enabled state changed")
         }
+        if let reason = click(identifier: firstID, in: window) { reject("project-card click: \(reason)") }
+        guard await waitUntil(timeout: .seconds(5), { opened == [available] }) else {
+            reject("accessible project-card click did not open exactly its project")
+        }
+        if let reason = click(identifier: secondID, in: window) { reject("unavailable project-card click: \(reason)") }
         try? await Task.sleep(for: .milliseconds(300))
         let name = "scale-\(scaleLabel(scale))-project-cards.png"
         guard opened == [available], snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
