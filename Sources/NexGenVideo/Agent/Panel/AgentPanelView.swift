@@ -279,7 +279,7 @@ struct AgentPanelView: View {
             Button("Decisions") { showDecisionHistory = true }
                 .buttonStyle(.capsule(.secondary, size: .small))
                 .background {
-                    if WorkspaceUIAcceptance.isRequested {
+                    if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                         AppRelaunchClickProbe(identifier: "agent.decisions")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
@@ -288,7 +288,7 @@ struct AgentPanelView: View {
             Button("Diagnostics") { showDiagnostics = true }
                 .buttonStyle(.capsule(.secondary, size: .small))
                 .background {
-                    if WorkspaceUIAcceptance.isRequested {
+                    if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                         AppRelaunchClickProbe(identifier: "agent.diagnostics")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
@@ -346,7 +346,7 @@ struct AgentPanelView: View {
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
         .background {
-            if WorkspaceUIAcceptance.isRequested {
+            if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                 AppRelaunchClickProbe(
                     identifier: "agent.utilities",
                     acceptanceState: iconOnly
@@ -493,9 +493,15 @@ struct AgentPanelView: View {
                 Spacer(minLength: AppTheme.Spacing.sm)
                 Button("Done") { showDiagnostics = false }
                     .buttonStyle(.inlineAction())
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
+                            AppRelaunchClickProbe(identifier: "agent.diagnostics.done")
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                AgentTranscriptLayout(spacing: AppTheme.Spacing.xl) {
                     ForEach(transcriptTurns) { turn in
                         AgentTranscriptTurnView(turn: turn, toolResults: toolResults)
                     }

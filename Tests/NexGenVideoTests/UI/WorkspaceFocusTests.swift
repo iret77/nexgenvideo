@@ -214,7 +214,15 @@ struct WorkspaceFocusTests {
         editor.toggleSidebarPresentation()
 
         #expect(editor.maximizedPanel == nil)
+        #expect(editor.mediaPanelVisible)
+        #expect(editor.isSidebarPresented)
+
+        editor.maximizedPanel = .mediaFolders
+        editor.toggleSidebarPresentation()
+
+        #expect(editor.maximizedPanel == nil)
         #expect(!editor.mediaPanelVisible)
+        #expect(!editor.isSidebarPresented)
 
         editor.theaterActive = true
         editor.maximizedPanel = .preview

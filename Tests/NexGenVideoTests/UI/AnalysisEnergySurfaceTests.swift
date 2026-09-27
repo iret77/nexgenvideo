@@ -42,7 +42,7 @@ struct AnalysisEnergySurfaceTests {
         value.songPath = "audio/Song.wav"
         #expect(value.verifiedSourceURL(dataRoot: root) == nil)
         value.songSHA256 = try FileDigest.sha256(of: song)
-        #expect(value.verifiedSourceURL(dataRoot: root) == song)
+        #expect(value.verifiedSourceURL(dataRoot: root)?.resolvingSymlinksInPath() == song.resolvingSymlinksInPath())
         value.songPath = "audio/Another.wav"
         #expect(value.verifiedSourceURL(dataRoot: root) == nil)
         value.songPath = "audio/Song.wav"

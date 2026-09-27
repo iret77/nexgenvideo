@@ -7,7 +7,7 @@ struct AgentTranscriptLayoutPolicyTests {
     @Test func transcriptTurnContainerUsesFiniteLayout() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(
-            of: "private func scrollingMessages"
+            of: "private var diagnosticTranscript"
         ))
         let end = try #require(source.range(
             of: "private var errorBanner",
@@ -25,7 +25,7 @@ struct AgentTranscriptLayoutPolicyTests {
     @Test func observedScrollViewHasNoSecondaryLayerOrAlignmentContainer() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(
-            of: "private func scrollingMessages"
+            of: "private var diagnosticTranscript"
         ))
         let end = try #require(source.range(
             of: "private var errorBanner",
@@ -42,28 +42,6 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!implementation.contains("if isUserPinnedAway"))
         #expect(!implementation.contains(".onChange(of: service.transcriptRevision)"))
         #expect(!implementation.contains(".onChange(of: service.isStreaming)"))
-        #expect(implementation.contains(
-            ".defaultScrollAnchor(.bottom, for: .initialOffset)"
-        ))
-        #expect(implementation.contains("for: .sizeChanges"))
-        #expect(implementation.contains("AgentTranscriptScrollPolicy.pinState("))
-        #expect(implementation.contains("if away != isUserPinnedAway"))
-        #expect(!implementation.contains(".onChange(of: service.currentSessionId)"))
-        #expect(implementation.contains(".id(service.currentSessionId)"))
-        #expect(implementation.contains(".id(AgentTranscriptScrollPolicy.endID)"))
-    }
-
-    @Test func sessionPinResetLivesOnTheAlwaysPresentMessageList() throws {
-        let source = try agentPanelSource()
-        let start = try #require(source.range(of: "private func messageList"))
-        let end = try #require(source.range(
-            of: "private func scrollingMessages",
-            range: start.upperBound..<source.endIndex
-        ))
-        let implementation = source[start.lowerBound..<end.lowerBound]
-
-        #expect(implementation.contains(".onChange(of: service.currentSessionId)"))
-        #expect(implementation.contains("isUserPinnedAway = false"))
     }
 
     @Test func backendRecoveryLivesInTheDockInsteadOfTheTranscript() throws {
@@ -73,9 +51,9 @@ struct AgentTranscriptLayoutPolicyTests {
             of: "private func refreshDiscoveredPlugins",
             range: bodyStart.upperBound..<source.endIndex
         ))
-        let messageStart = try #require(source.range(of: "private func messageList"))
+        let messageStart = try #require(source.range(of: "private var taskResult"))
         let messageEnd = try #require(source.range(
-            of: "private func scrollingMessages",
+            of: "private var diagnosticTranscript",
             range: messageStart.upperBound..<source.endIndex
         ))
         let dockStart = try #require(source.range(of: "private var composerDock"))
@@ -115,7 +93,7 @@ struct AgentTranscriptLayoutPolicyTests {
             #expect(!implementation.contains(forbidden))
         }
         #expect(implementation.range(
-            of: #"conversationBar\s+messageList"#,
+            of: #"taskBar\s+taskResult"#,
             options: .regularExpression
         ) != nil)
     }
@@ -243,47 +221,6 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(input.contains("onFocusChange(value)"))
         #expect(panel.contains("service.restoreComposerFocus()"))
         #expect(panel.contains("service.recordComposerFocus($0, for: sessionID)"))
-    }
-
-    @Test func conversationHeaderHasOneLabeledNavigator() throws {
-        let panel = try agentPanelSource()
-        let start = try #require(panel.range(of: "private var conversationBar"))
-        let end = try #require(panel.range(
-            of: "private var modelPicker",
-            range: start.upperBound..<panel.endIndex
-        ))
-        let header = panel[start.lowerBound..<end.lowerBound]
-
-        #expect(header.contains("historyButton"))
-        #expect(header.contains("utilityButton"))
-        #expect(header.contains("newConversationButton"))
-        #expect(header.contains("Label(\"Latest\""))
-        #expect(header.contains("ViewThatFits(in: .horizontal)"))
-        #expect(header.contains("currentConversationTitle"))
-        #expect(header.contains(".truncationMode(.middle)"))
-        #expect(header.contains("if isUserPinnedAway"))
-        #expect(header.contains(".transition(.opacity)"))
-        #expect(!header.contains(".opacity(isUserPinnedAway"))
-        #expect(header.contains("let iconOnly = equalWidth && isUserPinnedAway"))
-        #expect(header.contains(".accessibilityLabel(\"Scroll to latest\")"))
-        #expect(!header.contains("ForEach(service.openSessions)"))
-        #expect(!header.contains(".focusable(false)"))
-        #expect(!panel.contains("ChatTabView"))
-
-        let history = try sourceFile(
-            "Sources/NexGenVideo/Agent/Panel/ChatHistoryList.swift"
-        )
-        let utilities = try sourceFile(
-            "Sources/NexGenVideo/Agent/Panel/PluginLauncherPopover.swift"
-        )
-        #expect(history.contains("Search conversations"))
-        #expect(history.contains(".confirmationDialog("))
-        #expect(history.contains("cue.label"))
-        #expect(history.contains("session.title, updated"))
-        #expect(!history.contains(".focusable(false)"))
-        #expect(utilities.contains("Close conversation"))
-        #expect(utilities.contains("Search workflows"))
-        #expect(!utilities.contains(".focusable(false)"))
     }
 
     @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {

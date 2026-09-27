@@ -3,8 +3,12 @@ import SwiftUI
 
 @MainActor
 enum ChatHangReplay {
+    static var isRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_CHAT_HANG_REPLAY"] == "1"
+    }
+
     static func runIfRequested() {
-        guard ProcessInfo.processInfo.environment["NGV_CHAT_HANG_REPLAY"] == "1" else { return }
+        guard isRequested else { return }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         BundledFonts.register()
@@ -21,6 +25,8 @@ enum ChatHangReplay {
         for index in 0..<24 {
             appendGeneration(index, image: image, service: service)
         }
+        guard service.stageTask(.init(title: "Review generated sheets", systemImage: "photo",
+            prompt: "Review the generated sheets.", requiresDirection: true)) else { exit(2) }
         service.isStreaming = true
         let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
         let window = NSWindow(
@@ -46,7 +52,7 @@ enum ChatHangReplay {
                     )
                 )
                 if step == 1 {
-                    service.prefillInput("")
+                    service.restoreComposerFocus()
                 }
                 if step % 80 == 20 {
                     service.isStreaming = false
@@ -59,7 +65,7 @@ enum ChatHangReplay {
                 } else if step % 80 == 35 {
                     service.abandonDialog()
                     service.isStreaming = true
-                    service.prefillInput("")
+                    service.restoreComposerFocus()
                 }
                 if step.isMultiple(of: 40) {
                     service.isStreaming = false
@@ -80,11 +86,37 @@ enum ChatHangReplay {
                     ))
                 }
                 host.layoutSubtreeIfNeeded()
+                if step % 400 == 100 {
+                    guard WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: window) == nil else {
+                        emit("diagnostics-open-failed", step: step)
+                        exit(2)
+                    }
+                } else if step % 400 == 300 {
+                    guard let sheet = window.attachedSheet,
+                          WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: sheet) == nil else {
+                        emit("diagnostics-close-failed", step: step)
+                        exit(2)
+                    }
+                }
+                if step % 400 == 110 {
+                    guard window.attachedSheet != nil else {
+                        emit("diagnostics-not-visible", step: step)
+                        exit(2)
+                    }
+                    emit("diagnostics-opened", step: step)
+                } else if step % 400 == 310 {
+                    guard window.attachedSheet == nil else {
+                        emit("diagnostics-not-dismissed", step: step)
+                        exit(2)
+                    }
+                    emit("diagnostics-closed", step: step)
+                }
+                let visibleHost = window.attachedSheet?.contentView ?? host
                 if window.firstResponder is NSTextView {
                     focusedTicks += 1
                 }
                 if step.isMultiple(of: 15),
-                   let scroll = scrollViews(in: host).max(by: { $0.bounds.height < $1.bounds.height }),
+                   let scroll = scrollViews(in: visibleHost).max(by: { $0.bounds.height < $1.bounds.height }),
                    let event = CGEvent(
                        scrollWheelEvent2Source: nil,
                        units: .pixel,
@@ -97,7 +129,7 @@ enum ChatHangReplay {
                     scroll.scrollWheel(with: wheel)
                 }
                 if [10, 25, 600, 1200].contains(step) {
-                    snapshot(host, step: step)
+                    snapshot(visibleHost, step: step)
                 }
                 if step.isMultiple(of: 10) {
                     emit("progress", step: step)

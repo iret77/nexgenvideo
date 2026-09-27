@@ -166,10 +166,8 @@ enum WorkspaceUIAcceptance {
                         scale: scale
                     )
                 }
-                let renderedFrames = visiblePanelFrames(in: host)
-                try? await Task.sleep(for: .milliseconds(300))
-                host.layoutSubtreeIfNeeded()
-                guard editor.workspaceFocus == workspace,
+                guard let renderedFrames = await stablePanelFrames(in: host),
+                      editor.workspaceFocus == workspace,
                       probeState(identifier: identifier, in: window) == true,
                       visiblePanelIDs(in: host) == expectedPanels(for: workspace),
                       visiblePanelFrames(in: host) == renderedFrames,
@@ -209,14 +207,17 @@ enum WorkspaceUIAcceptance {
                   }) else {
                 fail("could not return to edit", scale: scale)
             }
-            let returnedFrames = visiblePanelFrames(in: host)
-            try? await Task.sleep(for: .milliseconds(300))
-            host.layoutSubtreeIfNeeded()
-            guard probeState(identifier: "editor.workspace.edit", in: window) == true,
-                  visiblePanelIDs(in: host) == expectedPanels(for: .edit),
-                  visiblePanelFrames(in: host) == returnedFrames,
-                  let initialEditFrames,
-                  returnedFrames == initialEditFrames else {
+            guard let initialEditFrames,
+                  await stablePanelFrames(in: host, matching: initialEditFrames) != nil,
+                  probeState(identifier: "editor.workspace.edit", in: window) == true,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .edit) else {
+                let name = "scale-\(scaleLabel(scale))-edit-return-failed.png"
+                _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+                emit("layout-diagnostic", scale: scale, fields: [
+                    "expectedFrames": initialEditFrames?.mapValues { frameDescription($0) } ?? [:],
+                    "actualFrames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                    "splits": splitDiagnostics(in: host), "screenshot": name,
+                ])
                 fail("edit workspace did not settle before panel controls", scale: scale)
             }
             if inspectorRequested {
@@ -420,7 +421,11 @@ enum WorkspaceUIAcceptance {
                       && state.searchQuery == "Acceptance Source 498"
                       && state.currentFolderId == "fixture-nested"
                       && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
-              }), editor.selectedMediaAssetIds == ["fixture-498"] else {
+                      && defaultPanelWidthsAreValid(workspace: .media, frames: visiblePanelFrames(in: host))
+                      && previewTimecodeIsSingleLine(in: window, scale: scale)
+              }), let frames = await stablePanelFrames(in: host),
+              defaultPanelWidthsAreValid(workspace: .media, frames: frames),
+              editor.selectedMediaAssetIds == ["fixture-498"] else {
             fail("media navigation state leaked or was lost across workspaces", scale: scale)
         }
         let name = "scale-\(scaleLabel(scale))-media-library.png"
@@ -432,6 +437,7 @@ enum WorkspaceUIAcceptance {
             "types": Set(editor.mediaAssets.map { $0.type.rawValue }).sorted(),
             "nestedFolderOpened": true, "searchSelectedAsset": "fixture-498",
             "workspaceStatePreserved": true, "screenshot": name,
+            "frames": frames.mapValues { frameDescription($0) },
         ])
     }
 
@@ -1341,7 +1347,7 @@ enum WorkspaceUIAcceptance {
         }
     }
 
-    private static func click(identifier: String, in window: NSWindow) -> String? {
+    static func click(identifier: String, in window: NSWindow) -> String? {
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView,
               let probe = findProbe(in: root, identifier: identifier),
@@ -1401,6 +1407,27 @@ enum WorkspaceUIAcceptance {
               let probe = findProbe(in: root, identifier: identifier)
                 as? AppRelaunchClickProbeView else { return nil }
         return probe.acceptanceState
+    }
+
+    private static func stablePanelFrames(
+        in host: NSView, matching expected: [String: NSRect]? = nil
+    ) async -> [String: NSRect]? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        var previous: [String: NSRect] = [:]
+        var stableSince = clock.now
+        while clock.now < deadline {
+            host.layoutSubtreeIfNeeded()
+            let frames = visiblePanelFrames(in: host)
+            if frames.isEmpty || frames != previous || (expected != nil && frames != expected) {
+                previous = frames
+                stableSince = clock.now
+            } else if clock.now - stableSince >= .milliseconds(300) {
+                return frames
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return nil }
+        }
+        return nil
     }
 
     private static func waitUntil(
