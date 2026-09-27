@@ -326,9 +326,12 @@ struct DeclarativePackSurfaceView: View {
         if editor.isPlaying { editor.togglePlayback() }
         if analysisPlayer == nil { analysisPlayer = AVPlayer(url: expectedURL) }
         if listeningPosition >= analysis.durationS { listeningPosition = selectedAnalysisSection?.start ?? 0 }
-        analysisPlayer?.seek(to: CMTime(seconds: listeningPosition, preferredTimescale: 600),
+        guard let player = analysisPlayer else { return }
+        let positioned = await player.seek(to: CMTime(seconds: listeningPosition, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero)
-        analysisPlayer?.play()
+        guard positioned, !Task.isCancelled, playbackRequest == request,
+              analysisPlayer === player, editor.workingRoot == home, !editor.isPlaying else { return }
+        player.play()
         isListening = true
     }
 
