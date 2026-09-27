@@ -2,6 +2,28 @@ import Foundation
 
 extension EditorViewModel {
 
+    func activateFolderContext(_ id: String) {
+        guard folder(id: id) != nil else { return }
+        focusedPanel = .media
+        if !selectedFolderIds.contains(id) {
+            selectedFolderIds = [id]
+            selectedMediaAssetIds.removeAll()
+        }
+    }
+
+    @discardableResult
+    func deleteMediaSelection() -> Bool {
+        let folderIDs = selectedFolderIds.intersection(Set(folders.map(\.id)))
+        let assetIDs = selectedMediaAssetIds.intersection(Set(mediaAssets.map(\.id)))
+        guard !folderIDs.isEmpty || !assetIDs.isEmpty else { return false }
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+        if !folderIDs.isEmpty { deleteFolders(ids: folderIDs) }
+        if !assetIDs.isEmpty { deleteMediaAssets(ids: assetIDs) }
+        undoManager?.setActionName("Delete Media")
+        return true
+    }
+
     private typealias ParentChange = (id: String, newValue: String?)
 
     // MARK: - Reads

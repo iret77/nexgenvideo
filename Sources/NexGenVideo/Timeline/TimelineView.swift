@@ -836,6 +836,14 @@ final class TimelineView: NSView {
         let copyItem = NSMenuItem(title: "Copy", action: #selector(performCopyClips(_:)), keyEquivalent: "")
         copyItem.target = self
         timelineItems.append(copyItem)
+        if allowsEditChrome {
+            let cutItem = NSMenuItem(title: "Cut", action: #selector(performCutClips(_:)), keyEquivalent: "")
+            cutItem.target = self
+            timelineItems.append(cutItem)
+            let deleteItem = NSMenuItem(title: "Delete Selected Clips", action: #selector(performDeleteClips(_:)), keyEquivalent: "")
+            deleteItem.target = self
+            timelineItems.append(deleteItem)
+        }
         if editor.canPasteClips {
             let pasteItem = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
             pasteItem.target = self
@@ -963,6 +971,17 @@ final class TimelineView: NSView {
 
     @objc private func performCopyClips(_ sender: Any?) {
         editor.copySelectedClipsToClipboard()
+    }
+
+    @objc private func performCutClips(_ sender: Any?) {
+        editor.cutSelectedClipsToClipboard()
+        needsDisplay = true
+    }
+
+    @objc private func performDeleteClips(_ sender: Any?) {
+        guard editor.allowsTimelineEditChrome else { return }
+        editor.deleteSelectedClips()
+        needsDisplay = true
     }
 
     @objc private func performPasteClips(_ sender: Any?) {

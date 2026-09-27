@@ -43,8 +43,7 @@ final class EditorWindowController: NSWindowController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        // Don't intercept keys when a text field has focus
-        if isTextInputFocused {
+        if !canRouteEditorCommands || isTextInputFocused || window?.firstResponder is NSControl {
             return false
         }
 
@@ -195,9 +194,14 @@ final class EditorWindowController: NSWindowController {
         }
     }
 
+    private var canRouteEditorCommands: Bool {
+        guard let window else { return false }
+        return window.isKeyWindow && window.attachedSheet == nil && NSApp.modalWindow == nil
+    }
+
     private var isTextInputFocused: Bool {
         guard let responder = window?.firstResponder else { return false }
-        if let textView = responder as? NSTextView { return textView.isEditable }
+        if let textView = responder as? NSTextView { return textView.isEditable || textView.isSelectable }
         if let textField = responder as? NSTextField { return textField.isEditable }
         return false
     }
@@ -241,11 +245,26 @@ extension EditorWindowController: EditorActions {
     @objc func deleteSelectedClips(_ sender: Any?) {
         _ = performContextualDelete(ripple: false)
     }
-    @objc func playPause(_ sender: Any?) { editorViewModel.togglePlayback() }
-    @objc func stepFrameForward(_ sender: Any?) { editorViewModel.stepActivePreview(by: 1) }
-    @objc func stepFrameBackward(_ sender: Any?) { editorViewModel.stepActivePreview(by: -1) }
-    @objc func skipFramesForward(_ sender: Any?) { editorViewModel.stepActivePreview(by: 5) }
-    @objc func skipFramesBackward(_ sender: Any?) { editorViewModel.stepActivePreview(by: -5) }
+    @objc func playPause(_ sender: Any?) {
+        guard canRouteEditorCommands, !isTextInputFocused else { return }
+        editorViewModel.togglePlayback()
+    }
+    @objc func stepFrameForward(_ sender: Any?) {
+        guard canRouteEditorCommands, !isTextInputFocused else { return }
+        editorViewModel.stepActivePreview(by: 1)
+    }
+    @objc func stepFrameBackward(_ sender: Any?) {
+        guard canRouteEditorCommands, !isTextInputFocused else { return }
+        editorViewModel.stepActivePreview(by: -1)
+    }
+    @objc func skipFramesForward(_ sender: Any?) {
+        guard canRouteEditorCommands, !isTextInputFocused else { return }
+        editorViewModel.stepActivePreview(by: 5)
+    }
+    @objc func skipFramesBackward(_ sender: Any?) {
+        guard canRouteEditorCommands, !isTextInputFocused else { return }
+        editorViewModel.stepActivePreview(by: -5)
+    }
 
     @objc func importMedia(_ sender: Any?) {
         MediaImportFlow.present(
@@ -267,8 +286,7 @@ extension EditorWindowController: EditorActions {
     @objc func cut(_ sender: Any?) {
         guard canHandleClipboardShortcut(),
               !editorViewModel.selectedClipIds.isEmpty else { return }
-        editorViewModel.copySelectedClipsToClipboard()
-        editorViewModel.deleteSelectedClips()
+        editorViewModel.cutSelectedClipsToClipboard()
     }
 
     @objc func paste(_ sender: Any?) {
@@ -286,7 +304,7 @@ extension EditorWindowController: EditorActions {
     }
 
     private func canHandleTimelineEditShortcut() -> Bool {
-        !isTextInputFocused
+        canRouteEditorCommands && !isTextInputFocused
             && editorViewModel.workspaceFocus == .edit
             && editorViewModel.focusedPanel == .timeline
             && editorViewModel.activePreviewTab == .timeline
@@ -295,7 +313,7 @@ extension EditorWindowController: EditorActions {
     }
 
     private func canHandleMediaShortcut() -> Bool {
-        !isTextInputFocused
+        canRouteEditorCommands && !isTextInputFocused
             && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
             && editorViewModel.focusedPanel == .media
             && (editorViewModel.workspaceFocus == .media || editorViewModel.isSidebarPresented)
@@ -304,16 +322,7 @@ extension EditorWindowController: EditorActions {
     @discardableResult
     private func performContextualDelete(ripple: Bool) -> Bool {
         if canHandleMediaShortcut() {
-            let hasFolders = !editorViewModel.selectedFolderIds.isEmpty
-            let hasAssets = !editorViewModel.selectedMediaAssetIds.isEmpty
-            guard hasFolders || hasAssets else { return false }
-            if hasFolders {
-                editorViewModel.deleteFolders(ids: editorViewModel.selectedFolderIds)
-            }
-            if hasAssets {
-                editorViewModel.deleteSelectedMediaAssets()
-            }
-            return true
+            return editorViewModel.deleteMediaSelection()
         }
         guard canHandleTimelineEditShortcut() else { return false }
         if ripple, editorViewModel.selectedGap != nil {
@@ -373,6 +382,7 @@ extension EditorWindowController: EditorActions {
     }
 
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard canRouteEditorCommands else { return false }
         switch menuItem.action {
         case #selector(toggleMediaPanel(_:)):
             menuItem.state = editorViewModel.isSidebarPresented ? .on : .off
@@ -424,6 +434,10 @@ extension EditorWindowController: EditorActions {
         case #selector(toggleTheater(_:)):
             menuItem.state = editorViewModel.theaterActive ? .on : .off
             return !isTextInputFocused
+        case #selector(playPause(_:)), #selector(stepFrameForward(_:)), #selector(stepFrameBackward(_:)),
+             #selector(skipFramesForward(_:)), #selector(skipFramesBackward(_:)):
+            return !isTextInputFocused && editorViewModel.activePreviewTab.clipType != .document
+                && editorViewModel.activePreviewTab.clipType != .image
         case #selector(splitAtPlayhead(_:)),
              #selector(trimStartToPlayhead(_:)),
              #selector(trimEndToPlayhead(_:)):

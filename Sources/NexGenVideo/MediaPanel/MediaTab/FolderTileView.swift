@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct FolderTileView: View {
+    @Environment(EditorViewModel.self) private var editor
     let folder: MediaFolder
     let isSelected: Bool
     let isDropHover: Bool
@@ -83,6 +84,7 @@ struct FolderTileView: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture { handleClick() }
+        .background { ContextClickActivation { editor.activateFolderContext(folder.id) } }
         .contextMenu { contextMenuItems }
         .onAppear {
             if shouldAutoFocus {
@@ -116,7 +118,7 @@ struct FolderTileView: View {
         Button("Open") { onOpen() }
         Button("Rename") { beginRename() }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { onDelete() }
+        Button(editor.selectedFolderIds.count + editor.selectedMediaAssetIds.count > 1 ? "Delete Selected Items" : "Delete", role: .destructive) { onDelete() }
     }
 
     private func beginRename() {

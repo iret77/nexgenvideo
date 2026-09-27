@@ -421,7 +421,7 @@ extension MediaTab {
                     renamingFolderId = nil
                 },
                 onCancelRename: { renamingFolderId = nil },
-                onDelete: { editor.deleteFolders(ids: [folder.id]) },
+                onDelete: { editor.deleteMediaSelection() },
                 shouldAutoFocus: pendingFolderFocusId == folder.id,
                 onAutoFocusConsumed: { pendingFolderFocusId = nil }
             )

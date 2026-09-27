@@ -40,8 +40,8 @@ extension EditorViewModel {
         focusedPanel = .media
         if !selectedMediaAssetIds.contains(asset.id) {
             selectedMediaAssetIds = [asset.id]
+            selectedFolderIds.removeAll()
         }
-        selectedFolderIds.removeAll()
         openPreviewTab(for: asset)
         inspectedObject = selectionInspectedObject
     }

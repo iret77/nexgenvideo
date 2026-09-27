@@ -14,6 +14,12 @@ extension EditorViewModel {
     var canPasteClips: Bool { !clipClipboard.isEmpty }
 
     /// Snapshot the current selection into `clipClipboard`
+    func cutSelectedClipsToClipboard() {
+        guard allowsTimelineEditChrome, !selectedClipIds.isEmpty else { return }
+        copySelectedClipsToClipboard()
+        deleteSelectedClips()
+    }
+
     func copySelectedClipsToClipboard() {
         let ids = selectedClipIds
         guard !ids.isEmpty else { return }

@@ -150,7 +150,7 @@ struct AssetThumbnailView: View {
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
+        Button(editor.selectedFolderIds.count + ids.count > 1 ? "Delete Selected Items" : "Delete", role: .destructive) { deleteAssets(ids: ids) }
     }
 
     private var contextTargetIds: [String] {
@@ -182,7 +182,7 @@ struct AssetThumbnailView: View {
 
     private func deleteAssets(ids: [String]) {
         editor.selectedMediaAssetIds = Set(ids)
-        editor.deleteSelectedMediaAssets()
+        editor.deleteMediaSelection()
     }
 
     private var thumbnailContent: some View {
