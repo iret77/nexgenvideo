@@ -73,7 +73,7 @@ struct AgentPanelView: View {
         !service.isComposerBlocked &&
         !service.isStreaming &&
         service.canStream &&
-        (service.pendingFunction.map { !$0.requiresDirection || !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        (service.pendingFunction.map { !$0.requiresDirection || AgentService.hasWorkOrderDirection(service.draft, mentions: service.mentions) }
             ?? false)
     }
 

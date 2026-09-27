@@ -863,7 +863,8 @@ final class TimelineView: NSView {
 
         // AI
         var aiItems: [NSMenuItem] = []
-        let addToChatItem = NSMenuItem(title: "Add to Chat", action: #selector(performAddClipsToChat(_:)), keyEquivalent: "")
+        let addToChatItem = NSMenuItem(title: "Add Clips to Task", action: #selector(performAddClipsToChat(_:)), keyEquivalent: "")
+        addToChatItem.isEnabled = editor.agentService.canAttachTaskReference
         addToChatItem.target = self
         addToChatItem.representedObject = targetClipIds
         aiItems.append(addToChatItem)
@@ -926,7 +927,8 @@ final class TimelineView: NSView {
     }
 
     private func addTimelineRangeItems(to menu: NSMenu) {
-        let addItem = NSMenuItem(title: "Add Range to Chat", action: #selector(performAddTimelineRangeToChat(_:)), keyEquivalent: "")
+        let addItem = NSMenuItem(title: "Add Range to Task", action: #selector(performAddTimelineRangeToChat(_:)), keyEquivalent: "")
+        addItem.isEnabled = editor.agentService.canAttachTaskReference
         addItem.target = self
         menu.addItem(addItem)
 

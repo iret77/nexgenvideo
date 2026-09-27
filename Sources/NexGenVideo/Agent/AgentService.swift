@@ -2273,8 +2273,24 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
+    var canAttachTaskReference: Bool { !isStreaming && !isComposerBlocked }
+
+    private func prepareReferenceTask() -> Bool {
+        stageTask(pendingFunction ?? PendingFunction(
+            title: "Apply a project change", systemImage: "pencil",
+            prompt: "Apply the requested change using the attached references. Respect the current phase and approval gates. Ask for clarification when the requested change is ambiguous.",
+            requiresDirection: true
+        ))
+    }
+
+    static func hasWorkOrderDirection(_ direction: String, mentions: [AgentMention]) -> Bool {
+        let names = mentions.map(\.displayName).sorted { $0.count > $1.count }
+        let text = names.reduce(direction) { $0.replacingOccurrences(of: "@" + $1, with: "") }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func attachMention(for asset: MediaAsset) {
-        editor?.agentPanelVisible = true
+        guard !asset.isGenerating, prepareReferenceTask() else { return }
         pruneDetachedMentions()
         guard !mentions.contains(where: { $0.mediaRef == asset.id && !$0.referencesTimelineContext }) else { return }
         let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
@@ -2284,11 +2300,12 @@ final class AgentService {
 
     func attachMentions(forClipIds clipIds: [String]) {
         guard let editor, !clipIds.isEmpty else { return }
-        editor.agentPanelVisible = true
+        let references = Self.clipMentionReferences(for: clipIds, editor: editor)
+        guard !references.isEmpty, prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let existingClipIds = Set(mentions.compactMap(\.clipId))
-        for ref in Self.clipMentionReferences(for: clipIds, editor: editor) where !existingClipIds.contains(ref.clip.id) {
+        for ref in references where !existingClipIds.contains(ref.clip.id) {
             let displayName = Self.disambiguatedClipMentionName(
                 for: ref.clip,
                 label: ref.label,
@@ -2307,8 +2324,8 @@ final class AgentService {
     }
 
     func attachSelectedTimelineRangeMention() {
-        guard let editor, let range = editor.validSelectedTimelineRange else { return }
-        editor.agentPanelVisible = true
+        guard let editor, let range = editor.validSelectedTimelineRange,
+              prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let timelineRange = AgentTimelineRangeMention(range: range, fps: editor.timeline.fps)
@@ -2707,7 +2724,7 @@ final class AgentService {
     func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
         guard !isStreaming else { return false }
         let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !function.requiresDirection || !note.isEmpty else { return false }
+        guard !function.requiresDirection || Self.hasWorkOrderDirection(note, mentions: mentions) else { return false }
         let presentation = AgentUserPresentation(
             choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])],
                 attachmentNames: mentions.map(\.displayName), confirmed: true),

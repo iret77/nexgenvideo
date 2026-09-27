@@ -147,6 +147,13 @@ struct AssetThumbnailView: View {
             AIEditMenu(asset: asset)
             Divider() // app-theme: native-menu-divider
         }
+        Button(ids.count > 1 ? "Add Selected Media to Task" : "Add to Task") {
+            for target in editor.mediaAssets where ids.contains(target.id) {
+                editor.agentService.attachMention(for: target)
+            }
+        }
+        .disabled(!editor.agentService.canAttachTaskReference
+            || editor.mediaAssets.contains { ids.contains($0.id) && $0.isGenerating })
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider() // app-theme: native-menu-divider
@@ -257,7 +264,9 @@ struct AssetThumbnailView: View {
             .overlay(Circle().strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline))
             .padding(AppTheme.Spacing.xs)
             .transition(.opacity)
-            .help("Add to chat")
+            .help("Add to task")
+            .accessibilityLabel("Add \(asset.name) to task")
+            .disabled(!editor.agentService.canAttachTaskReference)
         }
     }
 

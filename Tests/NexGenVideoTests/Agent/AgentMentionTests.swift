@@ -6,6 +6,31 @@ import Testing
 @MainActor
 struct AgentMentionTests {
 
+    @Test func referencesKeepTheSelectedTaskAndCannotModifyABusyDecision() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        let task = AgentTask(title: "Revise the ending", systemImage: "pencil",
+            prompt: "Revise only the ending.", requiresDirection: true)
+        #expect(service.stageTask(task))
+        service.draft = "Use a slower closing shot"
+        let asset = MediaAsset(id: "reference", url: URL(fileURLWithPath: "/tmp/reference.png"),
+            type: .image, name: "Reference")
+        service.attachMention(for: asset)
+        #expect(service.pendingFunction == task)
+        #expect(service.draft.hasPrefix("Use a slower closing shot"))
+        #expect(AgentService.hasWorkOrderDirection(service.draft, mentions: service.mentions))
+        let draft = service.draft
+        let mentions = service.mentions
+        try service.presentDialog(AgentDialog.parse(["title": "Choose direction", "textField": [:]]))
+        let another = MediaAsset(id: "another", url: URL(fileURLWithPath: "/tmp/another.png"),
+            type: .image, name: "Another")
+        service.attachMention(for: another)
+        #expect(!service.canAttachTaskReference)
+        #expect(service.draft == draft)
+        #expect(service.mentions == mentions)
+        #expect(service.pendingFunction == task)
+        #expect(service.messages.isEmpty)
+    }
+
     @Test func attachClipMentionAddsTimelineClipReference() {
         let editor = EditorViewModel()
         let asset = MediaAsset(
@@ -21,6 +46,11 @@ struct AgentMentionTests {
 
         editor.agentService.attachMentions(forClipIds: ["clip-1"])
 
+        #expect(editor.agentService.pendingFunction?.requiresDirection == true)
+        #expect(!AgentService.hasWorkOrderDirection(editor.agentService.draft,
+            mentions: editor.agentService.mentions))
+        #expect(editor.agentService.messages.isEmpty)
+        #expect(!editor.agentService.isStreaming)
         #expect(editor.agentService.mentions.count == 1)
         #expect(editor.agentService.mentions[0].mediaRef == asset.id)
         #expect(editor.agentService.mentions[0].clipId == "clip-1")
