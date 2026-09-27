@@ -14,7 +14,8 @@
         {
           "heading": "Agent",
           "items": [
-            "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details."
+            "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details.",
+            "Starter tasks and pack commands with required arguments can be reviewed before running. Recorded workflow decisions are available in a read-only history."
           ]
         },
         {

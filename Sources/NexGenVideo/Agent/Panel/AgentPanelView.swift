@@ -9,7 +9,8 @@ struct AgentPanelView: View {
         AgentStarterPrompt(
             title: "Generate an AI video",
             systemImage: "sparkles",
-            prompt: "Generate an AI video of "
+            prompt: "Generate an AI video from the supplied direction.",
+            requiresDirection: true
         ),
         AgentStarterPrompt(
             title: "Generate B-roll",
@@ -61,8 +62,8 @@ struct AgentPanelView: View {
         !service.isComposerBlocked &&
         !service.isStreaming &&
         service.canStream &&
-        (service.pendingFunction != nil ||
-         !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        (service.pendingFunction.map { !$0.requiresDirection || !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            ?? !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     var body: some View {
@@ -76,6 +77,9 @@ struct AgentPanelView: View {
             )
             composerDock
             GenerationBatchProgressView(editor: editor)
+        }
+        .sheet(isPresented: $showDecisionHistory) {
+            AgentDecisionHistoryView(messages: service.messages)
         }
         .onAppear {
             refreshDiscoveredPlugins()
@@ -288,6 +292,9 @@ struct AgentPanelView: View {
     private func conversationActions(equalWidth: Bool) -> some View {
         let iconOnly = equalWidth && isUserPinnedAway
         return HStack(spacing: AppTheme.Spacing.xs) {
+            Button("Decisions", systemImage: "checklist") { showDecisionHistory = true }
+                .buttonStyle(.capsule(.secondary, size: .small))
+                .help("Read recorded inputs and decisions")
             if isUserPinnedAway {
                 latestButton(iconOnly: iconOnly)
                     .frame(maxWidth: equalWidth ? .infinity : nil)
@@ -371,6 +378,7 @@ struct AgentPanelView: View {
     @State private var isUserPinnedAway = false
     @State private var programmaticScrollPending = false
     @State private var scrollToLatestRequest: UInt = 0
+    @State private var showDecisionHistory = false
     @State private var showUtilities = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
@@ -421,7 +429,10 @@ struct AgentPanelView: View {
     private func runPluginCommand(_ command: PluginCommandCatalog.PluginCommand) {
         showUtilities = false
         if command.requiresArgument {
-            service.prefillInput(command.command + " ")
+            service.pendingFunction = .init(title: command.title, systemImage: "puzzlepiece.extension",
+                prompt: command.command + " ", requiresDirection: true)
+            service.recordComposerFocus(true)
+            service.restoreComposerFocus()
         } else {
             editor.runActivePackStarter()
         }
@@ -716,7 +727,7 @@ struct AgentPanelView: View {
             EmptyView()
         } else if service.canStream {
             VStack(spacing: AppTheme.Spacing.smMd) {
-                Text("Ask anything, or start with:")
+                Text("Choose a task:")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .multilineTextAlignment(.center)
@@ -852,6 +863,20 @@ struct AgentPanelView: View {
         @Bindable var service = editor.agentService
         let sessionID = service.currentSessionId
         return VStack(spacing: AppTheme.Spacing.sm) {
+            Menu("Choose Task") {
+                ForEach(Self.starterPrompts) { starter in
+                    Button(starter.title) { runStarter(starter) }
+                }
+                if let target = editor.selectionContextHint {
+                    Button("Revise Selected Object") {
+                        service.pendingFunction = .init(title: "Revise: " + target, systemImage: "pencil",
+                            prompt: "Revise only this selected object: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
+                            requiresDirection: true)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(service.isStreaming || service.isComposerBlocked)
             if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
@@ -884,45 +909,26 @@ struct AgentPanelView: View {
 
     private func submit() {
         guard canSend else { return }
-        if let fn = service.pendingFunction {
-            let note = service.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-            if note.isEmpty {
-                // One-tap starter, no note of the user's own → seed the agent hidden; the raw prompt
-                // is never the user's words, so it must not appear as a chat bubble.
-                service.send(text: fn.prompt, mentions: service.mentions, hidden: true)
-            } else {
-                // The user added their own direction → that IS their message; keep it visible.
-                service.send(
-                    text: AgentService.composedFunctionMessage(prompt: fn.prompt, note: note),
-                    mentions: service.mentions
-                )
-            }
+        let accepted: Bool
+        if let function = service.pendingFunction {
+            accepted = service.sendWorkOrder(function, direction: service.draft, mentions: service.mentions)
         } else {
-            service.send(text: service.draft, mentions: service.mentions)
+            accepted = service.send(text: service.draft, mentions: service.mentions)
         }
+        guard accepted else { return }
         service.pendingFunction = nil
         service.draft = ""
         service.mentions.removeAll()
     }
 
-    /// A starter chip is a one-tap action: clicking it RUNS the starter immediately. Sent DIRECTLY, not
-    /// staged as a composer pill first — staging then submitting in the same update briefly flashes the
-    /// pill. The raw prompt is never the user's words, so a note-less run seeds the agent hidden; a note
-    /// the user already typed becomes their visible message.
     private func runStarter(_ starter: AgentStarterPrompt) {
-        let note = service.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if note.isEmpty {
-            service.send(text: starter.prompt, mentions: service.mentions, hidden: true)
-        } else {
-            service.send(
-                text: AgentService.composedFunctionMessage(prompt: starter.prompt, note: note),
-                mentions: service.mentions
-            )
-        }
-        service.pendingFunction = nil
-        service.draft = ""
-        service.mentions.removeAll()
+        guard !service.isStreaming, !service.isComposerBlocked else { return }
+        service.pendingFunction = .init(title: starter.title, systemImage: starter.systemImage,
+            prompt: starter.prompt, requiresDirection: starter.requiresDirection)
+        service.recordComposerFocus(true)
+        service.restoreComposerFocus()
     }
+
 }
 
 private struct AgentStarterPrompt: Identifiable {
@@ -930,6 +936,7 @@ private struct AgentStarterPrompt: Identifiable {
     let title: String
     let systemImage: String
     let prompt: String
+    var requiresDirection: Bool = false
 }
 
 private struct AgentStarterPromptButton: View {

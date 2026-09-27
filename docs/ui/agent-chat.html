@@ -1116,6 +1116,17 @@
         different conversation.</td></tr>
     </table>
 
+    <h2>Structured task entry</h2>
+    <p>Choosing a starter stages a named task in the existing input dock. The field contains only
+      user instructions and media references; host instructions stay hidden. Required instructions
+      keep Run Task disabled until supplied. Rejected submission preserves the task, instructions,
+      and references. Pack commands requiring an argument use the same form.</p>
+    <p>Decisions opens a read-only projection of the current session's persisted workflow and choice
+      records. It contains no approval or execution controls. Opening it never executes a command.</p>
+    <div class="callout"><strong>Generate an AI video</strong><br>
+      Enter task instructions. Use @ to reference media.<br>
+      <button disabled>Run Task</button> — Required instructions are empty.</div>
+
     <h2>Turn semantics and reading order</h2>
     <ul>
       <li>A turn is an explicit semantic projection with a stable identity. A message role alone is

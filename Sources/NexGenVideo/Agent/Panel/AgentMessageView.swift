@@ -72,7 +72,7 @@ private struct AgentReceiptGroupView: View {
     }
 }
 
-private struct AgentReceiptView: View {
+struct AgentReceiptView: View {
     let receipt: AgentTranscriptReceipt
 
     var body: some View {

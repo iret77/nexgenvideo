@@ -243,6 +243,7 @@ final class AgentService {
         let title: String
         let systemImage: String
         let prompt: String
+        var requiresDirection: Bool = false
     }
 
     private struct ComposerState {
@@ -2654,6 +2655,19 @@ final class AgentService {
         streamError = nil
         kickOffStream()
         return true
+    }
+
+    @discardableResult
+    func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
+        let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !function.requiresDirection || !note.isEmpty else { return false }
+        let presentation = AgentUserPresentation(
+            choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])],
+                attachmentNames: mentions.map(\.displayName), confirmed: true),
+            typedText: note.isEmpty ? nil : note
+        )
+        return send(text: Self.composedFunctionMessage(prompt: function.prompt, note: note),
+            mentions: mentions, hidden: true, presentation: presentation)
     }
 
     func send(controlTurn: AgentControlTurn) {
