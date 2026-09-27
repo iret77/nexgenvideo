@@ -1240,19 +1240,21 @@ struct InspectorView: View {
 
     // MARK: - Media Asset Inspector
 
-    @ViewBuilder
     private func mediaAssetInspectorContent(_ asset: MediaAsset) -> some View {
-        if asset.type.isVisual {
-            VStack(spacing: AppTheme.Spacing.none) {
+        VStack(spacing: AppTheme.Spacing.none) {
+            assetIdentityHeader(asset)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+            if asset.type.isVisual {
                 assetTabBar([.details, .ai])
                 if preferredAssetTab == .ai {
                     AIEditTab(asset: asset)
                 } else {
                     assetDetailsContent(asset)
                 }
+            } else {
+                assetDetailsContent(asset)
             }
-        } else {
-            assetDetailsContent(asset)
         }
     }
 
@@ -1260,13 +1262,12 @@ struct InspectorView: View {
     private func assetDetailsContent(_ asset: MediaAsset) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                assetIdentityHeader(asset)
-
                 if editor.workspaceFocus == .edit, asset.type.isPlaceable {
                     SourceRangeInspector(asset: asset)
                 }
 
                 fileSection(asset)
+                AssetProvenanceSection(asset: asset)
 
                 if let gen = asset.generationInput {
                     if GenerationReferencesStrip.hasResolvableReferences(gen, in: editor.mediaAssets) {
@@ -1275,8 +1276,7 @@ struct InspectorView: View {
                         }
                     }
 
-                    metadataSection(title: "Generated") {
-                        plainMetadataRow(label: "Model", value: ModelRegistry.displayName(for: gen.model))
+                    metadataSection(title: "Generation Parameters") {
                         if !gen.aspectRatio.isEmpty {
                             plainMetadataRow(label: "Aspect Ratio", value: gen.aspectRatio)
                         }
@@ -1312,23 +1312,47 @@ struct InspectorView: View {
             if let fileSize = fileSize(for: asset.url) {
                 plainMetadataRow(label: "Size", value: fileSize)
             }
-            plainMetadataRow(
-                label: "Path",
-                value: asset.url.path,
-                stacked: true
-            )
+            if editor.isMediaOffline(asset.id) {
+                Button("Relink…", systemImage: "link") { editor.presentRelinkPanel(for: asset) }
+                    .buttonStyle(.inlineAction())
+                    .disabled(asset.isGenerating)
+            }
+            Button("Reveal in Finder", systemImage: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([asset.url])
+            }
+            .buttonStyle(.inlineAction())
+            .disabled(editor.isMediaOffline(asset.id) || asset.isGenerating)
         }
     }
 
-    @ViewBuilder
     private func assetIdentityHeader(_ asset: MediaAsset) -> some View {
-        // The breadcrumb header already names the asset; surface only the AI-generated badge here.
-        if asset.generationInput != nil {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text(asset.libraryDisplayName)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if asset.libraryDisplayName != asset.userFacingFilename {
+                Text(asset.userFacingFilename)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: AppTheme.Spacing.sm) {
-                aiBadge
-                Spacer(minLength: 0)
+                Text(asset.type.trackLabel)
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                if asset.generationInput != nil { aiBadge }
+                if editor.isMediaOffline(asset.id) {
+                    Label("Offline", systemImage: "exclamationmark.triangle")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+                Spacer(minLength: AppTheme.Spacing.none)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var aiBadge: some View {

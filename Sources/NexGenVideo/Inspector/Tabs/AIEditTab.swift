@@ -20,6 +20,9 @@ struct AIEditTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                if clipId == nil, editor.workspaceFocus == .edit, asset.type.isPlaceable {
+                    SourceRangeInspector(asset: asset)
+                }
                 if hasScopeToggles {
                     aiSection(title: "Scope") {
                         if clipId != nil { replaceToggle }
@@ -207,10 +210,9 @@ struct AIEditTab: View {
         description: String,
         triggerTitle: String? = nil
     ) -> some View {
-        let availability = action.availability(
-            for: asset,
-            effectiveDurationOverride: effectiveDurationForAvailability
-        )
+        let availability: EditActionAvailability = editor.isMediaOffline(asset.id) && action != .rerun
+            ? .disabled(reason: "Relink the original media to use this action")
+            : action.availability(for: asset, effectiveDurationOverride: effectiveDurationForAvailability)
         let isEnabled = availability.isAvailable
         let disabledReason = availability.reason
 
@@ -281,7 +283,9 @@ struct AIEditTab: View {
         case .createVideo:
             Menu(title) {
                 Button("Set as first frame") { sendToVideo(asReference: false) }
+                    .disabled(EditSubmitter.createVideoSeed(for: asset, asReference: false) == nil)
                 Button("Set as reference") { sendToVideo(asReference: true) }
+                    .disabled(EditSubmitter.createVideoSeed(for: asset, asReference: true) == nil)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

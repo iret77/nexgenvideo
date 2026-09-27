@@ -1,7 +1,19 @@
-import Foundation
+import AppKit
 
 // Reconnect offline media by repointing assets at a relocated source file or folder.
 extension EditorViewModel {
+
+    func presentRelinkPanel(for asset: MediaAsset) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the source file for \"\(asset.userFacingFilename)\""
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            Task { await self.relinkAsset(id: asset.id, to: url) }
+        }
+    }
 
     /// Repoint a single asset at a new source file, re-validate, and rebuild.
     func relinkAsset(id: String, to newURL: URL) async {
