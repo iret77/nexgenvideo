@@ -95,6 +95,10 @@ enum ChatHangReplay {
                     if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
                     emit("diagnostics-opened", step: step)
                 } else if step % 400 == 300 {
+                    guard await waitForSheet(in: window, presented: true) else {
+                        emit("diagnostics-close-failed", step: step, reason: "sheet geometry did not settle")
+                        exit(2)
+                    }
                     let clickFailure = window.attachedSheet.map {
                         WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: $0)
                     } ?? "diagnostic sheet unavailable"
@@ -148,11 +152,25 @@ enum ChatHangReplay {
     private static func waitForSheet(in window: NSWindow, presented: Bool) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(5))
+        var previousFrame: NSRect?
+        var stableSince = clock.now
         while clock.now < deadline {
-            if (window.attachedSheet != nil) == presented { return true }
+            if !presented, window.attachedSheet == nil { return true }
+            if presented, let sheet = window.attachedSheet, sheet.isVisible, sheet.isKeyWindow {
+                sheet.contentView?.layoutSubtreeIfNeeded()
+                if sheet.frame != previousFrame {
+                    previousFrame = sheet.frame
+                    stableSince = clock.now
+                } else if clock.now - stableSince >= .milliseconds(300) {
+                    return true
+                }
+            } else {
+                previousFrame = nil
+                stableSince = clock.now
+            }
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
         }
-        return (window.attachedSheet != nil) == presented
+        return false
     }
 
     private static func reviewDialog(_ step: Int) -> AgentDialog {
