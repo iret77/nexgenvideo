@@ -712,12 +712,8 @@ struct AgentPanelView: View {
                 ForEach(Self.starterPrompts) { starter in
                     Button(starter.title) { runStarter(starter) }
                 }
-                if let target = editor.selectionContextHint {
-                    Button("Revise Selected Object") {
-                        service.stageTask(.init(title: "Revise: " + target, systemImage: "pencil",
-                            prompt: "Revise only this selected object: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
-                            requiresDirection: true))
-                    }
+                if let task = editor.selectedObjectRevisionTask {
+                    Button("Revise Selected Object") { service.stageTask(task) }
                 }
             }
             .menuStyle(.borderlessButton)

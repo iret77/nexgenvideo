@@ -169,6 +169,21 @@ final class EditorViewModel {
         }
     }
 
+    var selectedObjectRevisionTask: AgentTask? {
+        guard let label = selectionContextHint else { return nil }
+        let target: String
+        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
+            target = "timeline clip IDs " + selectedClipIds.sorted().joined(separator: ", ")
+        } else if let object = inspectedObject {
+            target = object.taskTarget
+        } else {
+            return nil
+        }
+        return AgentTask(title: "Revise: " + label, systemImage: "pencil",
+            prompt: "Revise only this selected target: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
+            requiresDirection: true)
+    }
+
     /// Agent grounding: one line describing what the user is currently inspecting/selecting, so scoped
     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.

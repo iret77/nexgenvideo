@@ -20,6 +20,40 @@ struct AgentDecisionHistoryTests {
         #expect(records.first?.userPresentation?.typedText == nil)
     }
 
+    @Test func stagedRevisionKeepsTheExactAssetWhenAnotherSameNamedAssetIsSelected() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        let editor = EditorViewModel(agentService: service)
+        service.loadSessions(from: nil)
+        let first = MediaAsset(id: "first-source", url: URL(fileURLWithPath: "/tmp/first.mov"),
+            type: .video, name: "Interview", duration: 10)
+        let second = MediaAsset(id: "second-source", url: URL(fileURLWithPath: "/tmp/second.mov"),
+            type: .video, name: "Interview", duration: 10)
+        editor.mediaAssets = [first, second]
+        editor.selectMediaAsset(first)
+        let task = try #require(editor.selectedObjectRevisionTask)
+        #expect(service.stageTask(task))
+        editor.selectMediaAsset(second)
+        #expect(task.prompt.contains("media asset ID first-source"))
+        #expect(service.pendingFunction == task)
+        #expect(service.pendingFunction?.prompt.contains("second-source") == false)
+        #expect(editor.selectedObjectRevisionTask?.prompt.contains("media asset ID second-source") == true)
+        #expect(task.requiresDirection)
+        #expect(service.messages.isEmpty)
+    }
+
+    @Test func multiClipRevisionNamesEveryTargetInsteadOfOnlyTheirCount() throws {
+        let editor = EditorViewModel(agentService: AgentService(refreshBackendStatusOnInit: false))
+        editor.selectedClipIds = ["clip-b", "clip-a"]
+        let task = try #require(editor.selectedObjectRevisionTask)
+        #expect(task.prompt.contains("timeline clip IDs clip-a, clip-b"))
+        editor.selectedClipIds = ["clip-c", "clip-d"]
+        #expect(task.prompt.contains("clip-c") == false)
+        #expect(task.prompt.contains("clip-d") == false)
+        editor.selectedClipIds = []
+        editor.inspectedObject = nil
+        #expect(editor.selectedObjectRevisionTask == nil)
+    }
+
     @Test func requiredDirectionRejectsWhitespaceWithoutConsumingDraft() {
         let harness = ToolHarness()
         let service = harness.editor.agentService
