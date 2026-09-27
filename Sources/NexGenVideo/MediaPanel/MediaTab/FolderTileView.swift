@@ -83,6 +83,12 @@ struct FolderTileView: View {
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "media.folder-tile.\(folder.id)")
+                    .allowsHitTesting(false)
+            }
+        }
         .onTapGesture { handleClick() }
         .background { ContextClickActivation { editor.activateFolderContext(folder.id) } }
         .contextMenu { contextMenuItems }

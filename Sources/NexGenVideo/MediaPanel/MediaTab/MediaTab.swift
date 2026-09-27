@@ -543,6 +543,12 @@ struct MediaTab: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search", text: Binding(get: { searchQuery }, set: { searchQuery = $0 }))
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "media.search")
+                            .allowsHitTesting(false)
+                    }
+                }
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)

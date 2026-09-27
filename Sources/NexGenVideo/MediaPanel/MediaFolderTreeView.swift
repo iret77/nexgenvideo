@@ -35,6 +35,7 @@ struct MediaFolderTreeView: View {
                 OutlineGroup(MediaFolderTree(folders: editor.folders).roots, children: \.children) { node in
                     Label(node.folder.name, systemImage: "folder")
                         .tag(node.id)
+                        .background { acceptanceProbe("media.folder.\(node.id)") }
                         .draggable(MediaTab.folderDragString(forFolderId: node.id))
                         .onDrop(of: [.fileURL, .text], isTargeted: nil) { providers in
                             MediaTab.handleProviderDrop(providers, into: node.id, editor: editor)
@@ -63,6 +64,14 @@ struct MediaFolderTreeView: View {
             }
             .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ identifier: String) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: identifier)
+                .allowsHitTesting(false)
         }
     }
 

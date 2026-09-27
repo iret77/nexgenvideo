@@ -226,6 +226,12 @@ extension MediaTab {
         }
         .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
         .onTapGesture { editor.selectMediaPanelItem(asset.id) }
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "media.search-result.\(asset.id)")
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func previewMoment(assetID: String, atSeconds seconds: Double) {

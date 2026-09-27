@@ -165,11 +165,12 @@ def run_scale(executable, output, scale):
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
+    library = [row for row in rows if row.get("event") == "media-library"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow
+        for row in workspace_rows + hidden + narrow + library
     ]
     screenshots += [
         row.get("screenshot")
@@ -198,6 +199,12 @@ def run_scale(executable, output, scale):
         and len(narrow) == 1
         and set(narrow[0].get("taskControls", []))
         == {"agent.decisions", "agent.diagnostics", "agent.utilities"}
+        and len(library) == 1
+        and library[0].get("assetCount") == 500
+        and set(library[0].get("types", [])) == {"image", "audio", "document"}
+        and library[0].get("nestedFolderOpened") is True
+        and library[0].get("searchSelectedAsset") == "fixture-498"
+        and library[0].get("workspaceStatePreserved") is True
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -209,7 +216,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 7 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

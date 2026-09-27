@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 @MainActor
@@ -195,6 +196,10 @@ enum WorkspaceUIAcceptance {
                 )
             }
 
+            await captureMediaLibraryCase(
+                editor: editor, window: window, host: host, evidenceURL: evidenceURL, scale: scale
+            )
+
             guard click(identifier: "editor.workspace.edit", in: window) == nil,
                   await waitUntil(timeout: .seconds(5), {
                       host.layoutSubtreeIfNeeded()
@@ -360,6 +365,74 @@ enum WorkspaceUIAcceptance {
         }
         app.run()
         exit(1)
+    }
+
+    private static func captureMediaLibraryCase(
+        editor: EditorViewModel, window: NSWindow, host: NSView, evidenceURL: URL, scale: Double
+    ) async {
+        guard editor.mediaAssets.count == 500,
+              editor.missingMediaRefs.isEmpty,
+              Set(editor.mediaAssets.map(\.type)) == [.image, .audio, .document],
+              editor.mediaAssets.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }),
+              click(identifier: "editor.workspace.media", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.workspaceFocus == .media
+                      && findProbe(in: host, identifier: "media.folder.fixture-root") != nil
+              }),
+              click(identifier: "media.folder.fixture-root", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.mediaPanelCurrentFolderId == "fixture-root"
+                      && findProbe(in: host, identifier: "media.folder-tile.fixture-nested") != nil
+              }),
+              click(identifier: "media.folder-tile.fixture-nested", in: window) == nil else {
+            fail("500-asset library or root folder was unavailable", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(80))
+        guard click(identifier: "media.folder-tile.fixture-nested", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.mediaPanelCurrentFolderId == "fixture-nested"
+              }),
+              click(identifier: "media.search", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
+              let fieldEditor = window.firstResponder as? NSTextView else {
+            fail("nested folder or native search field was unavailable", scale: scale)
+        }
+        fieldEditor.insertText("Acceptance Source 498", replacementRange: NSRange(location: NSNotFound, length: 0))
+        let state = editor.mediaBrowserState(for: .media)
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return state.searchQuery == "Acceptance Source 498"
+                && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
+        }), click(identifier: "media.search-result.fixture-498", in: window) == nil,
+        await waitUntil(timeout: .seconds(5), { editor.selectedMediaAssetIds == ["fixture-498"] }) else {
+            fail("native search did not find and select the nested source", scale: scale)
+        }
+        guard click(identifier: "editor.workspace.edit", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { editor.workspaceFocus == .edit }),
+              editor.mediaBrowserState(for: .edit).searchQuery.isEmpty,
+              click(identifier: "editor.workspace.media", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.workspaceFocus == .media
+                      && state.searchQuery == "Acceptance Source 498"
+                      && state.currentFolderId == "fixture-nested"
+                      && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
+              }), editor.selectedMediaAssetIds == ["fixture-498"] else {
+            fail("media navigation state leaked or was lost across workspaces", scale: scale)
+        }
+        let name = "scale-\(scaleLabel(scale))-media-library.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+            fail("could not capture the populated media library", scale: scale)
+        }
+        emit("media-library", scale: scale, fields: [
+            "assetCount": editor.mediaAssets.count,
+            "types": Set(editor.mediaAssets.map { $0.type.rawValue }).sorted(),
+            "nestedFolderOpened": true, "searchSelectedAsset": "fixture-498",
+            "workspaceStatePreserved": true, "screenshot": name,
+        ])
     }
 
     private static func captureInspectorCases(
@@ -614,7 +687,7 @@ enum WorkspaceUIAcceptance {
             to: projectURL.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )
-        try JSONEncoder().encode(MediaManifest()).write(
+        try JSONEncoder().encode(makeMediaFixture(at: projectURL)).write(
             to: projectURL.appendingPathComponent(Project.manifestFilename),
             options: .atomic
         )
@@ -624,6 +697,53 @@ enum WorkspaceUIAcceptance {
         )
         _ = try ProjectIdentity.uuid(for: projectURL)
         return projectURL
+    }
+
+    private static func makeMediaFixture(at projectURL: URL) throws -> MediaManifest {
+        let mediaURL = projectURL.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaURL, withIntermediateDirectories: true)
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 18, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { throw CocoaError(.fileWriteUnknown) }
+        for y in 0..<18 {
+            for x in 0..<32 { bitmap.setColor(.systemBlue, atX: x, y: y) }
+        }
+        guard let image = bitmap.representation(using: .png, properties: [:]),
+              let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 800),
+              let samples = buffer.floatChannelData?[0] else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = 800
+        for index in 0..<800 { samples[index] = Float(sin(Double(index) * 0.1)) * 0.1 }
+        let seedURL = mediaURL.appendingPathComponent("seed.caf")
+        do {
+            let file = try AVAudioFile(forWriting: seedURL, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        let audio = try Data(contentsOf: seedURL)
+        try FileManager.default.removeItem(at: seedURL)
+        var manifest = MediaManifest()
+        manifest.folders = [
+            MediaFolder(id: "fixture-root", name: "Acceptance Library"),
+            MediaFolder(id: "fixture-nested", name: "Nested Sources", parentFolderId: "fixture-root"),
+        ]
+        for index in 0..<500 {
+            let type: ClipType = index % 3 == 0 ? .image : index % 3 == 1 ? .audio : .document
+            let ext = type == .image ? "png" : type == .audio ? "caf" : "txt"
+            let name = String(format: "Acceptance Source %03d.%@", index, ext)
+            let relativePath = "media/fixture-\(index).\(ext)"
+            let bytes = type == .image ? image : type == .audio ? audio
+                : Data("Production notes for source \(index).".utf8)
+            try bytes.write(to: projectURL.appendingPathComponent(relativePath))
+            manifest.entries.append(MediaManifestEntry(
+                id: "fixture-\(index)", name: name, type: type,
+                source: .project(relativePath: relativePath), duration: type == .audio ? 0.1 : 0,
+                folderId: index < 250 ? "fixture-root" : "fixture-nested",
+                originalFilename: name
+            ))
+        }
+        return manifest
     }
 
     private static func projectSnapshot(at projectURL: URL) throws -> [String: Data] {
