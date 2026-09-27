@@ -17,6 +17,7 @@ extension EditorViewModel {
     }
 
     func applyTimelineSettings(fps: Int, width: Int, height: Int) {
+        rememberSourcePosition()
         let prevFPS = timeline.fps
         let prevWidth = timeline.width
         let prevHeight = timeline.height

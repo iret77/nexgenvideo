@@ -16,6 +16,12 @@
           "items": [
             "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details."
           ]
+        },
+        {
+          "heading": "Editing",
+          "items": [
+            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector."
+          ]
         }
       ]
     },

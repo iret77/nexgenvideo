@@ -8,8 +8,8 @@ struct InspectedObjectTests {
 
     @Test func kindLabelIsTypeNotName() {
         let ref = BibleEntityRef(kind: .character, id: "c1")
-        #expect(InspectedObject.clip("x").kindLabel == "Clip")
-        #expect(InspectedObject.mediaAsset("a").kindLabel == "Media")
+        #expect(InspectedObject.clip("x").kindLabel == "Timeline Clip")
+        #expect(InspectedObject.mediaAsset("a").kindLabel == "Original Media")
         #expect(InspectedObject.entity(ref).kindLabel == "Character")
         #expect(InspectedObject.look.kindLabel == "Look")
         #expect(InspectedObject.shot("s1").kindLabel == "Shot")
@@ -87,7 +87,7 @@ struct ObjectGraphBreadcrumbTests {
 
     @Test func clipBreadcrumbShowsTrackThenName() {
         let bc = graph().breadcrumb(for: .clip("cl1"))
-        #expect(bc.segments.map(\.label) == ["V2", "Intro.mp4"])
+        #expect(bc.segments.map(\.label) == ["Timeline Clip", "V2", "Intro.mp4"])
     }
 
     @Test func unresolvedNameFallsBackToIDNotEmpty() {

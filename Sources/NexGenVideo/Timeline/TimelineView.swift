@@ -309,6 +309,8 @@ final class TimelineView: NSView {
 
         let linkOffsets = editor.linkGroupOffsets()
         let allowsEditChrome = editor.allowsTimelineEditChrome
+        let selectionColor = editor.activePreviewTab == .timeline
+            ? NSColor(editor.projectPalette.accent) : AppTheme.Text.muted
 
         clipDisplayRects.removeAll(keepingCapacity: true)
         for (ti, track) in editor.timeline.tracks.enumerated() {
@@ -329,7 +331,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
 
                     let frameDelta = drag.deltaFrames
@@ -355,7 +358,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
                     continue
                 }
@@ -380,7 +384,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
                     continue
                 }
@@ -394,7 +399,8 @@ final class TimelineView: NSView {
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
                                   fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                  allowsEditChrome: allowsEditChrome)
+                                  allowsEditChrome: allowsEditChrome,
+                                  selectionColor: selectionColor)
             }
         }
     }
@@ -759,6 +765,8 @@ final class TimelineView: NSView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        editor.focusedPanel = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         let point = convert(event.locationInWindow, from: nil)
         let trackIndex = geometry.trackAt(y: point.y)
         let clickFrame = max(0, geometry.frameAt(x: point.x))
@@ -767,6 +775,11 @@ final class TimelineView: NSView {
             return emptyAreaMenu(trackIndex: trackIndex, frame: clickFrame, clickedRange: clickedRange)
         }
         let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
+        if !editor.selectedClipIds.contains(clip.id) {
+            editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
+            needsDisplay = true
+        }
+        editor.inspectedObject = editor.selectionInspectedObject
         let clipRect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
         let allowsEditChrome = editor.allowsTimelineEditChrome
 
@@ -810,11 +823,6 @@ final class TimelineView: NSView {
             del.representedObject = ["clipId": clip.id, "frame": kfFrame] as [String: Any]
             menu.addItem(del)
             return menu
-        }
-
-        if !editor.selectedClipIds.contains(clip.id) {
-            editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
-            needsDisplay = true
         }
 
         let menu = NSMenu()

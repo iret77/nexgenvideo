@@ -17,8 +17,8 @@ extension InspectedObject {
     /// for grouping. `Character: Mara`, `Shot 014 use of Mara`, and `Clip on V2` share nothing but this.
     var kindLabel: String {
         switch self {
-        case .clip: "Clip"
-        case .mediaAsset: "Media"
+        case .clip: "Timeline Clip"
+        case .mediaAsset: "Original Media"
         case .entity(let ref): ref.kind.label
         case .look: "Look"
         case .shot: "Shot"

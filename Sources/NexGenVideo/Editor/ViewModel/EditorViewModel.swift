@@ -861,6 +861,7 @@ final class EditorViewModel {
     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
+        rememberSourcePosition()
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
             sidebarVisible: mediaPanelVisible,
             inspectorVisible: inspectorPanelVisible,
@@ -1259,6 +1260,7 @@ final class EditorViewModel {
     // MARK: - Playback
 
     func togglePlayback() {
+        guard activePreviewTab.clipType != .document, activePreviewTab.clipType != .image else { return }
         if let videoEngine {
             videoEngine.togglePlayback()
         } else {
@@ -1313,7 +1315,18 @@ final class EditorViewModel {
     }
 
     func toggleSourcePlayback() {
-        videoEngine?.togglePlayback()
+        togglePlayback()
+    }
+
+    func stepActivePreview(by frames: Int) {
+        let position = activePreviewTab == .timeline ? currentFrame : sourcePlayheadFrame
+        let destination = position.addingReportingOverflow(frames)
+        guard !destination.overflow else { return }
+        if activePreviewTab == .timeline {
+            seekToFrame(destination.partialValue)
+        } else if activePreviewTab.clipType != .document && activePreviewTab.clipType != .image {
+            seekSourceToFrame(destination.partialValue)
+        }
     }
 
     func stepForward() { seekToFrame(currentFrame + 1) }
@@ -1420,13 +1433,15 @@ final class EditorViewModel {
         startFrame: Int,
         addLinkedAudio: Bool = true,
         linkedAudioTrackIndex: Int? = nil,
-        segments: [String: ClosedRange<Double>] = [:]
+        segments: [String: ClosedRange<Double>] = [:],
+        sourceFrameRanges: [String: Range<Int>] = [:]
     ) -> [String] {
         var cursor = startFrame
         var clipIds: [String] = []
         for asset in assets {
-            let segment = segments[asset.id]
-            let durationFrames = clipDurationFrames(for: asset, segment: segment)
+            let range = sourceFrameRanges[asset.id]
+            let segment = range == nil ? segments[asset.id] : nil
+            let durationFrames = range?.count ?? clipDurationFrames(for: asset, segment: segment)
             clipIds.append(contentsOf: placeClip(
                 asset: asset,
                 trackIndex: trackIndex,
@@ -1434,7 +1449,9 @@ final class EditorViewModel {
                 durationFrames: durationFrames,
                 addLinkedAudio: addLinkedAudio,
                 linkedAudioTrackIndex: linkedAudioTrackIndex,
-                sourceSegment: segment
+                sourceSegment: segment,
+                trimStartFrame: range?.lowerBound,
+                trimEndFrame: range.map { max(0, secondsToFrame(seconds: asset.duration, fps: timeline.fps) - $0.upperBound) }
             ))
             cursor += durationFrames
         }
@@ -1522,5 +1539,6 @@ final class EditorViewModel {
 
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
+    var sourcePreviewStates: [String: SourcePreviewState] = [:]
 
 }

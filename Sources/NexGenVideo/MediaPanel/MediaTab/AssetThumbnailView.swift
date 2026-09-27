@@ -5,6 +5,7 @@ struct AssetThumbnailView: View {
     var onMoveToFolderMenu: AnyView? = nil
 
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.projectPalette) private var palette
     @State private var isRenaming = false
     @FocusState private var isRenameFieldFocused: Bool
     @State private var renameDraft = ""
@@ -67,6 +68,12 @@ struct AssetThumbnailView: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 1) {
             handleTap()
+        }
+        .background {
+            ContextClickActivation {
+                guard !isSwapDimmed else { return }
+                editor.activateMediaContext(asset)
+            }
         }
         .contextMenu { contextMenuItems }
         .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
@@ -301,7 +308,8 @@ struct AssetThumbnailView: View {
     private var borderColor: Color {
         if isMissing { return AppTheme.Status.errorColor }
         if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.Accent.primary : AppTheme.Background.clearColor }
-        return isSelected ? AppTheme.Accent.primary : AppTheme.Background.clearColor
+        guard isSelected else { return AppTheme.Background.clearColor }
+        return editor.activePreviewTab == .timeline ? AppTheme.Text.mutedColor : palette.accent
     }
 
     private var borderWidth: CGFloat {

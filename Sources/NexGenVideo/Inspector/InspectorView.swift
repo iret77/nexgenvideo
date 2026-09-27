@@ -1262,6 +1262,10 @@ struct InspectorView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                 assetIdentityHeader(asset)
 
+                if editor.workspaceFocus == .edit, asset.type.isPlaceable {
+                    SourceRangeInspector(asset: asset)
+                }
+
                 fileSection(asset)
 
                 if let gen = asset.generationInput {

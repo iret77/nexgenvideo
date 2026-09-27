@@ -92,12 +92,11 @@ final class VideoEngine {
             // AVPlayer can't read Lottie JSON — bake (cached) to a playable mov first.
             let url = asset.url, ref = asset.id
             let size = CGSize(width: asset.sourceWidth ?? 512, height: asset.sourceHeight ?? 512)
-            let startFrame = editor?.sourcePlayheadFrame ?? 0
             Task { @MainActor [weak self] in
                 guard let self, let mov = try? await LottieVideoGenerator.lottieVideo(for: url, mediaRef: ref, size: size) else { return }
                 guard case .mediaAsset(let activeId, _, _) = self.editor?.activePreviewTab, activeId == ref else { return }
                 self.replacePlayerItem(AVPlayerItem(url: mov), reason: "previewLottie")
-                self.seek(to: startFrame, mode: .exact)
+                self.seek(to: self.editor?.sourcePlayheadFrame ?? 0, mode: .exact)
             }
             return
         }
@@ -118,7 +117,7 @@ final class VideoEngine {
         case .mediaAsset(let id, _, let type):
             textController.textRoot.isHidden = true
             guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
-            if type == .image {
+            if type == .image || type == .document {
                 replacePlayerItem(nil, reason: "imagePreview")
             } else {
                 previewAsset(asset)

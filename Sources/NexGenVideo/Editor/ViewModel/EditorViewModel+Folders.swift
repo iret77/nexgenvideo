@@ -184,7 +184,10 @@ extension EditorViewModel {
             availableMediaPaths: Set(mediaAssets.compactMap { asset in
                 let path = asset.url.standardizedFileURL.path
                 return FileManager.default.fileExists(atPath: path) ? path : nil
-            })
+            }),
+            previewTabHistory: previewTabHistory,
+            previewTabHistoryIndex: previewTabHistoryIndex,
+            sourcePreviewStates: sourcePreviewStates
         )
     }
 
@@ -207,6 +210,10 @@ extension EditorViewModel {
         previewTabs = snapshot.previewTabs
         activePreviewTabId = snapshot.activePreviewTabId
         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
+        previewTabHistory = snapshot.previewTabHistory
+        previewTabHistoryIndex = snapshot.previewTabHistoryIndex
+        sourcePreviewStates = snapshot.sourcePreviewStates
+        inspectedObject = selectionInspectedObject
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()
@@ -224,6 +231,9 @@ struct MediaLibraryUndoSnapshot {
     let activePreviewTabId: String
     let sourcePlayheadFrame: Int
     let availableMediaPaths: Set<String>
+    let previewTabHistory: [String]
+    let previewTabHistoryIndex: Int
+    let sourcePreviewStates: [String: SourcePreviewState]
 }
 
 // Cached lookup tables for folder path and descendant traversal.

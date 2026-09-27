@@ -65,11 +65,11 @@ final class EditorWindowController: NSWindowController {
             return true
 
         case 123: // Left arrow
-            if shift { editorViewModel.skipBackward() } else { editorViewModel.stepBackward() }
+            editorViewModel.stepActivePreview(by: shift ? -5 : -1)
             return true
 
         case 124: // Right arrow
-            if shift { editorViewModel.skipForward() } else { editorViewModel.stepForward() }
+            editorViewModel.stepActivePreview(by: shift ? 5 : 1)
             return true
 
         case 51: // Delete/Backspace
@@ -90,6 +90,10 @@ final class EditorWindowController: NSWindowController {
             return false
 
         case 34: // I key
+            if rangeMarkShortcut, let asset = activeRangeSource {
+                editorViewModel.markSourceIn(asset)
+                return true
+            }
             if rangeMarkShortcut, canHandleTimelineEditShortcut() {
                 editorViewModel.markTimelineRangeStart()
                 return true
@@ -97,6 +101,10 @@ final class EditorWindowController: NSWindowController {
             return false
 
         case 31: // O key
+            if rangeMarkShortcut, let asset = activeRangeSource {
+                editorViewModel.markSourceOut(asset)
+                return true
+            }
             if rangeMarkShortcut, canHandleTimelineEditShortcut() {
                 editorViewModel.markTimelineRangeEnd()
                 return true
@@ -167,6 +175,14 @@ final class EditorWindowController: NSWindowController {
         }
     }
 
+    private var activeRangeSource: MediaAsset? {
+        guard editorViewModel.workspaceFocus == .edit,
+              case .mediaAsset(let id, _, _) = editorViewModel.activePreviewTab,
+              let asset = editorViewModel.mediaAssets.first(where: { $0.id == id }),
+              editorViewModel.sourceFrameRange(for: asset) != nil else { return nil }
+        return asset
+    }
+
     private func mediaArrowDirection(for keyCode: UInt16) -> EditorViewModel.MediaSelectionDirection? {
         switch keyCode {
         case 123: .left
@@ -224,10 +240,10 @@ extension EditorWindowController: EditorActions {
         _ = performContextualDelete(ripple: false)
     }
     @objc func playPause(_ sender: Any?) { editorViewModel.togglePlayback() }
-    @objc func stepFrameForward(_ sender: Any?) { editorViewModel.stepForward() }
-    @objc func stepFrameBackward(_ sender: Any?) { editorViewModel.stepBackward() }
-    @objc func skipFramesForward(_ sender: Any?) { editorViewModel.skipForward() }
-    @objc func skipFramesBackward(_ sender: Any?) { editorViewModel.skipBackward() }
+    @objc func stepFrameForward(_ sender: Any?) { editorViewModel.stepActivePreview(by: 1) }
+    @objc func stepFrameBackward(_ sender: Any?) { editorViewModel.stepActivePreview(by: -1) }
+    @objc func skipFramesForward(_ sender: Any?) { editorViewModel.stepActivePreview(by: 5) }
+    @objc func skipFramesBackward(_ sender: Any?) { editorViewModel.stepActivePreview(by: -5) }
 
     @objc func importMedia(_ sender: Any?) {
         MediaImportFlow.present(
@@ -271,6 +287,7 @@ extension EditorWindowController: EditorActions {
         !isTextInputFocused
             && editorViewModel.workspaceFocus == .edit
             && editorViewModel.focusedPanel == .timeline
+            && editorViewModel.activePreviewTab == .timeline
             && !editorViewModel.theaterActive
             && (editorViewModel.maximizedPanel == nil || editorViewModel.maximizedPanel == .timeline)
     }
