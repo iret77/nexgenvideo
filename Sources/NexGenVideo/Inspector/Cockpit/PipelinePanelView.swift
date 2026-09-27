@@ -196,6 +196,7 @@ struct PipelinePanelView: View {
                     }
                     Text("Current phase: \(PhaseDisplay.label(phase.phase))")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        .background { acceptanceProbe("current", text: phase.phase) }
                     HStack(spacing: AppTheme.Spacing.md) {
                         surfaceIcon(for: phase.phase)
                         approveButton(phase, enabled: approvalIsEnabled(for: phase.phase,
@@ -412,6 +413,17 @@ struct PipelinePanelView: View {
             .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+            .background { acceptanceProbe("phase.\(phase.phase)", text: PhaseDisplay.label(phase.phase)) }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ part: String, enabled: Bool? = nil, text: String? = nil) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "pipeline.\(presentation == .overview ? "overview" : "dock").\(part)",
+                acceptanceState: enabled, acceptanceText: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
     }
 
     /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
@@ -439,6 +451,7 @@ struct PipelinePanelView: View {
         }
         .buttonStyle(.inlineAction(.approval))
         .disabled(!enabled)
+        .background { acceptanceProbe("approve.\(phase.phase)", enabled: enabled) }
         .help(
             enabled
                 ? "Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase"

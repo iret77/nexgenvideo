@@ -163,6 +163,13 @@ struct AgentDialogCard: View {
             Text(dialog.title)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "agent.dialog.title", acceptanceText: dialog.title)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
             Spacer(minLength: AppTheme.Spacing.sm)
             if canDismiss {
                 Button(action: onCancel) {

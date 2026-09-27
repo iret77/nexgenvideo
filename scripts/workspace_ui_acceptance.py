@@ -122,7 +122,7 @@ def run_scale(executable, output, scale):
     started = time.monotonic()
     case_results = []
     output_chunks = []
-    for scenario in ("workspace", "cards", "analysis", "provenance"):
+    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo"):
         case_started = time.monotonic()
         try:
             process = subprocess.run(
@@ -169,7 +169,7 @@ def run_scale(executable, output, scale):
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
     workspaces = {row.get("workspace") for row in workspace_rows}
-    completed = sum(row.get("event") == "completed" for row in rows) == 4
+    completed = sum(row.get("event") == "completed" for row in rows) == 5
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
@@ -178,6 +178,7 @@ def run_scale(executable, output, scale):
     cards = [row for row in rows if row.get("event") == "project-cards"]
     analysis = [row for row in rows if row.get("event") == "analysis-interaction"]
     provenance = [row for row in rows if row.get("event") == "asset-provenance"]
+    musicvideo = [row for row in rows if row.get("event") == "musicvideo-startup"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
@@ -195,7 +196,7 @@ def run_scale(executable, output, scale):
         for layout in row.get("laneLayoutEvidence", [])
         if isinstance(layout, dict)
     ]
-    screenshots += [name for row in analysis + provenance for name in row.get("screenshots", [])]
+    screenshots += [name for row in analysis + provenance + musicvideo for name in row.get("screenshots", [])]
     valid_images = all(
         isinstance(name, str)
         and (output / name).is_file()
@@ -243,7 +244,19 @@ def run_scale(executable, output, scale):
             "syntheticReceipts", "exactOriginRendered", "originalSelected",
             "offlineActionsCorrect", "projectUnchanged",
         ))
+        and provenance[0].get("viewportWidth") == 440
+        and provenance[0].get("viewportHeight") == 650
         and len(provenance[0].get("screenshots", [])) == 7
+        and len(musicvideo) == 1
+        and musicvideo[0].get("phases") == [
+            "project_init", "analysis", "brief", "production_design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frames", "render",
+        ]
+        and all(musicvideo[0].get(key) is True for key in (
+            "externalPackLoaded", "exactBinding", "libraryDidNotAssignTrack",
+            "viewingDidNotAdvance", "disabledApprovalDidNotMutate",
+        ))
+        and len(musicvideo[0].get("screenshots", [])) == 2
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -255,7 +268,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 19 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 21 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

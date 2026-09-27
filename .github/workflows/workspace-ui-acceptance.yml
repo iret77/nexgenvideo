@@ -30,7 +30,8 @@ jobs:
       - name: Build acceptance app
         run: |
           scripts/bundle.sh debug
-          tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app
+          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
+          tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
       - uses: actions/upload-artifact@v4
         with:
           name: workspace-ui-app
@@ -52,6 +53,7 @@ jobs:
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
           tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
+          export NGV_WORKSPACE_UI_PACK="$RUNNER_TEMP/workspace-ui/plugins/musicvideo.ngvpack"
           python3 scripts/workspace_ui_acceptance.py \
             "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             "$RUNNER_TEMP/evidence"

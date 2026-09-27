@@ -44,6 +44,7 @@ enum WorkspaceUIAcceptance {
                 case "cards": await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
                 case "analysis": await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
                 case "provenance": await captureAssetProvenance(evidenceURL: evidenceURL, scale: scale)
+                case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -743,6 +744,107 @@ enum WorkspaceUIAcceptance {
         editor.mediaAssets = originalAssets
     }
 
+    private static func captureMusicvideoStartup(evidenceURL: URL, scale: Double) async {
+        guard let packPath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
+            fail("native Musicvideo acceptance requires an external pack", scale: scale)
+        }
+        let record = PluginLoader.load(at: URL(fileURLWithPath: packPath))
+        guard record.isLoaded, record.id == "musicvideo",
+              let binding = PluginLoader.liveBinding(id: "musicvideo") else {
+            fail("native Musicvideo pack failed to load: \(record.state)", scale: scale)
+        }
+        let projectURL: URL
+        let document: VideoProject
+        do {
+            projectURL = try makeProjectFixture(scale: scale)
+            try ProjectPluginSettings.setActivePlugin(binding, projectURL: projectURL)
+            _ = try ProjectScaffold.initProject(home: projectURL, name: "Native Musicvideo acceptance",
+                extraDirs: PackCatalog.projectDirs(activePack: "musicvideo"))
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not open pinned Musicvideo fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        editor.setWorkspaceFocus(.production)
+        await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+        let expectedPhases = ["project_init", "analysis", "brief", "production_design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frames", "render"]
+        guard editor.declaredPluginBinding == binding,
+              editor.projectState?.phases.map(\.phase) == expectedPhases,
+              editor.projectState?.nextPhaseName == "project_init",
+              editor.agentService.pendingDialog?.title == "Track",
+              editor.agentService.pendingDialog?.fileIntake?.attachAs == "song",
+              editor.mediaAssets.contains(where: { $0.type == .audio }),
+              editor.mediaAssets.contains(where: { $0.type == .document }),
+              editor.activePackAccentColor != nil else {
+            fail("pinned Musicvideo startup lost its phases, Track intake or pack identity", scale: scale)
+        }
+        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
+            PipelinePanelView().frame(width: 540)
+            VStack(spacing: AppTheme.Spacing.lg) {
+                PipelinePanelView(presentation: .phaseDock, viewedPhase: "analysis")
+                AgentPanelView()
+            }
+        }.interfaceStyle().environment(editor).frame(width: 1380, height: 950))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func text(_ id: String) -> String? {
+            (findProbe(in: host, identifier: id) as? AppRelaunchClickProbeView)?.acceptanceText
+        }
+        func reject(_ reason: String) -> Never {
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-musicvideo-failed.png"))
+            emit("musicvideo-diagnostic", scale: scale, fields: ["reason": reason,
+                "current": editor.projectState?.nextPhaseName ?? "missing",
+                "dialog": editor.agentService.pendingDialog?.title ?? "missing",
+                "renderedDialog": text("agent.dialog.title") ?? "missing",
+                "renderedPhases": expectedPhases.filter { text("pipeline.overview.phase.\($0)") != nil }])
+            fail(reason, scale: scale)
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return window.isKeyWindow && text("agent.dialog.title") == "Track"
+                && text("pipeline.dock.current") == "project_init"
+                && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
+                && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
+        }) else { reject("Musicvideo phase controls or Track card did not render") }
+        guard let home = editor.workingRoot, let workingBytes = try? treeSnapshot(at: home),
+              let savedBytes = try? treeSnapshot(at: projectURL) else { reject("Musicvideo fixture is unreadable") }
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let log = editor.generationLog
+        let canUndo = document.undoManager?.canUndo ?? false
+        let edited = document.isDocumentEdited
+        let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
+        if let reason = click(identifier: "pipeline.dock.approve.project_init", in: window) {
+            reject("disabled approval target: \(reason)")
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard editor.projectState?.nextPhaseName == "project_init",
+              editor.projectState?.phases.allSatisfy({ !$0.approved }) == true,
+              editor.agentService.pendingDialog?.title == "Track",
+              editor.timeline == timeline, editor.mediaManifest == manifest, editor.generationLog == log,
+              document.isDocumentEdited == edited, (document.undoManager?.canUndo ?? false) == canUndo,
+              (try? treeSnapshot(at: home)) == workingBytes,
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("viewing another phase or clicking disabled approval changed the production")
+        }
+        guard await revealProbe("pipeline.overview.phase.render", in: window) else { reject("final Musicvideo phases are unreachable") }
+        let final = "scale-\(scaleLabel(scale))-musicvideo-phases.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(final)) else { reject("could not capture final phases") }
+        emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
+            "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
+            "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true,
+            "disabledApprovalDidNotMutate": true, "screenshots": [initial, final]])
+    }
+
     private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {
         let projectURL: URL
         let document: VideoProject
@@ -762,7 +864,8 @@ enum WorkspaceUIAcceptance {
         let log = editor.generationLog
         let canUndo = document.undoManager?.canUndo ?? false
         let edited = document.isDocumentEdited
-        let host = NSHostingView(rootView: InspectorView().interfaceStyle().environment(editor))
+        let host = NSHostingView(rootView: InspectorView().interfaceStyle().environment(editor)
+            .frame(width: 440, height: 650))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 650),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -803,7 +906,8 @@ enum WorkspaceUIAcceptance {
             expectedRows = Dictionary(uniqueKeysWithValues: expected.map { (prefix + "origin." + $0.key, $0.value) })
             guard await waitUntil(timeout: .seconds(5), {
                 host.layoutSubtreeIfNeeded()
-                return window.isKeyWindow && text(prefix + "identity") == asset.libraryDisplayName
+                return window.isKeyWindow && abs(host.bounds.width - 440) <= 1 && abs(host.bounds.height - 650) <= 1
+                    && text(prefix + "identity") == asset.libraryDisplayName
                     && probeState(identifier: prefix + "identity", in: window) == (item.family == "offline")
                     && expected.allSatisfy { text(prefix + "origin." + $0.key) == $0.value }
             }) else { reject("\(item.family) identity or recorded origin did not render correctly") }
@@ -855,6 +959,7 @@ enum WorkspaceUIAcceptance {
         emit("asset-provenance", scale: scale, fields: [
             "families": cases.map { $0.family }, "syntheticReceipts": true, "exactOriginRendered": true,
             "originalSelected": true, "offlineActionsCorrect": true, "projectUnchanged": true,
+            "viewportWidth": host.bounds.width, "viewportHeight": host.bounds.height,
             "screenshots": screenshots,
         ])
     }
