@@ -400,6 +400,16 @@ enum WorkspaceUIAcceptance {
     private static func captureMediaLibraryCase(
         editor: EditorViewModel, window: NSWindow, host: NSView, evidenceURL: URL, scale: Double
     ) async {
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-media-library-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("media-library-diagnostic", scale: scale, fields: ["reason": reason,
+                "folder": editor.mediaPanelCurrentFolderId ?? "root", "selectedFolders": editor.selectedFolderIds.sorted(),
+                "firstResponder": String(describing: window.firstResponder), "keyWindow": window.isKeyWindow,
+                "nestedProbe": findProbe(in: host, identifier: "media.folder-tile.fixture-nested").map { viewLayoutDiagnostics($0, in: host) } ?? ["available": false],
+                "searchProbe": findProbe(in: host, identifier: "media.search").map { viewLayoutDiagnostics($0, in: host) } ?? ["available": false], "screenshot": name])
+            fail(reason, scale: scale)
+        }
         guard editor.mediaAssets.count == 500,
               editor.missingMediaRefs.isEmpty,
               Set(editor.mediaAssets.map(\.type)) == [.image, .audio, .document],
@@ -415,20 +425,21 @@ enum WorkspaceUIAcceptance {
                   host.layoutSubtreeIfNeeded()
                   return editor.mediaPanelCurrentFolderId == "fixture-root"
                       && findProbe(in: host, identifier: "media.folder-tile.fixture-nested") != nil
-              }),
-              click(identifier: "media.folder-tile.fixture-nested", in: window) == nil else {
-            fail("500-asset library or root folder was unavailable", scale: scale)
+              }), await stablePanelFrames(in: host) != nil else {
+            reject("500-asset library or root folder was unavailable")
         }
-        try? await Task.sleep(for: .milliseconds(80))
-        guard click(identifier: "media.folder-tile.fixture-nested", in: window) == nil,
-              await waitUntil(timeout: .seconds(5), {
-                  host.layoutSubtreeIfNeeded()
-                  return editor.mediaPanelCurrentFolderId == "fixture-nested"
-              }),
-              click(identifier: "media.search", in: window) == nil,
-              await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
+        if let reason = click(identifier: "media.folder-tile.fixture-nested", in: window, clickCount: 2) {
+            reject("nested folder double-click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return editor.mediaPanelCurrentFolderId == "fixture-nested"
+        }) else { reject("native double-click did not open the nested folder") }
+        guard await stablePanelFrames(in: host) != nil else { reject("nested folder layout did not settle") }
+        if let reason = click(identifier: "media.search", in: window) { reject("search click: \(reason)") }
+        guard await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
               let fieldEditor = window.firstResponder as? NSTextView else {
-            fail("nested folder or native search field was unavailable", scale: scale)
+            reject("native search field did not take keyboard focus")
         }
         fieldEditor.insertText("Acceptance Source 498", replacementRange: NSRange(location: NSNotFound, length: 0))
         let state = editor.mediaBrowserState(for: .media)
@@ -2029,7 +2040,8 @@ enum WorkspaceUIAcceptance {
         }
     }
 
-    static func click(identifier: String, in window: NSWindow, fraction: NSPoint = NSPoint(x: 0.5, y: 0.5)) -> String? {
+    static func click(identifier: String, in window: NSWindow, fraction: NSPoint = NSPoint(x: 0.5, y: 0.5), clickCount: Int = 1) -> String? {
+        guard (1...2).contains(clickCount) else { return "unsupported click count" }
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView,
               let probe = findProbe(in: root, identifier: identifier),
@@ -2048,32 +2060,35 @@ enum WorkspaceUIAcceptance {
         guard root.bounds.contains(root.convert(location, from: nil)) else {
             return "control is outside the window"
         }
-        let timestamp = ProcessInfo.processInfo.systemUptime
-        guard let down = NSEvent.mouseEvent(
-            with: .leftMouseDown,
-            location: location,
-            modifierFlags: [],
-            timestamp: timestamp,
-            windowNumber: window.windowNumber,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 1
-        ), let up = NSEvent.mouseEvent(
-            with: .leftMouseUp,
-            location: location,
-            modifierFlags: [],
-            timestamp: timestamp + 0.001,
-            windowNumber: window.windowNumber,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 0
-        ) else {
-            return "AppKit could not create mouse events"
+        let start = ProcessInfo.processInfo.systemUptime
+        for count in 1...clickCount {
+            let timestamp = start + Double(count - 1) * min(0.08, NSEvent.doubleClickInterval / 4)
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: location,
+                modifierFlags: [],
+                timestamp: timestamp,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: count,
+                pressure: 1
+            ), let up = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: location,
+                modifierFlags: [],
+                timestamp: timestamp + 0.001,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: count,
+                pressure: 0
+            ) else {
+                return "AppKit could not create mouse events"
+            }
+            NSApp.postEvent(down, atStart: false)
+            NSApp.postEvent(up, atStart: false)
         }
-        NSApp.postEvent(down, atStart: false)
-        NSApp.postEvent(up, atStart: false)
         return nil
     }
 

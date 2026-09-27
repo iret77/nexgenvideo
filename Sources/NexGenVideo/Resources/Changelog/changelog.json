@@ -27,6 +27,7 @@
         {
           "heading": "Media",
           "items": [
+            "Media folders use native double-click recognition instead of timing event-handler execution.",
             "Generation review rejects inputs changed before or during pricing, before presenting an approval package.",
             "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review.",
             "The analysis timeline aligns verified source waveforms and recorded RMS energy with beats and sections, with shared zoom, horizontal scrolling, hierarchy selection, and verified-source listening. Analysis waveform caches are bound to the verified source digest.",

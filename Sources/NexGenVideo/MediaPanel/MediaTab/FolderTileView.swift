@@ -17,7 +17,6 @@ struct FolderTileView: View {
 
     @State private var renameDraft: String = ""
     @FocusState private var isRenameFieldFocused: Bool
-    @State private var lastClickTime: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
@@ -89,7 +88,8 @@ struct FolderTileView: View {
                     .allowsHitTesting(false)
             }
         }
-        .onTapGesture { handleClick() }
+        .onTapGesture(count: 2, perform: onOpen)
+        .onTapGesture(count: 1, perform: onTap)
         .background { ContextClickActivation { editor.activateFolderContext(folder.id) } }
         .contextMenu { contextMenuItems }
         .onAppear {
@@ -130,17 +130,6 @@ struct FolderTileView: View {
     private func beginRename() {
         renameDraft = folder.name
         isRenaming = true
-    }
-
-    private func handleClick() {
-        let now = Date()
-        if let last = lastClickTime, now.timeIntervalSince(last) < NSEvent.doubleClickInterval {
-            onOpen()
-            lastClickTime = nil
-        } else {
-            onTap()
-            lastClickTime = now
-        }
     }
 
     private func commit() {
