@@ -690,6 +690,7 @@ enum WorkspaceUIAcceptance {
         window.appearance = NSAppearance(named: .darkAqua)
         window.center()
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         defer { window.orderOut(nil); window.contentView = nil }
         let firstID = "home.project.\(entries[0].id)"
         let secondID = "home.project.\(entries[1].id)"
@@ -708,6 +709,14 @@ enum WorkspaceUIAcceptance {
             return clock.now - stableSince >= .milliseconds(300)
         }), let first = findProbe(in: host, identifier: firstID),
         let second = findProbe(in: host, identifier: secondID) else {
+            let name = "scale-\(scaleLabel(scale))-project-cards-not-ready.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("project-card-diagnostic", scale: scale, fields: [
+                "reason": "native project cards did not appear", "keyWindow": window.isKeyWindow,
+                "activeApp": NSApp.isActive, "screenshot": name,
+                "firstFound": findProbe(in: host, identifier: firstID) != nil,
+                "secondFound": findProbe(in: host, identifier: secondID) != nil,
+            ])
             fail("native project cards did not appear", scale: scale)
         }
         func reject(_ reason: String) -> Never {
@@ -775,6 +784,7 @@ enum WorkspaceUIAcceptance {
         window.appearance = NSAppearance(named: .darkAqua)
         window.center()
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         defer { window.orderOut(nil); window.contentView = nil }
         func value(_ identifier: String) -> Double? {
             (findProbe(in: host, identifier: identifier) as? AppRelaunchClickProbeView)?.acceptanceValue
@@ -911,7 +921,7 @@ enum WorkspaceUIAcceptance {
         let resolution: [String: Any] = [
             "status": "resolved", "method": "music_understanding_hierarchy",
             "candidate_boundary_count": 1, "accepted_boundary_count": 1, "discarded_boundary_count": 0,
-            "hierarchy": hierarchy,
+            "hierarchy": hierarchy, "detail": "Synthetic native interaction fixture",
         ]
         let artifact: [String: Any] = [
             "schema": "analysis/v3", "song_path": "audio/Acceptance Track.wav",
@@ -926,8 +936,14 @@ enum WorkspaceUIAcceptance {
             },
             "structure_resolution": resolution,
         ]
-        try JSONSerialization.data(withJSONObject: artifact, options: [.sortedKeys])
-            .write(to: root.appendingPathComponent("analysis/Acceptance Track.json"))
+        let artifactBytes = try JSONSerialization.data(withJSONObject: artifact, options: [.sortedKeys])
+        let analysis = try JSONDecoder().decode(AnalysisSurfaceData.self, from: artifactBytes)
+        guard analysis.hasNestedHierarchy, analysis.measuredEnergy != nil,
+              analysis.verifiedSourceURL(dataRoot: root) != nil else {
+            throw NSError(domain: "WorkspaceUIAcceptance", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Analysis fixture lacks hierarchy, energy, or a verified source"])
+        }
+        try artifactBytes.write(to: root.appendingPathComponent("analysis/Acceptance Track.json"))
         _ = try ProjectIdentity.uuid(for: home)
         return home
     }
