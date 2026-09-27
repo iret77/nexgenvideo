@@ -95,11 +95,14 @@ enum ChatHangReplay {
                     if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
                     emit("diagnostics-opened", step: step)
                 } else if step % 400 == 300 {
-                    guard let sheet = window.attachedSheet,
-                          WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: sheet) == nil,
+                    let clickFailure = window.attachedSheet.map {
+                        WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: $0)
+                    } ?? "diagnostic sheet unavailable"
+                    guard clickFailure == nil,
                           await waitForSheet(in: window, presented: false) else {
                         if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
-                        emit("diagnostics-close-failed", step: step)
+                        emit("diagnostics-close-failed", step: step,
+                             reason: clickFailure ?? "sheet remained presented after click")
                         exit(2)
                     }
                     emit("diagnostics-closed", step: step)
@@ -234,12 +237,13 @@ enum ChatHangReplay {
         return bitmap.representation(using: .png, properties: [:])!.base64EncodedString()
     }
 
-    private static func emit(_ event: String, step: Int) {
-        let row: [String: Any] = [
+    private static func emit(_ event: String, step: Int, reason: String? = nil) {
+        var row: [String: Any] = [
             "event": event,
             "step": step,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
+        if let reason { row["reason"] = reason }
         let data = try! JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
         FileHandle.standardOutput.write(data + Data([10]))
     }

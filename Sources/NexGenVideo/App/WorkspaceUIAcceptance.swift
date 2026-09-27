@@ -422,7 +422,10 @@ enum WorkspaceUIAcceptance {
                       && state.currentFolderId == "fixture-nested"
                       && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
                       && defaultPanelWidthsAreValid(workspace: .media, frames: visiblePanelFrames(in: host))
-                      && previewTimecodeIsSingleLine(in: window, scale: scale)
+                      && editor.activePreviewTab.clipType == .image
+                      && visiblePanelFrames(in: host)["previewPanel"].map {
+                          visibleProbe(identifier: "preview.zoom", in: window, containedBy: $0)
+                      } == true
               }), let frames = await stablePanelFrames(in: host),
               defaultPanelWidthsAreValid(workspace: .media, frames: frames),
               editor.selectedMediaAssetIds == ["fixture-498"] else {

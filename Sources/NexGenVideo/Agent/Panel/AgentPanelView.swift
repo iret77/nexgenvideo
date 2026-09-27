@@ -496,6 +496,7 @@ struct AgentPanelView: View {
                     .background {
                         if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                             AppRelaunchClickProbe(identifier: "agent.diagnostics.done")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .allowsHitTesting(false)
                         }
                     }
