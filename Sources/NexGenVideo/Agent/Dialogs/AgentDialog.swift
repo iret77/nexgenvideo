@@ -327,6 +327,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         self.workflowDecision = workflowDecision
     }
 
+    func hasSameControls(as other: AgentDialog) -> Bool {
+        AgentDialog(id: other.id, title: title, symbol: symbol, intro: intro,
+            costHint: costHint, confirmLabel: confirmLabel, textField: textField,
+            sections: sections, fileIntake: fileIntake, projection: projection,
+            purpose: purpose, workflowDecision: workflowDecision) == other
+    }
+
     /// Derives a compact label when the dialog omits `shortLabel`.
     static func compactTranscriptLabel(_ label: String) -> String {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)

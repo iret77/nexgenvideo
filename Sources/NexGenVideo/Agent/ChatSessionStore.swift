@@ -23,14 +23,27 @@ struct ChatSessionDraft: Codable, Equatable {
     }
 }
 
+struct WorkflowIntakeDraftKey: Codable, Equatable {
+    let packBinding: ProjectPackBinding?
+    let phase: String
+    let stepID: String
+    let itemNumber: Int?
+    let fingerprint: Int
+    let isRepeat: Bool
+}
+
 struct ChatSessionDecision: Codable, Equatable {
     let dialog: AgentDialog
     let origin: ToolCallOrigin
     var draft: AgentDialogDraft
     var selections: [String: Set<String>]
+    var intakeKey: WorkflowIntakeDraftKey? = nil
 
     func belongs(to sessionID: UUID) -> Bool {
-        guard dialog.purpose == .chatClarification else { return false }
+        if dialog.purpose == .workflowIntake {
+            return intakeKey != nil && origin == .direct
+        }
+        guard dialog.purpose == .chatClarification, intakeKey == nil else { return false }
         switch origin {
         case .direct: return true
         case .inAppChat(let id), .embeddedRuntime(let id, _): return id == sessionID

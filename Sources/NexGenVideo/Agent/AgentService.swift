@@ -299,6 +299,7 @@ final class AgentService {
             dialogDraft = AgentDialogDraft()
             dialogSubmissionError = nil
             submittingDialogID = nil
+            if pendingDialog == nil { activeIntakeDraftKey = nil }
         }
     }
 
@@ -325,7 +326,8 @@ final class AgentService {
 
     func presentDialog(
         _ dialog: AgentDialog,
-        origin: ToolCallOrigin = .direct
+        origin: ToolCallOrigin = .direct,
+        intakeKey: WorkflowIntakeDraftKey? = nil
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
@@ -337,9 +339,16 @@ final class AgentService {
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
             )
         }
+        let saved = sessions.first { $0.id == currentSessionId }?.decision
+        activeIntakeDraftKey = intakeKey
         dialogOrigins[dialog.id] = origin
         suspendToolCalls(from: origin)
         pendingDialog = dialog
+        if let intakeKey, let saved, saved.intakeKey == intakeKey,
+           saved.dialog.hasSameControls(as: dialog), origin == .direct {
+            dialogDraft = saved.draft
+            dialogChoiceSelections = saved.selections
+        }
         editor?.agentPanelVisible = true
     }
 
@@ -1168,11 +1177,13 @@ final class AgentService {
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
+        let preservedIntakeKey = activeIntakeDraftKey
         let preservedDraft = dialogDraft
         let preservedSelections = dialogChoiceSelections
         submittingDialogID = nil
         pendingDialog = nil
         guard let editor else {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
             dialogDraft = preservedDraft
             dialogChoiceSelections = preservedSelections
@@ -1188,6 +1199,7 @@ final class AgentService {
             editor: editor
         )
         if let failure = reconciliation.failure {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
             dialogDraft = preservedDraft
             dialogChoiceSelections = preservedSelections
@@ -3175,7 +3187,7 @@ final class AgentService {
               let owner = origin.chatSessionID ?? currentSessionId,
               let index = sessions.firstIndex(where: { $0.id == owner }) else { return }
         let decision = ChatSessionDecision(dialog: dialog, origin: origin,
-            draft: dialogDraft, selections: dialogChoiceSelections)
+            draft: dialogDraft, selections: dialogChoiceSelections, intakeKey: activeIntakeDraftKey)
         guard decision.belongs(to: owner), sessions[index].decision != decision else { return }
         sessions[index].decision = decision
         sessions[index].updatedAt = Date()
@@ -3185,7 +3197,7 @@ final class AgentService {
     private func restoreDecision(for id: UUID) {
         guard pendingDialog == nil,
               let saved = sessions.first(where: { $0.id == id })?.decision,
-              saved.belongs(to: id) else { return }
+              saved.belongs(to: id), saved.dialog.purpose == .chatClarification else { return }
         let wasRestoring = isRestoringComposer
         isRestoringComposer = true
         defer { isRestoringComposer = wasRestoring }
@@ -3386,6 +3398,7 @@ final class AgentService {
     var dialogDraft = AgentDialogDraft() {
         didSet { persistDecisionDraft() }
     }
+    private var activeIntakeDraftKey: WorkflowIntakeDraftKey?
 
 }
 

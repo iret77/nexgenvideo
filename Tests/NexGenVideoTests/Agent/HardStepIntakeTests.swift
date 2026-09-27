@@ -141,6 +141,38 @@ struct HardStepIntakeTests {
                  symbol: "tray", confirmLabel: "Continue", textField: nil)
     }
 
+    @Test("Reload reoffers an unfinished repeat only while its phase, count, order, and ledger agree")
+    func unfinishedRepeatRequiresCurrentIntakeState() throws {
+        let root = try makeDataRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let characterRoot = root.appendingPathComponent("import/characters/lead")
+        try FileManager.default.createDirectory(at: characterRoot, withIntermediateDirectories: true)
+        try Data([1]).write(to: characterRoot.appendingPathComponent("reference.png"))
+        let characters = step("characters", kind: .character, repeatable: true)
+        let key = WorkflowIntakeDraftKey(packBinding: nil, phase: "p", stepID: characters.id,
+            itemNumber: 2, fingerprint: 1, isRepeat: true)
+        let saved = ChatSessionDecision(
+            dialog: AgentDialog(hardStep: characters, isRepeat: true, itemNumber: 2),
+            origin: .direct, draft: AgentDialogDraft(direction: "Second singer"),
+            selections: [:], intakeKey: key
+        )
+        #expect(IntakePlanner.next([characters], dataRoot: root, ledger: IntakeLedger()) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == characters)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "later",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger(declined: [characters.id])) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved,
+            steps: [step("track", kind: .song, required: true), characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+        let second = root.appendingPathComponent("import/characters/second")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try Data([2]).write(to: second.appendingPathComponent("reference.png"))
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+    }
+
     // MARK: - Manifest decoding
 
     @Test("decodes phases and steps in declared order, tolerating unknown keys")

@@ -85,6 +85,66 @@ struct ChatSessionStoreTests {
         }
     }
 
+    @Test("Intake inputs restore only after the host reoffers the matching current step")
+    @MainActor
+    func intakeReloadRequiresMatchingHostOffer() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let binding = try #require(ProjectPackBinding(id: "musicvideo", version: "1.0.0", projectSchema: "musicvideo/1"))
+        let key = WorkflowIntakeDraftKey(packBinding: binding, phase: "story", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        func dialog(_ title: String = "Character 1") -> AgentDialog {
+            AgentDialog(id: UUID().uuidString, title: title, symbol: "person",
+                intro: nil, costHint: nil, confirmLabel: "Attach", textField: nil, sections: [],
+                fileIntake: AgentDialog.FileIntake(accept: ["image"], prompt: nil,
+                    allowsMultiple: true, attachAs: "character", namePrompt: "Name",
+                    required: false, completionLabel: "Skip"), purpose: .workflowIntake)
+        }
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        try service.presentDialog(dialog(), intakeKey: key)
+        service.dialogDraft.direction = "Lead singer"
+        service.dialogDraft.fileURLs = [URL(fileURLWithPath: "/tmp/singer.png")]
+        let saved = try #require(service.sessions.first { $0.id == id })
+        #expect(saved.decision?.intakeKey == key)
+        try #require(ChatSessionStore.encodeSession(saved)).write(
+            to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+        let changedPhase = WorkflowIntakeDraftKey(packBinding: binding, phase: "bible", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        let nextItem = WorkflowIntakeDraftKey(packBinding: binding, phase: "story", stepID: "characters",
+            itemNumber: 2, fingerprint: 1, isRepeat: true)
+        let changedPack = WorkflowIntakeDraftKey(packBinding: nil, phase: "story", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        for (offeredKey, title, shouldRestore) in [
+            (key, "Character 1", true), (changedPhase, "Character 1", false),
+            (nextItem, "Character 1", false), (changedPack, "Character 1", false),
+            (key, "Location 1", false),
+        ] {
+            let restored = AgentService(refreshBackendStatusOnInit: false)
+            restored.loadSessions(from: home)
+            #expect(restored.currentSessionId == id)
+            #expect(restored.pendingDialog == nil)
+            #expect(restored.messages.isEmpty)
+            let offered = dialog(title)
+            try restored.presentDialog(offered, intakeKey: offeredKey)
+            #expect(restored.pendingDialog?.id == offered.id)
+            #expect(restored.dialogDraft.direction == (shouldRestore ? "Lead singer" : ""))
+            #expect(restored.dialogDraft.fileURLs.count == (shouldRestore ? 1 : 0))
+            #expect(restored.messages.isEmpty)
+            #expect(!restored.isStreaming)
+            if shouldRestore {
+                restored.completeDialog(offered)
+                #expect(restored.dialogSubmissionError != nil)
+                #expect(restored.sessions.first { $0.id == id }?.decision?.intakeKey == key)
+                #expect(restored.dialogDraft.direction == "Lead singer")
+            }
+        }
+    }
+
     @Test("A saved decision cannot claim another session or an external MCP connection")
     func decisionRequiresItsOriginalSession() throws {
         let owner = UUID()
