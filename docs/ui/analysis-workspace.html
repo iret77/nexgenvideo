@@ -13,7 +13,11 @@ button{background:#30343b;color:white;border:1px solid #626772;border-radius:6px
 <p>The assigned song supplies one shared time axis. Zoom changes the display scale only.
 Horizontal scrolling never changes measured timestamps. Section bands and structure rows select the
 same measured section and show its exact start and end times. Selection never approves, rewrites,
-or remeasures analysis. A changed analysis clears a selection whose measured range is no longer present.</p>
+or remeasures analysis. Section selection seeks the listening position without starting audio.
+Play revalidates the assigned track's exact digest before starting. A visible Play/Pause control and
+listening-position slider share the playhead across all lanes. Leaving the view, replacing the source,
+or starting editor playback stops analysis listening. A changed analysis clears a selection whose
+measured range is no longer present.</p>
 <p>Track → optional Lyrics → Project Init → approved Audio Analysis → optional existing material →
 story development remains the independent acceptance sequence. Media-library import does not assign
 intake. Beatless and unresolved measurements retain their existing explicit status.</p>
@@ -23,6 +27,7 @@ SHA-256. RMS energy uses recorded normalized samples without inventing missing m
 Missing or invalid layers show an explicit unavailable state. Energy remains visible for beatless
 tracks. Additional evidence layers must use declared actual measurements.</p></section>
 <article><h2>Measured structure</h2><button>Zoom: 2×</button> <button>Fit</button>
+<p><button>Play</button> <input type="range" aria-label="Listening position" min="0" max="120" value="30"> 0:30.000</p>
 <div class="band"><span style="width:25%">Intro</span><span class="selected" style="width:75%">Verse</span></div>
 <div class="beats"></div><div class="ruler"><span>0:00</span><span>0:30</span><span>1:00</span><span>1:30</span><span>2:00</span></div>
 <p>Source waveform · amplitude envelope</p>

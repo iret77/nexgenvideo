@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftUI
 
@@ -62,15 +63,39 @@ struct DeclarativePackSurfaceView: View {
     @State private var loadToken = 0
     @State private var selectedAnalysisSection: AnalysisSurfaceData.Section?
     @State private var analysisZoom = 1
+    @State private var analysisPlayer: AVPlayer?
+    @State private var listeningPosition = 0.0
+    @State private var isListening = false
+    @State private var isPreparingPlayback = false
+    @State private var playbackError: String?
+    @State private var playbackRequest = UUID()
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) { content }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task(id: editor.projectURL) {
+                resetListening()
                 selectedAnalysisSection = nil
                 analysisZoom = 1
                 await load()
             }
+            .onDisappear { resetListening() }
+            .onChange(of: editor.isPlaying) { _, playing in
+                if playing {
+                    playbackRequest = UUID()
+                    isPreparingPlayback = false
+                    analysisPlayer?.pause()
+                    isListening = false
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { notification in
+                guard let item = notification.object as? AVPlayerItem,
+                      item === analysisPlayer?.currentItem else { return }
+                isListening = false
+                let time = item.currentTime().seconds
+                if time.isFinite { listeningPosition = time }
+            }
+            .task(id: analysisPlayer.map(ObjectIdentifier.init)) { await observeListeningPosition() }
             .onChange(of: editor.engineStateRevision) { _, _ in
                 Task { await load(showProgress: false) }
             }
@@ -161,12 +186,13 @@ struct DeclarativePackSurfaceView: View {
                             .buttonStyle(.inlineAction())
                     }
                     .interfaceFont(size: AppTheme.Typography.ui)
+                    listeningControls(loaded)
                     GeometryReader { geometry in
                         ScrollView(.horizontal) {
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                                 BeatTimeline(duration: duration, beats: beats, downbeats: downbeats,
                                     sections: sections, selectedSectionIndex: selectedAnalysisSection?.index,
-                                    onSelectSection: { selectedAnalysisSection = $0 })
+                                    onSelectSection: selectAnalysisSection)
                                 if loaded.analysis?.durationS == duration, let waveform = loaded.waveform,
                                    !waveform.isEmpty, waveform.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
                                     AnalysisWaveformTimeline(samples: waveform)
@@ -186,6 +212,17 @@ struct DeclarativePackSurfaceView: View {
                                 }
                             }
                             .frame(width: geometry.size.width * CGFloat(analysisZoom))
+                            .overlay {
+                                GeometryReader { lane in
+                                    Path { path in
+                                        let x = CGFloat(min(max(listeningPosition / duration, 0), 1)) * lane.size.width
+                                        path.move(to: CGPoint(x: x, y: 0))
+                                        path.addLine(to: CGPoint(x: x, y: lane.size.height))
+                                    }
+                                    .stroke(AppTheme.Text.primaryColor, lineWidth: AppTheme.BorderWidth.thin)
+                                }
+                                .allowsHitTesting(false)
+                            }
                         }
                     }
                     .frame(height: AppTheme.ComponentSize.analysisTimelineViewportHeight)
@@ -210,7 +247,7 @@ struct DeclarativePackSurfaceView: View {
                 ) {
                     StructureHierarchyList(sections: hierarchy,
                         selectedSectionIndex: selectedAnalysisSection?.index,
-                        onSelectSection: { selectedAnalysisSection = $0 })
+                        onSelectSection: selectAnalysisSection)
                 }
             }
         case .keyValue(let title, let items):
@@ -220,6 +257,108 @@ struct DeclarativePackSurfaceView: View {
             }
             if !rows.isEmpty { PackSurfaceKeyValueList(title: title, rows: rows) }
         }
+    }
+
+    private func listeningControls(_ loaded: LoadedSurface) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Button(isListening ? "Pause" : "Play") {
+                if isListening {
+                    analysisPlayer?.pause()
+                    isListening = false
+                } else {
+                    Task { await startListening(loaded) }
+                }
+            }
+            .buttonStyle(.inlineAction())
+            .disabled(loaded.sourceURL == nil || isPreparingPlayback)
+            if let duration = loaded.analysis?.durationS, duration.isFinite, duration > 0 {
+                Slider(value: Binding(get: { min(max(listeningPosition, 0), duration) },
+                    set: { seekListening(to: $0) }), in: 0...duration)
+                    .accessibilityLabel("Listening position")
+                    .disabled(loaded.sourceURL == nil || isPreparingPlayback)
+            }
+            Text(PackSurfaceFormat.measuredTimecode(listeningPosition))
+                .monospacedDigit()
+            if isPreparingPlayback { ProgressView().controlSize(.small) }
+            if loaded.sourceURL == nil {
+                Text("Verified source unavailable.")
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            if let playbackError {
+                Text(playbackError).foregroundStyle(AppTheme.Status.errorColor)
+            }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+    }
+
+    private func selectAnalysisSection(_ section: AnalysisSurfaceData.Section) {
+        guard section.start.isFinite, section.start >= 0 else { return }
+        selectedAnalysisSection = section
+        seekListening(to: section.start)
+    }
+
+    private func seekListening(to seconds: Double) {
+        guard seconds.isFinite, seconds >= 0 else { return }
+        listeningPosition = seconds
+        analysisPlayer?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
+            toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    private func startListening(_ loaded: LoadedSurface) async {
+        guard !isPreparingPlayback, let analysis = loaded.analysis,
+              analysis.durationS.isFinite, analysis.durationS > 0,
+              let expectedURL = loaded.sourceURL, let home = editor.workingRoot,
+              let root = NativeCockpitReader.dataRoot(of: home) else { return }
+        isPreparingPlayback = true
+        playbackError = nil
+        let request = UUID()
+        playbackRequest = request
+        defer { if playbackRequest == request { isPreparingPlayback = false } }
+        let verifiedURL = await Task.detached { analysis.verifiedSourceURL(dataRoot: root) }.value
+        guard playbackRequest == request, editor.workingRoot == home else { return }
+        guard verifiedURL == expectedURL else {
+            analysisPlayer?.pause()
+            analysisPlayer = nil
+            isListening = false
+            playbackError = "The analyzed track has changed. Reload the analysis."
+            return
+        }
+        if editor.isPlaying { editor.togglePlayback() }
+        if analysisPlayer == nil { analysisPlayer = AVPlayer(url: expectedURL) }
+        if listeningPosition >= analysis.durationS { listeningPosition = selectedAnalysisSection?.start ?? 0 }
+        analysisPlayer?.seek(to: CMTime(seconds: listeningPosition, preferredTimescale: 600),
+            toleranceBefore: .zero, toleranceAfter: .zero)
+        analysisPlayer?.play()
+        isListening = true
+    }
+
+    private func observeListeningPosition() async {
+        guard let player = analysisPlayer else { return }
+        while !Task.isCancelled, analysisPlayer === player {
+            if isListening {
+                let time = player.currentTime().seconds
+                if time.isFinite, time >= 0 { listeningPosition = time }
+                if player.currentItem?.status == .failed {
+                    playbackError = "The analyzed track could not be played."
+                    player.pause()
+                    isListening = false
+                } else if let duration = player.currentItem?.duration.seconds,
+                          duration.isFinite, duration > 0, time >= duration {
+                    isListening = false
+                }
+            }
+            do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
+        }
+    }
+
+    private func resetListening() {
+        playbackRequest = UUID()
+        analysisPlayer?.pause()
+        analysisPlayer = nil
+        isListening = false
+        isPreparingPlayback = false
+        listeningPosition = 0
+        playbackError = nil
     }
 
     private func statTile(
@@ -483,7 +622,10 @@ struct DeclarativePackSurfaceView: View {
         }
         loadToken += 1
         let token = loadToken
-        if showProgress { state = .loading }
+        if showProgress {
+            resetListening()
+            state = .loading
+        }
         let surface = surface
         let loaded = await Task.detached { () -> LoadedSurface? in
             guard let root = NativeCockpitReader.dataRoot(of: dir) else { return nil }
@@ -504,9 +646,14 @@ struct DeclarativePackSurfaceView: View {
         }.value
         guard token == loadToken else { return }
         guard let loaded else {
+            resetListening()
             state = .idle
             onUnavailable()
             return
+        }
+        if case .loaded(let previous) = state,
+           previous.sourceURL != loaded.sourceURL || previous.analysis?.songSHA256 != loaded.analysis?.songSHA256 {
+            resetListening()
         }
         if let selectedAnalysisSection, loaded.analysis?.sections.contains(selectedAnalysisSection) != true {
             self.selectedAnalysisSection = nil
