@@ -696,7 +696,7 @@ enum WorkspaceUIAcceptance {
     ) -> Set<String> {
         switch workspace {
         case .media:
-            ["mediaPanel", "previewPanel", "inspectorPanel"]
+            ["mediaFoldersPanel", "mediaPanel", "previewPanel", "inspectorPanel"]
         case .production:
             ["agentPanel", "projectPanel", "timelinePanel", "previewPanel", "inspectorPanel"]
         case .edit:
@@ -743,7 +743,16 @@ enum WorkspaceUIAcceptance {
             return abs(frame.width - width) <= tolerance
         }
         switch workspace {
-        case .media, .edit:
+        case .media:
+            guard let library = frames["mediaPanel"], let folders = frames["mediaFoldersPanel"],
+                  let preview = frames["previewPanel"], let inspector = frames["inspectorPanel"] else { return false }
+            return matches("mediaFoldersPanel", AppTheme.Layout.mediaFolderTreeDefault)
+                && library.width >= AppTheme.Layout.previewMinWidth
+                && folders.maxX <= library.minX + tolerance
+                && library.maxX <= preview.minX + tolerance
+                && abs(preview.minX - inspector.minX) <= tolerance
+                && matches("previewPanel", AppTheme.Layout.producePreviewDefaultWidth)
+        case .edit:
             return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
         case .production:

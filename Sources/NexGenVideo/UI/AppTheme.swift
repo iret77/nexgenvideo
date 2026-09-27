@@ -440,6 +440,8 @@ enum AppTheme {
     }
 
     enum Layout {
+        static let mediaFolderTreeMin: CGFloat = 180
+        static let mediaFolderTreeDefault: CGFloat = 220
         static let safeDimensionCeiling: CGFloat = 10_000
         static let mediaPanelDefault: CGFloat = 500
         static let mediaPanelMin: CGFloat = 280
@@ -570,6 +572,10 @@ enum AppTheme {
     }
 
     enum MediaPanel {
+        static let thumbnailSmall: Double = 80
+        static let thumbnailMedium: Double = 110
+        static let thumbnailLarge: Double = 150
+        static let thumbnailXlarge: Double = 200
         static let contextRowHeight: CGFloat = IconSize.md
     }
 

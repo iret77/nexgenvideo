@@ -28,6 +28,13 @@ struct FinishReviewPane: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             Spacer(minLength: AppTheme.Spacing.md)
+            LibraryAssetPickerButton(
+                purpose: .workspace(.postproduction),
+                acceptedTypes: Set(ClipType.allCases.filter { $0 != .text }),
+                title: "Preview Media"
+            ) { editor.selectMediaAsset($0) }
+            .labelStyle(.iconOnly)
+            .help("Preview original media")
             Button { editor.showExportDialog = true } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "square.and.arrow.up")

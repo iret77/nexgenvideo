@@ -8,8 +8,20 @@ extension MediaTab {
 
     var searchResults: some View {
         let nameMatches = sortAndFilter(editor.mediaAssets)
+        let eligible = MediaLibraryQuery(types: filterTypes, generatedOnly: filterAI).apply(to: editor.mediaAssets)
+        let eligibleIDs = Set(eligible.map(\.id))
+        let visualHits = self.visualHits.filter { eligibleIDs.contains($0.assetID) }
+        let spokenHits = self.spokenHits.filter { eligibleIDs.contains($0.assetID) }
+        let documentHits = documentSearch.hits.filter { eligibleIDs.contains($0.id) }
+        let unavailableDocuments = documentSearch.unavailableIDs.intersection(eligibleIDs).count
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                if isSearchingContents {
+                    Text("Searching contents…")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .padding(AppTheme.Spacing.md)
+                }
                 if !visualHits.isEmpty {
                     momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
                     if !collapsedSearchSections.contains("Moments") {
@@ -25,11 +37,38 @@ extension MediaTab {
                         .padding(.bottom, AppTheme.Spacing.sm)
                     }
                 }
+                if !documentHits.isEmpty {
+                    momentHeader("Document Contents", icon: "doc.text.magnifyingglass", count: documentHits.count)
+                    ForEach(documentHits) { hit in
+                        if let asset = editor.mediaAssets.first(where: { $0.id == hit.id }) {
+                            Button { editor.selectMediaAsset(asset) } label: {
+                                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                                    Text(asset.libraryDisplayName)
+                                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                                    Text(hit.excerpt)
+                                        .interfaceFont(size: AppTheme.Typography.ui)
+                                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                                        .lineLimit(3)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(AppTheme.Spacing.md)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                if unavailableDocuments > 0 {
+                    Text("\(unavailableDocuments) documents could not be searched. Check file availability; content search supports documents up to 16 MB.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .padding(AppTheme.Spacing.md)
+                }
                 if !nameMatches.isEmpty {
                     momentHeader("Files", icon: "doc", count: nameMatches.count)
                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
                 }
-                if visualHits.isEmpty, spokenHits.isEmpty, nameMatches.isEmpty {
+                if !isSearchingContents, visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
                     Text("No matches for “\(trimmedSearchQuery)”")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -101,7 +140,7 @@ extension MediaTab {
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-            Text(asset?.name ?? "")
+            Text(asset?.libraryDisplayName ?? "")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
@@ -149,7 +188,7 @@ extension MediaTab {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .lineLimit(3)
-                Text("\(asset?.name ?? "") · \(timecode(hit.start))")
+                Text("\(asset?.libraryDisplayName ?? "") · \(timecode(hit.start))")
                     .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
@@ -180,7 +219,7 @@ extension MediaTab {
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-            Text(asset.name)
+            Text(asset.libraryDisplayName)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
@@ -206,23 +245,32 @@ extension MediaTab {
     func scheduleMomentSearch() {
         momentSearchTask?.cancel()
         let query = trimmedSearchQuery
-        guard !query.isEmpty else {
-            visualHits = []
-            spokenHits = []
-            return
-        }
-        let assets = editor.mediaAssets
+        visualHits = []
+        spokenHits = []
+        documentSearch = DocumentContentSearch.Result()
+        isSearchingContents = !query.isEmpty
+        guard !query.isEmpty else { return }
+        let eligible = MediaLibraryQuery(types: filterTypes, generatedOnly: filterAI).apply(to: editor.mediaAssets)
+        let eligibleIDs = Set(eligible.map(\.id))
+        let assets = eligible
             .filter { $0.type == .video || $0.type == .audio }
             .map { (id: $0.id, url: $0.url) }
+        let documents = eligible.filter { $0.type == .document }
+            .map { DocumentContentSearch.Source(id: $0.id, url: $0.url) }
         let coordinator = editor.searchIndex
         momentSearchTask = Task {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
-            let spoken = TranscriptSearch.search(query: query, assets: assets)
-            let visual = await coordinator.search(query: query)
+            async let documentMatches = DocumentContentSearch.search(query: query, sources: documents)
+            async let spokenMatches = TranscriptSearch.searchAsync(query: query, assets: assets)
+            let visual = await coordinator.search(query: query, within: eligibleIDs)
+            let spoken = await spokenMatches
+            let foundDocuments = await documentMatches
             guard !Task.isCancelled else { return }
             visualHits = visual
             spokenHits = spoken
+            documentSearch = foundDocuments
+            isSearchingContents = false
         }
     }
 }

@@ -100,10 +100,12 @@ extension MediaTab {
                             .id(cell.id)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(AppTheme.Spacing.md)
                 .padding(.top, topPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollPosition(id: scrollAssetBinding)
             .coordinateSpace(name: "mediaGrid")
             .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
                 guard workspace == editor.workspaceFocus else { return }
@@ -212,6 +214,7 @@ extension MediaTab {
                     }
                     .padding(AppTheme.Spacing.md)
                 }
+                .scrollPosition(id: scrollAssetBinding)
                 .coordinateSpace(name: "mediaGrid")
                 .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
                     guard workspace == editor.workspaceFocus else { return }
@@ -322,6 +325,7 @@ extension MediaTab {
                                 .id(asset.id)
                         }
                     }
+                    .scrollTargetLayout()
                 }
             }
         }
@@ -376,7 +380,7 @@ extension MediaTab {
     func assetCellView(for asset: MediaAsset) -> some View {
         AssetThumbnailView(
             asset: asset,
-            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset))
+            onMoveToFolderMenu: workspace == .media ? AnyView(moveToFolderMenu(for: asset)) : nil
         )
         .draggable(dragPayload(for: asset)) {
             dragPreview(for: asset)
@@ -446,7 +450,7 @@ extension MediaTab {
     }
 
     @ViewBuilder
-    fileprivate func moveToFolderMenu(for asset: MediaAsset) -> some View {
+    func moveToFolderMenu(for asset: MediaAsset) -> some View {
         let targetIds: Set<String> = editor.selectedMediaAssetIds.contains(asset.id)
             ? editor.selectedMediaAssetIds
             : [asset.id]

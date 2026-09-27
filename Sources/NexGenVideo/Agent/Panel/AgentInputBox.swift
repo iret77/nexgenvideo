@@ -281,6 +281,11 @@ struct AgentInputBox<LeadingTools: View>: View {
                 showsTypeTabs: true,
                 scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
                 pinnedId: editor.selectedMediaAssetIds.first,
+                state: editor.mediaPickerState(for: .composer),
+                onReveal: { asset in
+                    showReferencePicker = false
+                    editor.revealAssetInMedia(asset)
+                },
                 onPick: { asset in
                     editor.agentService.attachMention(for: asset)
                     showReferencePicker = false

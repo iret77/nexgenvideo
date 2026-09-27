@@ -48,6 +48,8 @@ final class EditorWindowController: NSWindowController {
             return false
         }
 
+        if editorViewModel.focusedPanel == .mediaFolders { return false }
+
         let mods = event.modifierFlags
         let shift = mods.contains(.shift)
         let cmd = mods.contains(.command)
@@ -296,7 +298,7 @@ extension EditorWindowController: EditorActions {
         !isTextInputFocused
             && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
             && editorViewModel.focusedPanel == .media
-            && editorViewModel.isSidebarPresented
+            && (editorViewModel.workspaceFocus == .media || editorViewModel.isSidebarPresented)
     }
 
     @discardableResult

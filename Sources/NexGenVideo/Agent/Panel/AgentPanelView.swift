@@ -830,6 +830,8 @@ struct AgentPanelView: View {
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
                     libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,
+                    libraryPickerState: editor.mediaPickerState(for: .intake(dialog.id)),
+                    onRevealLibraryAsset: { editor.revealAssetInMedia($0) },
                     submissionError: service.dialogSubmissionError,
                     isSubmitting: service.submittingDialogID == dialog.id,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },

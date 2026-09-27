@@ -3,6 +3,7 @@ import SwiftUI
 struct AssetThumbnailView: View {
     let asset: MediaAsset
     var onMoveToFolderMenu: AnyView? = nil
+    var isListRow = false
 
     @Environment(EditorViewModel.self) var editor
     @Environment(\.projectPalette) private var palette
@@ -12,6 +13,27 @@ struct AssetThumbnailView: View {
     @State private var isHovering = false
 
     var body: some View {
+        Group {
+            if isListRow { listContent }
+            else { gridContent }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 1) {
+            handleTap()
+        }
+        .background {
+            ContextClickActivation {
+                guard !isSwapDimmed else { return }
+                editor.activateMediaContext(asset)
+            }
+        }
+        .contextMenu { contextMenuItems }
+        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
+        .allowsHitTesting(!isSwapDimmed)
+    }
+
+    private var gridContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
                 Rectangle().fill(AppTheme.Background.overlayColor)
@@ -36,48 +58,77 @@ struct AssetThumbnailView: View {
                     .frame(height: AppTheme.BorderWidth.thick)
             }
 
-            ZStack(alignment: .leading) {
-                if isRenaming {
-                    TextField("Name", text: $renameDraft)
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1)
-                        .focused($isRenameFieldFocused)
-                        .onSubmit { commitRename() }
-                        .onChange(of: isRenameFieldFocused) { _, focused in
-                            if !focused { commitRename() }
-                        }
-                        .onExitCommand { isRenaming = false }
-                } else {
-                    Text(asset.name)
-                        .interfaceFont(size: AppTheme.Typography.ui)
+            assetName
+        }
+    }
+
+    private var assetName: some View {
+        ZStack(alignment: .leading) {
+            if isRenaming {
+                TextField("Name", text: $renameDraft)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1)
+                    .focused($isRenameFieldFocused)
+                    .onSubmit { commitRename() }
+                    .onChange(of: isRenameFieldFocused) { _, focused in
+                        if !focused { commitRename() }
+                    }
+                    .onExitCommand { isRenaming = false }
+            } else {
+                Text(asset.libraryDisplayName)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                    .onTapGesture(count: 2) { beginRename() }
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.xs)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
+        )
+    }
+
+    private var listContent: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            thumbnailContent
+                .frame(width: AppTheme.IconSize.xl, height: AppTheme.IconSize.xl)
+                .clipped()
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                assetName
+                if asset.libraryDisplayName != asset.userFacingFilename {
+                    Text(asset.userFacingFilename)
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.mutedColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                        .onTapGesture(count: 2) { beginRename() }
                 }
             }
-            .padding(.horizontal, AppTheme.Spacing.xs)
-            .padding(.vertical, AppTheme.Spacing.xxs)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
-            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if isMissing {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .accessibilityLabel("Offline")
+            }
+            if asset.isGenerated {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .accessibilityLabel("AI Generated")
+            }
+            Text(asset.type.trackLabel)
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.mutedColor)
         }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 1) {
-            handleTap()
-        }
-        .background {
-            ContextClickActivation {
-                guard !isSwapDimmed else { return }
-                editor.activateMediaContext(asset)
+        .padding(AppTheme.Spacing.sm)
+        .background(isSelected ? borderColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle().fill(borderColor).frame(width: AppTheme.BorderWidth.thick)
             }
         }
-        .contextMenu { contextMenuItems }
-        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
-        .allowsHitTesting(!isSwapDimmed)
     }
 
     @ViewBuilder

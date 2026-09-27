@@ -1077,6 +1077,13 @@ struct GenerationView: View {
                     }
                 }
             }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):video-references"),
+                acceptedTypes: Set(ClipType.allCases.filter { refCap(for: $0) > refCount(for: $0) }),
+                excludedIDs: Set(allRefCardItems.map { $0.asset.id }),
+                onPick: addRefAsset
+            )
+            .disabled(isRefCapReached)
         }
     }
 
@@ -1292,6 +1299,11 @@ struct GenerationView: View {
                     onDrop: onDrop
                 )
             }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):\(label)"),
+                acceptedTypes: acceptedTypes,
+                onPick: onDrop
+            )
         }
     }
 
@@ -1324,6 +1336,13 @@ struct GenerationView: View {
                         imageReferences.append(asset)
                     }
                 }
+            }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):image-references"),
+                acceptedTypes: [.image],
+                excludedIDs: Set(imageReferences.map(\.id))
+            ) { asset in
+                if !imageReferences.contains(where: { $0.id == asset.id }) { imageReferences.append(asset) }
             }
         }
     }

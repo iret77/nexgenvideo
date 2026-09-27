@@ -40,7 +40,7 @@ final class EditorViewModel {
     // MARK: - Panel focus
 
     enum FocusedPanel: String {
-        case media, preview, inspector, timeline, agent
+        case media, preview, inspector, timeline, agent, mediaFolders
         /// The Project cockpit when it is the center work surface.
         case project
 
@@ -820,7 +820,8 @@ final class EditorViewModel {
 
     private var sidebarPanel: FocusedPanel {
         switch workspaceFocus {
-        case .media, .edit: .media
+        case .media: .mediaFolders
+        case .edit: .media
         case .production: .agent
         case .postproduction, .export: .project
         }
@@ -862,6 +863,7 @@ final class EditorViewModel {
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
         rememberSourcePosition()
+        mediaBrowserState(for: workspaceFocus).sourceRanges = sourcePreviewStates
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
             sidebarVisible: mediaPanelVisible,
             inspectorVisible: inspectorPanelVisible,
@@ -880,6 +882,7 @@ final class EditorViewModel {
             mediaFolderId: mediaPanelCurrentFolderId
         )
         workspaceFocus = focus
+        sourcePreviewStates = mediaBrowserState(for: focus).sourceRanges
         let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
         isRestoringWorkspacePresentation = true
         defer { isRestoringWorkspacePresentation = false }
@@ -1540,5 +1543,8 @@ final class EditorViewModel {
     private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
     @ObservationIgnored private var isRestoringWorkspacePresentation = false
     var sourcePreviewStates: [String: SourcePreviewState] = [:]
+    var mediaFolderNavigationRequest: MediaFolderNavigationRequest?
+    @ObservationIgnored var mediaPickerStates: [MediaPickerPurpose: MediaPickerState] = [:]
+    @ObservationIgnored var mediaBrowserStates: [WorkspaceFocus: MediaBrowserState] = [:]
 
 }

@@ -22,6 +22,12 @@
           "items": [
             "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector."
           ]
+        },
+        {
+          "heading": "Media",
+          "items": [
+            "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review."
+          ]
         }
       ]
     },

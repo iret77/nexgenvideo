@@ -115,7 +115,8 @@ private enum SplitAutosave {
     static let productionRoot   = "editor.produce.root"
     static let productionCenter = "editor.produce.center"
     static let productionRight  = "editor.produce.right"
-    static let mediaRoot     = "editor.workspace.media.root.v1"
+    static let mediaRoot     = "editor.workspace.media.root.v2"
+    static let mediaDetails = "editor.workspace.media.details.v1"
     static let postRoot      = "editor.workspace.postproduction.root.v1"
     static let postCenter    = "editor.workspace.postproduction.center.v1"
     static let exportRoot    = "editor.workspace.export.root.v1"
@@ -145,6 +146,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private weak var cockpitSplitItem: NSSplitViewItem?
     private var panelHosts: [any PanelFocusUpdating] = []
 
+    private lazy var mediaFoldersHC: NSViewController = makeHosting(MediaFolderTreeView(), panel: .mediaFolders)
     private lazy var mediaWorkspaceHC: NSViewController = makeHosting(
         MediaWorkspaceSidebar(workspace: .media),
         panel: .media
@@ -226,7 +228,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     func leafItem(for panel: EditorViewModel.FocusedPanel) -> NSSplitViewItem? {
         switch panel {
         case .agent:     return mediaSplitItem   // Agent lives in the left sidebar now.
-        case .media:     return mediaSplitItem
+        case .media:     return mediaLibrarySplitItem ?? mediaSplitItem
+        case .mediaFolders: return mediaSplitItem
         case .preview:   return previewSplitItem
         case .inspector: return inspectorSplitItem
         case .timeline:  return timelineSplitItem
@@ -293,6 +296,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             removeSplitViewItem(splitViewItems.last!)
         }
         mediaSplitItem = nil
+        mediaLibrarySplitItem = nil
         previewSplitItem = nil
         inspectorSplitItem = nil
         timelineSplitItem = nil
@@ -364,16 +368,32 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func buildMediaWorkspace(into target: NSSplitViewController) {
         target.splitView.isVertical = true
-        target.addSplitViewItem(makeSidebarItem(host: mediaWorkspaceHC, minimumThickness: AppTheme.Layout.mediaPanelMin))
-        target.addSplitViewItem(makePreviewItem())
-        target.addSplitViewItem(makeInspectorItem())
-
-        applyAfterLayout { [weak self, weak target] in
-            guard let self, let target else { return }
+        target.addSplitViewItem(makeSidebarItem(host: mediaFoldersHC, minimumThickness: AppTheme.Layout.mediaFolderTreeMin))
+        let library = NSSplitViewItem(viewController: mediaWorkspaceHC)
+        library.minimumThickness = AppTheme.Layout.previewMinWidth
+        mediaLibrarySplitItem = library
+        target.addSplitViewItem(library)
+        let details = makeChildSplit(isVertical: false, autosave: SplitAutosave.mediaDetails)
+        let preview = makePreviewItem()
+        preview.minimumThickness = AppTheme.Layout.producePreviewMinHeight
+        details.addSplitViewItem(preview)
+        let inspector = makeInspectorItem()
+        inspector.minimumThickness = AppTheme.Layout.inspectorMinHeight
+        details.addSplitViewItem(inspector)
+        let right = NSSplitViewItem(viewController: details)
+        right.minimumThickness = AppTheme.Layout.produceRightColumnMinWidth
+        right.holdingPriority = .editorFixedPanel
+        target.addSplitViewItem(right)
+        applyAfterLayout { [weak self, weak target, weak details] in
+            guard let self, let target, let details else { return }
             let width = target.view.bounds.width
             self.positionIfUnsaved(target) {
-                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
-                $0.setPosition(width - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
+                $0.setPosition(AppTheme.Layout.mediaFolderTreeDefault, ofDividerAt: 0)
+                $0.setPosition(width - AppTheme.Layout.producePreviewDefaultWidth, ofDividerAt: 1)
+            }
+            target.view.layoutSubtreeIfNeeded()
+            self.positionIfUnsaved(details) {
+                $0.setPosition(AppTheme.Layout.producePreviewMinHeight, ofDividerAt: 0)
             }
         }
     }
@@ -700,6 +720,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         currentMaximized = nil
         applyMaximize(editor.theaterActive ? .preview : editor.maximizedPanel)
     }
+
+    private weak var mediaLibrarySplitItem: NSSplitViewItem?
 }
 
 private struct MediaWorkspaceSidebar: View {

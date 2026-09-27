@@ -29,6 +29,8 @@ struct AgentDialogCard: View {
     var libraryAssets: [MediaAsset] = []
     /// A library asset assigned by an earlier workflow card must not be offered under another role.
     var libraryAssetRoles: [String: String] = [:]
+    var libraryPickerState: MediaPickerState?
+    var onRevealLibraryAsset: ((MediaAsset) -> Void)?
     var submissionError: String?
     var isSubmitting = false
     let onSubmit: (AgentDialogResult) -> Void
@@ -264,7 +266,9 @@ struct AgentDialogCard: View {
                 LibraryAssetPicker(
                     assets: picks,
                     showsSearch: true,
-                    showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
+                    showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1,
+                    state: libraryPickerState,
+                    onReveal: onRevealLibraryAsset
                 ) { addPicked($0.url, intake) }
             }
         }

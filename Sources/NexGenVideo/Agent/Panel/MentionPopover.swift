@@ -3,7 +3,7 @@ import SwiftUI
 enum MentionTab: CaseIterable, Hashable {
     // `.document` is labeled "Text" — the file-backed text assets (scripts, lyrics, notes: .txt/.md/…).
     // ClipType.text is a title clip, never a library asset, so it needs no tab.
-    case all, video, image, audio, document
+    case all, video, image, audio, document, lottie
 
     var label: String {
         switch self {
@@ -12,6 +12,7 @@ enum MentionTab: CaseIterable, Hashable {
         case .image: "Image"
         case .audio: "Audio"
         case .document: "Text"
+        case .lottie: "Animation"
         }
     }
 
@@ -22,6 +23,7 @@ enum MentionTab: CaseIterable, Hashable {
         case .image: .image
         case .audio: .audio
         case .document: .document
+        case .lottie: .lottie
         }
     }
 
@@ -32,6 +34,7 @@ enum MentionTab: CaseIterable, Hashable {
         case .image: "No images"
         case .audio: "No audio"
         case .document: "No text"
+        case .lottie: "No animations"
         }
     }
 }

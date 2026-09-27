@@ -28,7 +28,7 @@ enum TourTarget: Equatable {
 
     var workspace: EditorViewModel.WorkspaceFocus {
         switch hostPanel {
-        case .media: .media
+        case .media, .mediaFolders: .media
         case .agent, .project: .production
         case .inspector, .timeline, .preview: .edit
         }
@@ -117,7 +117,7 @@ final class TourController {
             editor.setWorkspaceFocus(target.workspace)
             editor.maximizedPanel = nil
             switch target.hostPanel {
-            case .media:
+            case .media, .mediaFolders:
                 editor.mediaPanelVisible = true
                 editor.leftSidebarTab = .media
             case .agent: editor.agentPanelVisible = true
