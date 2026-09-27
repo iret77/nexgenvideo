@@ -814,7 +814,16 @@ enum WorkspaceUIAcceptance {
                 && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
                 && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
         }) else { reject("Musicvideo phase controls or Track card did not render") }
-        guard let home = editor.workingRoot, let workingBytes = try? treeSnapshot(at: home),
+        guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }
+        guard await waitUntil(timeout: .seconds(5), {
+            guard let owner = editor.agentService.currentSessionId,
+                  let expected = editor.agentService.sessions.first(where: { $0.id == owner })?.decision,
+                  let restored = try? ChatSessionStore.loadThrowing(from: home).first(where: { $0.id == owner }) else {
+                return false
+            }
+            return restored.decision == expected && expected.dialog.title == "Track"
+        }) else { reject("initial Track decision did not finish its durable checkpoint") }
+        guard let workingBytes = try? treeSnapshot(at: home),
               let savedBytes = try? treeSnapshot(at: projectURL) else { reject("Musicvideo fixture is unreadable") }
         let timeline = editor.timeline
         let manifest = editor.mediaManifest
@@ -827,13 +836,22 @@ enum WorkspaceUIAcceptance {
             reject("disabled approval target: \(reason)")
         }
         try? await Task.sleep(for: .milliseconds(300))
-        guard editor.projectState?.nextPhaseName == "project_init",
-              editor.projectState?.phases.allSatisfy({ !$0.approved }) == true,
-              editor.agentService.pendingDialog?.title == "Track",
-              editor.timeline == timeline, editor.mediaManifest == manifest, editor.generationLog == log,
-              document.isDocumentEdited == edited, (document.undoManager?.canUndo ?? false) == canUndo,
-              (try? treeSnapshot(at: home)) == workingBytes,
-              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+        let currentWorkingBytes = try? treeSnapshot(at: home)
+        let currentSavedBytes = try? treeSnapshot(at: projectURL)
+        let checks: [String: Bool] = [
+            "currentPhase": editor.projectState?.nextPhaseName == "project_init",
+            "noApprovals": editor.projectState?.phases.allSatisfy({ !$0.approved }) == true,
+            "trackDecision": editor.agentService.pendingDialog?.title == "Track",
+            "timeline": editor.timeline == timeline, "manifest": editor.mediaManifest == manifest,
+            "costs": editor.generationLog == log, "documentEdited": document.isDocumentEdited == edited,
+            "undo": (document.undoManager?.canUndo ?? false) == canUndo,
+            "workingBytes": currentWorkingBytes == workingBytes, "savedBytes": currentSavedBytes == savedBytes,
+        ]
+        guard checks.values.allSatisfy({ $0 }) else {
+            let changed = Set(workingBytes.keys).union(currentWorkingBytes?.keys.map { $0 } ?? [])
+                .filter { workingBytes[$0] != currentWorkingBytes?[$0] }.sorted()
+            emit("musicvideo-invariant-diagnostic", scale: scale,
+                fields: ["checks": checks, "changedWorkingFiles": changed])
             reject("viewing another phase or clicking disabled approval changed the production")
         }
         guard await revealProbe("pipeline.overview.phase.render", in: window) else { reject("final Musicvideo phases are unreachable") }
@@ -841,7 +859,7 @@ enum WorkspaceUIAcceptance {
         guard snapshot(host, at: evidenceURL.appendingPathComponent(final)) else { reject("could not capture final phases") }
         emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
             "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
-            "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true,
+            "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
             "disabledApprovalDidNotMutate": true, "screenshots": [initial, final]])
     }
 

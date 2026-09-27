@@ -254,7 +254,7 @@ def run_scale(executable, output, scale):
         ]
         and all(musicvideo[0].get(key) is True for key in (
             "externalPackLoaded", "exactBinding", "libraryDidNotAssignTrack",
-            "viewingDidNotAdvance", "disabledApprovalDidNotMutate",
+            "viewingDidNotAdvance", "disabledApprovalDidNotMutate", "intakeCheckpointSettled",
         ))
         and len(musicvideo[0].get("screenshots", [])) == 2
         and len(invariants) == 1
