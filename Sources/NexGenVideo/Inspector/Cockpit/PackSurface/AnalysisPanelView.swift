@@ -638,7 +638,9 @@ struct DeclarativePackSurfaceView: View {
             let sourceURL = analysis?.verifiedSourceURL(dataRoot: root)
             let waveform: [Float]?
             if let sourceURL {
-                waveform = await MediaVisualCache.loadOrGenerateWaveform(url: sourceURL)
+                waveform = await MediaVisualCache.loadOrGenerateWaveform(
+                    url: sourceURL, expectedSourceSHA256: analysis?.songSHA256
+                )
             } else {
                 waveform = nil
             }
