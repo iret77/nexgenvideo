@@ -41,3 +41,63 @@ struct TrackDisplayLabelTests {
         #expect(editor.timelineTrackDisplayLabel(at: 2) == "T1")
     }
 }
+
+@Suite("Track commands — undo and redo")
+@MainActor
+struct TrackCommandUndoTests {
+    @Test func trackFlagsRoundTripThroughUndoAndRedo() {
+        let commands: [(EditorViewModel) -> Void] = [
+            { $0.toggleTrackMute(trackIndex: 1) },
+            { $0.toggleTrackHidden(trackIndex: 0) },
+            { $0.toggleTrackSyncLock(trackIndex: 0) },
+        ]
+        for command in commands {
+            let editor = makeEditor([Fixtures.videoTrack(), Fixtures.audioTrack()])
+            let undo = UndoManager()
+            undo.groupsByEvent = false
+            editor.undoManager = undo
+            let original = editor.timeline
+            undo.beginUndoGrouping()
+            command(editor)
+            undo.endUndoGrouping()
+            let changed = editor.timeline
+            #expect(changed != original)
+            undo.undo()
+            #expect(editor.timeline == original)
+            #expect(undo.canRedo)
+            undo.redo()
+            #expect(editor.timeline == changed)
+            undo.undo()
+            #expect(editor.timeline == original)
+        }
+    }
+
+    @Test func resizeAndRemovalUndoInOrderAndInvalidSizesDoNothing() {
+        let editor = makeEditor([Fixtures.videoTrack(), Fixtures.audioTrack()])
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        editor.undoManager = undo
+        let original = editor.timeline
+        let trackID = original.tracks[0].id
+        for value in [CGFloat.nan, .infinity, -.infinity] {
+            editor.setTrackHeight(trackIndex: 0, height: value)
+        }
+        #expect(editor.timeline == original)
+        #expect(!undo.canUndo)
+        undo.beginUndoGrouping()
+        editor.setTrackHeight(trackIndex: 0, height: AppTheme.Timeline.trackMaxHeight)
+        undo.endUndoGrouping()
+        let resized = editor.timeline
+        #expect(resized.tracks[0].displayHeight == AppTheme.Timeline.trackMaxHeight)
+        undo.beginUndoGrouping()
+        editor.removeTrack(id: trackID)
+        undo.endUndoGrouping()
+        #expect(editor.timeline.tracks.count == 1)
+        undo.undo()
+        #expect(editor.timeline == resized)
+        undo.undo()
+        #expect(editor.timeline == original)
+        undo.redo()
+        #expect(editor.timeline == resized)
+    }
+}
