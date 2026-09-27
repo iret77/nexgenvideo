@@ -64,7 +64,7 @@ enum MainMenuBuilder {
 
     // MARK: - Edit menu
 
-    private static func editMenu() -> NSMenuItem {
+    static func editMenu() -> NSMenuItem {
         let item = NSMenuItem()
         let menu = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")

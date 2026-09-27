@@ -28,6 +28,12 @@ enum WorkspaceUIAcceptance {
         resetWorkspaceDefaults(scale: scale)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        let menu = NSMenu()
+        let applicationItem = NSMenuItem()
+        applicationItem.submenu = NSMenu(title: "NexGenVideo")
+        menu.addItem(applicationItem)
+        menu.addItem(MainMenuBuilder.editMenu())
+        app.mainMenu = menu
         BundledFonts.register()
         let evidenceURL = URL(fileURLWithPath: evidencePath, isDirectory: true)
         emit("started", scale: scale)
@@ -422,6 +428,7 @@ enum WorkspaceUIAcceptance {
         await waitUntil(timeout: .seconds(5), { editor.selectedMediaAssetIds == ["fixture-498"] }) else {
             fail("native search did not find and select the nested source", scale: scale)
         }
+        await verifySearchKeyboardIsolation(editor: editor, window: window, scale: scale)
         guard click(identifier: "editor.workspace.edit", in: window) == nil,
               await waitUntil(timeout: .seconds(5), { editor.workspaceFocus == .edit }),
               editor.mediaBrowserState(for: .edit).searchQuery.isEmpty,
@@ -460,6 +467,65 @@ enum WorkspaceUIAcceptance {
             "nestedFolderOpened": true, "searchSelectedAsset": "fixture-498",
             "workspaceStatePreserved": true, "screenshot": name,
             "frames": frames.mapValues { frameDescription($0) },
+        ])
+    }
+
+    private static func verifySearchKeyboardIsolation(
+        editor: EditorViewModel, window: NSWindow, scale: Double
+    ) async {
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let selection = editor.selectedMediaAssetIds
+        let clipSelection = editor.selectedClipIds
+        let playing = editor.isPlaying
+        let state = editor.mediaBrowserState(for: .media)
+        let query = state.searchQuery
+        guard !query.isEmpty, !selection.isEmpty,
+              click(identifier: "media.search", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
+              let field = window.firstResponder as? NSTextView else {
+            fail("keyboard isolation did not focus the native search field", scale: scale)
+        }
+        field.setSelectedRange(NSRange(location: (field.string as NSString).length, length: 0))
+        func postKey(_ code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = []) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero,
+                    modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: characters,
+                    charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else {
+                    fail("could not create native keyboard event", scale: scale)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        postKey(49, characters: " ")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query + " " }),
+              editor.isPlaying == playing else {
+            fail("Space escaped the native text field or changed playback", scale: scale)
+        }
+        postKey(51, characters: "\u{7f}")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query }) else {
+            fail("Delete did not edit the native search text", scale: scale)
+        }
+        postKey(0, characters: "a", modifiers: .command)
+        guard await waitUntil(timeout: .seconds(5), {
+            field.selectedRange() == NSRange(location: 0, length: (query as NSString).length)
+        }) else { fail("Select All escaped the native text field", scale: scale) }
+        postKey(51, characters: "\u{7f}")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery.isEmpty }),
+              editor.timeline == timeline, editor.mediaManifest == manifest,
+              editor.selectedMediaAssetIds == selection, editor.selectedClipIds == clipSelection,
+              editor.isPlaying == playing else {
+            fail("text deletion mutated media, timeline, selection, or playback", scale: scale)
+        }
+        field.insertText(query, replacementRange: NSRange(location: NSNotFound, length: 0))
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query }) else {
+            fail("native search text could not be restored", scale: scale)
+        }
+        emit("text-keyboard-isolation", scale: scale, fields: [
+            "spaceEditsText": true, "deleteEditsText": true, "selectAllTargetsText": true,
+            "timelineUnchanged": true, "mediaUnchanged": true, "selectionUnchanged": true,
+            "playbackUnchanged": true,
         ])
     }
 

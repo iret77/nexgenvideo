@@ -174,6 +174,7 @@ def run_scale(executable, output, scale):
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     library = [row for row in rows if row.get("event") == "media-library"]
+    keyboard = [row for row in rows if row.get("event") == "text-keyboard-isolation"]
     cards = [row for row in rows if row.get("event") == "project-cards"]
     analysis = [row for row in rows if row.get("event") == "analysis-interaction"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
@@ -216,6 +217,11 @@ def run_scale(executable, output, scale):
         and library[0].get("nestedFolderOpened") is True
         and library[0].get("searchSelectedAsset") == "fixture-498"
         and library[0].get("workspaceStatePreserved") is True
+        and len(keyboard) == 1
+        and all(keyboard[0].get(key) is True for key in (
+            "spaceEditsText", "deleteEditsText", "selectAllTargetsText", "timelineUnchanged",
+            "mediaUnchanged", "selectionUnchanged", "playbackUnchanged",
+        ))
         and len(cards) == 1
         and abs(cards[0].get("width", 0) - 213) <= 1
         and abs(cards[0].get("height", 0) - 170.4) <= 1
