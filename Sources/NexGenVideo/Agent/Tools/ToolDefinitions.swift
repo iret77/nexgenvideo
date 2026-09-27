@@ -235,7 +235,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
+            description: "Present a native structured dialog in the current task interaction dock for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -275,6 +275,7 @@ enum ToolDefinitions {
                     ],
                     "sections": [
                         "type": "array",
+                        "maxItems": AgentDialog.maxSections,
                         "description": "At most 3 focused sections (more is rejected \u{2014} split into separate dialogs).",
                         "items": [
                             "type": "object",
@@ -289,6 +290,8 @@ enum ToolDefinitions {
                                 "defaultOn": ["type": "boolean", "description": "toggle sections only"],
                                 "options": [
                                     "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": AgentDialog.maxOptionsPerSection,
                                     "items": [
                                         "type": "object",
                                         "additionalProperties": false,
@@ -303,6 +306,7 @@ enum ToolDefinitions {
                                             "symbol": ["type": "string", "description": "SF Symbol per option"],
                                             "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
+                                        "required": ["label"],
                                     ],
                                 ],
                             ],

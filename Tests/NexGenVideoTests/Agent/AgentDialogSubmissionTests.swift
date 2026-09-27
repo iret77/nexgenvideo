@@ -5,6 +5,43 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func malformedDecisionFieldsNeverBecomeAConfirmablePartialDialog() {
+        let invalid: [[String: Any]] = [
+            ["title": "Choose", "textField": [:], "sections": "unsupported"],
+            ["title": "Choose", "textField": "unsupported", "sections": []],
+            ["title": "Choose", "textField": [:], "workflowDecision": "future_decision"],
+            ["title": "Choose", "textField": [:], "projection": ["timelineRanges": "unsupported"]],
+            ["title": "Choose", "textField": [:], "unknownControl": true],
+            ["title": "Choose", "fileIntake": ["accept": [3]]],
+            ["title": "Choose", "textField": ["multiline": 1]],
+            ["title": "Choose", "sections": [
+                ["id": "same", "type": "toggle"], ["id": "same", "type": "toggle"],
+            ]],
+            ["title": "Choose", "sections": [["type": "choices", "options": [
+                ["id": "same", "label": "One"], ["id": "same", "label": "Two"],
+            ]]]],
+            ["title": "Choose", "sections": [["type": "choices", "options": [
+                ["label": "One", "rangeRef": "missing"], ["label": "Two"],
+            ]]]],
+        ]
+        for args in invalid {
+            #expect(throws: ToolError.self) { try AgentDialog.parse(args) }
+        }
+    }
+
+    @Test func timelineRangesRequireExactNonnegativeRepresentableFrames() throws {
+        for start in [true, 0.5, -1, Double.infinity, Double.nan, 1e100] as [Any] {
+            #expect(throws: ToolError.self) {
+                try AgentDialog.parse(["title": "Range", "textField": [:],
+                    "projection": ["timelineRanges": [["startFrame": start, "endFrame": 20]]]])
+            }
+        }
+        let dialog = try AgentDialog.parse(["title": "Range", "textField": [:],
+            "projection": ["timelineRanges": [["startFrame": 10, "endFrame": 20]]]])
+        #expect(dialog.projection.timelineRanges.first?.startFrame == 10)
+        #expect(dialog.projection.timelineRanges.first?.endFrame == 20)
+    }
+
     @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
         let dialog = try AgentDialog.parse([
             "title": "Choose how to develop the treatment",
@@ -56,6 +93,24 @@ struct AgentDialogSubmissionTests {
         #expect(throws: ToolError.self) {
             try PipelineAgentHarness.validateTreatmentPathDialog(forcedUpload)
         }
+    }
+
+    @Test func rejectedDialogLeavesNoPendingDecisionAndAllowsARepairedRequest() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let rejected = await harness.executor.execute(name: "show_dialog",
+            args: ["title": "Choose", "textField": [:], "sections": "unsupported"],
+            origin: .inAppChat(sessionID: sessionID))
+        #expect(rejected.isError)
+        #expect(harness.editor.agentService.pendingDialog == nil)
+
+        let repaired = await harness.executor.execute(name: "show_dialog",
+            args: ["title": "Describe the correction", "textField": ["placeholder": "Correction", "multiline": true]],
+            origin: .inAppChat(sessionID: sessionID))
+        #expect(!repaired.isError)
+        #expect(repaired.turnDisposition == .suspendTurn)
+        #expect(harness.editor.agentService.pendingDialog?.title == "Describe the correction")
     }
 
     @Test func agentDialogSuspendsItsOwningTurn() async throws {
