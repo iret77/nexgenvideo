@@ -133,11 +133,24 @@ struct BeatTimeline: View {
     let beats: [Double]
     let downbeats: [Double]
     let sections: [AnalysisSurfaceData.Section]
+    var selectedSectionIndex: Int? = nil
+    var onSelectSection: ((AnalysisSurfaceData.Section) -> Void)? = nil
+
+    static func section(atFraction fraction: Double, duration: Double,
+                        sections: [AnalysisSurfaceData.Section]) -> AnalysisSurfaceData.Section? {
+        guard fraction.isFinite, duration.isFinite, duration > 0, (0...1).contains(fraction) else { return nil }
+        let time = fraction * duration
+        return sections.first {
+            $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start
+                && $0.end <= duration && $0.start <= time
+                && (time < $0.end || (time == duration && $0.end == duration))
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Canvas { ctx, size in
-                guard duration > 0 else { return }
+                guard duration.isFinite, duration > 0 else { return }
                 let w = size.width, h = size.height
                 let bandHeight = AppTheme.ComponentSize.beatTimelineBandHeight
                 func x(_ t: Double) -> CGFloat { CGFloat(min(max(t, 0), duration) / duration) * w }
@@ -146,6 +159,10 @@ struct BeatTimeline: View {
                     let x0 = x(section.start), x1 = x(section.end)
                     let rect = CGRect(x: x0, y: 0, width: max(1, x1 - x0), height: bandHeight)
                     ctx.fill(Path(rect), with: .color(PackSurfacePalette.section(section.index).opacity(AppTheme.Opacity.prominent)))
+                    if section.index == selectedSectionIndex {
+                        ctx.stroke(Path(rect.insetBy(dx: AppTheme.BorderWidth.thin, dy: AppTheme.BorderWidth.thin)),
+                            with: .color(AppTheme.Text.primaryColor), lineWidth: AppTheme.BorderWidth.medium)
+                    }
                 }
                 let top = bandHeight + AppTheme.Spacing.xs
                 for beat in beats {
@@ -168,6 +185,18 @@ struct BeatTimeline: View {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
+            .overlay {
+                GeometryReader { geometry in
+                    AppTheme.Background.clearColor
+                        .contentShape(Rectangle())
+                        .gesture(SpatialTapGesture().onEnded { event in
+                            guard geometry.size.width > 0,
+                                  let section = Self.section(atFraction: Double(event.location.x / geometry.size.width),
+                                    duration: duration, sections: sections) else { return }
+                            onSelectSection?(section)
+                        })
+                }
+            }
             ruler
         }
     }
@@ -187,12 +216,20 @@ struct BeatTimeline: View {
 
 struct StructureHierarchyList: View {
     let sections: [AnalysisSurfaceData.HierarchySection]
+    var selectedSectionIndex: Int? = nil
+    var onSelectSection: ((AnalysisSurfaceData.Section) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             ForEach(sections) { section in
                 VStack(spacing: AppTheme.Spacing.none) {
-                    sectionRow(section)
+                    if let onSelectSection {
+                        Button { onSelectSection(section.section) } label: { sectionRow(section) }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(section.section.index == selectedSectionIndex ? .isSelected : [])
+                    } else {
+                        sectionRow(section)
+                    }
                     ForEach(section.segments.indices, id: \.self) { segmentOffset in
                         let segment = section.segments[segmentOffset]
                         segmentRow(segment, number: segmentOffset + 1)
@@ -232,6 +269,8 @@ struct StructureHierarchyList: View {
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.xs)
+        .background(row.section.index == selectedSectionIndex
+            ? AppTheme.Background.raisedColor : AppTheme.Background.clearColor)
     }
 
     private func segmentRow(_ segment: AnalysisSurfaceData.HierarchySegment, number: Int) -> some View {

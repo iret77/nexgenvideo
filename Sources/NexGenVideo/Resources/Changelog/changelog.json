@@ -27,7 +27,8 @@
         {
           "heading": "Media",
           "items": [
-            "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review."
+            "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review.",
+            "The analysis beat timeline supports zoom, horizontal scrolling, and section selection linked to its structure hierarchy."
           ]
         }
       ]

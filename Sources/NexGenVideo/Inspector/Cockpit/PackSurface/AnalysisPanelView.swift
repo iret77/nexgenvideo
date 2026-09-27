@@ -58,11 +58,17 @@ struct DeclarativePackSurfaceView: View {
 
     @State private var state: LoadState = .idle
     @State private var loadToken = 0
+    @State private var selectedAnalysisSection: AnalysisSurfaceData.Section?
+    @State private var analysisZoom = 1
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) { content }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .task(id: editor.projectURL) { await load() }
+            .task(id: editor.projectURL) {
+                selectedAnalysisSection = nil
+                analysisZoom = 1
+                await load()
+            }
             .onChange(of: editor.engineStateRevision) { _, _ in
                 Task { await load(showProgress: false) }
             }
@@ -149,12 +155,26 @@ struct DeclarativePackSurfaceView: View {
             } else {
                 analysisStatus(loaded.analysis)
                 labelledBlock(title, detail: provenance(loaded.analysis, beats: beats, downbeats: downbeats)) {
-                    BeatTimeline(
-                        duration: duration,
-                        beats: beats,
-                        downbeats: downbeats,
-                        sections: sections
-                    )
+                    HStack {
+                        Stepper("Zoom: \(analysisZoom)×", value: $analysisZoom, in: 1...8)
+                        Button("Fit") { analysisZoom = 1 }
+                            .buttonStyle(.inlineAction())
+                    }
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    GeometryReader { geometry in
+                        ScrollView(.horizontal) {
+                            BeatTimeline(duration: duration, beats: beats, downbeats: downbeats,
+                                sections: sections, selectedSectionIndex: selectedAnalysisSection?.index,
+                                onSelectSection: { selectedAnalysisSection = $0 })
+                                .frame(width: geometry.size.width * CGFloat(analysisZoom))
+                        }
+                    }
+                    .frame(height: AppTheme.ComponentSize.analysisTimelineViewportHeight)
+                    if let selected = selectedAnalysisSection, sections.contains(selected) {
+                        Text("\(selected.label ?? "Section \(selected.index + 1)") · \(PackSurfaceFormat.measuredTimecode(selected.start)) – \(PackSurfaceFormat.measuredTimecode(selected.end))")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
                 }
             }
         case .sectionList(let title, let sectionsField, let visibility):
@@ -169,7 +189,9 @@ struct DeclarativePackSurfaceView: View {
                     loaded.analysis?.hasNestedHierarchy == true ? "Structure hierarchy" : title,
                     detail: loaded.analysis.flatMap(structureProvenance)
                 ) {
-                    StructureHierarchyList(sections: hierarchy)
+                    StructureHierarchyList(sections: hierarchy,
+                        selectedSectionIndex: selectedAnalysisSection?.index,
+                        onSelectSection: { selectedAnalysisSection = $0 })
                 }
             }
         case .keyValue(let title, let items):
@@ -461,6 +483,9 @@ struct DeclarativePackSurfaceView: View {
             state = .idle
             onUnavailable()
             return
+        }
+        if let selectedAnalysisSection, loaded.analysis?.sections.contains(selectedAnalysisSection) != true {
+            self.selectedAnalysisSection = nil
         }
         state = .loaded(loaded)
     }
