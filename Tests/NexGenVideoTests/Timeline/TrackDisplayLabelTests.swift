@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -99,5 +100,63 @@ struct TrackCommandUndoTests {
         #expect(editor.timeline == original)
         undo.redo()
         #expect(editor.timeline == resized)
+    }
+}
+
+@Suite("Track context commands")
+@MainActor
+struct TrackContextCommandTests {
+    @Test func menuTargetsTrackIdentityAfterReorderingAndDoesNotMutateOnOpen() throws {
+        let first = Fixtures.audioTrack()
+        let second = Fixtures.audioTrack()
+        let editor = makeEditor([first, second])
+        let view = TimelineHeaderView(editor: editor)
+        let original = editor.timeline
+        let menu = try #require(view.trackContextMenu(id: first.id))
+        #expect(editor.timeline == original)
+        #expect(menu.items.first?.title.contains("A1") == true)
+        editor.timeline.tracks.swapAt(0, 1)
+        let mute = try #require(menu.items.first)
+        let action = try #require(mute.action)
+        _ = view.perform(action, with: mute)
+        #expect(editor.timeline.tracks[1].id == first.id)
+        #expect(editor.timeline.tracks[1].muted != first.muted)
+        #expect(editor.timeline.tracks[0].muted == second.muted)
+        editor.timeline.tracks.removeAll { $0.id == first.id }
+        let remaining = editor.timeline
+        _ = view.perform(action, with: mute)
+        #expect(editor.timeline == remaining)
+        #expect(view.trackContextMenu(id: first.id) == nil)
+    }
+
+    @Test func removalRevalidatesWorkspaceAndUsesTimelineUndo() throws {
+        let editor = makeEditor([Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 30)])])
+        let priorFocus = editor.workspaceFocus
+        defer { editor.setWorkspaceFocus(priorFocus) }
+        editor.setWorkspaceFocus(.edit)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        editor.undoManager = undo
+        let view = TimelineHeaderView(editor: editor)
+        let original = editor.timeline
+        let menu = try #require(view.trackContextMenu(id: original.tracks[0].id))
+        let remove = try #require(menu.items.last)
+        let action = try #require(remove.action)
+        #expect(remove.isEnabled)
+        editor.setWorkspaceFocus(.production)
+        _ = view.perform(action, with: remove)
+        #expect(editor.timeline == original)
+        #expect(!undo.canUndo)
+        let disabled = try #require(view.trackContextMenu(id: original.tracks[0].id))
+        #expect(disabled.items.last?.isEnabled == false)
+        editor.setWorkspaceFocus(.edit)
+        undo.beginUndoGrouping()
+        _ = view.perform(action, with: remove)
+        undo.endUndoGrouping()
+        #expect(editor.timeline.tracks.isEmpty)
+        undo.undo()
+        #expect(editor.timeline == original)
+        undo.redo()
+        #expect(editor.timeline.tracks.isEmpty)
     }
 }

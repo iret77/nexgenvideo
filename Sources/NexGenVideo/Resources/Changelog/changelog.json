@@ -21,7 +21,7 @@
         {
           "heading": "Editing",
           "items": [
-            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector. Track mute, visibility, sync-lock, and height changes support the shared timeline Undo and Redo path."
+            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector. Track mute, visibility, sync-lock, and height changes support the shared timeline Undo and Redo path. Track headers expose native context commands bound to the clicked track, with removal limited to Edit."
           ]
         },
         {

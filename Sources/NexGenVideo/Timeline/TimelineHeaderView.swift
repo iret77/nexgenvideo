@@ -181,6 +181,69 @@ final class TimelineHeaderView: NSView {
         return nil
     }
 
+    private enum TrackCommand {
+        case mute, visibility, syncLock, remove
+    }
+
+    private struct TrackCommandTarget {
+        let id: String
+        let command: TrackCommand
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let geometry = TimelineGeometry(editor: editor, bounds: bounds)
+        guard point.y >= bounds.minY + geometry.rulerHeight,
+              let index = editor.timeline.tracks.indices.first(where: {
+                point.y >= geometry.trackY(at: $0)
+                    && point.y < geometry.trackY(at: $0) + geometry.trackHeight(at: $0)
+              }) else { return nil }
+        editor.focusedPanel = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
+        return trackContextMenu(id: editor.timeline.tracks[index].id)
+    }
+
+    func trackContextMenu(id: String) -> NSMenu? {
+        guard let index = editor.timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let track = editor.timeline.tracks[index]
+        let label = editor.timelineTrackDisplayLabel(at: index)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, _ command: TrackCommand, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: #selector(performTrackCommand(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = TrackCommandTarget(id: id, command: command)
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        if track.type == .audio {
+            add("\(track.muted ? "Unmute" : "Mute") Track \(label)", .mute)
+        } else {
+            add("\(track.hidden ? "Show" : "Hide") Track \(label)", .visibility)
+        }
+        add("\(track.syncLocked ? "Unlock Sync for" : "Sync Lock") Track \(label)", .syncLock)
+        menu.addItem(.separator())
+        let contents = track.clips.count == 1 ? "1 Clip" : "\(track.clips.count) Clips"
+        let removal = track.clips.isEmpty ? "Remove Empty Track \(label)"
+            : "Remove Track \(label) and \(contents)"
+        add(removal, .remove, enabled: editor.allowsTimelineEditChrome)
+        return menu
+    }
+
+    @objc private func performTrackCommand(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? TrackCommandTarget,
+              let index = editor.timeline.tracks.firstIndex(where: { $0.id == target.id }) else { return }
+        switch target.command {
+        case .mute: editor.toggleTrackMute(trackIndex: index)
+        case .visibility: editor.toggleTrackHidden(trackIndex: index)
+        case .syncLock: editor.toggleTrackSyncLock(trackIndex: index)
+        case .remove:
+            guard editor.allowsTimelineEditChrome else { return }
+            editor.removeTrack(id: target.id)
+        }
+        needsDisplay = true
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
