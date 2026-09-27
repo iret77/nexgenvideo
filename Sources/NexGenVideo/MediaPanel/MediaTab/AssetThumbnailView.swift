@@ -265,7 +265,7 @@ struct AssetThumbnailView: View {
             .padding(AppTheme.Spacing.xs)
             .transition(.opacity)
             .help("Add to task")
-            .accessibilityLabel("Add \(asset.name) to task")
+            .accessibilityLabel("Add \(asset.libraryDisplayName) to task")
             .disabled(!editor.agentService.canAttachTaskReference)
         }
     }
@@ -376,7 +376,7 @@ struct AssetThumbnailView: View {
     }
 
     private func beginRename() {
-        renameDraft = asset.name
+        renameDraft = asset.libraryDisplayName
         isRenaming = true
         isRenameFieldFocused = true
     }
@@ -384,7 +384,7 @@ struct AssetThumbnailView: View {
     private func commitRename() {
         guard isRenaming else { return }
         let trimmed = renameDraft.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty && trimmed != asset.name {
+        if !trimmed.isEmpty && trimmed != asset.libraryDisplayName {
             editor.renameMediaAsset(id: asset.id, name: trimmed)
         }
         isRenaming = false

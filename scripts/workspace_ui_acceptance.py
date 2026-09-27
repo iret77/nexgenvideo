@@ -242,7 +242,7 @@ def run_scale(executable, output, scale):
         and provenance[0].get("families") == ["imported", "generated", "enhanced", "offline"]
         and all(provenance[0].get(key) is True for key in (
             "syntheticReceipts", "exactOriginRendered", "originalSelected",
-            "offlineActionsCorrect", "projectUnchanged",
+            "offlineActionsCorrect", "projectUnchanged", "legacyNameReadable",
         ))
         and provenance[0].get("viewportWidth") == 440
         and provenance[0].get("viewportHeight") == 650

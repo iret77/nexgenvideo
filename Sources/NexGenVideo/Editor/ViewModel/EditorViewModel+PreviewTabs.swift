@@ -48,7 +48,7 @@ extension EditorViewModel {
 
     func openPreviewTab(for asset: MediaAsset, atSourceFrame frame: Int? = nil) {
         rememberSourcePosition()
-        let tab = PreviewTab.mediaAsset(id: asset.id, name: asset.name, type: asset.type)
+        let tab = PreviewTab.mediaAsset(id: asset.id, name: asset.libraryDisplayName, type: asset.type)
         if !previewTabs.contains(where: { $0.id == tab.id }) {
             previewTabs.append(tab)
         }

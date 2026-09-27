@@ -535,7 +535,7 @@ struct InspectorView: View {
         var names: [String: String] = [:]
         var paths: [String: String] = [:]
         for asset in editor.mediaAssets {
-            names[asset.id] = asset.name
+            names[asset.id] = asset.libraryDisplayName
             paths[asset.id] = asset.url.path
         }
         return ObjectGraph.from(
@@ -588,6 +588,12 @@ struct InspectorView: View {
                     }
                 }
                 Spacer(minLength: 0)
+            }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "inspector.breadcrumb", acceptanceText: crumb.flatText)
+                        .allowsHitTesting(false)
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.top, AppTheme.Spacing.smMd)

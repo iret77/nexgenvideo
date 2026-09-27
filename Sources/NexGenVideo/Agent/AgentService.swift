@@ -852,7 +852,7 @@ final class AgentService {
         ) {
             guard let assigned = editor.mediaManifest.intakeRoleByAssetID[asset.id],
                   assigned != requestedRole else { continue }
-            return (asset.name, assigned)
+            return (asset.libraryDisplayName, assigned)
         }
         return nil
     }

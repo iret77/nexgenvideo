@@ -1152,7 +1152,7 @@ struct GenerationView: View {
         let inflight = editor.mediaAssets.filter(\.isGenerating).count
         Log.generation.notice("addRefAsset id=\(asset.id.prefix(8)) type=\(asset.type.rawValue) existing=\(refImages.count)+\(refVideos.count)+\(refAudios.count) inflightGen=\(inflight)")
         if allRefs.contains(where: { $0.id == asset.id }) {
-            flashDropError("\(asset.name) is already a reference")
+            flashDropError("\(asset.libraryDisplayName) is already a reference")
             return
         }
         guard let capabilities = videoTarget(for: videoModel).binding?
@@ -1344,7 +1344,7 @@ struct GenerationView: View {
                     iconName: "photo.badge.plus"
                 ) { asset in
                     if imageReferences.contains(where: { $0.id == asset.id }) {
-                        flashDropError("\(asset.name) is already a reference")
+                        flashDropError("\(asset.libraryDisplayName) is already a reference")
                     } else {
                         imageReferences.append(asset)
                     }

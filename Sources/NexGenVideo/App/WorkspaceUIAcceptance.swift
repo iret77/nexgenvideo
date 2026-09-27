@@ -940,6 +940,14 @@ enum WorkspaceUIAcceptance {
                     && probeState(identifier: prefix + "identity", in: window) == (item.family == "offline")
                     && expected.allSatisfy { text(prefix + "origin." + $0.key) == $0.value }
             }) else { reject("\(item.family) identity or recorded origin did not render correctly") }
+            if item.family == "imported" {
+                guard asset.name == String(repeating: "a", count: 64),
+                      asset.libraryDisplayName == "Acceptance Source 498.png",
+                      editor.activePreviewTab.displayName == "Acceptance Source 498.png",
+                      text("inspector.breadcrumb") == "Original Media › Acceptance Source 498.png" else {
+                    reject("legacy storage hash escaped into the asset identity or breadcrumb")
+                }
+            }
             if item.family == "offline" {
                 guard probeState(identifier: prefix + "relink", in: window) == true,
                       probeState(identifier: prefix + "reveal", in: window) == false else {
@@ -988,6 +996,7 @@ enum WorkspaceUIAcceptance {
         emit("asset-provenance", scale: scale, fields: [
             "families": cases.map { $0.family }, "syntheticReceipts": true, "exactOriginRendered": true,
             "originalSelected": true, "offlineActionsCorrect": true, "projectUnchanged": true,
+            "legacyNameReadable": true,
             "viewportWidth": host.bounds.width, "viewportHeight": host.bounds.height,
             "screenshots": screenshots,
         ])
@@ -1436,7 +1445,7 @@ enum WorkspaceUIAcceptance {
                 : Data("Production notes for source \(index).".utf8)
             try bytes.write(to: projectURL.appendingPathComponent(relativePath))
             manifest.entries.append(MediaManifestEntry(
-                id: "fixture-\(index)", name: name, type: type,
+                id: "fixture-\(index)", name: index == 498 ? String(repeating: "a", count: 64) : name, type: type,
                 source: .project(relativePath: relativePath), duration: type == .audio ? 0.1 : 0,
                 folderId: index < 250 ? "fixture-root" : "fixture-nested",
                 originalFilename: name
