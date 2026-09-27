@@ -257,6 +257,7 @@ enum GenerationController {
 
     static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
                                     quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
+        if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
         let estimate = try? await quoteLoader(generation.target,
             pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
         try generation.scope?.requireCurrent(editor: editor)
@@ -267,6 +268,7 @@ enum GenerationController {
             throw GenerationRequestError.optionsInvalid("This operation does not support a generation package.")
         }
         try await package.requireCurrentContext(editor: editor)
+        if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
         try generation.attachReview(package)
         return package
     }

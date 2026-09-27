@@ -12,6 +12,14 @@ enum GenerationPackageFixture {
     static func prepare(editor: EditorViewModel, model: String = "fixture-image",
                         preflight: GenerationController.Preflight? = nil) async throws
         -> (GenerationController.PreparedGeneration, GenerationPackageV1) {
+        let generation = try await unreviewed(editor: editor, model: model, preflight: preflight)
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })
+        return (generation, package)
+    }
+
+    static func unreviewed(editor: EditorViewModel, model: String = "fixture-image",
+                           preflight: GenerationController.Preflight? = nil) async throws
+        -> GenerationController.PreparedGeneration {
         let target = ResolvedGenerationTarget(modelId: model, provider: .fal, endpoint: model, binding: nil)
         let request = GenerationRequest(modality: .image, modelId: model, intent: "", aspectRatio: "1:1",
             placement: .mediaLibrary(folderId: nil), origin: .panel, target: target, submission: .image { prompt in
@@ -28,9 +36,7 @@ enum GenerationPackageFixture {
                         ))
                     })
             })
-        let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
-        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })
-        return (generation, package)
+        return try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
     }
 }
 
@@ -105,6 +111,35 @@ struct GenerationPackageTests {
         #expect(restored.durationSeconds == 8)
         #expect(editor.mediaAssets.isEmpty)
         #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func reviewDoesNotOfferChangedInputsBeforeOrDuringPricing() async throws {
+        for changeDuringPricing in [false, true] {
+            let editor = EditorViewModel()
+            var inputsCurrent = true
+            let generation = try await GenerationPackageFixture.unreviewed(editor: editor,
+                preflight: { inputsCurrent ? nil : "Inputs changed" })
+            if !changeDuringPricing { inputsCurrent = false }
+            var quoteCalls = 0
+            await #expect(throws: GenerationRequestError.self) {
+                try await GenerationController.prepareReviewPackage(generation, editor: editor,
+                    quoteLoader: { _, _ in
+                        quoteCalls += 1
+                        inputsCurrent = false
+                        return GenerationPackageFixture.money()
+                    })
+            }
+            #expect(quoteCalls == (changeDuringPricing ? 1 : 0))
+            #expect(generation.reviewedPackage == nil)
+            #expect(editor.mediaAssets.isEmpty)
+            #expect(editor.generationLog.spendEvents.isEmpty)
+            inputsCurrent = true
+            _ = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+                quoteLoader: { _, _ in GenerationPackageFixture.money() })
+            #expect(generation.reviewedPackage != nil)
+            #expect(editor.mediaAssets.isEmpty)
+            #expect(editor.generationLog.spendEvents.isEmpty)
+        }
     }
 
     @Test func changingPanelInputsDuringPricingBlocksBeforeDispatch() async throws {
