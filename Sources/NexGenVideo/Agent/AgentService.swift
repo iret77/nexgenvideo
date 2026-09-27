@@ -231,20 +231,21 @@ final class AgentService {
     var streamError: AgentStreamError?
     var onSessionsChanged: (@MainActor () -> Void)?
 
-    var draft: String = ""
-    var mentions: [AgentMention] = []
+    var draft: String = "" {
+        didSet { persistComposerDraft() }
+    }
+    var mentions: [AgentMention] = [] {
+        didSet { persistComposerDraft() }
+    }
 
     /// A starter or pack function staged in the composer as a colored pill: its full prompt is hidden
     /// from the text field, keeping the composer clean. On send the prompt is composed with any typed
     /// note into the outgoing message. Only one may be pending; staging another replaces it.
-    var pendingFunction: PendingFunction?
-
-    struct PendingFunction: Equatable {
-        let title: String
-        let systemImage: String
-        let prompt: String
-        var requiresDirection: Bool = false
+    var pendingFunction: PendingFunction? {
+        didSet { persistComposerDraft() }
     }
+
+    typealias PendingFunction = AgentTask
 
     private struct ComposerState {
         let draft: String
@@ -2376,6 +2377,8 @@ final class AgentService {
     private var currentTask: Task<Void, Never>?
 
     func loadSessions(from projectURL: URL?) {
+        isRestoringComposer = true
+        defer { isRestoringComposer = false }
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
         abandonDialog()
@@ -2389,8 +2392,9 @@ final class AgentService {
         _claudeRuntime?.stop()
         _claudeRuntime = nil
         composerStates.removeAll()
-        sessions = ChatSessionStore.load(from: projectURL)
-            .filter { !$0.messages.isEmpty }
+        let loadedSessions = ChatSessionStore.load(from: projectURL).filter(\.hasPersistedContent)
+        let resumeID = loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
+        sessions = loadedSessions
             .map {
                 var session = $0
                 session.isOpen = false
@@ -2398,16 +2402,23 @@ final class AgentService {
             }
             .sorted { $0.updatedAt > $1.updatedAt }
 
-        let session = ChatSession()
-        sessions.insert(session, at: 0)
-        currentSessionId = session.id
-        messages = []
+        if let resumeID, let index = sessions.firstIndex(where: { $0.id == resumeID }) {
+            sessions[index].isOpen = true
+            currentSessionId = resumeID
+            messages = sessions[index].messages
+        } else {
+            let session = ChatSession()
+            sessions.insert(session, at: 0)
+            currentSessionId = session.id
+            messages = []
+        }
         isStreaming = false
         draft = ""
         mentions.removeAll()
         pendingFunction = nil
         composerHeight = Self.preferredComposerHeight
         composerWantsFocus = false
+        if let resumeID { restoreComposerState(for: resumeID) }
         streamError = nil
         toolExecutor?.resetFeedbackState()
     }
@@ -3122,6 +3133,17 @@ final class AgentService {
         return obj
     }
 
+    private func persistComposerDraft() {
+        guard !isRestoringComposer, let id = currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let value = ChatSessionDraft(text: draft, mentions: mentions, task: pendingFunction)
+        let saved = value.isEmpty ? nil : value
+        guard sessions[index].draft != saved else { return }
+        sessions[index].draft = saved
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
     private func saveComposerState() {
         guard let id = currentSessionId else { return }
         composerStates[id] = ComposerState(
@@ -3141,10 +3163,14 @@ final class AgentService {
     }
 
     private func restoreComposerState(for id: UUID) {
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
         guard let state = composerStates[id] else {
-            draft = ""
-            mentions = []
-            pendingFunction = nil
+            let saved = sessions.first { $0.id == id }?.draft
+            draft = saved?.text ?? ""
+            mentions = saved?.mentions ?? []
+            pendingFunction = saved?.task
             composerHeight = Self.preferredComposerHeight
             composerWantsFocus = false
             return
@@ -3292,6 +3318,9 @@ final class AgentService {
             + "…"
             + String(normalized.suffix(trailingCount))
     }
+    private var isRestoringComposer = false
+    var onDraftChanged: (@MainActor () -> Void)?
+
 }
 
 struct AgentMessage: Identifiable, Codable, Sendable, Equatable {

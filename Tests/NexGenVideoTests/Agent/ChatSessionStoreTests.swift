@@ -28,6 +28,72 @@ struct ChatSessionStoreTests {
         """
         let session = try decoder.decode(ChatSession.self, from: Data(json.utf8))
         #expect(session.claudeSessionId == nil)
+        #expect(session.draft == nil)
+    }
+
+    @Test("An unsent task survives disk reload without starting the agent")
+    @MainActor
+    func unsentTaskSurvivesReload() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        let task = AgentTask(title: "Revise section", systemImage: "pencil",
+            prompt: "Revise the selected section.", requiresDirection: true)
+        let reference = AgentMention(displayName: "Character", mediaRef: "character-asset", type: .image)
+        service.pendingFunction = task
+        service.draft = "Use this character @Character"
+        service.mentions = [reference]
+        let session = try #require(service.sessions.first { $0.id == id })
+        #expect(session.messages.isEmpty)
+        #expect(session.hasPersistedContent)
+        let data = try #require(ChatSessionStore.encodeSession(session))
+        try data.write(to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+        let restored = AgentService(refreshBackendStatusOnInit: false)
+        var mutations = 0
+        restored.onSessionsChanged = { mutations += 1 }
+        restored.loadSessions(from: home)
+        #expect(restored.currentSessionId == id)
+        #expect(restored.pendingFunction == task)
+        #expect(restored.draft == "Use this character @Character")
+        #expect(restored.mentions == [reference])
+        #expect(restored.messages.isEmpty)
+        #expect(!restored.isStreaming)
+        #expect(mutations == 0)
+
+        restored.pendingFunction = nil
+        restored.draft = ""
+        restored.mentions = []
+        #expect(restored.sessions.first { $0.id == id }?.hasPersistedContent == false)
+    }
+
+    @Test("Closed task drafts remain available without becoming the active task on reload")
+    @MainActor
+    func closedDraftRemainsClosedOnReload() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var saved = ChatSession(title: "Deferred revision", isOpen: false)
+        saved.draft = .init(text: "Shorten the ending", mentions: [],
+            task: .init(title: "Revise ending", systemImage: "pencil", prompt: "Revise the ending.",
+                requiresDirection: true))
+        try #require(ChatSessionStore.encodeSession(saved))
+            .write(to: chat.appendingPathComponent("\(saved.id.uuidString).json"))
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: home)
+        #expect(service.currentSessionId != saved.id)
+        #expect(service.pendingFunction == nil)
+        #expect(service.sessions.first { $0.id == saved.id }?.isOpen == false)
+
+        service.selectSession(saved.id)
+        #expect(service.draft == "Shorten the ending")
+        #expect(service.pendingFunction == saved.draft?.task)
+        #expect(!service.isStreaming)
     }
 
     @Test("dialog choice presentation round-trips with the semantic user turn")

@@ -6,6 +6,23 @@ enum ChatSessionAttention: Equatable {
     case unreadResult
 }
 
+struct AgentTask: Codable, Equatable {
+    let title: String
+    let systemImage: String
+    let prompt: String
+    var requiresDirection: Bool = false
+}
+
+struct ChatSessionDraft: Codable, Equatable {
+    var text: String
+    var mentions: [AgentMention]
+    var task: AgentTask?
+
+    var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && mentions.isEmpty && task == nil
+    }
+}
+
 struct ChatSession: Codable, Identifiable {
     let id: UUID
     var title: String
@@ -15,6 +32,9 @@ struct ChatSession: Codable, Identifiable {
     /// `claude`'s own session id for this chat, once known. Persisted so reopening the tab or reloading
     /// the project can `--resume` the exact conversation instead of starting the agent from scratch.
     var claudeSessionId: String?
+    var draft: ChatSessionDraft?
+
+    var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false }
 
     init(id: UUID = UUID(), title: String = "New chat", messages: [AgentMessage] = [], isOpen: Bool = true) {
         self.id = id
@@ -23,9 +43,10 @@ struct ChatSession: Codable, Identifiable {
         self.messages = messages
         self.isOpen = isOpen
         self.claudeSessionId = nil
+        self.draft = nil
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId }
+    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId, draft }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -35,6 +56,7 @@ struct ChatSession: Codable, Identifiable {
         self.messages = try c.decode([AgentMessage].self, forKey: .messages)
         self.isOpen = try c.decodeIfPresent(Bool.self, forKey: .isOpen) ?? true
         self.claudeSessionId = try c.decodeIfPresent(String.self, forKey: .claudeSessionId)
+        self.draft = try c.decodeIfPresent(ChatSessionDraft.self, forKey: .draft)
     }
 }
 
