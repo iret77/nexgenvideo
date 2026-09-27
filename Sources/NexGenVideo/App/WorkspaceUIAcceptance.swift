@@ -426,6 +426,14 @@ enum WorkspaceUIAcceptance {
               }), let frames = await stablePanelFrames(in: host),
               defaultPanelWidthsAreValid(workspace: .media, frames: frames),
               editor.selectedMediaAssetIds == ["fixture-498"] else {
+            let name = "scale-\(scaleLabel(scale))-media-return-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("layout-diagnostic", scale: scale, fields: [
+                "query": state.searchQuery, "folder": state.currentFolderId ?? "",
+                "selection": editor.selectedMediaAssetIds.sorted(),
+                "frames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                "splits": splitDiagnostics(in: host), "screenshot": name,
+            ])
             fail("media navigation state leaked or was lost across workspaces", scale: scale)
         }
         let name = "scale-\(scaleLabel(scale))-media-library.png"

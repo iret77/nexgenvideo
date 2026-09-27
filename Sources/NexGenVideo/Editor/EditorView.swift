@@ -317,7 +317,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         case .postproduction: autosave = SplitAutosave.postRoot
         case .export:         autosave = SplitAutosave.exportRoot
         }
-        let presetRoot = makeChildSplit(isVertical: false, autosave: autosave)
+        let rootIsVertical = workspace != .edit || preset != .default
+        let presetRoot = makeChildSplit(isVertical: rootIsVertical, autosave: autosave)
         switch workspace {
         case .media:
             buildMediaWorkspace(into: presetRoot)

@@ -87,26 +87,19 @@ enum ChatHangReplay {
                 }
                 host.layoutSubtreeIfNeeded()
                 if step % 400 == 100 {
-                    guard WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: window) == nil else {
+                    guard WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: window) == nil,
+                          await waitForSheet(in: window, presented: true) else {
                         emit("diagnostics-open-failed", step: step)
                         exit(2)
                     }
+                    if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
+                    emit("diagnostics-opened", step: step)
                 } else if step % 400 == 300 {
                     guard let sheet = window.attachedSheet,
-                          WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: sheet) == nil else {
+                          WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: sheet) == nil,
+                          await waitForSheet(in: window, presented: false) else {
+                        if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
                         emit("diagnostics-close-failed", step: step)
-                        exit(2)
-                    }
-                }
-                if step % 400 == 110 {
-                    guard window.attachedSheet != nil else {
-                        emit("diagnostics-not-visible", step: step)
-                        exit(2)
-                    }
-                    emit("diagnostics-opened", step: step)
-                } else if step % 400 == 310 {
-                    guard window.attachedSheet == nil else {
-                        emit("diagnostics-not-dismissed", step: step)
                         exit(2)
                     }
                     emit("diagnostics-closed", step: step)
@@ -147,6 +140,16 @@ enum ChatHangReplay {
         }
         app.run()
         exit(1)
+    }
+
+    private static func waitForSheet(in window: NSWindow, presented: Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            if (window.attachedSheet != nil) == presented { return true }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+        }
+        return (window.attachedSheet != nil) == presented
     }
 
     private static func reviewDialog(_ step: Int) -> AgentDialog {
