@@ -122,6 +122,9 @@ struct TrackContextCommandTests {
         #expect(editor.timeline.tracks[1].id == first.id)
         #expect(editor.timeline.tracks[1].muted != first.muted)
         #expect(editor.timeline.tracks[0].muted == second.muted)
+        let afterMute = editor.timeline
+        _ = view.perform(action, with: mute)
+        #expect(editor.timeline == afterMute)
         editor.timeline.tracks.removeAll { $0.id == first.id }
         let remaining = editor.timeline
         _ = view.perform(action, with: mute)
@@ -150,6 +153,13 @@ struct TrackContextCommandTests {
         let disabled = try #require(view.trackContextMenu(id: original.tracks[0].id))
         #expect(disabled.items.last?.isEnabled == false)
         editor.setWorkspaceFocus(.edit)
+        editor.timeline.tracks[0].clips.append(Fixtures.clip(start: 30, duration: 30))
+        let changedContents = editor.timeline
+        _ = view.perform(action, with: remove)
+        #expect(editor.timeline == changedContents)
+        #expect(!undo.canUndo)
+        #expect(editor.mediaPanelToast != nil)
+        editor.timeline = original
         undo.beginUndoGrouping()
         _ = view.perform(action, with: remove)
         undo.endUndoGrouping()

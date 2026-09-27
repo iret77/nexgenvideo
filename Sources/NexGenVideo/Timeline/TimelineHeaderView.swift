@@ -182,7 +182,7 @@ final class TimelineHeaderView: NSView {
     }
 
     private enum TrackCommand {
-        case mute, visibility, syncLock, remove
+        case mute(Bool), visibility(Bool), syncLock(Bool), remove(Track)
     }
 
     private struct TrackCommandTarget {
@@ -217,16 +217,16 @@ final class TimelineHeaderView: NSView {
             menu.addItem(item)
         }
         if track.type == .audio {
-            add("\(track.muted ? "Unmute" : "Mute") Track \(label)", .mute)
+            add("\(track.muted ? "Unmute" : "Mute") Track \(label)", .mute(!track.muted))
         } else {
-            add("\(track.hidden ? "Show" : "Hide") Track \(label)", .visibility)
+            add("\(track.hidden ? "Show" : "Hide") Track \(label)", .visibility(!track.hidden))
         }
-        add("\(track.syncLocked ? "Unlock Sync for" : "Sync Lock") Track \(label)", .syncLock)
+        add("\(track.syncLocked ? "Unlock Sync for" : "Sync Lock") Track \(label)", .syncLock(!track.syncLocked))
         menu.addItem(.separator())
         let contents = track.clips.count == 1 ? "1 Clip" : "\(track.clips.count) Clips"
         let removal = track.clips.isEmpty ? "Remove Empty Track \(label)"
             : "Remove Track \(label) and \(contents)"
-        add(removal, .remove, enabled: editor.allowsTimelineEditChrome)
+        add(removal, .remove(track), enabled: editor.allowsTimelineEditChrome)
         return menu
     }
 
@@ -234,11 +234,21 @@ final class TimelineHeaderView: NSView {
         guard let target = sender.representedObject as? TrackCommandTarget,
               let index = editor.timeline.tracks.firstIndex(where: { $0.id == target.id }) else { return }
         switch target.command {
-        case .mute: editor.toggleTrackMute(trackIndex: index)
-        case .visibility: editor.toggleTrackHidden(trackIndex: index)
-        case .syncLock: editor.toggleTrackSyncLock(trackIndex: index)
-        case .remove:
+        case .mute(let value):
+            guard editor.timeline.tracks[index].muted != value else { return }
+            editor.toggleTrackMute(trackIndex: index)
+        case .visibility(let value):
+            guard editor.timeline.tracks[index].hidden != value else { return }
+            editor.toggleTrackHidden(trackIndex: index)
+        case .syncLock(let value):
+            guard editor.timeline.tracks[index].syncLocked != value else { return }
+            editor.toggleTrackSyncLock(trackIndex: index)
+        case .remove(let expected):
             guard editor.allowsTimelineEditChrome else { return }
+            guard editor.timeline.tracks[index] == expected else {
+                editor.mediaPanelToast = MediaPanelToast(message: "Track changed. Open its menu again before removing it.")
+                return
+            }
             editor.removeTrack(id: target.id)
         }
         needsDisplay = true
