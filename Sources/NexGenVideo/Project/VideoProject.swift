@@ -678,7 +678,7 @@ final class VideoProject: NSDocument {
         }
         editorViewModel.agentService.loadSessions(from: editorViewModel.workingCopyHome)
         editorViewModel.onWorkingCopyReset = { [weak self] home in
-            self?.reloadEditableContents(from: home)
+            await self?.reloadEditableContents(from: home) ?? false
         }
         editorViewModel.agentService.onSessionsChanged = { [weak self] in
             self?.updateChangeCount(.changeDone)
@@ -767,29 +767,29 @@ final class VideoProject: NSDocument {
         }
     }
 
-    private func reloadEditableContents(from home: URL) {
+    private func reloadEditableContents(from home: URL) async -> Bool {
         draftCheckpointTask?.cancel()
         draftCheckpointTask = nil
-        Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try Self.readEditableContents(at: home) }
-            }.value
-            guard let self, self.editorViewModel.workingCopyHome == home else { return }
-            switch result {
-            case .success(let contents):
-                self.editorViewModel.timeline = contents.timeline
-                self.editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
-                self.editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
-                self.cachedThumbnail = contents.thumbnail
-                self.editorViewModel.agentService.loadSessions(from: home)
-                self.editorViewModel.mediaAssets.removeAll()
-                self.restoreAssetsFromManifest()
-            case .failure(let error):
-                Log.project.error(
-                    "discard recovery reload failed: \(error.localizedDescription)"
-                )
-                self.presentError(error)
-            }
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try Self.readEditableContents(at: home) }
+        }.value
+        guard editorViewModel.workingCopyHome == home else { return false }
+        switch result {
+        case .success(let contents):
+            editorViewModel.timeline = contents.timeline
+            editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
+            editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
+            cachedThumbnail = contents.thumbnail
+            editorViewModel.agentService.loadSessions(from: home)
+            editorViewModel.mediaAssets.removeAll()
+            restoreAssetsFromManifest()
+            return true
+        case .failure(let error):
+            Log.project.error(
+                "discard recovery reload failed: \(error.localizedDescription)"
+            )
+            presentError(error)
+            return false
         }
     }
 

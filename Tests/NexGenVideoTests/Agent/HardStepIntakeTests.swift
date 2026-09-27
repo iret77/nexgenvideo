@@ -627,6 +627,7 @@ struct HardStepIntakeTests {
         GatesOperations.approve(&packageGates, phase: "analysis")
         try packageStore.save(packageGates, to: PipelineLayout.gatesFile)
         editor.projectURL = package
+        editor.agentService.loadSessions(from: editor.workingCopyHome)
 
         await editor.refreshEngineState()
         let dataRoot = try #require(
@@ -664,7 +665,7 @@ struct HardStepIntakeTests {
             titled: "Prepared character 2",
             service: editor.agentService
         )
-        let second = try #require(awaitedSecond)
+        var second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
         let confirmed = try ConfirmedIdentityAssetStoreV1.load(
             dataRoot: dataRoot
@@ -683,6 +684,33 @@ struct HardStepIntakeTests {
         #expect(firstRecord.detail == "Character One")
         #expect(firstRecord.attachmentNames == ["first.png"])
         #expect(firstRecord.outcome == .attached)
+        let sessionID = try #require(editor.agentService.currentSessionId)
+        editor.agentService.dialogDraft.direction = "Unsubmitted second character"
+        let session = try #require(editor.agentService.sessions.first { $0.id == sessionID })
+        let home = try #require(editor.workingCopyHome)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        try #require(ChatSessionStore.encodeSession(session)).write(
+            to: chat.appendingPathComponent("\(sessionID.uuidString).json"))
+        let gatesURL = dataRoot.appendingPathComponent(PipelineLayout.gatesFile)
+        let gatesBeforeReload = try Data(contentsOf: gatesURL)
+        let ledgerBeforeReload = IntakeLedger.load(dataRoot: dataRoot)
+        let oldDialogID = second.id
+        editor.agentService.loadSessions(from: home)
+        #expect(editor.agentService.pendingDialog == nil)
+        await editor.refreshEngineState()
+        second = try #require(editor.agentService.pendingDialog)
+        #expect(second.id != oldDialogID)
+        #expect(second.title == "Prepared character 2")
+        #expect(editor.agentService.currentSessionId == sessionID)
+        #expect(editor.agentService.dialogDraft.direction == "Unsubmitted second character")
+        #expect(editor.agentService.messages == session.messages)
+        #expect(!editor.agentService.isStreaming)
+        #expect(try Data(contentsOf: gatesURL) == gatesBeforeReload)
+        #expect(IntakeLedger.load(dataRoot: dataRoot) == ledgerBeforeReload)
+        await editor.refreshEngineState()
+        #expect(editor.agentService.pendingDialog?.id == second.id)
+        editor.agentService.dialogDraft = AgentDialogDraft()
         try write("fixtures/second.png", in: dataRoot)
         editor.agentService.submitDialog(
             second,

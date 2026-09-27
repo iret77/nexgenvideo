@@ -92,7 +92,7 @@ struct ChatSessionStoreTests {
         let chat = home.appendingPathComponent(ChatSessionStore.dirName)
         try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
-        let binding = try #require(ProjectPackBinding(id: "musicvideo", version: "1.0.0", projectSchema: "musicvideo/1"))
+        let binding = try #require(ProjectPackBinding(id: "musicvideo", version: "1.0.0", projectSchema: "musicvideo/1.0.0"))
         let key = WorkflowIntakeDraftKey(packBinding: binding, phase: "story", stepID: "characters",
             itemNumber: 1, fingerprint: 0, isRepeat: false)
         func dialog(_ title: String = "Character 1") -> AgentDialog {

@@ -310,7 +310,7 @@ final class EditorViewModel {
     /// Marks the document edited when the pipeline changes (so the user is prompted to save, which
     /// persists the working copy into the package). Set by the owning document.
     var onPipelineChanged: (() -> Void)?
-    var onWorkingCopyReset: ((URL) -> Void)?
+    var onWorkingCopyReset: (@MainActor (URL) async -> Bool)?
 
     /// Stable store key derived once when `projectURL` changes. It never re-reads a package mid-save.
     var workingCopyKey: String? { projectId.map { "p-" + $0 } }
@@ -450,7 +450,10 @@ final class EditorViewModel {
             }
             self.workingCopyHome = home
             self.capturePluginDeclaration(from: projectURL)
-            self.onWorkingCopyReset?(home)
+            if let reload = self.onWorkingCopyReset {
+                guard await reload(home) else { return }
+            }
+            guard self.projectURL == projectURL, self.workingCopyHome == home else { return }
             self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
             self.verifyPackWiring()
@@ -990,6 +993,11 @@ final class EditorViewModel {
     @ObservationIgnored private var engineRefreshRequested: UInt64 = 0
     @ObservationIgnored private var engineRefreshCompleted: UInt64 = 0
     @ObservationIgnored private var engineRefreshTask: Task<Void, Never>?
+
+    func resetWorkflowForSessionReload() {
+        pipelineAgentHarness.reset()
+        workflowHandoffPending = false
+    }
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {

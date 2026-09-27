@@ -2454,6 +2454,7 @@ final class AgentService {
         }
         streamError = nil
         toolExecutor?.resetFeedbackState()
+        editor?.resetWorkflowForSessionReload()
     }
 
     var canStartNewConversation: Bool {
