@@ -614,16 +614,26 @@ struct MediaTab: View {
                 Button(action: organizeWithAgent) {
                     Label("Organize with Agent", systemImage: "wand.and.stars")
                 }
+                .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             }
         }
     }
 
     private func organizeWithAgent() {
-        let folderHint = currentFolderId.map { _ in " Work within the current folder." } ?? ""
-        let service = editor.agentService
-        service.newChat()
-        service.draft = "Organize my media library. Review the assets, group related ones into clearly named folders, and give generically-named assets short descriptive names — inspect an asset when its name is unclear. Don't delete anything or change the timeline.\(folderHint)"
-        editor.agentPanelVisible = true
+        let scope: String
+        let title: String
+        if let id = currentFolderId {
+            guard let folder = editor.folder(id: id) else { return }
+            scope = "Work only within media folder ID \(id) (\(folder.name))."
+            title = "Organize \(folder.name)"
+        } else {
+            scope = "Work within this project's media library."
+            title = "Organize media library"
+        }
+        _ = editor.agentService.stageTask(AgentTask(
+            title: title, systemImage: "folder.badge.gearshape",
+            prompt: "Review the assets, group related ones into clearly named folders, and give generically named assets descriptive names. Inspect an asset when its name is unclear. Do not delete assets or change the timeline. \(scope)"
+        ))
     }
 
     private func toolbarMenuIcon<Content: View>(

@@ -393,16 +393,19 @@ struct InspectorView: View {
         }
     }
 
-    /// A scoped, temporary thread about the inspected object (ladder rung 4): a fresh agent chat,
-    /// the scope visible in the prefilled opener, context accumulating across turns.
     private var scopedThreadButton: some View {
-        Button("Thread…") {
-            editor.agentService.newChat()
-            editor.agentService.draft = "About \(currentBreadcrumb.flatText): "
-            editor.agentPanelVisible = true
+        Button("Revise Object…") {
+            guard let scope = editor.inspectedObject?.taskTarget else { return }
+            _ = editor.agentService.stageTask(AgentTask(
+                title: "Revise \(currentBreadcrumb.flatText)", systemImage: "pencil",
+                prompt: "Revise only this object: \(scope). Apply the supplied instructions through the existing tools. Preserve approved artifacts and request explicit rewind when needed. Clarify ambiguous changes with a structured dialog.",
+                requiresDirection: true
+            ))
         }
         .controlSize(.small)
-        .help("Start a focused thread about this object")
+        .disabled(editor.inspectedObject == nil || editor.agentService.isStreaming
+            || editor.agentService.isComposerBlocked)
+        .help("Prepare an object-specific revision task")
     }
 
     /// Structured Bible editing: the form composes ONE precise agent command — the bible phase

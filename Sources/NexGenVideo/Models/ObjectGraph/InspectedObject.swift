@@ -13,6 +13,18 @@ enum InspectedObject: Sendable, Hashable {
 }
 
 extension InspectedObject {
+    var taskTarget: String {
+        switch self {
+        case .clip(let id): "timeline clip ID \(id)"
+        case .mediaAsset(let id): "media asset ID \(id)"
+        case .entity(let ref): "Bible \(ref.kind.rawValue) ID \(ref.id)"
+        case .look: "this project's Look guide"
+        case .shot(let id): "shot ID \(id)"
+        case .shotUse(let shot, let entity): "shot ID \(shot), use of \(entity.kind.rawValue) ID \(entity.id)"
+        }
+    }
+
+
     /// The type of thing this is, independent of any resolved name — used as a breadcrumb fallback and
     /// for grouping. `Character: Mara`, `Shot 014 use of Mara`, and `Clip on V2` share nothing but this.
     var kindLabel: String {
