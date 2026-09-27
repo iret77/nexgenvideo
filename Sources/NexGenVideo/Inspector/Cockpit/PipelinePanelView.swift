@@ -75,6 +75,10 @@ enum PipelineSurfaceRouting {
 // highlighted and gate mutations routed through NativeGateWriter.
 
 struct PipelinePanelView: View {
+    enum Presentation { case overview, phaseDock }
+    var presentation: Presentation = .overview
+    var viewedPhase: String? = nil
+
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
 
@@ -128,9 +132,9 @@ struct PipelinePanelView: View {
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            content
+            if presentation == .phaseDock { dockContent } else { content }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: presentation == .overview ? .infinity : nil, alignment: .top)
         .task(id: editor.projectURL) { await load() }
         // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
         // then, so without this the panel would keep showing the stale "Start production" state.
@@ -167,6 +171,58 @@ struct PipelinePanelView: View {
             PipelineStoryboardReviewSheet()
                 .environment(editor)
         }
+    }
+
+    @ViewBuilder
+    private var dockContent: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            switch state {
+            case .idle, .loading:
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading phase controls…")
+                }
+            case .failed:
+                Text("Phase controls unavailable.")
+                Button("Retry") { Task { await load() } }
+                    .buttonStyle(.inlineAction())
+            case .loaded(nil):
+                Text("No pipeline yet.")
+            case .loaded(.some(let data)):
+                if let phase = data.phases.first(where: { $0.phase == data.nextPhaseName }) {
+                    if let viewedPhase, viewedPhase != phase.phase {
+                        Text("Viewing: \(PhaseDisplay.label(viewedPhase))")
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
+                    Text("Current phase: \(PhaseDisplay.label(phase.phase))")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    HStack(spacing: AppTheme.Spacing.md) {
+                        surfaceIcon(for: phase.phase)
+                        approveButton(phase, enabled: approvalIsEnabled(for: phase.phase,
+                            isNext: true, runningPhase: runningPhase))
+                    }
+                    if let runningPhase {
+                        Text("Running: \(PhaseDisplay.label(runningPhase)). Approval is unavailable until it finishes.")
+                    } else {
+                        Text(nextActionDescription(for: phase.phase))
+                    }
+                    if editor.agentService.isComposerBlocked || !approvalReadiness.isReady {
+                        Button("Open Current Controls") {
+                            editor.agentPanelVisible = true
+                            editor.focusedPanel = .agent
+                        }
+                        .buttonStyle(.inlineAction())
+                    }
+                } else {
+                    Text(data.isComplete ? "All phases complete" : "Current phase unavailable.")
+                }
+                if let gateError { gateErrorBanner(gateError) }
+            }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Background.surfaceColor)
     }
 
     @ViewBuilder
@@ -264,6 +320,16 @@ struct PipelinePanelView: View {
         return "Complete this phase’s artifact before approval. Open its working surface or the agent controls to continue."
     }
 
+    private func approvalIsEnabled(for phase: String, isNext: Bool, runningPhase: String?) -> Bool {
+        PipelineApprovalControl.isEnabled(
+            approvalReady: isNext && approvalPhase == phase && approvalReadiness.isReady,
+            controlsAvailable: mutationReadiness.isReady,
+            gateWriting: gateWriting,
+            pipelineIsRunning: runningPhase != nil,
+            hostDecisionPending: editor.agentService.isComposerBlocked
+        )
+    }
+
     @ViewBuilder
     private func phaseRow(
         _ phase: ProjectPhase,
@@ -279,13 +345,7 @@ struct PipelinePanelView: View {
         let readiness = isNext && approvalPhase == phase.phase
             ? approvalReadiness
             : .blocked("This phase is not current.")
-        let approvalEnabled = PipelineApprovalControl.isEnabled(
-            approvalReady: readiness.isReady,
-            controlsAvailable: mutationReadiness.isReady,
-            gateWriting: gateWriting,
-            pipelineIsRunning: pipelineIsRunning,
-            hostDecisionPending: hostDecisionPending
-        )
+        let approvalEnabled = approvalIsEnabled(for: phase.phase, isNext: isNext, runningPhase: runningPhase)
         VStack(spacing: AppTheme.Spacing.none) {
             let layout = compact
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))

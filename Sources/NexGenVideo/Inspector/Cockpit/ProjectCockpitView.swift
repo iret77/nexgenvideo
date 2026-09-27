@@ -66,6 +66,11 @@ struct ProjectCockpitView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()  // a panel may never paint over the cockpit tab bar
+            if editor.uiContract != nil, selectedSurface != nil || editor.cockpitTab != .pipeline {
+                AppDivider()
+                PipelinePanelView(presentation: .phaseDock, viewedPhase: selectedSurface?.phase)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .task(id: editor.projectURL) {
             applyPackSurfaces([])
