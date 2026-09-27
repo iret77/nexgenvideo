@@ -277,6 +277,7 @@ struct StructureHierarchyList: View {
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.xs)
+        .contentShape(Rectangle())
         .background(row.section.index == selectedSectionIndex
             ? AppTheme.Background.raisedColor : AppTheme.Background.clearColor)
     }

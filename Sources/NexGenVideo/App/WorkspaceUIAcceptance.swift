@@ -338,12 +338,22 @@ enum WorkspaceUIAcceptance {
             }) else {
                 fail("narrow production controls did not fit", scale: scale)
             }
-            let narrowFrames = visiblePanelFrames(in: host)
-            try? await Task.sleep(for: .milliseconds(300))
-            host.layoutSubtreeIfNeeded()
             let narrowName = "scale-\(scaleLabel(scale))-production-narrow"
-            guard visiblePanelFrames(in: host) == narrowFrames,
+            guard let narrowFrames = await stablePanelFrames(in: host),
+                  visiblePanelFrames(in: host) == narrowFrames,
+                  editor.workspaceFocus == .production,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .production),
+                  abs(host.bounds.width - AppTheme.Window.projectMin.width) <= AppTheme.BorderWidth.thin,
+                  narrowProductionWidthsAreValid(narrowFrames),
+                  previewTimecodeIsSingleLine(in: window, scale: scale),
+                  agentControlsAreContained(in: window),
                   snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName).png")) else {
+                _ = snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName)-failed.png"))
+                emit("layout-diagnostic", scale: scale, fields: [
+                    "reason": "narrow production layout did not settle",
+                    "frames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                    "window": windowDiagnostics(window, contentView: host),
+                ])
                 fail("narrow production layout did not settle", scale: scale)
             }
             emit(
@@ -886,21 +896,35 @@ enum WorkspaceUIAcceptance {
         }
         let initialWidth = wave.bounds.width
         let initialName = "scale-\(scaleLabel(scale))-analysis.png"
-        guard initialWidth > 0, snapshot(host, at: evidenceURL.appendingPathComponent(initialName)),
-              await revealProbe("analysis.section.1", in: window),
-              click(identifier: "analysis.section.1", in: window) == nil,
-              await waitUntil(timeout: .seconds(5), {
-                  probeState(identifier: "analysis.section.1", in: window) == true
-                      && value("analysis.selection") == 6 && value("analysis.play") == 6
-              }), await revealProbe("analysis.play", in: window),
-              click(identifier: "analysis.play", in: window) == nil,
-              await waitUntil(timeout: .seconds(10), {
-                  probeState(identifier: "analysis.play", in: window) == true
-                      && (value("analysis.play") ?? 0) > 6.1
-              }), click(identifier: "analysis.play", in: window) == nil,
-              await waitUntil(timeout: .seconds(5), { probeState(identifier: "analysis.play", in: window) == false }) else {
-            reject("analysis section selection and native playback lost their shared time")
+        guard initialWidth > 0, snapshot(host, at: evidenceURL.appendingPathComponent(initialName)) else {
+            reject("analysis initial waveform could not be captured")
         }
+        guard await revealProbe("analysis.section.1", in: window) else {
+            reject("analysis section row could not be scrolled into view")
+        }
+        if let reason = click(identifier: "analysis.section.1", in: window) {
+            reject("analysis section click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            probeState(identifier: "analysis.section.1", in: window) == true
+                && value("analysis.selection") == 6 && value("analysis.play") == 6
+        }) else { reject("analysis section click did not select its exact start time") }
+        guard await revealProbe("analysis.play", in: window) else {
+            reject("analysis playback control could not be scrolled into view")
+        }
+        if let reason = click(identifier: "analysis.play", in: window) {
+            reject("analysis play click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(10), {
+            probeState(identifier: "analysis.play", in: window) == true
+                && (value("analysis.play") ?? 0) > 6.1
+        }) else { reject("analysis native playback did not advance from the selected section") }
+        if let reason = click(identifier: "analysis.play", in: window) {
+            reject("analysis pause click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            probeState(identifier: "analysis.play", in: window) == false
+        }) else { reject("analysis native playback did not pause") }
         let playbackPosition = value("analysis.play") ?? 0
         guard let zoom = findProbe(in: host, identifier: "analysis.zoom"), zoom.bounds.width > 16,
               click(identifier: "analysis.zoom", in: window,
