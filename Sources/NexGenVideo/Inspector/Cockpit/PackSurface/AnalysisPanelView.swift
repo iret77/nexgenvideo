@@ -182,8 +182,10 @@ struct DeclarativePackSurfaceView: View {
                 labelledBlock(title, detail: provenance(loaded.analysis, beats: beats, downbeats: downbeats)) {
                     HStack {
                         Stepper("Zoom: \(analysisZoom)×", value: $analysisZoom, in: 1...8)
+                            .background { acceptanceProbe("analysis.zoom", value: Double(analysisZoom)) }
                         Button("Fit") { analysisZoom = 1 }
                             .buttonStyle(.inlineAction())
+                            .background { acceptanceProbe("analysis.fit") }
                     }
                     .interfaceFont(size: AppTheme.Typography.ui)
                     listeningControls(loaded)
@@ -196,6 +198,7 @@ struct DeclarativePackSurfaceView: View {
                                 if loaded.analysis?.durationS == duration, let waveform = loaded.waveform,
                                    !waveform.isEmpty, waveform.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
                                     AnalysisWaveformTimeline(samples: waveform)
+                                        .background { acceptanceProbe("analysis.waveform") }
                                 } else {
                                     Text("Source waveform unavailable.")
                                         .interfaceFont(size: AppTheme.Typography.metadata)
@@ -205,6 +208,7 @@ struct DeclarativePackSurfaceView: View {
                                    let energy = analysis.measuredEnergy {
                                     AnalysisEnergyTimeline(duration: duration, samples: energy,
                                         selectedSection: selectedAnalysisSection)
+                                        .background { acceptanceProbe("analysis.energy") }
                                 } else {
                                     Text("Measured energy unavailable.")
                                         .interfaceFont(size: AppTheme.Typography.metadata)
@@ -230,6 +234,7 @@ struct DeclarativePackSurfaceView: View {
                         Text("\(selected.label ?? "Section \(selected.index + 1)") · \(PackSurfaceFormat.measuredTimecode(selected.start)) – \(PackSurfaceFormat.measuredTimecode(selected.end))")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .background { acceptanceProbe("analysis.selection", value: selected.start) }
                     }
                 }
             }
@@ -271,6 +276,9 @@ struct DeclarativePackSurfaceView: View {
             }
             .buttonStyle(.inlineAction())
             .disabled(loaded.sourceURL == nil || isPreparingPlayback)
+            .background {
+                acceptanceProbe("analysis.play", state: isListening, value: listeningPosition)
+            }
             if let duration = loaded.analysis?.durationS, duration.isFinite, duration > 0 {
                 Slider(value: Binding(get: { min(max(listeningPosition, 0), duration) },
                     set: { seekListening(to: $0) }), in: 0...duration)
@@ -289,6 +297,16 @@ struct DeclarativePackSurfaceView: View {
             }
         }
         .interfaceFont(size: AppTheme.Typography.ui)
+        .background { acceptanceProbe("analysis.source", state: loaded.sourceURL != nil) }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ identifier: String, state: Bool? = nil, value: Double? = nil) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: identifier, acceptanceState: state, acceptanceValue: value)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
     }
 
     private func selectAnalysisSection(_ section: AnalysisSurfaceData.Section) {

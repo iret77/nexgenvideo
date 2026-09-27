@@ -227,6 +227,14 @@ struct StructureHierarchyList: View {
                         Button { onSelectSection(section.section) } label: { sectionRow(section) }
                             .buttonStyle(.plain)
                             .accessibilityAddTraits(section.section.index == selectedSectionIndex ? .isSelected : [])
+                            .background {
+                                if WorkspaceUIAcceptance.isRequested {
+                                    AppRelaunchClickProbe(identifier: "analysis.section.\(section.section.index)",
+                                        acceptanceState: section.section.index == selectedSectionIndex)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .allowsHitTesting(false)
+                                }
+                            }
                     } else {
                         sectionRow(section)
                     }

@@ -115,6 +115,13 @@ struct ProjectCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!entry.isAccessible)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "home.project.\(entry.id)", acceptanceState: entry.isAccessible)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .accessibilityLabel(entry.isAccessible ? "Open \(entry.name)" : "\(entry.name), unavailable")
     }
 

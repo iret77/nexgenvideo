@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import NexGenEngine
 import SwiftUI
 
 @MainActor
@@ -360,8 +361,10 @@ enum WorkspaceUIAcceptance {
                     "workingCopyUnchanged": true,
                 ]
             )
-            emit("completed", scale: scale)
             window.orderOut(nil)
+            await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
+            await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
+            emit("completed", scale: scale)
             exit(0)
         }
         app.run()
@@ -653,6 +656,249 @@ enum WorkspaceUIAcceptance {
         editor.selectedClipIds = originalClipIDs
         editor.inspectedObject = originalObject
         editor.mediaAssets = originalAssets
+    }
+
+    private static func captureProjectCards(evidenceURL: URL, scale: Double) async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let available = directory.appendingPathComponent("Claude Mouse.ngv")
+        let unavailable = directory.appendingPathComponent("Unavailable Project.ngv")
+        do { try FileManager.default.createDirectory(at: available, withIntermediateDirectories: true) }
+        catch { fail("could not create project-card fixture", scale: scale) }
+        let now = Date()
+        let entries = [available, unavailable].map {
+            ProjectEntry(id: UUID(), url: $0, createdDate: now, lastOpenedDate: now)
+        }
+        var opened: [URL] = []
+        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.md) {
+            ForEach(entries) { entry in
+                ProjectCard(entry: entry, onOpen: { opened.append($0) }, onRemove: { _ in })
+                    .frame(width: AppTheme.ComponentSize.projectCardWidth)
+            }
+        }.padding(AppTheme.Spacing.xl).interfaceStyle())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 320),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        let firstID = "home.project.\(entries[0].id)"
+        let secondID = "home.project.\(entries[1].id)"
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return window.isKeyWindow && findProbe(in: host, identifier: firstID) != nil
+        }), let first = findProbe(in: host, identifier: firstID),
+        let second = findProbe(in: host, identifier: secondID) else {
+            fail("native project cards did not appear", scale: scale)
+        }
+        // The former 150-point grid cell contained a 142 × 113.6-point card inside 4-point padding.
+        guard abs(first.bounds.width - 213) <= 1,
+              abs(first.bounds.height - 170.4) <= 1,
+              first.bounds.size == second.bounds.size,
+              probeState(identifier: firstID, in: window) == true,
+              probeState(identifier: secondID, in: window) == false,
+              click(identifier: firstID, in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { opened == [available] }),
+              click(identifier: secondID, in: window) == nil else {
+            fail("project-card size or accessible open action changed", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let name = "scale-\(scaleLabel(scale))-project-cards.png"
+        guard opened == [available], snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+            fail("unavailable project opened or card capture failed", scale: scale)
+        }
+        emit("project-cards", scale: scale, fields: [
+            "width": Double(first.bounds.width), "height": Double(first.bounds.height),
+            "openVerified": true, "unavailableDisabled": true, "screenshot": name,
+        ])
+    }
+
+    private static func captureAnalysis(evidenceURL: URL, scale: Double) async {
+        let projectURL: URL
+        let document: VideoProject
+        let savedBytes: [String: Data]
+        do {
+            projectURL = try makeAnalysisFixture()
+            savedBytes = try treeSnapshot(at: projectURL)
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not load analysis fixture: \(error.localizedDescription)", scale: scale) }
+        let surfaceBytes = Data("""
+        {"id":"native-analysis","title":"Audio Analysis","phase":"analysis","data_file":"analysis/Acceptance Track.json","layout":[
+          {"type":"beatTimeline","title":"Song timeline","duration_field":"duration_s","beats_field":"beats","downbeats_field":"downbeats","sections_field":"sections","sections_visibility":"whenCanonicalSections"},
+          {"type":"sectionList","title":"Sections","sections_field":"sections","visibility":"whenCanonicalSections"}
+        ]}
+        """.utf8)
+        guard let surface = try? JSONDecoder().decode(CockpitSurfaceData.self, from: surfaceBytes) else {
+            fail("invalid native analysis surface fixture", scale: scale)
+        }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        var unavailable = false
+        let host = NSHostingView(rootView: DeclarativePackSurfaceView(surface: surface,
+            onUnavailable: { unavailable = true }).interfaceStyle().environment(editor))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 950),
+            styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func value(_ identifier: String) -> Double? {
+            (findProbe(in: host, identifier: identifier) as? AppRelaunchClickProbeView)?.acceptanceValue
+        }
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-analysis-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            let identifiers = ["analysis.source", "analysis.play", "analysis.zoom", "analysis.selection",
+                               "analysis.section.1", "analysis.waveform", "analysis.energy"]
+            emit("analysis-diagnostic", scale: scale, fields: [
+                "reason": reason, "screenshot": name,
+                "probes": identifiers.map { id -> [String: Any] in
+                    let probe = findProbe(in: host, identifier: id)
+                    return ["id": id, "state": probeState(identifier: id, in: window).map { String(describing: $0) } ?? "missing",
+                            "value": value(id).map { String(describing: $0) } ?? "missing",
+                            "frame": probe.map { frameDescription($0.convert($0.bounds, to: host)) } ?? [:]]
+                },
+            ])
+            fail(reason, scale: scale)
+        }
+        guard await waitUntil(timeout: .seconds(10), {
+            host.layoutSubtreeIfNeeded()
+            return window.isKeyWindow && !unavailable
+                && probeState(identifier: "analysis.source", in: window) == true
+                && findProbe(in: host, identifier: "analysis.waveform") != nil
+                && findProbe(in: host, identifier: "analysis.energy") != nil
+                && findProbe(in: host, identifier: "analysis.section.1") != nil
+        }), let wave = findProbe(in: host, identifier: "analysis.waveform") else {
+            reject("native analysis did not load verified audio and measured layers")
+        }
+        func width(_ identifier: String) -> CGFloat {
+            findProbe(in: host, identifier: identifier)?.bounds.width ?? 0
+        }
+        let initialWidth = wave.bounds.width
+        let initialName = "scale-\(scaleLabel(scale))-analysis.png"
+        guard initialWidth > 0, snapshot(host, at: evidenceURL.appendingPathComponent(initialName)),
+              await revealProbe("analysis.section.1", in: window),
+              click(identifier: "analysis.section.1", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  probeState(identifier: "analysis.section.1", in: window) == true
+                      && value("analysis.selection") == 6 && value("analysis.play") == 6
+              }), await revealProbe("analysis.play", in: window),
+              click(identifier: "analysis.play", in: window) == nil,
+              await waitUntil(timeout: .seconds(10), {
+                  probeState(identifier: "analysis.play", in: window) == true
+                      && (value("analysis.play") ?? 0) > 6.1
+              }), click(identifier: "analysis.play", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { probeState(identifier: "analysis.play", in: window) == false }) else {
+            reject("analysis section selection and native playback lost their shared time")
+        }
+        let playbackPosition = value("analysis.play") ?? 0
+        guard let zoom = findProbe(in: host, identifier: "analysis.zoom"), zoom.bounds.width > 16,
+              click(identifier: "analysis.zoom", in: window,
+                    fraction: NSPoint(x: 1 - 8 / zoom.bounds.width, y: 0.75)) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return value("analysis.zoom") == 2
+                      && abs(width("analysis.waveform") - initialWidth * 2) <= 1
+                      && abs(width("analysis.energy") - initialWidth * 2) <= 1
+              }) else { reject("native analysis zoom did not double the time-aligned lanes") }
+        let selectedName = "scale-\(scaleLabel(scale))-analysis-selected.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(selectedName)),
+              click(identifier: "analysis.fit", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return value("analysis.zoom") == 1 && abs(width("analysis.waveform") - initialWidth) <= 1
+              }), let home = editor.workingRoot else { reject("analysis Fit did not restore lane width") }
+        do {
+            let song = home.appendingPathComponent("pipeline/audio/Acceptance Track.wav")
+            try Data("Changed source bytes".utf8).write(to: song, options: .atomic)
+        } catch { reject("could not replace analysis fixture source") }
+        await editor.refreshEngineState()
+        guard await waitUntil(timeout: .seconds(10), {
+            probeState(identifier: "analysis.source", in: window) == false
+                && findProbe(in: host, identifier: "analysis.waveform") == nil
+        }), click(identifier: "analysis.play", in: window) == nil else {
+            reject("changed analysis source remained executable")
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let changedName = "scale-\(scaleLabel(scale))-analysis-source-unavailable.png"
+        guard probeState(identifier: "analysis.play", in: window) == false,
+              snapshot(host, at: evidenceURL.appendingPathComponent(changedName)),
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("analysis played changed bytes or changed the saved project")
+        }
+        emit("analysis-interaction", scale: scale, fields: [
+            "selectedStart": 6, "playedPosition": playbackPosition, "zoom": 2,
+            "fitRestored": true, "changedSourceDisabled": true, "savedProjectUnchanged": true,
+            "screenshots": [initialName, selectedName, changedName],
+        ])
+    }
+
+    private static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
+        guard let root = window.contentView, let probe = findProbe(in: root, identifier: identifier),
+              let scroll = enclosingScrollView(for: probe), let document = scroll.documentView else { return false }
+        document.scrollToVisible(probe.convert(probe.bounds, to: document))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        return await waitUntil(timeout: .seconds(5), {
+            root.layoutSubtreeIfNeeded()
+            return scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView))
+                && root.bounds.contains(probe.convert(probe.bounds, to: root))
+        })
+    }
+
+    private static func makeAnalysisFixture() throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("Analysis-\(UUID().uuidString).ngv")
+        let root = home.appendingPathComponent("pipeline")
+        for child in ["audio", "analysis"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(child), withIntermediateDirectories: true)
+        }
+        try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
+        try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
+        try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
+        try Data("project: Native analysis acceptance\nmode: generic\n".utf8).write(to: root.appendingPathComponent("project.yaml"))
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 96_000),
+              let samples = buffer.floatChannelData?[0] else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = 96_000
+        for index in 0..<96_000 { samples[index] = Float(sin(Double(index) * 0.1)) * 0.1 }
+        let song = root.appendingPathComponent("audio/Acceptance Track.wav")
+        do {
+            let audio = try AVAudioFile(forWriting: song, settings: format.settings)
+            try audio.write(from: buffer)
+        }
+        let intervals: [[String: Double]] = [["start": 0, "end": 6], ["start": 6, "end": 12]]
+        let sections: [[String: Any]] = [
+            ["index": 0, "start": 0, "end": 6, "label": "Intro", "source": "measured_system_hierarchy"],
+            ["index": 1, "start": 6, "end": 12, "label": "Verse", "source": "measured_system_hierarchy"],
+        ]
+        let hierarchy: [String: Any] = [
+            "source": "apple_music_understanding", "sections": intervals, "segments": intervals,
+            "phrases": [["start": 0, "end": 3], ["start": 3, "end": 6], ["start": 6, "end": 9], ["start": 9, "end": 12]],
+        ]
+        let resolution: [String: Any] = [
+            "status": "resolved", "method": "music_understanding_hierarchy",
+            "candidate_boundary_count": 1, "accepted_boundary_count": 1, "discarded_boundary_count": 0,
+            "hierarchy": hierarchy,
+        ]
+        let artifact: [String: Any] = [
+            "schema": "analysis/v3", "song_path": "audio/Acceptance Track.wav",
+            "song_sha256": try FileDigest.sha256(of: song), "duration_s": 12, "bpm": 120,
+            "beats": (0..<24).map { Double($0) / 2 }, "downbeats": [0, 2, 4, 6, 8, 10],
+            "sections": sections,
+            "energy_curve": (0..<12).map { second -> [String: Double] in
+                let sum = (second * 8_000..<(second + 1) * 8_000).reduce(0.0) { sum, i in
+                    sum + Double(samples[i] * samples[i])
+                }
+                return ["t": Double(second), "rms": sqrt(sum / 8_000)]
+            },
+            "structure_resolution": resolution,
+        ]
+        try JSONSerialization.data(withJSONObject: artifact, options: [.sortedKeys])
+            .write(to: root.appendingPathComponent("analysis/Acceptance Track.json"))
+        _ = try ProjectIdentity.uuid(for: home)
+        return home
     }
 
     private static func makeProjectFixture(scale: Double) throws -> URL {
@@ -1358,7 +1604,7 @@ enum WorkspaceUIAcceptance {
         }
     }
 
-    static func click(identifier: String, in window: NSWindow) -> String? {
+    static func click(identifier: String, in window: NSWindow, fraction: NSPoint = NSPoint(x: 0.5, y: 0.5)) -> String? {
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView,
               let probe = findProbe(in: root, identifier: identifier),
@@ -1370,7 +1616,10 @@ enum WorkspaceUIAcceptance {
         guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
             return "control has no finite frame"
         }
-        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        guard fraction.x.isFinite, fraction.y.isFinite,
+              (0...1).contains(fraction.x), (0...1).contains(fraction.y) else { return "invalid click fraction" }
+        let point = NSPoint(x: frame.minX + frame.width * fraction.x, y: frame.minY + frame.height * fraction.y)
+        let location = probe.convert(point, to: nil)
         guard root.bounds.contains(root.convert(location, from: nil)) else {
             return "control is outside the window"
         }

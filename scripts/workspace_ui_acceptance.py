@@ -166,11 +166,13 @@ def run_scale(executable, output, scale):
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
     library = [row for row in rows if row.get("event") == "media-library"]
+    cards = [row for row in rows if row.get("event") == "project-cards"]
+    analysis = [row for row in rows if row.get("event") == "analysis-interaction"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
         row.get("screenshot")
-        for row in workspace_rows + hidden + narrow + library
+        for row in workspace_rows + hidden + narrow + library + cards
     ]
     screenshots += [
         row.get("screenshot")
@@ -183,6 +185,7 @@ def run_scale(executable, output, scale):
         for layout in row.get("laneLayoutEvidence", [])
         if isinstance(layout, dict)
     ]
+    screenshots += [name for row in analysis for name in row.get("screenshots", [])]
     valid_images = all(
         isinstance(name, str)
         and (output / name).is_file()
@@ -205,6 +208,19 @@ def run_scale(executable, output, scale):
         and library[0].get("nestedFolderOpened") is True
         and library[0].get("searchSelectedAsset") == "fixture-498"
         and library[0].get("workspaceStatePreserved") is True
+        and len(cards) == 1
+        and abs(cards[0].get("width", 0) - 213) <= 1
+        and abs(cards[0].get("height", 0) - 170.4) <= 1
+        and cards[0].get("openVerified") is True
+        and cards[0].get("unavailableDisabled") is True
+        and len(analysis) == 1
+        and analysis[0].get("selectedStart") == 6
+        and analysis[0].get("playedPosition", 0) > 6.1
+        and analysis[0].get("zoom") == 2
+        and analysis[0].get("fitRestored") is True
+        and analysis[0].get("changedSourceDisabled") is True
+        and analysis[0].get("savedProjectUnchanged") is True
+        and len(analysis[0].get("screenshots", [])) == 3
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -216,7 +232,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 8 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 12 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {
