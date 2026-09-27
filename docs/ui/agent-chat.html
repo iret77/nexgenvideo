@@ -1129,6 +1129,18 @@
       Enter task instructions. Use @ to reference media.<br>
       <button disabled>Run Task</button> — Required instructions are empty.</div>
 
+    <h3>Task entry routes</h3>
+    <table class="spec-table">
+      <tr><th>Entry</th><th>Task</th><th>Execution owner</th></tr>
+      <tr><td>Caption names, emoji, translation</td><td>Named caption task; optional instructions</td><td>AgentService staged work order</td></tr>
+      <tr><td>Music revision</td><td>Timeline music; required instructions</td><td>AgentService staged work order</td></tr>
+      <tr><td>Inspector correction</td><td>Named inspected object; required correction</td><td>AgentService scoped work order</td></tr>
+      <tr><td>Bible form / Story controls</td><td>Object changes and submitted field values</td><td>Existing AgentControlTurn</td></tr>
+    </table>
+    <p>Staging never starts execution. Running or blocked agent state refuses a new task without
+      consuming the current task or instructions. Generated control text is hidden; readable choice
+      records retain the user-visible action. A refused form submission preserves its fields.</p>
+
     <h2>Turn semantics and reading order</h2>
     <ul>
       <li>A turn is an explicit semantic projection with a stable identity. A message role alone is

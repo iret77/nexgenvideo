@@ -35,4 +35,27 @@ struct AgentDecisionHistoryTests {
         #expect(service.messages.map(\.id) == messageIDs)
     }
 
+
+    @Test func stagingDoesNotRunOrConsumeInstructionsAndBusyActionsPreserveTheCurrentTask() {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        service.draft = "Keep the ending quiet"
+        let task = AgentTask(title: "Revise music", systemImage: "music.note", prompt: "Revise timeline music.")
+        #expect(service.stageTask(task))
+        #expect(service.pendingFunction == task)
+        #expect(service.draft == "Keep the ending quiet")
+        #expect(service.messages.isEmpty)
+        #expect(!service.isStreaming)
+
+        service.isStreaming = true
+        defer { service.isStreaming = false }
+        let next = AgentTask(title: "Revise captions", systemImage: "captions.bubble", prompt: "Revise captions.")
+        #expect(!service.stageTask(next))
+        #expect(!service.sendWorkOrder(next, direction: "Shorten them", mentions: []))
+        #expect(!service.send(controlTurn: .init(command: "Apply the revision")))
+        #expect(service.pendingFunction == task)
+        #expect(service.draft == "Keep the ending quiet")
+        #expect(service.messages.isEmpty)
+    }
+
 }

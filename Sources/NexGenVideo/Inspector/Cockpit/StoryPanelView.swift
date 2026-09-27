@@ -455,14 +455,14 @@ struct StoryPanelView: View {
     ) {
         let text = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard allowEmpty || !text.isEmpty else { return }
-        draft.wrappedValue = ""
-        editor.agentService.send(
+        let accepted = editor.agentService.send(
             controlTurn: Self.proseTurn(
                 command: command(text),
                 action: action,
                 typedText: text
             )
         )
+        if accepted { draft.wrappedValue = "" }
         editor.agentPanelVisible = true
     }
 

@@ -423,6 +423,7 @@ struct InspectorView: View {
                 Spacer()
                 Button("Apply via Agent") { applyEntityEdit(entity) }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -443,15 +444,15 @@ struct InspectorView: View {
         }
         diff("name", new: entityEditName, old: entity.name, clearable: false)
         diff("visual_prompt", new: entityEditPrompt, old: entity.visualPrompt, clearable: true)
-        entityEditTarget = nil
-        guard !changes.isEmpty else { return }
+        guard !changes.isEmpty else { entityEditTarget = nil; return }
         let kind = entityKind(of: entity).rawValue
-        editor.agentService.send(
-            text: "Update the Bible \(kind) \u{201C}\(entity.id)\u{201D}: "
+        let accepted = editor.agentService.send(controlTurn: AgentControlTurn(
+            command: "Update the Bible \(kind) \u{201C}\(entity.id)\u{201D}: "
                 + changes.joined(separator: "; ")
                 + ". Apply it through the bible tooling (keep schema + sheets consistent) and confirm the diff.",
-            mentions: []
-        )
+            selections: [.init(label: "Object", values: [entity.name]), .init(label: "Changes", values: changes)]
+        ))
+        if accepted { entityEditTarget = nil }
         editor.agentPanelVisible = true
     }
 
@@ -464,10 +465,6 @@ struct InspectorView: View {
 
     // MARK: - Contextual one-shot prose (ladder rung 3 — docs/UI_UX_CONCEPT.md §4)
 
-    /// A one-shot prompt bound to the inspected object: the prose goes to the agent as typed, and the
-    /// scope chip above it shows what "this" resolves to — the inspected object IS the scope, so it's
-    /// always visible whenever this field is (docs/UI_UX_CONCEPT.md §2.2). Not a mini-chat — the field
-    /// clears on send and the Agent tab opens to show the work.
     private func contextualPromptField(placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let hint = editor.selectionContextHint {
@@ -481,11 +478,13 @@ struct InspectorView: View {
                 Button {
                     sendContextualPrompt()
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .interfaceFont(size: AppTheme.Typography.section)
+                    Label("Run Task", systemImage: "arrow.up")
+                        .interfaceFont(size: AppTheme.Typography.ui)
                 }
-                .buttonStyle(.plain)
-                .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.inlineAction())
+                .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || editor.agentService.isStreaming || editor.agentService.isComposerBlocked
+                    || editor.selectionContextHint == nil)
             }
         }
     }
@@ -493,8 +492,13 @@ struct InspectorView: View {
     private func sendContextualPrompt() {
         let text = contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        contextualPromptDraft = ""
-        editor.agentService.send(text: text, mentions: [])
+        guard let target = editor.selectionContextHint else { return }
+        let accepted = editor.agentService.sendWorkOrder(
+            .init(title: "Revise: " + target, systemImage: "pencil",
+                prompt: "Revise only this selected object: " + target + ". Respect phase gates and use the existing project tools.",
+                requiresDirection: true),
+            direction: text, mentions: [])
+        if accepted { contextualPromptDraft = "" }
         editor.agentPanelVisible = true
     }
 

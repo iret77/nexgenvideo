@@ -232,18 +232,21 @@ struct CaptionTab: View {
                 removeFillerWords()
             } label: { Label("Remove filler words", systemImage: "text.badge.minus") }
             Button {
-                prefillCaptionTask("fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
+                prefillCaptionTask(title: "Fix Caption Names and Jargon", "fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
             } label: { Label("Fix names & jargon", systemImage: "checkmark.bubble") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             Button {
-                prefillCaptionTask("add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
+                prefillCaptionTask(title: "Add Caption Emoji", "add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
             } label: { Label("Add emoji", systemImage: "face.smiling") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             Menu {
                 ForEach(Self.translateLanguages, id: \.self) { language in
                     Button(language) {
-                        prefillCaptionTask("translate the captions to \(language), keeping each caption's timing unchanged.")
+                        prefillCaptionTask(title: "Translate Captions to \(language)", "translate the captions to \(language), keeping each caption's timing unchanged.")
                     }
                 }
             } label: { Label("Translate", systemImage: "globe") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")
@@ -259,7 +262,7 @@ struct CaptionTab: View {
             .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(AppTheme.aiGradient.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).focusable(false)
-        .help("Let Agent create captions for you. Choose a predefined task, or ask Agent in the chat.")
+        .help("Let Agent create captions for you. Choose a task and review its instructions before running.")
     }
 
     private func removeFillerWords() {
@@ -268,11 +271,9 @@ struct CaptionTab: View {
         if count == 0 { note = "No filler words found." }
     }
 
-    /// Visible, user-confirms-send: fills the agent input rather than sending — the scope prefix
-    /// makes it explicit this touches captions, not the whole project.
-    private func prefillCaptionTask(_ task: String) {
+    private func prefillCaptionTask(title: String, _ task: String) {
         let prompt = "Captions: If the timeline has no captions yet, transcribe the spoken audio and add captions on word boundaries first. Then \(task)"
-        editor.agentService.prefillInput(prompt)
+        editor.agentService.stageTask(.init(title: title, systemImage: "captions.bubble", prompt: prompt))
     }
 
     private func menuValueLabel(_ text: String) -> some View {

@@ -429,10 +429,8 @@ struct AgentPanelView: View {
     private func runPluginCommand(_ command: PluginCommandCatalog.PluginCommand) {
         showUtilities = false
         if command.requiresArgument {
-            service.pendingFunction = .init(title: command.title, systemImage: "puzzlepiece.extension",
-                prompt: command.command + " ", requiresDirection: true)
-            service.recordComposerFocus(true)
-            service.restoreComposerFocus()
+            service.stageTask(.init(title: command.title, systemImage: "puzzlepiece.extension",
+                prompt: command.command + " ", requiresDirection: true))
         } else {
             editor.runActivePackStarter()
         }
@@ -869,9 +867,9 @@ struct AgentPanelView: View {
                 }
                 if let target = editor.selectionContextHint {
                     Button("Revise Selected Object") {
-                        service.pendingFunction = .init(title: "Revise: " + target, systemImage: "pencil",
+                        service.stageTask(.init(title: "Revise: " + target, systemImage: "pencil",
                             prompt: "Revise only this selected object: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
-                            requiresDirection: true)
+                            requiresDirection: true))
                     }
                 }
             }
@@ -922,11 +920,8 @@ struct AgentPanelView: View {
     }
 
     private func runStarter(_ starter: AgentStarterPrompt) {
-        guard !service.isStreaming, !service.isComposerBlocked else { return }
-        service.pendingFunction = .init(title: starter.title, systemImage: starter.systemImage,
-            prompt: starter.prompt, requiresDirection: starter.requiresDirection)
-        service.recordComposerFocus(true)
-        service.restoreComposerFocus()
+        service.stageTask(.init(title: starter.title, systemImage: starter.systemImage,
+            prompt: starter.prompt, requiresDirection: starter.requiresDirection))
     }
 
 }

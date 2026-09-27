@@ -2232,9 +2232,16 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
-    /// Insert `text` into the input field and focus it — used by the plugin launcher for commands that
-    /// still need an argument, so the user lands in the field ready to type rather than sending an
-    /// incomplete command. Clears mentions (a slash-command carries no media references).
+    @discardableResult
+    func stageTask(_ task: PendingFunction) -> Bool {
+        guard !isStreaming, !isComposerBlocked else { return false }
+        editor?.agentPanelVisible = true
+        pendingFunction = task
+        recordComposerFocus(true)
+        restoreComposerFocus()
+        return true
+    }
+
     func prefillInput(_ text: String) {
         editor?.agentPanelVisible = true
         draft = text
@@ -2670,6 +2677,7 @@ final class AgentService {
 
     @discardableResult
     func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
+        guard !isStreaming else { return false }
         let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !function.requiresDirection || !note.isEmpty else { return false }
         let presentation = AgentUserPresentation(
@@ -2681,10 +2689,13 @@ final class AgentService {
             mentions: mentions, hidden: true, presentation: presentation)
     }
 
-    func send(controlTurn: AgentControlTurn) {
-        send(
+    @discardableResult
+    func send(controlTurn: AgentControlTurn) -> Bool {
+        guard !isStreaming else { return false }
+        return send(
             text: controlTurn.command,
             mentions: [],
+            hidden: true,
             presentation: controlTurn.presentation
         )
     }
