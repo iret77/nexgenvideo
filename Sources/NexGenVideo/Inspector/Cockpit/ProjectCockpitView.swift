@@ -152,6 +152,7 @@ struct ProjectSettingsView: View {
                     menuRow("Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
                 }
 
+                ProjectBudgetView().id(editor.workingRoot)
                 pluginSection
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
