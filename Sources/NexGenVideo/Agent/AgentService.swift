@@ -149,7 +149,8 @@ final class AgentService {
     }
 
     func refreshBackendStatus() {
-        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil
+            || WorkspaceUIAcceptance.isRequested {
             isCheckingAPIKey = false
             isCheckingClaude = false
             claudeStatus = .init(executableURL: nil, version: "offline-replay", isAuthenticated: true)

@@ -69,6 +69,7 @@ extension MediaTab {
     }
 
     func publishOrderedIds(_ ids: [String]) {
+        guard workspace == editor.workspaceFocus else { return }
         if editor.mediaPanelOrderedItemIds != ids {
             editor.mediaPanelOrderedItemIds = ids
         }
@@ -105,13 +106,14 @@ extension MediaTab {
             }
             .coordinateSpace(name: "mediaGrid")
             .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                guard workspace == editor.workspaceFocus else { return }
                 assetFrames = frames
                 if editor.mediaPanelColumnCount != cols { editor.mediaPanelColumnCount = cols }
             }
             .onAppear { publishOrderedIds(orderedIds) }
             .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
             .onChange(of: editor.mediaPanelScrollTarget) { _, target in
-                guard let target else { return }
+                guard workspace == editor.workspaceFocus, let target else { return }
                 withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                     proxy.scrollTo(target, anchor: .center)
                 }
@@ -212,13 +214,14 @@ extension MediaTab {
                 }
                 .coordinateSpace(name: "mediaGrid")
                 .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                    guard workspace == editor.workspaceFocus else { return }
                     assetFrames = frames
                     if editor.mediaPanelColumnCount != dims.cols { editor.mediaPanelColumnCount = dims.cols }
                 }
                 .onAppear { publishOrderedIds(orderedIds) }
                 .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
                 .onChange(of: editor.mediaPanelScrollTarget) { _, target in
-                    guard let target else { return }
+                    guard workspace == editor.workspaceFocus, let target else { return }
                     withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                         proxy.scrollTo(target, anchor: .center)
                     }

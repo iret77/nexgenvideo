@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GenerationView: View {
     let maxPanelHeight: Double
+    let workspace: EditorViewModel.WorkspaceFocus
 
     @Environment(EditorViewModel.self) var editor
     @State private var prompt = ""
@@ -72,6 +73,8 @@ struct GenerationView: View {
     @State private var dragStartExtra: Double?
     @State private var measuredPanelHeight: CGFloat = 0
     @State private var measuredPromptHeight: CGFloat = 0
+
+    private var isActiveWorkspace: Bool { workspace == editor.workspaceFocus }
 
     /// Everything in the panel except the prompt's variable height, recovered
     /// from two frame-consistent measurements so it never depends on the value
@@ -655,12 +658,22 @@ struct GenerationView: View {
         .padding(.bottom, AppTheme.Spacing.sm)
         .frame(maxHeight: max(0, CGFloat(maxPanelHeight)), alignment: .top)
         .onAppear {
+            guard isActiveWorkspace else { return }
             let hadSeed = editor.pendingPanelSeed != nil
             consumePendingPanelSeed()
             // A seeded edit may reuse a now-disabled model; keep its selection.
             if !hadSeed { normalizeModelSelection() }
         }
-        .onChange(of: editor.pendingPanelSeed?.asset.id) { _, _ in consumePendingPanelSeed() }
+        .onChange(of: editor.pendingPanelSeed?.asset.id) { _, _ in
+            guard isActiveWorkspace else { return }
+            consumePendingPanelSeed()
+        }
+        .onChange(of: editor.workspaceFocus) { _, focus in
+            guard focus == workspace else { return }
+            let hadSeed = editor.pendingPanelSeed != nil
+            consumePendingPanelSeed()
+            if !hadSeed { normalizeModelSelection() }
+        }
         .onChange(of: ModelPreferences.shared.disabledIds) { _, _ in
             guard !isPopulatingPanel else { return }
             normalizeModelSelection()
@@ -682,8 +695,10 @@ struct GenerationView: View {
             clearReferences()
             if newValue == .audio { resetAudioState() }
             editFolderId = nil
-            editor.pendingEditTrimmedSource = nil
-            editor.pendingEditAudioPlacement = nil
+            if isActiveWorkspace {
+                editor.pendingEditTrimmedSource = nil
+                editor.pendingEditAudioPlacement = nil
+            }
         }
         .onChange(of: selectedVideoModelIndex) { _, _ in
             guard !isPopulatingPanel else { return }
@@ -1989,6 +2004,7 @@ struct GenerationView: View {
     }
 
     private func consumePendingPanelSeed() {
+        guard isActiveWorkspace else { return }
         guard let seed = editor.pendingPanelSeed else { return }
         populatePanel(asset: seed.asset, stored: seed.stored)
         editor.pendingPanelSeed = nil

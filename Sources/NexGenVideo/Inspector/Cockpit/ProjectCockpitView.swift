@@ -249,7 +249,7 @@ struct ProjectSettingsView: View {
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
                         editor.cockpitPackSurfaceID = nil
-                        editor.setWorkspaceFocus(.produce)
+                        editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
@@ -268,7 +268,7 @@ struct ProjectSettingsView: View {
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
                         editor.cockpitPackSurfaceID = nil
-                        editor.setWorkspaceFocus(.produce)
+                        editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)

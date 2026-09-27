@@ -53,7 +53,7 @@ final class EditorWindowController: NSWindowController {
         let cmd = mods.contains(.command)
         let rangeMarkShortcut = mods.intersection([.command, .option, .control]).isEmpty
 
-        if editorViewModel.focusedPanel == .media, !shift,
+        if canHandleMediaShortcut(), !shift,
            let direction = mediaArrowDirection(for: event.keyCode) {
             editorViewModel.moveMediaSelection(direction: direction)
             return true
@@ -73,59 +73,43 @@ final class EditorWindowController: NSWindowController {
             return true
 
         case 51: // Delete/Backspace
-            if !editorViewModel.selectedFolderIds.isEmpty || !editorViewModel.selectedMediaAssetIds.isEmpty {
-                if !editorViewModel.selectedFolderIds.isEmpty {
-                    editorViewModel.deleteFolders(ids: editorViewModel.selectedFolderIds)
-                }
-                if !editorViewModel.selectedMediaAssetIds.isEmpty {
-                    editorViewModel.deleteSelectedMediaAssets()
-                }
-            } else if shift {
-                if editorViewModel.selectedGap != nil {
-                    editorViewModel.rippleDeleteSelectedGap()
-                } else {
-                    editorViewModel.rippleDeleteSelectedClips()
-                }
-            } else {
-                editorViewModel.deleteSelectedClips()
-            }
-            return true
+            return performContextualDelete(ripple: shift)
 
         case 8: // C key
-            if !cmd, editorViewModel.allowsTimelineEditChrome {
+            if !cmd, canHandleTimelineEditShortcut() {
                 editorViewModel.toolMode = .razor
                 return true
             }
             return false
 
         case 9: // V key
-            if !cmd {
+            if !cmd, canHandleTimelineEditShortcut() {
                 editorViewModel.toolMode = .pointer
                 return true
             }
             return false
 
         case 34: // I key
-            if rangeMarkShortcut {
+            if rangeMarkShortcut, canHandleTimelineEditShortcut() {
                 editorViewModel.markTimelineRangeStart()
                 return true
             }
             return false
 
         case 31: // O key
-            if rangeMarkShortcut {
+            if rangeMarkShortcut, canHandleTimelineEditShortcut() {
                 editorViewModel.markTimelineRangeEnd()
                 return true
             }
             return false
 
         case 33: // [ key
-            guard editorViewModel.allowsTimelineEditChrome else { return false }
+            guard canHandleTimelineEditShortcut() else { return false }
             editorViewModel.trimStartToPlayhead()
             return true
 
         case 30: // ] key
-            guard editorViewModel.allowsTimelineEditChrome else { return false }
+            guard canHandleTimelineEditShortcut() else { return false }
             editorViewModel.trimEndToPlayhead()
             return true
 
@@ -141,7 +125,7 @@ final class EditorWindowController: NSWindowController {
             return false
 
         case 36: // Return / Enter
-            if editorViewModel.focusedPanel == .media,
+            if canHandleMediaShortcut(),
                editorViewModel.selectedFolderIds.count == 1,
                let folderId = editorViewModel.selectedFolderIds.first {
                 editorViewModel.mediaPanelOpenFolderId = folderId
@@ -170,10 +154,13 @@ final class EditorWindowController: NSWindowController {
                 editorViewModel.maximizedPanel = nil
                 return true
             }
-            editorViewModel.selectedClipIds.removeAll()
-            editorViewModel.clearTimelineRange()
-            editorViewModel.toolMode = .pointer
-            return true
+            if canHandleTimelineEditShortcut() {
+                editorViewModel.selectedClipIds.removeAll()
+                editorViewModel.clearTimelineRange()
+                editorViewModel.toolMode = .pointer
+                return true
+            }
+            return false
 
         default:
             return false
@@ -202,8 +189,6 @@ final class EditorWindowController: NSWindowController {
         while let v = view {
             if let panel = EditorViewModel.FocusedPanel(accessibilityID: v.accessibilityIdentifier()) {
                 editorViewModel.focusedPanel = panel
-                if panel == .media { editorViewModel.selectedClipIds.removeAll() }
-                if panel == .timeline { editorViewModel.selectedMediaAssetIds.removeAll() }
                 return
             }
             view = v.superview
@@ -223,10 +208,21 @@ final class EditorWindowController: NSWindowController {
 // MARK: - EditorActions (responder chain)
 
 extension EditorWindowController: EditorActions {
-    @objc func splitAtPlayhead(_ sender: Any?) { editorViewModel.splitAtPlayhead() }
-    @objc func trimStartToPlayhead(_ sender: Any?) { editorViewModel.trimStartToPlayhead() }
-    @objc func trimEndToPlayhead(_ sender: Any?) { editorViewModel.trimEndToPlayhead() }
-    @objc func deleteSelectedClips(_ sender: Any?) { editorViewModel.deleteSelectedClips() }
+    @objc func splitAtPlayhead(_ sender: Any?) {
+        guard canHandleTimelineEditShortcut() else { return }
+        editorViewModel.splitAtPlayhead()
+    }
+    @objc func trimStartToPlayhead(_ sender: Any?) {
+        guard canHandleTimelineEditShortcut() else { return }
+        editorViewModel.trimStartToPlayhead()
+    }
+    @objc func trimEndToPlayhead(_ sender: Any?) {
+        guard canHandleTimelineEditShortcut() else { return }
+        editorViewModel.trimEndToPlayhead()
+    }
+    @objc func deleteSelectedClips(_ sender: Any?) {
+        _ = performContextualDelete(ripple: false)
+    }
     @objc func playPause(_ sender: Any?) { editorViewModel.togglePlayback() }
     @objc func stepFrameForward(_ sender: Any?) { editorViewModel.stepForward() }
     @objc func stepFrameBackward(_ sender: Any?) { editorViewModel.stepBackward() }
@@ -258,7 +254,7 @@ extension EditorWindowController: EditorActions {
     }
 
     @objc func paste(_ sender: Any?) {
-        if editorViewModel.focusedPanel == .media {
+        if canHandleMediaShortcut() {
             editorViewModel.mediaPanelPasteRequestTick &+= 1
             return
         }
@@ -268,11 +264,51 @@ extension EditorWindowController: EditorActions {
     }
 
     private func canHandleClipboardShortcut() -> Bool {
-        editorViewModel.focusedPanel == .timeline
+        canHandleTimelineEditShortcut()
     }
 
-    @objc func toggleMediaPanel(_ sender: Any?) { editorViewModel.mediaPanelVisible.toggle() }
-    @objc func toggleInspectorPanel(_ sender: Any?) { editorViewModel.inspectorPanelVisible.toggle() }
+    private func canHandleTimelineEditShortcut() -> Bool {
+        !isTextInputFocused
+            && editorViewModel.workspaceFocus == .edit
+            && editorViewModel.focusedPanel == .timeline
+            && !editorViewModel.theaterActive
+            && (editorViewModel.maximizedPanel == nil || editorViewModel.maximizedPanel == .timeline)
+    }
+
+    private func canHandleMediaShortcut() -> Bool {
+        !isTextInputFocused
+            && (editorViewModel.workspaceFocus == .media || editorViewModel.workspaceFocus == .edit)
+            && editorViewModel.focusedPanel == .media
+            && editorViewModel.isSidebarPresented
+    }
+
+    @discardableResult
+    private func performContextualDelete(ripple: Bool) -> Bool {
+        if canHandleMediaShortcut() {
+            let hasFolders = !editorViewModel.selectedFolderIds.isEmpty
+            let hasAssets = !editorViewModel.selectedMediaAssetIds.isEmpty
+            guard hasFolders || hasAssets else { return false }
+            if hasFolders {
+                editorViewModel.deleteFolders(ids: editorViewModel.selectedFolderIds)
+            }
+            if hasAssets {
+                editorViewModel.deleteSelectedMediaAssets()
+            }
+            return true
+        }
+        guard canHandleTimelineEditShortcut() else { return false }
+        if ripple, editorViewModel.selectedGap != nil {
+            editorViewModel.rippleDeleteSelectedGap()
+        } else if ripple {
+            editorViewModel.rippleDeleteSelectedClips()
+        } else {
+            editorViewModel.deleteSelectedClips()
+        }
+        return true
+    }
+
+    @objc func toggleMediaPanel(_ sender: Any?) { editorViewModel.toggleSidebarPresentation() }
+    @objc func toggleInspectorPanel(_ sender: Any?) { editorViewModel.toggleInspectorPresentation() }
     @objc func toggleAgentPanel(_ sender: Any?) { editorViewModel.agentPanelVisible.toggle() }
     @objc func newAgentConversation(_ sender: Any?) {
         guard !editorViewModel.agentService.isComposerBlocked,
@@ -302,9 +338,11 @@ extension EditorWindowController: EditorActions {
     @objc func setLayoutDefault(_ sender: Any?) { editorViewModel.layoutPreset = .default }
     @objc func setLayoutMedia(_ sender: Any?) { editorViewModel.layoutPreset = .media }
     @objc func setLayoutVertical(_ sender: Any?) { editorViewModel.layoutPreset = .vertical }
-    @objc func setFocusEdit(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.edit) }
-    @objc func setFocusProduce(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.produce) }
-    @objc func setFocusFinish(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.finish) }
+    @objc func setWorkspaceMedia(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.media) }
+    @objc func setWorkspaceProduction(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.production) }
+    @objc func setWorkspaceEdit(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.edit) }
+    @objc func setWorkspacePostproduction(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.postproduction) }
+    @objc func setWorkspaceExport(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.export) }
     @objc func toggleTheater(_ sender: Any?) { editorViewModel.toggleTheater() }
 
     private func toggleMaximizePanelAction() {
@@ -318,10 +356,10 @@ extension EditorWindowController: EditorActions {
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(toggleMediaPanel(_:)):
-            menuItem.state = editorViewModel.mediaPanelVisible ? .on : .off
+            menuItem.state = editorViewModel.isSidebarPresented ? .on : .off
             return true
         case #selector(toggleInspectorPanel(_:)):
-            menuItem.state = editorViewModel.inspectorPanelVisible ? .on : .off
+            menuItem.state = editorViewModel.isInspectorPresented ? .on : .off
             return true
         case #selector(toggleAgentPanel(_:)):
             menuItem.state = editorViewModel.agentPanelVisible ? .on : .off
@@ -338,34 +376,49 @@ extension EditorWindowController: EditorActions {
                 && editorViewModel.agentService.openSessions.count > 1
         case #selector(toggleMaximizePanel(_:)):
             menuItem.state = editorViewModel.maximizedPanel != nil ? .on : .off
-            return editorViewModel.maximizedPanel != nil || editorViewModel.focusedPanel != nil
+            return !isTextInputFocused
+                && (editorViewModel.maximizedPanel != nil || editorViewModel.focusedPanel != nil)
         case #selector(setLayoutDefault(_:)):
             menuItem.state = editorViewModel.layoutPreset == .default ? .on : .off
-            return true
+            return editorViewModel.workspaceFocus == .edit
         case #selector(setLayoutMedia(_:)):
             menuItem.state = editorViewModel.layoutPreset == .media ? .on : .off
-            return true
+            return editorViewModel.workspaceFocus == .edit
         case #selector(setLayoutVertical(_:)):
             menuItem.state = editorViewModel.layoutPreset == .vertical ? .on : .off
+            return editorViewModel.workspaceFocus == .edit
+        case #selector(setWorkspaceMedia(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .media ? .on : .off
             return true
-        case #selector(setFocusEdit(_:)):
+        case #selector(setWorkspaceProduction(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .production ? .on : .off
+            return true
+        case #selector(setWorkspaceEdit(_:)):
             menuItem.state = editorViewModel.workspaceFocus == .edit ? .on : .off
             return true
-        case #selector(setFocusProduce(_:)):
-            menuItem.state = editorViewModel.workspaceFocus == .produce ? .on : .off
+        case #selector(setWorkspacePostproduction(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .postproduction ? .on : .off
             return true
-        case #selector(setFocusFinish(_:)):
-            menuItem.state = editorViewModel.workspaceFocus == .finish ? .on : .off
+        case #selector(setWorkspaceExport(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .export ? .on : .off
             return true
         case #selector(toggleTheater(_:)):
             menuItem.state = editorViewModel.theaterActive ? .on : .off
-            return true
-        case #selector(trimStartToPlayhead(_:)), #selector(trimEndToPlayhead(_:)):
-            return editorViewModel.allowsTimelineEditChrome
+            return !isTextInputFocused
+        case #selector(splitAtPlayhead(_:)),
+             #selector(trimStartToPlayhead(_:)),
+             #selector(trimEndToPlayhead(_:)):
+            return canHandleTimelineEditShortcut()
+        case #selector(deleteSelectedClips(_:)):
+            if canHandleMediaShortcut() {
+                return !editorViewModel.selectedFolderIds.isEmpty
+                    || !editorViewModel.selectedMediaAssetIds.isEmpty
+            }
+            return canHandleTimelineEditShortcut() && !editorViewModel.selectedClipIds.isEmpty
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty
         case #selector(paste(_:)):
-            if editorViewModel.focusedPanel == .media {
+            if canHandleMediaShortcut() {
                 return MediaTab.clipboardHasImportableMedia()
             }
             return canHandleClipboardShortcut() && editorViewModel.canPasteClips

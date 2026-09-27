@@ -14,7 +14,7 @@ enum ChatHangReplay {
                 refreshBackendStatusOnInit: false
             )
         )
-        editor.workspaceFocus = .produce
+        editor.setWorkspaceFocus(.production)
         editor.agentPanelVisible = true
         let service = editor.agentService
         let image = imagePayload()

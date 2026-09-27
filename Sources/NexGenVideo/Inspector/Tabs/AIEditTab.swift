@@ -98,16 +98,10 @@ struct AIEditTab: View {
 
     private func aiSection<Content: View>(
         title: String,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            Text(title.uppercased())
-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                .tracking(AppTheme.Tracking.wide)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            VStack(spacing: AppTheme.Spacing.smMd) {
-                content()
-            }
+        InspectorSection(title) {
+            content()
         }
     }
 
@@ -117,25 +111,11 @@ struct AIEditTab: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            Button {
+            InspectorSectionHeading(title: title, expanded: isExpanded.wrappedValue, onToggle: {
                 withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
                     isExpanded.wrappedValue.toggle()
                 }
-            } label: {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                        .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
-                    Text(title.uppercased())
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .tracking(AppTheme.Tracking.wide)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                    Spacer(minLength: AppTheme.Spacing.xs)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            })
 
             if isExpanded.wrappedValue {
                 VStack(spacing: AppTheme.Spacing.smMd) {
@@ -182,19 +162,12 @@ struct AIEditTab: View {
         help: String,
         isOn: Binding<Bool>
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: icon)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(isOn.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Spacer(minLength: AppTheme.Spacing.xs)
-            Toggle("", isOn: isOn)
+        InspectorFormRow(label: label, icon: icon, labelHelp: help) {
+            Toggle(label, isOn: isOn)
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
+                .accessibilityLabel(label)
         }
         .help(help)
     }
@@ -241,25 +214,41 @@ struct AIEditTab: View {
         let isEnabled = availability.isAvailable
         let disabledReason = availability.reason
 
-        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-            Image(systemName: icon)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
-                .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                Text(title)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(isEnabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
-                Text(disabledReason ?? description)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(disabledReason != nil ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+                actionDescription(icon: icon, title: title, detail: disabledReason ?? description, enabled: isEnabled)
+                Spacer(minLength: AppTheme.Spacing.sm)
+                actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
             }
-            Spacer(minLength: AppTheme.Spacing.sm)
-            actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
+            .frame(minWidth: AppTheme.ComponentSize.inspectorActionInlineMinWidth)
+
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                actionDescription(icon: icon, title: title, detail: disabledReason ?? description, enabled: isEnabled)
+                actionTrigger(action: action, title: triggerTitle ?? title, isEnabled: isEnabled)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(disabledReason ?? "")
+    }
+
+    private func actionDescription(icon: String, title: String, detail: String, enabled: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: icon)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(enabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
+                .frame(width: AppTheme.IconSize.xs)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text(title)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                    .foregroundStyle(enabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
+                Text(detail)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(enabled ? AppTheme.Text.tertiaryColor : AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func videoAudioActionRow(kind: VideoToAudioEditKind) -> some View {

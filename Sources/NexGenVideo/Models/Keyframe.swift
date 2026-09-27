@@ -79,12 +79,18 @@ enum AnimatableProperty: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .opacity:  "Opacity"
-        case .position: "Position"
-        case .scale:    "Scale"
-        case .rotation: "Rotation"
-        case .crop:     "Crop"
-        case .volume:   "Volume"
+        case .opacity:
+            String(localized: "inspector.keyframes.opacity", defaultValue: "Opacity", comment: "Keyframe lane")
+        case .position:
+            String(localized: "inspector.keyframes.position", defaultValue: "Position", comment: "Keyframe lane")
+        case .scale:
+            String(localized: "inspector.keyframes.scale", defaultValue: "Scale", comment: "Keyframe lane")
+        case .rotation:
+            String(localized: "inspector.keyframes.rotation", defaultValue: "Rotation", comment: "Keyframe lane")
+        case .crop:
+            String(localized: "inspector.keyframes.crop", defaultValue: "Crop", comment: "Keyframe lane")
+        case .volume:
+            String(localized: "inspector.keyframes.volume", defaultValue: "Volume", comment: "Keyframe lane")
         }
     }
 }
