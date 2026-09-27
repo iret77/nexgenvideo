@@ -2905,7 +2905,8 @@ final class AgentService {
         loop: while !Task.isCancelled {
             resolveOrphanToolUses()
             let apiMsgs = await apiMessages()
-            let assistant = AgentMessage(role: .assistant, blocks: [])
+            var assistant = AgentMessage(role: .assistant, blocks: [])
+            assistant.isIncompleteAPIResponse = true
             messages.append(assistant)
             let assistantID = assistant.id
 
@@ -2916,7 +2917,7 @@ final class AgentService {
                     messages: apiMsgs
                 )
 
-                var stopReason: AnthropicStopReason = .endTurn
+                var stopReason: AnthropicStopReason?
 
                 for try await event in stream {
                     let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
@@ -2925,6 +2926,10 @@ final class AgentService {
                     }
                     try Task.checkCancellation()
                     switch event {
+                    case .thinkingComplete(let block):
+                        if let index = assistantMessageIndex(id: assistantID) {
+                            messages[index].blocks.append(.thinking(block))
+                        }
                     case .textDelta(let chunk):
                         appendTextDelta(chunk, toAssistant: assistantID)
                     case .toolUseComplete(let id, let name, let inputJSON):
@@ -2934,6 +2939,13 @@ final class AgentService {
                     }
                 }
 
+                try Task.checkCancellation()
+                guard let stopReason else {
+                    throw AnthropicClientError.streamError("The response was interrupted. Try again.")
+                }
+                if let index = assistantMessageIndex(id: assistantID) {
+                    messages[index].isIncompleteAPIResponse = false
+                }
                 if stopReason == .toolUse {
                     if await runPendingToolUses(
                         assistantID: assistantID,
@@ -2988,7 +3000,8 @@ final class AgentService {
         assistantID: UUID,
         origin: ToolCallOrigin
     ) async -> Bool {
-        guard let assistantIndex = assistantMessageIndex(id: assistantID) else { return false }
+        guard let assistantIndex = assistantMessageIndex(id: assistantID),
+              !messages[assistantIndex].isIncompleteAPIResponse else { return false }
         let toolUses: [(id: String, name: String, input: String)] = messages[assistantIndex].blocks.compactMap {
             if case let .toolUse(id, name, input) = $0 { return (id, name, input) }
             return nil
@@ -3052,7 +3065,8 @@ final class AgentService {
         var i = 0
         while i < messages.count {
             defer { i += 1 }
-            guard messages[i].role == .assistant else { continue }
+            guard messages[i].role == .assistant,
+                  !messages[i].isIncompleteAPIResponse else { continue }
             let toolUseIds: [String] = messages[i].blocks.compactMap {
                 if case let .toolUse(id, _, _) = $0 { return id }
                 return nil
@@ -3150,9 +3164,9 @@ final class AgentService {
         }
     }
 
-    private func apiMessages() async -> [AnthropicMessage] {
+    func apiMessages() async -> [AnthropicMessage] {
         var result: [AnthropicMessage] = []
-        for msg in messages {
+        for msg in messages where !msg.isIncompleteAPIResponse {
             var content = msg.blocks.compactMap(Self.contentBlockJSON)
             if msg.role == .user, !msg.mentions.isEmpty || msg.contextHint != nil {
                 let inlined = await inlineImageBlocks(for: msg.mentions)
@@ -3205,8 +3219,10 @@ final class AgentService {
         return out
     }
 
-    private static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
+    static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
         switch block {
+        case .thinking(let block):
+            return block.json
         case .text(let s):
             guard !s.isEmpty else { return nil }
             return ["type": "text", "text": s]
@@ -3276,6 +3292,7 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     var hidden: Bool = false
     /// Optional rendering for a structured user action whose blocks remain model-facing.
     var userPresentation: AgentUserPresentation?
+    var isIncompleteAPIResponse: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -3296,7 +3313,7 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation, isIncompleteAPIResponse
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -3310,22 +3327,26 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
+        isIncompleteAPIResponse = try c.decodeIfPresent(Bool.self, forKey: .isIncompleteAPIResponse) ?? false
     }
 }
 
 enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
+    case thinking(AnthropicThinkingBlock)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)
 
-    private enum Kind: String, Codable { case text, toolUse, toolResult }
+    private enum Kind: String, Codable { case text, thinking, toolUse, toolResult }
     private enum CodingKeys: String, CodingKey {
-        case kind, text, id, name, input, toolUseId, content, isError
+        case kind, text, id, name, input, toolUseId, content, isError, thinking
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .kind) {
+        case .thinking:
+            self = .thinking(try c.decode(AnthropicThinkingBlock.self, forKey: .thinking))
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
         case .toolUse:
@@ -3346,6 +3367,9 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .thinking(let block):
+            try c.encode(Kind.thinking, forKey: .kind)
+            try c.encode(block, forKey: .thinking)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)

@@ -6,16 +6,18 @@ struct AgentActivity: Identifiable {
         let id: String
         let name: String
         let inputJSON: String
+        var thinkingSummaries: [String] = []
     }
 
     let id: UUID
     let statuses: [String]
     let steps: [Step]
     let isRunning: Bool
+    var trailingThinkingSummaries: [String] = []
 
     var currentStatus: String? { statuses.last }
     var operationLabel: String {
-        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Working"
+        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Thinking"
     }
 }
 
@@ -135,6 +137,7 @@ enum AgentTranscriptProjection {
             case .assistant:
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
                 let persistentBlocks = message.blocks.filter { block in
+                    if case .thinking = block { return false }
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
                 }
@@ -177,31 +180,40 @@ enum AgentTranscriptProjection {
     private static func makeActivity(_ turn: [AgentMessage], isRunning: Bool) -> AgentActivity? {
         var statuses: [String] = []
         var steps: [AgentActivity.Step] = []
+        var thinkingSummaries: [String] = []
 
         for message in turn where message.role == .assistant {
-            guard message.blocks.contains(where: isActivityTool) else { continue }
+            let hasActivityTool = message.blocks.contains(where: isActivityTool)
             for block in message.blocks {
                 switch block {
+                case .thinking(let block):
+                    if let summary = block.summary { thinkingSummaries.append(summary) }
                 case .text(let text):
+                    guard hasActivityTool else { continue }
                     let status = compactStatus(text)
                     if !status.isEmpty, statuses.last != status { statuses.append(status) }
                 case .toolUse(let id, let name, let inputJSON):
                     guard ToolRunPresentation.baseName(for: name) != ToolName.showBlocks.rawValue else {
                         continue
                     }
-                    steps.append(.init(id: id, name: name, inputJSON: inputJSON))
+                    steps.append(.init(
+                        id: id, name: name, inputJSON: inputJSON,
+                        thinkingSummaries: thinkingSummaries
+                    ))
+                    thinkingSummaries = []
                 case .toolResult:
                     break
                 }
             }
         }
 
-        guard !steps.isEmpty else { return nil }
+        guard !steps.isEmpty || !thinkingSummaries.isEmpty else { return nil }
         return AgentActivity(
             id: turn.first?.id ?? UUID(),
             statuses: statuses,
             steps: steps,
-            isRunning: isRunning
+            isRunning: isRunning,
+            trailingThinkingSummaries: thinkingSummaries
         )
     }
 

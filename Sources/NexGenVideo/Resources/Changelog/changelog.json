@@ -10,6 +10,12 @@
           "items": [
             "Project cards on the welcome screen are 50% larger, with unchanged text and icon sizes."
           ]
+        },
+        {
+          "heading": "Agent",
+          "items": [
+            "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details."
+          ]
         }
       ]
     },
