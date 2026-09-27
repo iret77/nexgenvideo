@@ -814,6 +814,17 @@ enum WorkspaceUIAcceptance {
               probeState(identifier: secondID, in: window) == false else {
             reject("project-card size or enabled state changed")
         }
+        let unavailableParts = ["unavailable-icon", "name", "unavailable-status"].compactMap { part in
+            findProbe(in: host, identifier: "\(secondID).\(part)")
+        }
+        let unavailableFrames = unavailableParts.map { $0.convert($0.bounds, to: second) }
+        guard unavailableFrames.count == 3,
+              unavailableFrames.allSatisfy({ second.bounds.contains($0) }),
+              !unavailableFrames[0].intersects(unavailableFrames[1]),
+              !unavailableFrames[0].intersects(unavailableFrames[2]),
+              !unavailableFrames[1].intersects(unavailableFrames[2]) else {
+            reject("unavailable project-card icon, name, or status overlap")
+        }
         if let reason = click(identifier: firstID, in: window) { reject("project-card click: \(reason)") }
         guard await waitUntil(timeout: .seconds(5), { opened == [available] }) else {
             reject("accessible project-card click did not open exactly its project")
@@ -826,7 +837,8 @@ enum WorkspaceUIAcceptance {
         }
         emit("project-cards", scale: scale, fields: [
             "width": Double(first.bounds.width), "height": Double(first.bounds.height),
-            "openVerified": true, "unavailableDisabled": true, "screenshot": name,
+            "openVerified": true, "unavailableDisabled": true, "unavailableContentSeparated": true,
+            "screenshot": name,
         ])
     }
 

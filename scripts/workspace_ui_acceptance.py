@@ -227,6 +227,7 @@ def run_scale(executable, output, scale):
         and abs(cards[0].get("height", 0) - 170.4) <= 1
         and cards[0].get("openVerified") is True
         and cards[0].get("unavailableDisabled") is True
+        and cards[0].get("unavailableContentSeparated") is True
         and len(analysis) == 1
         and analysis[0].get("selectedStart") == 6
         and analysis[0].get("playedPosition", 0) > 6.1
