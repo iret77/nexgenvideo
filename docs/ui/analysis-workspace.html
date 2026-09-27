@@ -8,6 +8,8 @@ button{background:#30343b;color:white;border:1px solid #626772;border-radius:6px
 .band .selected{background:#5a4634;outline:2px solid white;outline-offset:-2px}
 .beats{height:48px;background:repeating-linear-gradient(90deg,transparent 0 23px,#aaa 23px 24px)}
 .ruler{display:flex;justify-content:space-between;color:#aaa}.selected-row{background:#30343b;padding:12px}
+button:disabled{opacity:.35;cursor:default}
+.time-lanes{position:relative}.time-lanes p,.ruler span{position:relative;background:#1e2126}.playhead{position:absolute;left:25%;top:0;bottom:0;border-left:2px solid #f4f6fa;pointer-events:none}
 </style>
 <section id="spec"><h1>Analysis timeline and structure selection</h1>
 <p>The assigned song supplies one shared time axis. Zoom changes the display scale only.
@@ -29,16 +31,16 @@ story development remains the independent acceptance sequence. Media-library imp
 intake. Beatless and unresolved measurements retain their existing explicit status.</p>
 <p>Waveform and energy share the beat timeline's horizontal scrolling and zoom. Waveform uses
 existing source extraction only after the assigned project-local song matches the analysis path and
-SHA-256. RMS energy uses recorded normalized samples without inventing missing measurements.
+SHA-256; cached waveform samples use that same source digest. RMS energy uses recorded normalized samples without inventing missing measurements.
 Missing or invalid layers show an explicit unavailable state. Energy remains visible for beatless
 tracks. Additional evidence layers must use declared actual measurements.</p></section>
-<article><h2>Measured structure</h2><button>Zoom: 2×</button> <button>Fit</button>
+<article><h2>Measured structure</h2><button>Zoom: 1×</button> <button>Fit</button>
 <p><button>Play</button> <input type="range" aria-label="Listening position" min="0" max="120" value="30"> 0:30.000</p>
-<div class="band"><span style="width:25%">Intro</span><span class="selected" style="width:75%">Verse</span></div>
+<div class="time-lanes"><div class="playhead" aria-label="Playhead at 30 seconds"></div><div class="band"><span style="width:25%">Intro</span><span class="selected" style="width:75%">Verse</span></div>
 <div class="beats"></div><div class="ruler"><span>0:00</span><span>0:30</span><span>1:00</span><span>1:30</span><span>2:00</span></div>
 <p>Source waveform · amplitude envelope</p>
-<svg viewBox="0 0 1000 70" width="100%" height="70" role="img" aria-label="Illustrative waveform"><path d="M0 35 L100 28 L200 4 L300 20 L400 8 L500 25 L600 5 L700 23 L800 8 L900 26 L1000 35 L900 44 L800 62 L700 47 L600 65 L500 45 L400 62 L300 50 L200 66 L100 42 Z" fill="#929aa8"/></svg>
+<svg preserveAspectRatio="none" viewBox="0 0 1000 70" width="100%" height="70" role="img" aria-label="Illustrative waveform"><path d="M0 35 L100 28 L200 4 L300 20 L400 8 L500 25 L600 5 L700 23 L800 8 L900 26 L1000 35 L900 44 L800 62 L700 47 L600 65 L500 45 L400 62 L300 50 L200 66 L100 42 Z" fill="#929aa8"/></svg>
 <p>Measured energy · normalized RMS</p>
-<svg viewBox="0 0 1000 70" width="100%" height="70" role="img" aria-label="Illustrative measured energy"><path d="M0 60 L100 50 L200 12 L300 40 L400 20 L500 40 L600 10 L700 30 L800 20 L900 50 L1000 60" fill="none" stroke="#e6ad45" stroke-width="2"/></svg>
-<p>Verse · 0:30.000 – 2:00.000</p><p>Intro · 0:00.000 – 0:30.000</p>
+<svg preserveAspectRatio="none" viewBox="0 0 1000 70" width="100%" height="70" role="img" aria-label="Illustrative measured energy"><path d="M0 60 L100 50 L200 12 L300 40 L400 20 L500 40 L600 10 L700 30 L800 20 L900 50 L1000 60" fill="none" stroke="#e6ad45" stroke-width="2"/></svg>
+</div><p>Verse · 0:30.000 – 2:00.000</p><p>Intro · 0:00.000 – 0:30.000</p>
 <p class="selected-row">Verse · 0:30.000 – 2:00.000</p><p>Current phase: Audio Analysis · <button>Open Current Controls</button> <button disabled>Approve</button></p><small>Illustrative fixture; not native runtime evidence.</small></article></html>
