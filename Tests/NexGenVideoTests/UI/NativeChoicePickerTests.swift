@@ -107,4 +107,26 @@ struct NativeChoicePickerTests {
         #expect(button.intrinsicContentSize.height == AppTheme.ComponentSize.choicePickerHeight * 1.5)
         #expect(button.font?.pointSize == AppTheme.Typography.ui * 1.5)
     }
+
+    @Test func disabledPlaceholderRemainsVisibleButCannotMutateSelection() {
+        var selected = ""
+        let coordinator = NativeChoicePicker.Coordinator(selection: Binding(
+            get: { selected }, set: { selected = $0 }
+        ))
+        let button = ChoicePopUpButton(frame: .zero, pullsDown: false)
+        let options: [NativeChoicePicker.Option] = [
+            .init(id: "", title: "Normal (Unsupported Mode)", isEnabled: false),
+            .init(id: "normal", title: "Normal"),
+        ]
+        button.configure(label: "Blend Mode", options: options, selection: "", enabled: true, scale: 1)
+        #expect(button.selectedItem?.title == "Normal (Unsupported Mode)")
+        #expect(button.item(at: 0)?.isEnabled == false)
+        #expect(button.item(at: 1)?.isEnabled == true)
+        button.selectItem(at: 1)
+        coordinator.choose(button)
+        #expect(selected == "normal")
+        button.selectItem(at: 0)
+        coordinator.choose(button)
+        #expect(selected == "normal")
+    }
 }

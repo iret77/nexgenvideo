@@ -6,6 +6,7 @@ struct NativeChoicePicker: NSViewRepresentable {
         let id: String
         let title: String
         var help: String? = nil
+        var isEnabled: Bool = true
     }
 
     let label: String
@@ -43,6 +44,7 @@ struct NativeChoicePicker: NSViewRepresentable {
 
         @objc func choose(_ sender: ChoicePopUpButton) {
             guard sender.isEnabled,
+                  sender.selectedItem?.isEnabled == true,
                   let id = sender.selectedItem?.representedObject as? String else { return }
             selection.wrappedValue = id
         }
@@ -87,6 +89,7 @@ final class ChoicePopUpButton: NSPopUpButton {
                 let item = NSMenuItem(title: option.title, action: nil, keyEquivalent: "")
                 item.representedObject = option.id
                 item.toolTip = option.help ?? option.title
+                item.isEnabled = option.isEnabled
                 menu.addItem(item)
             }
             self.menu = menu

@@ -241,7 +241,7 @@ enum PipelineDeliveryStore {
             colorSpace: "rec709-sdr",
             hdr: false,
             audioLayout: hasAudio ? "present" : "none",
-            captionMode: TextLayerController.hasVisibleText(in: timeline)
+            captionMode: TextLayerStyle.hasVisibleText(in: timeline)
                 ? "burned-in" : "none",
             disclosureMode: "project-record",
             requirements: [

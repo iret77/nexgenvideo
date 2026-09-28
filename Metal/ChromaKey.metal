@@ -2,7 +2,7 @@
 using namespace metal;
 
 // Chroma key: pixels near `keyHue` (and saturated enough) become transparent, with a soft edge.
-// `spill` desaturates the leftover key tint on partially-keyed edges. Unpremultiplied I/O.
+// Apply the matte to RGB as well as alpha to preserve premultiplied compositing.
 extern "C" float4 chromaKey(coreimage::sample_t s, float keyHue, float tolerance,
                             float softness, float spill) {
     float3 rgb = s.rgb;
@@ -24,5 +24,5 @@ extern "C" float4 chromaKey(coreimage::sample_t s, float keyHue, float tolerance
               * smoothstep(0.12, 0.32, sat);                 // near key hue AND saturated
     float y = dot(rgb, float3(0.2126, 0.7152, 0.0722));
     rgb = mix(rgb, float3(y), spill * key);                  // kill spill on the edges
-    return float4(rgb, s.a * (1.0 - key));
+    return float4(rgb, s.a) * (1.0 - key);
 }

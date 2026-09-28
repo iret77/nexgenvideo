@@ -533,8 +533,8 @@ final class ToolExecutor {
     func withUndoGroup<T>(_ editor: EditorViewModel, actionName: String, _ work: () throws -> T) rethrows -> T {
         editor.undoManager?.beginUndoGrouping()
         defer {
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName(actionName)
+            editor.undoManager?.endUndoGrouping()
         }
         return try work()
     }

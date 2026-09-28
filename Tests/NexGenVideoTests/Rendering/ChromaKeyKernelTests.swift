@@ -35,10 +35,26 @@ struct ChromaKeyKernelTests {
         #expect(alpha(0.1, 0.8, 0.15, tolerance: 0) > 0.95, "no key with zero tolerance")
     }
 
+    @Test(arguments: [0.25, 1.0])
+    func softMatteAttenuatesRGBAndExistingAlphaTogether(sourceAlpha: Double) {
+        let rgb = [0.45, 0.6, 0.45]
+        let source = CIImage(color: CIColor(red: rgb[0], green: rgb[1], blue: rgb[2], alpha: sourceAlpha))
+            .cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+        let keyed = ChromaKeyKernel.apply(source, keyHue: 1.0 / 3, tolerance: 0.3, softness: 0.5, spill: 0)
+        var pixel = [Float](repeating: 0, count: 4)
+        ctx.render(keyed, toBitmap: &pixel, rowBytes: 16,
+                   bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        #expect(Double(pixel[3]) > sourceAlpha * 0.1)
+        #expect(Double(pixel[3]) < sourceAlpha * 0.5)
+        for channel in 0..<3 {
+            #expect(abs(Double(pixel[channel]) - rgb[channel] * Double(pixel[3])) < 0.001)
+        }
+    }
+
     @Test func spillDesaturatesEdges() {
         // A green-tinted edge pixel (partial key) loses its green cast with spill on.
-        let off = ChromaKeyKernel.apply(solid(0.4, 0.6, 0.42), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 0)
-        let on = ChromaKeyKernel.apply(solid(0.4, 0.6, 0.42), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 1)
+        let off = ChromaKeyKernel.apply(solid(0.45, 0.6, 0.45), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 0)
+        let on = ChromaKeyKernel.apply(solid(0.45, 0.6, 0.45), keyHue: 0.333, tolerance: 0.3, softness: 0.5, spill: 1)
         func g(_ i: CIImage) -> Double {
             var px = [Float](repeating: 0, count: 4)
             ctx.render(i, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
