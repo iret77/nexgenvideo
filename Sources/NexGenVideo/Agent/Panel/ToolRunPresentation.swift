@@ -40,7 +40,7 @@ enum ToolRunPresentation {
         "split_clip": "Splitting a clip",
         "ripple_delete_ranges": "Closing gaps in the cut",
         "remove_words": "Cutting words from speech",
-        "sync_audio": "Syncing audio",
+        "sync_audio": "Synchronizing clips",
         "undo": "Undoing the last edit",
         "add_texts": "Adding titles",
         "add_captions": "Adding captions",
