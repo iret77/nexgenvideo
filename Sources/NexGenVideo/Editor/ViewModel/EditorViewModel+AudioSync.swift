@@ -164,6 +164,7 @@ extension EditorViewModel {
         let refClip = timeline.tracks[refLocation.trackIndex].clips[refLocation.clipIndex]
         let refUnitKey = refClip.linkGroupId ?? refClip.id
 
+
         func liveClip(_ id: String) -> Clip? {
             findClip(id: id).map { timeline.tracks[$0.trackIndex].clips[$0.clipIndex] }
         }
@@ -356,6 +357,7 @@ extension EditorViewModel {
                     minOverlapHops: minOverlap,
                     maxDriftPPM: maxDriftPPM
                 )
+
             }.value
 
             var dateAssessment: AudioSyncCorrelator.Assessment?

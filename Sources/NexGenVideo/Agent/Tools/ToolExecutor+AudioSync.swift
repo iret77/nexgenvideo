@@ -13,6 +13,7 @@ extension ToolExecutor {
         if let single = args.string("targetClipId") { targets.append(single) }
         guard !targets.isEmpty else {
             throw ToolError("sync_audio: provide targetClipId or targetClipIds.")
+
         }
 
         let searchWindow = args.double("searchWindowSeconds")
