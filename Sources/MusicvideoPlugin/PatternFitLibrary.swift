@@ -13,7 +13,7 @@ public enum PatternFitError: Swift.Error, Sendable, Equatable {
     case noProjectInput
 }
 
-/// Loads valid authored profiles while keeping invalid profiles visible as defects.
+/// Loads valid authored profiles while keeping invalid profiles and pattern content visible as defects.
 public enum PatternFitLibrary {
     /// Decode the committed scoring policy from the bundled resource. Weights are
     /// never hardcoded — they come from here.
@@ -43,7 +43,7 @@ public enum PatternFitLibrary {
         /// Patterns with no profile yet. Authoring one is expensive, so this is the normal state,
         /// not a gap to apologise for.
         public var unscored: [String]
-        /// Present-but-broken profiles. A real defect.
+        /// Present-but-broken profiles or current-schema content. A real pack defect.
         public var invalid: [String: [String]]
         public var total: Int { scored.count + unscored.count + invalid.count }
     }
@@ -53,30 +53,49 @@ public enum PatternFitLibrary {
         let name: String
         let profile: PatternFitProfile?
         let profileDecodeIssue: String?
+        let contentIssues: [String]
 
-        private enum CodingKeys: String, CodingKey {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
             case id, name, description, references
             case fitProfile = "fit_profile"
             case sectionArc = "section_arc"
             case framingMix = "framing_mix"
             case aslRange = "asl_range"
-            case cameraVocabulary = "camera_vocabulary"
-            case lightingSignature = "lighting_signature"
-            case approximationBasis = "approximation_basis"
+            case camera
+            case lighting
+            case color
+            case craftSignature = "craft_signature"
         }
 
         init(from decoder: Decoder) throws {
+            let allFields = try decoder.container(keyedBy: PatternCodingKey.self)
+            let allowed = Set(CodingKeys.allCases.map(\.rawValue))
+            let unknown = allFields.allKeys.map(\.stringValue).filter { !allowed.contains($0) }.sorted()
+            var schemaIssues = unknown.isEmpty
+                ? []
+                : ["pattern schema has unknown fields: \(unknown.joined(separator: ", "))"]
             let container = try decoder.container(keyedBy: CodingKeys.self)
             id = try container.decode(String.self, forKey: .id)
             name = try container.decode(String.self, forKey: .name)
-            _ = try container.decode(String.self, forKey: .description)
-            _ = try container.decode([PatternReference].self, forKey: .references)
-            _ = try container.decode([SectionArcStep].self, forKey: .sectionArc)
-            _ = try container.decode(FramingMix.self, forKey: .framingMix)
-            _ = try container.decode(AslRange.self, forKey: .aslRange)
-            _ = try container.decode([String].self, forKey: .cameraVocabulary)
-            _ = try container.decode(String.self, forKey: .lightingSignature)
-            _ = try container.decode(String.self, forKey: .approximationBasis)
+            do {
+                let pattern = Pattern(
+                    id: id,
+                    name: name,
+                    description: try container.decode(String.self, forKey: .description),
+                    references: try container.decode([PatternReference].self, forKey: .references),
+                    sectionArc: try container.decode([SectionArcStep].self, forKey: .sectionArc),
+                    framingMix: try container.decode(FramingMix.self, forKey: .framingMix),
+                    aslRange: try container.decode(AslRange.self, forKey: .aslRange),
+                    camera: try container.decode(PatternCamera.self, forKey: .camera),
+                    lighting: try container.decode(PatternLighting.self, forKey: .lighting),
+                    color: try container.decode(PatternColor.self, forKey: .color),
+                    craftSignature: try container.decode([PatternCraftTechnique].self, forKey: .craftSignature)
+                )
+                schemaIssues.append(contentsOf: PatternSchemaValidator.validate(pattern))
+            } catch {
+                schemaIssues.append("pattern schema decode failed: \(String(describing: error))")
+            }
+            contentIssues = schemaIssues
 
             if !container.contains(.fitProfile) {
                 profile = nil
@@ -108,15 +127,17 @@ public enum PatternFitLibrary {
         for url in PackKnowledge.patternLibraryURLs().sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let yaml = try String(contentsOf: url, encoding: .utf8)
             let pattern = try recommendationRecord(yaml: yaml, fileName: url.lastPathComponent)
-            if let issue = pattern.profileDecodeIssue {
-                invalid[pattern.id] = [issue]
-                continue
-            }
+            var issues = pattern.contentIssues
+            if let issue = pattern.profileDecodeIssue { issues.append(issue) }
             guard let profile = pattern.profile else {
-                unscored.append(pattern.id)
+                if issues.isEmpty {
+                    unscored.append(pattern.id)
+                } else {
+                    invalid[pattern.id] = issues.sorted()
+                }
                 continue
             }
-            let issues = validate(profile, expectedId: pattern.id)
+            issues.append(contentsOf: validate(profile, expectedId: pattern.id))
             if issues.isEmpty {
                 recommendable.append((profile, pattern.name))
                 scored.append(pattern.id)
@@ -131,10 +152,16 @@ public enum PatternFitLibrary {
     static func recommendationRecord(
         yaml: String,
         fileName: String
-    ) throws -> (id: String, name: String, profile: PatternFitProfile?, profileDecodeIssue: String?) {
+    ) throws -> (
+        id: String,
+        name: String,
+        profile: PatternFitProfile?,
+        profileDecodeIssue: String?,
+        contentIssues: [String]
+    ) {
         do {
             let record = try YAMLCoding.decode(RecommendationRecord.self, from: yaml)
-            return (record.id, record.name, record.profile, record.profileDecodeIssue)
+            return (record.id, record.name, record.profile, record.profileDecodeIssue, record.contentIssues)
         } catch {
             throw PatternLibraryError.decodingFailed(file: fileName, underlying: String(describing: error))
         }

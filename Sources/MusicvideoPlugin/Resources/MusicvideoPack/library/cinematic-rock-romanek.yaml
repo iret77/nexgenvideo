@@ -64,25 +64,47 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"
 
 asl_range:
   min_s: 2.0
   max_s: 8.0
   typical_s: 4.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"
 
-camera_vocabulary:
-  - "static hold"
-  - "slow push-in"
-  - "vertical crane"
-  - "controlled slow-mo"
+camera:
+  vocabulary:
+    - "static hold"
+    - "slow push-in"
+    - "vertical crane"
+    - "controlled slow-mo"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"
 
-lighting_signature: |
-  high-contrast key with deep shadows, often black-and-white or
-  desaturated grade; single hard light source; symbolic motivated
-  practicals.
+lighting:
+  description: |
+    high-contrast key with deep shadows, often black-and-white or
+    desaturated grade; single hard light source; symbolic motivated
+    practicals.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, lafilm.edu and Indigo Productions
-  sources describing Romanek's "four-minute panic attack" approach and
-  Sigismondi's gothic visceral aesthetic. Specific ASL varies per
-  video.
+color:
+  description: "Black-and-white or a restrained desaturated grade."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"
+
+craft_signature:
+  - technique: "Single hard key"
+    directive: "Use one hard motivated key, deep shadows, symbolic practicals, and black-and-white or desaturated grading."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Mark_Romanek"

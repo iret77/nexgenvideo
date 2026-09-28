@@ -96,15 +96,19 @@ What you derive from it:
 - **`framing_mix`** — target distribution of framings ACROSS THE WHOLE
   SHOTLIST. You do NOT have to hit this distribution per section — but
   the shotlist total should approach the pattern. Sanity check
-  `PATTERN_DRIFT` warns at >25 pp deviation per slot.
+  `PATTERN_DRIFT` warns at >25 pp deviation per slot. State its `basis`
+  accurately; the migrated library values are inferred, not measured.
 - **`asl_range`** — an editorial reference for the pattern. The injected
   core production profile and the approved atomic story action remain
-  authoritative for generated-shot duration.
-- **`camera_vocabulary`** — preferred movement language. Choose camera
+  authoritative for generated-shot duration. `PATTERN_DRIFT` reports when
+  the planned mean falls outside the range.
+- **`camera.vocabulary`** — preferred movement language. Choose camera
   setups (height/angle/lens) freely, but derive movement descriptions
   from this vocabulary.
-- **`lighting_signature`** — lighting shorthand. Adopted by the bible
-  build and the frame builder.
+- **`lighting` / `color`** — sourced look directives. Carry them into the
+  Bible and production design; `compile_prompt` injects them at render time.
+- **`craft_signature`** — citable techniques. Apply each technique only to
+  its declared `pipeline_levers`; do not claim an inferred technique was measured.
 
 **Pattern deviation is allowed:** if a section dramaturgically demands
 a different route, deviate deliberately and note it in the section

@@ -1,8 +1,8 @@
 import Foundation
 import NexGenEngine
 
-/// PATTERN_DRIFT — the "Spiegel" that measures the shotlist's real framing distribution against the
-/// chosen director pattern's target `framing_mix`. Without it, choosing a pattern is lip service; this
+/// PATTERN_DRIFT measures the shotlist's framing distribution and average shot length against the
+/// chosen director pattern. Without it, choosing a pattern is lip service; this
 /// makes "chosen" into "executed". Port of `sanity/checks/pattern_drift.py` (Block 7m, section-aware
 /// v0.13.0). Fixes the mechanism half of the pattern regression (#185): the ported pattern data now has
 /// a live consumer.
@@ -41,20 +41,17 @@ extension MusicvideoChecks {
         }
         if briefPattern == nil && sectionOverrides.isEmpty { return out }
 
-        // Bucket framings by section.
-        var sectionShots: [String: [Framing]] = [:]
+        var sectionShots: [String: [Shot]] = [:]
         for shot in ctx.shotlist.shots {
-            guard let framing = shot.framing else { continue }
-            sectionShots[shot.section ?? "_unsectioned", default: []].append(framing)
+            sectionShots[shot.section ?? "_unsectioned", default: []].append(shot)
         }
         let sectionsWithOverride = Set(sectionOverrides.keys)
 
         // Section-specific checks (v0.13.0).
-        for (sectionId, framings) in sectionShots.sorted(by: { $0.key < $1.key }) {
-            guard sectionsWithOverride.contains(sectionId), framings.count >= minShotsForDrift,
+        for (sectionId, shots) in sectionShots.sorted(by: { $0.key < $1.key }) {
+            guard sectionsWithOverride.contains(sectionId), shots.count >= minShotsForDrift,
                 let sectionPattern = pattern(id: sectionOverrides[sectionId]) else { continue }
-            if let finding = driftFinding(sectionPattern, real: realDistribution(framings),
-                                          scope: "Section \"\(sectionId)\"") {
+            if let finding = driftFinding(sectionPattern, shots: shots, scope: "Section \"\(sectionId)\"") {
                 out.append(finding)
             }
         }
@@ -64,7 +61,7 @@ extension MusicvideoChecks {
             let leftover = sectionShots.filter { !sectionsWithOverride.contains($0.key) }.flatMap(\.value)
             if leftover.count >= minShotsForDrift {
                 let scope = sectionsWithOverride.isEmpty ? "Project" : "Project (sections without override)"
-                if let finding = driftFinding(briefPattern, real: realDistribution(leftover), scope: scope) {
+                if let finding = driftFinding(briefPattern, shots: leftover, scope: scope) {
                     out.append(finding)
                 }
             }
@@ -85,9 +82,10 @@ extension MusicvideoChecks {
         return out
     }
 
-    /// Compare real vs the pattern's target mix; warn when any framing slot drifts beyond tolerance.
+    /// Compare the plan with the pattern's framing and pacing targets.
     /// Port of `_drift_finding`.
-    private static func driftFinding(_ pattern: Pattern, real: [Framing: Int], scope: String) -> Finding? {
+    private static func driftFinding(_ pattern: Pattern, shots: [Shot], scope: String) -> Finding? {
+        let real = realDistribution(shots.compactMap(\.framing))
         var drifts: [(framing: Framing, target: Int, real: Int, delta: Int)] = []
         for (framing, targetPct) in pattern.framingMix.byFraming() {
             let realPct = real[framing] ?? 0
@@ -96,17 +94,25 @@ extension MusicvideoChecks {
                 drifts.append((framing, targetPct, realPct, delta))
             }
         }
-        guard !drifts.isEmpty else { return nil }
         drifts.sort { abs($0.delta) > abs($1.delta) }
-        let lines = drifts.prefix(3).map {
+        var lines = drifts.prefix(3).map {
             "  \($0.framing.rawValue): real \($0.real)% vs target \($0.target)% "
                 + "(\($0.delta > 0 ? "over" : "under") by \(abs($0.delta)) pp)"
-        }.joined(separator: "\n")
+        }
+        let averageShotLength = shots.map(\.durationS).reduce(0, +) / Double(shots.count)
+        if averageShotLength < pattern.aslRange.minS || averageShotLength > pattern.aslRange.maxS {
+            lines.append(
+                "  average shot length: real \(String(format: "%.2f", averageShotLength))s vs target "
+                    + "\(String(format: "%.2f", pattern.aslRange.minS))–"
+                    + "\(String(format: "%.2f", pattern.aslRange.maxS))s"
+            )
+        }
+        guard !lines.isEmpty else { return nil }
         return Finding(
             level: .warn, code: "PATTERN_DRIFT", shotId: nil,
-            message: "\(scope): pattern \"\(pattern.id)\" (\(pattern.name)) expects a different framing "
-                + "mix than the shotlist delivers. Per-framing drift tolerance \(patternDriftTolerancePP)pp "
-                + "exceeded:\n\(lines)\nFix: revise the storyboard so framing_mix matches the pattern — or set "
+            message: "\(scope): pattern \"\(pattern.id)\" (\(pattern.name)) differs from the shotlist. "
+                + "Framing tolerance is \(patternDriftTolerancePP)pp; ASL must stay inside its cited range:\n"
+                + "\(lines.joined(separator: "\n"))\nFix: revise framing or pacing to match the pattern — or set "
                 + "`pattern_override: <reason>` in brief.notes (project-wide), or a Section.pattern_override "
                 + "(section-specific).")
     }

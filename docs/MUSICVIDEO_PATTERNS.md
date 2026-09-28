@@ -77,6 +77,10 @@ lyric-typography, tiny-desk). Nit: „Khalil" statt korrekt „Kahlil" Joseph.
 - **Nur hebel-gebundene Direktiven** im Schema (R1). Der Wechsel ist ein harter Cutover:
   keine Alt-Felder, Adapter oder parallele Score-Semantik bleiben erhalten.
 
+Die strukturelle Migration übernimmt keine Schätzwerte als Messdaten: bestehende operative
+Bibliothekswerte sind `inferred` und zitieren ihre bisherige Quelle. `measured` bleibt Werten
+vorbehalten, die zusätzlich das tatsächlich vermessene Referenzvideo tragen.
+
 ### 3.2 Mechanismus (echte Wirkung — behebt die Regression, Issue #185)
 
 - **Auswahl:** MCP-Tool `suggest_patterns(brief_context)` → Swift-Scorer → Top-N +

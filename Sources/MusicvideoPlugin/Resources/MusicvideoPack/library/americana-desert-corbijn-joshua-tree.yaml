@@ -62,27 +62,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
 
 asl_range:
   min_s: 3.0
   max_s: 12.0
   typical_s: 5.5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
 
-camera_vocabulary:
-  - "static hold on horizon"
-  - "slow lateral track across landscape"
-  - "drone aerial reveal"
-  - "rack-focus from sand to subject"
-  - "single long crane move"
+camera:
+  vocabulary:
+    - "static hold on horizon"
+    - "slow lateral track across landscape"
+    - "drone aerial reveal"
+    - "rack-focus from sand to subject"
+    - "single long crane move"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
 
-lighting_signature: |
-  natural desert daylight, golden-hour heavy bias, hard shadows
-  with deep contrast, deep blue sky, occasional black-and-white or
-  sepia grade in Corbijn tradition, lens flare on direct sun.
+lighting:
+  description: |
+    natural desert daylight, golden-hour heavy bias, hard shadows
+    with deep contrast, deep blue sky, occasional black-and-white or
+    sepia grade in Corbijn tradition, lens flare on direct sun.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, uDiscoverMusic, Albumism,
-  Secret Tours, Joshua Tree Earth and Sebastian Wintero pages
-  describing Corbijn's Mojave shoots and the broader music-video
-  Joshua-Tree filming tradition. Specific framing_mix derived
-  qualitatively, not Cinemetrics-grade.
+color:
+  description: "Deep blue sky with occasional black-and-white or sepia grading."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
+
+craft_signature:
+  - technique: "Golden-hour desert contrast"
+    directive: "Use golden-hour desert light, hard shadows, deep blue sky, and direct-sun lens flare."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree"

@@ -32,6 +32,7 @@ bible agent and is curated / generated there.
 
 - Gate `brief` approved (check via `get_project_state(project_dir)`).
   `brief.yaml` already contains `visual_medium` and `visual_medium_notes`.
+- If `brief.director_pattern` is set, load it with `get_pattern`.
 - User uploads under `import/` (dirty source material).
 - An existing `production_design/production_design.yaml`, if resuming.
 
@@ -93,6 +94,10 @@ lowercase, underscores. The original stays in `import/` (it's a copy).
 
 Read `brief.yaml` — `visual_medium` and `visual_medium_notes` are
 already set. Check whether the notes still fit after seeing the refs.
+When a director pattern is selected, carry its `lighting`, `color`, and
+`craft_signature` entries whose `pipeline_levers` include `bible_look` or
+`bible_lighting` into the proposal. Keep every `basis` label and source URL
+visible in the rationale; inferred material is a target, not a measurement.
 If the refs show a clear, specific style (e.g. "Studio Ghibli, soft
 morning light, warm earth tones"), propose a more precise wording of
 `visual_medium_notes` to the user via `show_dialog`. If accepted, call

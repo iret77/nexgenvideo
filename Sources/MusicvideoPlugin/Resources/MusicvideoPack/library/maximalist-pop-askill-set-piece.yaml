@@ -59,26 +59,47 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"
 
 asl_range:
   min_s: 1.5
   max_s: 5.0
   typical_s: 2.5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"
 
-camera_vocabulary:
-  - "static hold framing choreography"
-  - "slow circle dolly around performer"
-  - "match-cut on choreographed beat"
-  - "occasional whip pan between performer and detail"
+camera:
+  vocabulary:
+    - "static hold framing choreography"
+    - "slow circle dolly around performer"
+    - "match-cut on choreographed beat"
+    - "occasional whip pan between performer and detail"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"
 
-lighting_signature: |
-  desaturated grey-and-earth-tone palette with single motivated
-  practical, soft side-key with deep shadow detail, grimy set-
-  texture preserved, occasional bold colour-wash for hook moments.
+lighting:
+  description: |
+    desaturated grey-and-earth-tone palette with single motivated
+    practical, soft side-key with deep shadow detail, grimy set-
+    texture preserved, occasional bold colour-wash for hook moments.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, Billboard, Music Network,
-  VideoStatic and Medium analyses describing Askill's Chandelier
-  approach (single dirty apartment, Heffington choreography, Sia +
-  Askill co-direction, Sebastian Wintero DOP). Specific framing_mix
-  derived qualitatively from these descriptions.
+color:
+  description: "Desaturated grey and earth tones interrupted by a bold colour wash at hook moments."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"
+
+craft_signature:
+  - technique: "Grimy motivated side light"
+    directive: "Use one motivated practical, a soft side key, preserved grimy texture, and a bold wash only at hook moments."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Chandelier_(song)"

@@ -480,6 +480,8 @@ struct PromptComposerShotTests {
         ).text
 
         #expect(prompt.contains("fully pre-lit set with constant exposure"))
+        #expect(prompt.contains("stable daylight/practical mix"))
+        #expect(prompt.contains("fixed light field"))
         #expect(!prompt.contains("continuous tracking shot"))
         #expect(!prompt.contains("Steadicam / gimbal long take"))
         #expect(!prompt.contains("synchronized lateral dolly"))
