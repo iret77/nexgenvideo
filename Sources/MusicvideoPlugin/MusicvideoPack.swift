@@ -7,6 +7,7 @@ import NexGenEngine
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
 let musicvideoMinAppVersion = "1.6.0"
 
+
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
 

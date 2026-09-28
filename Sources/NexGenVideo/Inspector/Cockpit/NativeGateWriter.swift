@@ -328,39 +328,11 @@ enum NativeGateWriter {
             order: context.order,
             phase: context.phase
         )
-        try GateGuard.checkApprovable(
+        try PipelineGateEvidenceValidator.requireCurrent(
             phase: context.phase,
             dataRoot: context.dataRoot,
             requirement: context.requirement
         )
-        if context.phase == "production_design" {
-            _ = try ProductionStyleStoreV1.load(dataRoot: context.dataRoot)
-        }
-        if context.phase == "treatment" {
-            _ = try StoryCausalityStoreV1.requireCurrent(dataRoot: context.dataRoot)
-        }
-        if context.phase == "storyboard" {
-            _ = try StoryboardCausalityV1.requireCurrent(dataRoot: context.dataRoot)
-        }
-        if context.phase == "frames" {
-            try FrameObservationStoreV1.requireProjectStyleFrames(dataRoot: context.dataRoot)
-        }
-        if context.phase == "render" {
-            try TakeReview.requireSelected(dataRoot: context.dataRoot, phase: "final")
-        }
-        if context.phase == "shotlist" {
-            try PipelineExecutionPlanWriter.requireCurrent(dataRoot: context.dataRoot)
-            try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
-                dataRoot: context.dataRoot
-            )
-            try PipelineLineageStore.requireCurrent(
-                phase: PipelineExecutionPlanWriter.lineagePhaseID,
-                snapshot: try PipelineExecutionPlanWriter.lineageSnapshot(
-                    dataRoot: context.dataRoot
-                ),
-                dataRoot: context.dataRoot
-            )
-        }
     }
 
     /// Reset `phase` and every following phase to unapproved. Port of `gates.rewind_to` /

@@ -430,6 +430,7 @@ struct MusicvideoPackTests {
         #expect(pack.name == "musicvideo")
         #expect(pack.version == "0.5.9")
         #expect(pack.manifest.minAppVersion == "1.6.0")
+
     }
 
     @Test("pack exposes gallery manifest and a starter")

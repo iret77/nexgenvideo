@@ -19,6 +19,7 @@ struct ProjectStateData: Codable, Sendable, Equatable {
     var legacyGenerations: Int
     var phases: [ProjectPhase]
     var nextPhase: String?
+    var confirmedIdentityRecovery: ConfirmedIdentityRecoveryData?
 
     enum CodingKeys: String, CodingKey {
         case project, mode, phases
@@ -32,6 +33,7 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         case unpricedTransactions = "unpriced_transactions"
         case legacyGenerations = "legacy_generations"
         case nextPhase = "next_phase"
+        case confirmedIdentityRecovery = "confirmed_identity_recovery"
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +51,10 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         legacyGenerations = try c.decodeIfPresent(Int.self, forKey: .legacyGenerations) ?? 0
         phases = try c.decodeIfPresent([ProjectPhase].self, forKey: .phases) ?? []
         nextPhase = try c.decodeIfPresent(String.self, forKey: .nextPhase)
+        confirmedIdentityRecovery = try c.decodeIfPresent(
+            ConfirmedIdentityRecoveryData.self,
+            forKey: .confirmedIdentityRecovery
+        )
     }
 
     /// The phase the project is currently working toward (first not-yet-approved), if any.
@@ -57,12 +63,18 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         return phases.first { !$0.approved }?.phase
     }
 
-    var isComplete: Bool { !phases.isEmpty && phases.allSatisfy(\.approved) }
+    var isComplete: Bool {
+        !phases.isEmpty && phases.allSatisfy(\.approvalCurrent)
+    }
+
+    var currentApprovalCount: Int {
+        phases.filter(\.approvalCurrent).count
+    }
 
     /// Fraction of phases approved, 0…1, for a progress readout.
     var progress: Double {
         guard !phases.isEmpty else { return 0 }
-        return Double(phases.filter(\.approved).count) / Double(phases.count)
+        return Double(currentApprovalCount) / Double(phases.count)
     }
 
     /// True when the budget is exhausted or spending has crossed into the last 10% of the budget.
@@ -84,6 +96,8 @@ struct ProjectStateData: Codable, Sendable, Equatable {
 struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
     var phase: String
     var approved: Bool
+    var approvalCurrent: Bool
+    var approvalBlocker: String?
     var state: String
     var notes: String?
 
@@ -91,13 +105,37 @@ struct ProjectPhase: Codable, Sendable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case phase, approved, state, notes
+        case approvalCurrent = "approval_current"
+        case approvalBlocker = "approval_blocker"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         phase = try c.decodeIfPresent(String.self, forKey: .phase) ?? ""
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved) ?? false
+        approvalCurrent = try c.decodeIfPresent(
+            Bool.self,
+            forKey: .approvalCurrent
+        ) ?? approved
+        approvalBlocker = try c.decodeIfPresent(
+            String.self,
+            forKey: .approvalBlocker
+        )
         state = try c.decodeIfPresent(String.self, forKey: .state) ?? (approved ? "approved" : "pending")
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
+    }
+}
+
+struct ConfirmedIdentityRecoveryData: Codable, Sendable, Equatable {
+    var affectedTargets: [String]
+    var discardedTargets: [String]
+    var eligible: Bool
+    var blocker: String?
+    var action: String
+
+    enum CodingKeys: String, CodingKey {
+        case affectedTargets = "affected_targets"
+        case discardedTargets = "discarded_targets"
+        case eligible, blocker, action
     }
 }

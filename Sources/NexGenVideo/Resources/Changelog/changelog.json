@@ -18,6 +18,13 @@
             "Image generation preserves compiled prompts, exact request options, reference roles, masks and output provenance across approval, rerun and batch restore.",
             "Music Video 0.5.9 routes ordinary sketches, Bible sheets and Frames through Flare and reserves Sunburst for precision work."
           ]
+        },
+        {
+          "heading": "Reliability",
+          "items": [
+            "Confirmed identity references keep creative intake lineage stable while retaining exact source and staged-target hash proofs.",
+            "Affected older projects show outdated approvals and offer an explicit audited provenance recovery without changing gate decisions."
+          ]
         }
       ]
     },
