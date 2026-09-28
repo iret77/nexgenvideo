@@ -69,5 +69,111 @@ struct DeliveryV1Tests {
         }
     }
 
+    @Test("HDR evidence requires independent Main10, HLG, range, and frame proofs")
+    func hdrEvidence() throws {
+        let output = hash("hdr-output")
+        let track = DeliveryHDRTrackQCV1(
+            codec: "hvc1", bitsPerComponent: 10,
+            colorPrimaries: "bt2020", transferFunction: "hlg",
+            yCbCrMatrix: "bt2020-ncl", fullRange: false
+        )
+        let container = DeliveryHDRContainerQCV1(
+            fileType: "mov", sampleEntry: "hvc1", hasHEVCConfiguration: true,
+            profileIDC: 2, lumaBitDepth: 10, chromaBitDepth: 10,
+            colorPrimariesIndex: 9, transferFunctionIndex: 18, matrixIndex: 9,
+            fullRangeFlag: false
+        )
+        let frames = (0..<4).map {
+            DeliveryHDRReferenceFrameQCV1(
+                index: $0, presentationTimeValue: Int64($0 * 15),
+                presentationTimeTimescale: 30, pixelFormat: "x420",
+                lumaMinimumCode: 64, lumaMaximumCode: 721,
+                outOfRangePixelCount: 0, pixelCount: 320 * 180,
+                chromaCbMeanCode: 512, chromaCrMeanCode: 512,
+                pixelSHA256: hash("frame-\($0)")
+            )
+        }
+        let qc = DeliveryHDRQCV1(
+            outputSHA256: output,
+            conversion: "rec709-sdr-reference-white-75-to-bt2020-hlg",
+            track: track,
+            container: container,
+            referenceFrames: frames,
+            passed: true
+        )
+        try DeliveryValidatorV1.validate(hdrQC: qc, outputSHA256: output)
+
+        let relabelled = DeliveryHDRQCV1(
+            outputSHA256: output,
+            conversion: qc.conversion,
+            track: .init(
+                codec: "hvc1", bitsPerComponent: 10,
+                colorPrimaries: "bt2020", transferFunction: "rec709",
+                yCbCrMatrix: "bt2020-ncl", fullRange: false
+            ),
+            container: container,
+            referenceFrames: frames,
+            passed: true
+        )
+        #expect(throws: DeliveryValidationErrorV1.self) {
+            try DeliveryValidatorV1.validate(hdrQC: relabelled, outputSHA256: output)
+        }
+
+        let illegalRange = DeliveryHDRQCV1(
+            outputSHA256: output,
+            conversion: qc.conversion,
+            track: track,
+            container: container,
+            referenceFrames: [
+                .init(
+                    index: 0, presentationTimeValue: 0,
+                    presentationTimeTimescale: 30, pixelFormat: "x420",
+                    lumaMinimumCode: 0, lumaMaximumCode: 1_023,
+                    outOfRangePixelCount: 100, pixelCount: 320 * 180,
+                    chromaCbMeanCode: 512, chromaCrMeanCode: 512,
+                    pixelSHA256: hash("bad-frame")
+                ),
+            ] + Array(frames.dropFirst()),
+            passed: true
+        )
+        #expect(throws: DeliveryValidationErrorV1.self) {
+            try DeliveryValidatorV1.validate(hdrQC: illegalRange, outputSHA256: output)
+        }
+        let failures = DeliveryValidatorV1.hdrValidationFailures(
+            hdrQC: illegalRange,
+            outputSHA256: output
+        )
+        #expect(failures.contains(
+            "reference_frames[0].luma_minimum_code expected >= 60 measured 0"
+        ))
+        #expect(failures.contains(
+            "reference_frames[0].luma_maximum_code expected <= 944 measured 1023"
+        ))
+
+        var peakFrames = frames
+        peakFrames[2] = .init(
+            index: 2, presentationTimeValue: 30,
+            presentationTimeTimescale: 30, pixelFormat: "x420",
+            lumaMinimumCode: 64, lumaMaximumCode: 900,
+            outOfRangePixelCount: 0, pixelCount: 320 * 180,
+            chromaCbMeanCode: 512, chromaCrMeanCode: 512,
+            pixelSHA256: hash("peak-frame")
+        )
+        let inventedHighlights = DeliveryHDRQCV1(
+            outputSHA256: output,
+            conversion: qc.conversion,
+            track: track,
+            container: container,
+            referenceFrames: peakFrames,
+            passed: true
+        )
+        #expect(throws: DeliveryValidationErrorV1.self) {
+            try DeliveryValidatorV1.validate(
+                hdrQC: inventedHighlights,
+                outputSHA256: output
+            )
+        }
+    }
+
     private func hash(_ value: String) -> String { FileDigest.sha256(of: Data(value.utf8)) }
 }

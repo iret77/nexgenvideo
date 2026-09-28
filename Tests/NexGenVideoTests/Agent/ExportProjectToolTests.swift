@@ -17,6 +17,7 @@ struct ExportProjectToolTests {
             (["mode": "xml", "codec": "H.264", "outputPath": "/tmp/out.xml"], "codec only applies"),
             (["outputPath": "relative.mp4"], "absolute"),
             (["outputPath": "/tmp/out.mov", "codec": "H.264"], ".mp4"),
+            (["outputPath": "/tmp/out.mp4", "codec": "HEVC Main10 HDR (HLG)"], ".mov"),
         ]
 
         for (args, message) in cases {
