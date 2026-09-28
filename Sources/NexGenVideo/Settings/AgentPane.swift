@@ -187,12 +187,10 @@ struct AgentPane: View {
             SettingsCard {
                 SettingsRow(
                     title: "Run agent with",
-                    subtitle: backend == .claudeCode
-                        ? "Uses your signed-in Claude subscription."
-                        : "Uses your Anthropic API account."
+                    subtitle: runtimeSubtitle
                 ) {
                     Picker("Agent runtime", selection: $backend) {
-                        ForEach(AgentBackend.allCases) { option in
+                        ForEach(AgentBackend.selectableCases) { option in
                             Text(option.displayName).tag(option)
                         }
                     }
@@ -209,10 +207,40 @@ struct AgentPane: View {
                 SettingsDivider()
                 if backend == .claudeCode {
                     claudeCodeConfiguration
+                } else if backend == .codexAppServer {
+                    codexConfiguration
                 } else {
                     anthropicConfiguration
                 }
             }
+        }
+    }
+
+    private var runtimeSubtitle: String {
+        switch backend {
+        case .claudeCode:
+            "Uses your signed-in Claude subscription."
+        case .anthropicAPI:
+            "Uses your Anthropic API account."
+        case .codexAppServer:
+            "Uses an isolated Codex account."
+        }
+    }
+
+    private var codexConfiguration: some View {
+        VStack(spacing: AppTheme.Spacing.none) {
+            SettingsRow(
+                title: "Codex App Server \(CodexAppServerContract.cliVersion)",
+                subtitle: "Uses a dedicated credential home and transcript replay. Personal Codex settings and chats are not loaded."
+            ) {
+                SettingsStatusBadge(text: "Incompatible", tone: .warning)
+            }
+            SettingsDivider()
+            SettingsNotice(
+                text: "Codex remains unavailable until configuration isolation, transcript replay, and its model-visible tools pass approved Actions acceptance. Account setup is not available in Settings.",
+                systemImage: "lock.shield",
+                tone: .neutral
+            )
         }
     }
 

@@ -210,5 +210,9 @@ struct AgentBackendPreferenceTests {
         #expect(AgentBackendPreference.selected(in: defaults) == .claudeCode)
         defaults.set(AgentBackend.anthropicAPI.rawValue, forKey: AgentBackendPreference.key)
         #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
+        defaults.removeObject(forKey: AgentBackendPreference.legacyKey)
+        defaults.set(AgentBackend.codexAppServer.rawValue, forKey: AgentBackendPreference.key)
+        #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
+        #expect(!AgentBackend.selectableCases.contains(.codexAppServer))
     }
 }
