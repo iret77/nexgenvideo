@@ -54,6 +54,7 @@ enum XMLExporter {
                 recovery = "Choose another writable location and try again."
             }
             return "Couldn’t export XML to “\(target.lastPathComponent)”. \(recovery)"
+
         }
     }
 
@@ -62,12 +63,19 @@ enum XMLExporter {
         let data = try serializedData(xml, target: outputURL)
         do {
             try data.write(to: outputURL, options: .atomic)
+            guard try Data(contentsOf: outputURL) == data else {
+                throw ExportError.writeFailed(target: outputURL)
+            }
+        } catch let error as ExportError {
+            throw error
+
         } catch {
             throw ExportError.writeFailed(target: outputURL)
         }
     }
 
     static func serializedData(_ xml: String, target: URL, encoding: String.Encoding = .utf8) throws -> Data {
+
         guard let data = xml.data(using: encoding) else {
             throw ExportError.serializationFailed(target: target)
         }
@@ -220,7 +228,7 @@ enum XMLExporter {
 
             var children: [XMLNode] = [
                 leaf("masterclipid", masterclipId(for: clip, isAudio: isAudio)),
-                leaf("name", resolver.displayName(for: clip.mediaRef)),
+                leaf("name", resolver.interchangeFilename(for: clip.mediaRef)),
                 bool("enabled", true),
                 leaf("duration", sourceDuration),
                 rate(fps),

@@ -1,13 +1,15 @@
 import AVFoundation
 
 enum ExportFormat {
-    case h264, h265, prores, hevcMain10HLG, xml
+    case h264, h265, prores, hevcMain10HLG, xml, fcpxml
+
 
     var fileExtension: String {
         switch self {
         case .h264, .h265: "mp4"
         case .prores, .hevcMain10HLG: "mov"
         case .xml: "xml"
+        case .fcpxml: "fcpxml"
         }
     }
 
@@ -15,7 +17,8 @@ enum ExportFormat {
         switch self {
         case .h264, .h265: .mp4
         case .prores, .hevcMain10HLG: .mov
-        case .xml: nil
+        case .xml, .fcpxml: nil
+
         }
     }
 
@@ -58,7 +61,9 @@ enum ExportResolution: String, CaseIterable, Identifiable {
 
 enum ExportMode: String, CaseIterable, Identifiable {
     case video = "Video"
-    case xml = "Timeline (.xml)"
+    case xml = "Premiere XML (.xml)"
+    case fcpxml = "Final Cut Pro XML (.fcpxml)"
+
     case ngvProject = "NexGenVideo Project (.ngv)"
 
     var id: String { rawValue }
@@ -87,13 +92,18 @@ enum VideoCodec: String, CaseIterable, Identifiable {
         case .h265: self = .h265
         case .prores: self = .prores
         case .hevcMain10HLG: self = .hdr
-        case .xml: return nil
+        case .xml, .fcpxml: return nil
+
         }
     }
 }
 
 extension ExportFormat {
     var displayName: String {
-        VideoCodec(exportFormat: self)?.rawValue ?? "XML"
+        switch self {
+        case .xml: "XML"
+        case .fcpxml: "FCPXML"
+        default: VideoCodec(exportFormat: self)?.rawValue ?? "Video"
+        }
     }
 }

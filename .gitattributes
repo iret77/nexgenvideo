@@ -1,2 +1,5 @@
 # Vendored binary frameworks — opaque, never normalize or diff
 Vendor/whisper.xcframework/** binary
+
+# Vendored Apple DTDs — preserve exact source bytes
+"Sources/NexGenVideo/Resources/FCPXML DTDs/*.dtd" -whitespace
