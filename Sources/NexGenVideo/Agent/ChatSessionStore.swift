@@ -11,6 +11,8 @@ struct AgentTask: Codable, Equatable {
     let systemImage: String
     let prompt: String
     var requiresDirection: Bool = false
+    var originContext: String? = nil
+    var replyToMessageID: UUID? = nil
 }
 
 struct ChatSessionDraft: Codable, Equatable {

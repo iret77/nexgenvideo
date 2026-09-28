@@ -2257,11 +2257,31 @@ final class AgentService {
     @discardableResult
     func stageTask(_ task: PendingFunction) -> Bool {
         guard !isStreaming, !isComposerBlocked else { return false }
+        var staged = task
+        if staged.originContext == nil, let editor {
+            let target: String
+            if editor.activePreviewTab == .timeline && editor.selectedClipIds.count > 1 {
+                target = "Task-origin clip IDs: " + editor.selectedClipIds.sorted().joined(separator: ", ")
+            } else {
+                target = editor.inspectedObject.map { "Task-origin object: " + $0.taskTarget }
+                    ?? "No object target was selected."
+            }
+            staged.originContext = Self.selectionHint(editor: editor)
+                .map { $0 + " " + target + " Task-origin timeline frame: \(editor.currentFrame). This is the context captured when the task was chosen; later workspace selections and get_timeline playheads do not replace its target or frame." }
+        }
         editor?.agentPanelVisible = true
-        pendingFunction = task
+        pendingFunction = staged
         recordComposerFocus(true)
         restoreComposerFocus()
         return true
+    }
+
+    @discardableResult
+    func stageReply(to messageID: UUID) -> Bool {
+        guard messages.contains(where: { $0.id == messageID && $0.role == .assistant }) else { return false }
+        return stageTask(PendingFunction(title: "Reply to agent", systemImage: "arrowshape.turn.up.left",
+            prompt: "Answer the agent's preceding message. Treat the supplied text as an answer, not as a new project-change request. Preserve all phase and spending approval requirements.",
+            requiresDirection: true, replyToMessageID: messageID))
     }
 
     func prefillInput(_ text: String) {
@@ -2674,7 +2694,8 @@ final class AgentService {
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
-        allowWhileBlocked: Bool = false
+        allowWhileBlocked: Bool = false,
+        taskContext: String? = nil
     ) -> Bool {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
@@ -2691,7 +2712,8 @@ final class AgentService {
                 trimmed,
                 mentions: mentions,
                 hidden: hidden,
-                presentation: presentation
+                presentation: presentation,
+                taskContext: taskContext
             )
         }
         guard canStream else {
@@ -2705,7 +2727,7 @@ final class AgentService {
         let mentionHint = referencedMentions.isEmpty
             ? nil
             : AgentMentionContext.hint(referencedMentions, editor: editor)
-        let hints = [mentionHint, Self.selectionHint(editor: editor)].compactMap(\.self)
+        let hints = [mentionHint, taskContext ?? Self.selectionHint(editor: editor)].compactMap(\.self)
         let contextHint = hints.isEmpty ? nil : hints.joined(separator: " ")
 
         resolveOrphanToolUses()
@@ -2723,6 +2745,9 @@ final class AgentService {
     @discardableResult
     func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
         guard !isStreaming else { return false }
+        if let replyID = function.replyToMessageID {
+            guard messages.contains(where: { $0.id == replyID && $0.role == .assistant }) else { return false }
+        }
         let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !function.requiresDirection || Self.hasWorkOrderDirection(note, mentions: mentions) else { return false }
         let presentation = AgentUserPresentation(
@@ -2730,8 +2755,20 @@ final class AgentService {
                 attachmentNames: mentions.map(\.displayName), confirmed: true),
             typedText: note.isEmpty ? nil : note
         )
-        return send(text: Self.composedFunctionMessage(prompt: function.prompt, note: note),
-            mentions: mentions, hidden: true, presentation: presentation)
+        let prompt: String
+        if let replyID = function.replyToMessageID,
+           let index = messages.firstIndex(where: { $0.id == replyID }) {
+            let question = messages[index...].filter { $0.role == .assistant }
+                .flatMap(\.blocks).compactMap { block -> String? in
+                    if case .text(let text) = block { return text }
+                    return nil
+                }.joined(separator: "\n")
+            prompt = function.prompt + "\nAgent message being answered:\n" + question
+        } else {
+            prompt = function.prompt
+        }
+        return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
+            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
     }
 
     @discardableResult
@@ -2878,7 +2915,8 @@ final class AgentService {
         _ trimmed: String,
         mentions: [AgentMention],
         hidden: Bool = false,
-        presentation: AgentUserPresentation? = nil
+        presentation: AgentUserPresentation? = nil,
+        taskContext: String? = nil
     ) -> Bool {
         // One turn at a time per chat: the composer disables send while streaming, but programmatic
         // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
@@ -2890,7 +2928,7 @@ final class AgentService {
         let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
         guard !referenced.isEmpty else {
             // No attachments — send synchronously (the selection/plugin context only).
-            let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
+            let context = (taskContext ?? Self.selectionHint(editor: editor)).map { "<app-context>\($0)</app-context>" }
             let started = claudeRuntime.send(
                 text: trimmed,
                 context: context,
@@ -2900,7 +2938,7 @@ final class AgentService {
             checkpointCurrentSession()
             return started
         }
-        let selection = Self.selectionHint(editor: editor)
+        let selection = taskContext ?? Self.selectionHint(editor: editor)
         let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
         let pathNote = Self.mentionPathNote(referenced, editor: editor)
         // Encoding is async: fence the turn to the chat that sent it, so a switch / new-chat / second

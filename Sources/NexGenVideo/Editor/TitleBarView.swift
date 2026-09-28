@@ -28,6 +28,9 @@ struct TitleBarView: View {
 
             HStack(spacing: AppTheme.Spacing.sm) {
                 formatStatus
+                if !WorkspaceUIAcceptance.isRequested && !ChatHangReplay.isRequested {
+                    UpdateBadgeView()
+                }
                 panelButton(
                     systemName: "sidebar.right",
                     label: "Inspector",

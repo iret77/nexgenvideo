@@ -34,7 +34,7 @@ struct AgentDecisionHistoryTests {
         #expect(service.stageTask(task))
         editor.selectMediaAsset(second)
         #expect(task.prompt.contains("media asset ID first-source"))
-        #expect(service.pendingFunction == task)
+        #expect(service.pendingFunction?.prompt == task.prompt)
         #expect(service.pendingFunction?.prompt.contains("second-source") == false)
         #expect(editor.selectedObjectRevisionTask?.prompt.contains("media asset ID second-source") == true)
         #expect(task.requiresDirection)
@@ -64,7 +64,7 @@ struct AgentDecisionHistoryTests {
         let messageIDs = service.messages.map(\.id)
 
         #expect(!service.sendWorkOrder(task, direction: service.draft, mentions: []))
-        #expect(service.pendingFunction == task)
+        #expect(service.pendingFunction?.prompt == task.prompt)
         #expect(service.draft == "  \n ")
         #expect(service.messages.map(\.id) == messageIDs)
     }
@@ -76,7 +76,7 @@ struct AgentDecisionHistoryTests {
         service.draft = "Keep the ending quiet"
         let task = AgentTask(title: "Revise music", systemImage: "music.note", prompt: "Revise timeline music.")
         #expect(service.stageTask(task))
-        #expect(service.pendingFunction == task)
+        #expect(service.pendingFunction?.prompt == task.prompt)
         #expect(service.draft == "Keep the ending quiet")
         #expect(service.messages.isEmpty)
         #expect(!service.isStreaming)
@@ -87,9 +87,55 @@ struct AgentDecisionHistoryTests {
         #expect(!service.stageTask(next))
         #expect(!service.sendWorkOrder(next, direction: "Shorten them", mentions: []))
         #expect(!service.send(controlTurn: .init(command: "Apply the revision")))
-        #expect(service.pendingFunction == task)
+        #expect(service.pendingFunction?.prompt == task.prompt)
         #expect(service.draft == "Keep the ending quiet")
         #expect(service.messages.isEmpty)
+    }
+
+    @Test func stagedTaskPersistsItsOriginAcrossWorkspaceAndSelectionChanges() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        let editor = EditorViewModel(agentService: service)
+        service.loadSessions(from: nil)
+        editor.setWorkspaceFocus(.edit)
+        editor.currentFrame = 42
+        editor.inspectedObject = .clip("original-clip")
+        let task = AgentTask(title: "Revise", systemImage: "pencil", prompt: "Revise this clip.")
+        #expect(service.stageTask(task))
+        let staged = try #require(service.pendingFunction)
+        editor.inspectedObject = .clip("different-clip")
+        editor.currentFrame = 7
+        #expect(staged.originContext?.contains("original-clip") == true)
+        #expect(staged.originContext?.contains("timeline frame: 42") == true)
+        #expect(staged.originContext?.contains("different-clip") == false)
+        let restored = try JSONDecoder().decode(AgentTask.self, from: JSONEncoder().encode(staged))
+        #expect(restored == staged)
+        #expect(service.stageTask(restored))
+        #expect(service.pendingFunction?.originContext == staged.originContext)
+    }
+
+    @Test func replyRemainsBoundToItsConversationAndRequiresAnAnswer() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let question = AgentMessage(role: .assistant, blocks: [.text("Which ending should I use?")])
+        service.messages.append(question)
+        #expect(service.stageReply(to: question.id))
+        let reply = try #require(service.pendingFunction)
+        #expect(reply.replyToMessageID == question.id)
+        #expect(reply.requiresDirection)
+        #expect(!service.sendWorkOrder(reply, direction: "  ", mentions: []))
+        #expect(service.messages.count == 1)
+        service.messages = []
+        #expect(!service.stageReply(to: question.id))
+        #expect(!service.sendWorkOrder(reply, direction: "The quiet ending", mentions: []))
+        #expect(service.messages.isEmpty)
+    }
+
+    @Test func oldTasksDecodeWithoutOriginOrReplyMetadata() throws {
+        let data = Data(#"{"title":"Revise","systemImage":"pencil","prompt":"Revise this","requiresDirection":true}"#.utf8)
+        let task = try JSONDecoder().decode(AgentTask.self, from: data)
+        #expect(task.originContext == nil)
+        #expect(task.replyToMessageID == nil)
+        #expect(task.requiresDirection)
     }
 
 }

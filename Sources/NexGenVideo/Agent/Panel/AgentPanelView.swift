@@ -463,10 +463,12 @@ struct AgentPanelView: View {
     }
 
     private var taskResult: some View {
-        let results = transcriptTurns.last?.items.compactMap { item -> AgentMessage? in
-            guard case .assistantResult(let message) = item else { return nil }
-            return message
-        } ?? []
+        let results = transcriptTurns.reversed().lazy.map { turn in
+            turn.items.compactMap { item -> AgentMessage? in
+                guard case .assistantResult(let message) = item else { return nil }
+                return message
+            }
+        }.first(where: { !$0.isEmpty }) ?? []
         return ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 if !results.isEmpty {
@@ -474,6 +476,11 @@ struct AgentPanelView: View {
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     ForEach(results) { message in
                         AgentMessageView(message: message, toolResults: toolResults)
+                    }
+                    if let message = results.last {
+                        Button("Reply to Agent") { service.stageReply(to: message.id) }
+                            .buttonStyle(.capsule(.secondary, size: .small))
+                            .disabled(service.isStreaming || service.isComposerBlocked)
                     }
                 } else if !service.isStreaming {
                     emptyState
