@@ -309,6 +309,8 @@ final class TimelineView: NSView {
 
         let linkOffsets = editor.linkGroupOffsets()
         let allowsEditChrome = editor.allowsTimelineEditChrome
+        let selectionColor = editor.activePreviewTab == .timeline
+            ? NSColor(editor.projectPalette.accent) : AppTheme.Text.muted
 
         clipDisplayRects.removeAll(keepingCapacity: true)
         for (ti, track) in editor.timeline.tracks.enumerated() {
@@ -329,7 +331,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
 
                     let frameDelta = drag.deltaFrames
@@ -355,7 +358,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
                     continue
                 }
@@ -380,7 +384,8 @@ final class TimelineView: NSView {
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                          allowsEditChrome: allowsEditChrome)
+                                          allowsEditChrome: allowsEditChrome,
+                                          selectionColor: selectionColor)
                     }
                     continue
                 }
@@ -394,7 +399,8 @@ final class TimelineView: NSView {
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
                                   fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
-                                  allowsEditChrome: allowsEditChrome)
+                                  allowsEditChrome: allowsEditChrome,
+                                  selectionColor: selectionColor)
             }
         }
     }
@@ -759,6 +765,8 @@ final class TimelineView: NSView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        editor.focusedPanel = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         let point = convert(event.locationInWindow, from: nil)
         let trackIndex = geometry.trackAt(y: point.y)
         let clickFrame = max(0, geometry.frameAt(x: point.x))
@@ -767,6 +775,11 @@ final class TimelineView: NSView {
             return emptyAreaMenu(trackIndex: trackIndex, frame: clickFrame, clickedRange: clickedRange)
         }
         let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
+        if !editor.selectedClipIds.contains(clip.id) {
+            editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
+            needsDisplay = true
+        }
+        editor.inspectedObject = editor.selectionInspectedObject
         let clipRect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
         let allowsEditChrome = editor.allowsTimelineEditChrome
 
@@ -812,11 +825,6 @@ final class TimelineView: NSView {
             return menu
         }
 
-        if !editor.selectedClipIds.contains(clip.id) {
-            editor.selectedClipIds = editor.expandToLinkGroup([clip.id])
-            needsDisplay = true
-        }
-
         let menu = NSMenu()
         menu.autoenablesItems = false
         let targetClipIds = selectedClipIdsInTimelineOrder()
@@ -828,6 +836,14 @@ final class TimelineView: NSView {
         let copyItem = NSMenuItem(title: "Copy", action: #selector(performCopyClips(_:)), keyEquivalent: "")
         copyItem.target = self
         timelineItems.append(copyItem)
+        if allowsEditChrome {
+            let cutItem = NSMenuItem(title: "Cut", action: #selector(performCutClips(_:)), keyEquivalent: "")
+            cutItem.target = self
+            timelineItems.append(cutItem)
+            let deleteItem = NSMenuItem(title: "Delete Selected Clips", action: #selector(performDeleteClips(_:)), keyEquivalent: "")
+            deleteItem.target = self
+            timelineItems.append(deleteItem)
+        }
         if editor.canPasteClips {
             let pasteItem = NSMenuItem(title: "Paste", action: #selector(performPasteClips(_:)), keyEquivalent: "")
             pasteItem.target = self
@@ -847,7 +863,8 @@ final class TimelineView: NSView {
 
         // AI
         var aiItems: [NSMenuItem] = []
-        let addToChatItem = NSMenuItem(title: "Add to Chat", action: #selector(performAddClipsToChat(_:)), keyEquivalent: "")
+        let addToChatItem = NSMenuItem(title: "Add Clips to Task", action: #selector(performAddClipsToChat(_:)), keyEquivalent: "")
+        addToChatItem.isEnabled = editor.agentService.canAttachTaskReference
         addToChatItem.target = self
         addToChatItem.representedObject = targetClipIds
         aiItems.append(addToChatItem)
@@ -910,7 +927,8 @@ final class TimelineView: NSView {
     }
 
     private func addTimelineRangeItems(to menu: NSMenu) {
-        let addItem = NSMenuItem(title: "Add Range to Chat", action: #selector(performAddTimelineRangeToChat(_:)), keyEquivalent: "")
+        let addItem = NSMenuItem(title: "Add Range to Task", action: #selector(performAddTimelineRangeToChat(_:)), keyEquivalent: "")
+        addItem.isEnabled = editor.agentService.canAttachTaskReference
         addItem.target = self
         menu.addItem(addItem)
 
@@ -955,6 +973,17 @@ final class TimelineView: NSView {
 
     @objc private func performCopyClips(_ sender: Any?) {
         editor.copySelectedClipsToClipboard()
+    }
+
+    @objc private func performCutClips(_ sender: Any?) {
+        editor.cutSelectedClipsToClipboard()
+        needsDisplay = true
+    }
+
+    @objc private func performDeleteClips(_ sender: Any?) {
+        guard editor.allowsTimelineEditChrome else { return }
+        editor.deleteSelectedClips()
+        needsDisplay = true
     }
 
     @objc private func performPasteClips(_ sender: Any?) {
@@ -1033,6 +1062,7 @@ final class TimelineView: NSView {
     // MARK: - Drop target (drag from media panel)
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard editor.allowsTimelineEditChrome else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
         let geo = geometry
         if externalDragAssets == nil, let urlString = sender.draggingPasteboard.string(forType: .string) {
@@ -1048,6 +1078,7 @@ final class TimelineView: NSView {
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard editor.allowsTimelineEditChrome else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
         let geo = geometry
         externalDropTarget = geo.dropTargetAt(y: point.y)
@@ -1093,6 +1124,7 @@ final class TimelineView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard editor.allowsTimelineEditChrome else { return false }
         let geo = geometry
         let point = convert(sender.draggingLocation, from: nil)
         let cursorTarget = geo.dropTargetAt(y: point.y)

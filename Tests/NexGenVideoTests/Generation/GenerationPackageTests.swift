@@ -9,8 +9,17 @@ enum GenerationPackageFixture {
             exchangeRateDate: "2026-09-09", pricingSource: "fixture://pricing", exchangeRateSource: "fixture://exchange")
     }
 
-    static func prepare(editor: EditorViewModel, model: String = "fixture-image") async throws
+    static func prepare(editor: EditorViewModel, model: String = "fixture-image",
+                        preflight: GenerationController.Preflight? = nil) async throws
         -> (GenerationController.PreparedGeneration, GenerationPackageV1) {
+        let generation = try await unreviewed(editor: editor, model: model, preflight: preflight)
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })
+        return (generation, package)
+    }
+
+    static func unreviewed(editor: EditorViewModel, model: String = "fixture-image",
+                           preflight: GenerationController.Preflight? = nil) async throws
+        -> GenerationController.PreparedGeneration {
         let target = ResolvedGenerationTarget(modelId: model, provider: .fal, endpoint: model, binding: nil)
         let request = GenerationRequest(modality: .image, modelId: model, intent: "", aspectRatio: "1:1",
             placement: .mediaLibrary(folderId: nil), origin: .panel, target: target, submission: .image { prompt in
@@ -27,9 +36,7 @@ enum GenerationPackageFixture {
                         ))
                     })
             })
-        let generation = try await GenerationController.prepare(request, editor: editor).get()
-        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: { _, _ in money() })
-        return (generation, package)
+        return try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
     }
 }
 
@@ -72,6 +79,82 @@ struct GenerationPackageTests {
         let tampered = try JSONSerialization.data(withJSONObject: json)
         #expect(throws: (any Error).self) { try JSONDecoder().decode(GenerationPackageV1.self, from: tampered) }
         #expect(try JSONDecoder().decode(GenerationPackageV1.self, from: GenerationPackageV1.canonicalData(package)) == package)
+    }
+
+    @Test func audioReviewRoundTripsWithoutSubmittingOrInventingVisualInputs() async throws {
+        let entry = try #require(FalModelRegistry.entries.first {
+            if case .audio = $0.uiCapabilities { return true }
+            return false
+        })
+        guard case .audio(let caps) = entry.uiCapabilities else { Issue.record("Expected audio fixture"); return }
+        let model = AudioModelConfig(entry: entry, caps: caps)
+        let editor = EditorViewModel()
+        let target = ResolvedGenerationTarget(modelId: model.id, provider: .fal, endpoint: model.id, binding: nil)
+        let request = GenerationRequest(modality: .audio, modelId: model.id, intent: "",
+            durationSeconds: 8, placement: .mediaLibrary(folderId: nil), origin: .panel, target: target,
+            submission: .audio { prompt in
+                .make(genInput: .init(prompt: prompt, model: model.id, duration: 8, aspectRatio: ""), model: model,
+                    params: .init(prompt: prompt, voice: nil, lyrics: "words", styleInstructions: "quiet",
+                        instrumental: false, durationSeconds: 8))
+            })
+        let generation = try await GenerationController.prepare(request, editor: editor).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        #expect(package.payload.modality == "audio")
+        #expect(package.payload.references.isEmpty)
+        #expect(package.payload.outputCount == 1)
+        guard case .audio(let restored) = try package.restoreParameters().parameters else {
+            Issue.record("Expected restored audio parameters"); return
+        }
+        #expect(restored.lyrics == "words")
+        #expect(restored.styleInstructions == "quiet")
+        #expect(restored.durationSeconds == 8)
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func reviewDoesNotOfferChangedInputsBeforeOrDuringPricing() async throws {
+        for changeDuringPricing in [false, true] {
+            let editor = EditorViewModel()
+            var inputsCurrent = true
+            let generation = try await GenerationPackageFixture.unreviewed(editor: editor,
+                preflight: { inputsCurrent ? nil : "Inputs changed" })
+            if !changeDuringPricing { inputsCurrent = false }
+            var quoteCalls = 0
+            await #expect(throws: GenerationRequestError.self) {
+                try await GenerationController.prepareReviewPackage(generation, editor: editor,
+                    quoteLoader: { _, _ in
+                        quoteCalls += 1
+                        inputsCurrent = false
+                        return GenerationPackageFixture.money()
+                    })
+            }
+            #expect(quoteCalls == (changeDuringPricing ? 1 : 0))
+            #expect(generation.reviewedPackage == nil)
+            #expect(editor.mediaAssets.isEmpty)
+            #expect(editor.generationLog.spendEvents.isEmpty)
+            inputsCurrent = true
+            _ = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+                quoteLoader: { _, _ in GenerationPackageFixture.money() })
+            #expect(generation.reviewedPackage != nil)
+            #expect(editor.mediaAssets.isEmpty)
+            #expect(editor.generationLog.spendEvents.isEmpty)
+        }
+    }
+
+    @Test func changingPanelInputsDuringPricingBlocksBeforeDispatch() async throws {
+        let editor = EditorViewModel()
+        var inputsCurrent = true
+        let (generation, _) = try await GenerationPackageFixture.prepare(editor: editor,
+            preflight: { inputsCurrent ? nil : "Inputs changed" })
+        let outcome = await GenerationController.submitPrepared(generation, editor: editor,
+            quoteLoader: { _, _ in
+                inputsCurrent = false
+                return GenerationPackageFixture.money()
+            })
+        guard case .failure = outcome else { Issue.record("Changed inputs must not dispatch"); return }
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
     @Test func aHigherPriceCannotConsumeTheReviewedRequest() async throws {

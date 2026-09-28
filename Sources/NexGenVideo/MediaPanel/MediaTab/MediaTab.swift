@@ -2,30 +2,64 @@ import SwiftUI
 
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
+    let workspace: EditorViewModel.WorkspaceFocus
 
-    // Toolbar state
-    @State var sortMode: SortMode = .dateAdded
-    @State var filterTypes: Set<ClipType> = []
-    @State var filterAI = false
-    @State var searchQuery: String = ""
-    @State var thumbnailSize: Double = 80
-    @State var viewMode: ViewMode = .folder
+    var browserState: MediaBrowserState { editor.mediaBrowserState(for: workspace) }
+    var scrollAssetBinding: Binding<String?> {
+        Binding(get: { browserState.scrollAssetID }, set: { browserState.scrollAssetID = $0 })
+    }
+
+    var sortMode: SortMode {
+        get { browserState.sortMode }
+        nonmutating set { browserState.sortMode = newValue }
+    }
+    var filterTypes: Set<ClipType> {
+        get { browserState.filterTypes }
+        nonmutating set { browserState.filterTypes = newValue }
+    }
+    var filterAI: Bool {
+        get { browserState.filterAI }
+        nonmutating set { browserState.filterAI = newValue }
+    }
+    var searchQuery: String {
+        get { browserState.searchQuery }
+        nonmutating set { browserState.searchQuery = newValue }
+    }
+    var thumbnailSize: Double {
+        get { browserState.thumbnailSize }
+        nonmutating set { browserState.thumbnailSize = newValue }
+    }
+    var viewMode: ViewMode {
+        get { browserState.viewMode }
+        nonmutating set { browserState.viewMode = newValue }
+    }
 
     // Navigation + selection state
-    @State var currentFolderId: String? = nil
-    @State var folderReturnViewMode: ViewMode?
+    var currentFolderId: String? {
+        get { browserState.currentFolderId }
+        nonmutating set { browserState.currentFolderId = newValue }
+    }
+    var folderReturnViewMode: ViewMode? {
+        get { browserState.folderReturnViewMode }
+        nonmutating set { browserState.folderReturnViewMode = newValue }
+    }
     @State var renamingFolderId: String?
     @State var pendingFolderFocusId: String?
     @State var dropTargetFolderId: String?
     /// Hovered grouped-section key; "" = root.
     @State var dropTargetGroupedKey: String?
     /// Collapsed grouped-section keys; "" = root.
-    @State var collapsedGroupedKeys: Set<String> = []
+    var collapsedGroupedKeys: Set<String> {
+        get { browserState.collapsedGroupedKeys }
+        nonmutating set { browserState.collapsedGroupedKeys = newValue }
+    }
 
     // Drop + marquee
     @State var isDropTargeted = false
     @State var visualHits: [VisualSearch.Hit] = []
     @State var spokenHits: [TranscriptSearch.Hit] = []
+    @State var documentSearch = DocumentContentSearch.Result()
+    @State var isSearchingContents = false
     @State var collapsedSearchSections: Set<String> = []
     @State var momentSearchTask: Task<Void, Never>?
     @State var assetFrames: [String: CGRect] = [:]
@@ -33,29 +67,9 @@ struct MediaTab: View {
 
     @State private var mediaPanelHeight: CGFloat = 600
 
-    enum ViewMode: String, CaseIterable {
-        case folder, flat, grouped
+    typealias ViewMode = MediaBrowserViewMode
 
-        var title: String {
-            switch self {
-            case .folder: "Folders"
-            case .flat: "Flat"
-            case .grouped: "Grouped"
-            }
-        }
-
-        var systemImage: String {
-            switch self {
-            case .folder: "folder"
-            case .flat: "square.grid.2x2"
-            case .grouped: "rectangle.split.1x2"
-            }
-        }
-    }
-
-    /// Only media types that can actually appear in the panel. ClipType.text
-    /// exists for timeline clips but is never assigned to a MediaAsset.
-    private static let filterableTypes: [ClipType] = [.video, .audio, .image]
+    private static let filterableTypes: [ClipType] = [.video, .audio, .image, .document, .lottie]
 
     private enum ThumbnailPreset: String, CaseIterable, Identifiable {
         case small, medium, large, xlarge
@@ -70,10 +84,10 @@ struct MediaTab: View {
         }
         var size: Double {
             switch self {
-            case .small: 80
-            case .medium: 110
-            case .large: 150
-            case .xlarge: 200
+            case .small: AppTheme.MediaPanel.thumbnailSmall
+            case .medium: AppTheme.MediaPanel.thumbnailMedium
+            case .large: AppTheme.MediaPanel.thumbnailLarge
+            case .xlarge: AppTheme.MediaPanel.thumbnailXlarge
             }
         }
     }
@@ -103,6 +117,7 @@ struct MediaTab: View {
                             case .folder: mediaGridView
                             case .flat: flatGridView
                             case .grouped: groupedGridView
+                            case .list: mediaListView
                             }
                         }
                     }
@@ -120,9 +135,16 @@ struct MediaTab: View {
             }
             .layoutPriority(1)
             .onChange(of: searchQuery) { _, _ in scheduleMomentSearch() }
+            .onChange(of: filterTypes) { _, _ in scheduleMomentSearch() }
+            .onChange(of: filterAI) { _, _ in scheduleMomentSearch() }
+            .onChange(of: editor.mediaAssets.map(\.id)) { _, _ in scheduleMomentSearch() }
+            .onChange(of: editor.mediaAssets.map(\.url)) { _, _ in scheduleMomentSearch() }
 
             if editor.showGenerationPanel && !mediaAreaCollapsed {
-                GenerationView(maxPanelHeight: generationPanelMaxHeight)
+                GenerationView(
+                    maxPanelHeight: generationPanelMaxHeight,
+                    workspace: workspace
+                )
                     .frame(maxHeight: CGFloat(generationPanelMaxHeight), alignment: .bottom)
                     .tourAnchor(.generation)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -134,24 +156,42 @@ struct MediaTab: View {
             mediaPanelHeight = newValue
         }
         .onExitCommand { if editor.pendingSwapClipId != nil { editor.cancelMediaSwap() } }
-        .background(KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp))
+        .background {
+            if workspace == .media {
+                KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp)
+            }
+        }
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
-        .onChange(of: editor.mediaPanelRevealAssetId) { _, target in
-            guard let target else { return }
+        .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
+            guard workspace == editor.workspaceFocus, let target else { return }
             revealAsset(id: target)
             editor.mediaPanelRevealAssetId = nil
         }
-        .onChange(of: editor.mediaPanelOpenFolderId) { _, target in
-            guard let target else { return }
+        .onChange(of: editor.mediaFolderNavigationRequest, initial: true) { _, request in
+            guard let request, request.workspace == workspace, workspace == editor.workspaceFocus else { return }
+            if let id = request.folderID, editor.folder(id: id) == nil { return }
+            currentFolderId = request.folderID
+            searchQuery = ""
+            if viewMode != .list { viewMode = .folder }
+            editor.mediaFolderNavigationRequest = nil
+        }
+        .onChange(of: editor.mediaPanelOpenFolderId, initial: true) { _, target in
+            guard workspace == editor.workspaceFocus, let target else { return }
             openFolder(id: target)
             editor.mediaPanelOpenFolderId = nil
         }
         .onChange(of: editor.mediaPanelPasteRequestTick) { _, _ in
+            guard workspace == editor.workspaceFocus else { return }
             handleClipboardPaste()
         }
         .onChange(of: currentFolderId, initial: true) { _, folderId in
-            editor.mediaPanelCurrentFolderId = folderId
+            editor.publishMediaPanelFolder(folderId, for: workspace)
         }
+        .onAppear {
+            editor.publishMediaPanelFolder(currentFolderId, for: workspace)
+            scheduleMomentSearch()
+        }
+        .onDisappear { momentSearchTask?.cancel() }
     }
 
     private var swapBanner: some View {
@@ -224,11 +264,11 @@ struct MediaTab: View {
 
     private func revealAsset(id: String) {
         guard let asset = editor.mediaAssets.first(where: { $0.id == id }) else { return }
-        if !passesFilters(asset) {
+        if sortAndFilter([asset]).isEmpty {
             clearFilters()
             searchQuery = ""
         }
-        if viewMode == .folder, currentFolderId != asset.folderId {
+        if (viewMode == .folder || viewMode == .list), currentFolderId != asset.folderId {
             currentFolderId = asset.folderId
         }
         // Auto-expand the asset's grouped section so the scroll target exists.
@@ -270,7 +310,15 @@ struct MediaTab: View {
             toolbarButton(title: "Generate", systemImage: "sparkles", filled: true, accentStyle: AnyShapeStyle(AppTheme.aiGradient), action: toggleGenerationPanel)
                 .tourAnchor(.generateButton)
 
-            overflowMenu
+            if workspace == .media {
+                overflowMenu
+            } else {
+                toolbarButton(title: "Media", systemImage: "folder") {
+                    editor.revealMediaTools()
+                    editor.setWorkspaceFocus(.media)
+                }
+                .help("Organize in Media")
+            }
 
             Spacer(minLength: 0)
 
@@ -350,9 +398,9 @@ struct MediaTab: View {
 
     @ViewBuilder
     private var displayControls: some View {
-        toolbarMenuIcon(systemName: "rectangle.grid.2x2") {
+        toolbarMenuIcon(systemName: "rectangle.grid.2x2", title: "View") {
             Section("View") {
-                ForEach(ViewMode.allCases, id: \.self) { mode in
+                ForEach(ViewMode.allCases.filter { workspace == .media || $0 == .flat || $0 == .list }, id: \.self) { mode in
                     Button {
                         setViewMode(mode)
                     } label: {
@@ -372,7 +420,7 @@ struct MediaTab: View {
             }
         }
 
-        toolbarMenuIcon(systemName: "arrow.up.arrow.down") {
+        toolbarMenuIcon(systemName: "arrow.up.arrow.down", title: "Sort") {
             ForEach(SortMode.allCases, id: \.self) { mode in
                 Button {
                     sortMode = mode
@@ -384,6 +432,7 @@ struct MediaTab: View {
 
         toolbarMenuIcon(
             systemName: "line.3.horizontal.decrease",
+            title: "Filter",
             foregroundStyle: hasActiveFilters ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor
         ) {
             ForEach(Self.filterableTypes, id: \.self) { type in
@@ -433,18 +482,7 @@ struct MediaTab: View {
 
     // MARK: - Sort & Filter
 
-    enum SortMode: CaseIterable {
-        case name, dateAdded, duration, type
-
-        var title: String {
-            switch self {
-            case .name: "Name"
-            case .dateAdded: "Date Added"
-            case .duration: "Duration"
-            case .type: "Type"
-            }
-        }
-    }
+    typealias SortMode = MediaLibraryQuery.SortMode
 
     private var hasActiveFilters: Bool {
         !filterTypes.isEmpty || filterAI
@@ -474,26 +512,18 @@ struct MediaTab: View {
         return folders.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
 
-    private func passesFilters(_ asset: MediaAsset) -> Bool {
-        let typeOk = filterTypes.isEmpty || filterTypes.contains(asset.type)
-        let aiOk = !filterAI || asset.isGenerated
-        let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        let nameOk = q.isEmpty || asset.name.localizedCaseInsensitiveContains(q)
-        return typeOk && aiOk && nameOk
-    }
-
     func sortAndFilter(_ assets: [MediaAsset]) -> [MediaAsset] {
-        let filtered = assets.filter(passesFilters)
-        return switch sortMode {
-        case .dateAdded: filtered
-        case .name: filtered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case .duration: filtered.sorted { $0.duration > $1.duration }
-        case .type: filtered.sorted { $0.type.rawValue < $1.type.rawValue }
-        }
+        MediaLibraryQuery(
+            text: searchQuery, types: filterTypes, generatedOnly: filterAI, sort: sortMode
+        ).apply(to: assets)
     }
 
     private var currentFolderItemCount: Int {
-        subfoldersInCurrentFolder.count + assetsInCurrentFolder.count
+        if viewMode == .list, trimmedSearchQuery.isEmpty { return listAssets.count }
+        if viewMode != .folder || !trimmedSearchQuery.isEmpty {
+            return sortAndFilter(editor.mediaAssets).count
+        }
+        return subfoldersInCurrentFolder.count + assetsInCurrentFolder.count
     }
 
     // MARK: - Toolbar helpers
@@ -512,7 +542,13 @@ struct MediaTab: View {
             Image(systemName: "magnifyingglass")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-            TextField("Search", text: $searchQuery)
+            TextField("Search", text: Binding(get: { searchQuery }, set: { searchQuery = $0 }))
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "media.search")
+                            .allowsHitTesting(false)
+                    }
+                }
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -560,7 +596,7 @@ struct MediaTab: View {
     }
 
     private var mediaAreaCollapsed: Bool {
-        !editor.mediaPanelVisible
+        (workspace != .media && !editor.mediaPanelVisible)
             || (editor.maximizedPanel != nil && editor.maximizedPanel != .media)
     }
 
@@ -576,7 +612,7 @@ struct MediaTab: View {
 
     private var overflowMenu: some View {
         let canOrganize = !editor.mediaAssets.isEmpty
-        return toolbarMenuIcon(systemName: "ellipsis") {
+        return toolbarMenuIcon(systemName: "folder.badge.gearshape", title: "Organize", showsTitle: true) {
             Button(action: createNewFolderInCurrent) {
                 Label("New Folder", systemImage: "folder.badge.plus")
             }
@@ -584,29 +620,46 @@ struct MediaTab: View {
                 Button(action: organizeWithAgent) {
                     Label("Organize with Agent", systemImage: "wand.and.stars")
                 }
+                .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             }
         }
     }
 
     private func organizeWithAgent() {
-        let folderHint = currentFolderId.map { _ in " Work within the current folder." } ?? ""
-        let service = editor.agentService
-        service.newChat()
-        service.draft = "Organize my media library. Review the assets, group related ones into clearly named folders, and give generically-named assets short descriptive names — inspect an asset when its name is unclear. Don't delete anything or change the timeline.\(folderHint)"
-        editor.agentPanelVisible = true
+        let scope: String
+        let title: String
+        if let id = currentFolderId {
+            guard let folder = editor.folder(id: id) else { return }
+            scope = "Work only within media folder ID \(id) (\(folder.name))."
+            title = "Organize \(folder.name)"
+        } else {
+            scope = "Work within this project's media library."
+            title = "Organize media library"
+        }
+        _ = editor.agentService.stageTask(AgentTask(
+            title: title, systemImage: "folder.badge.gearshape",
+            prompt: "Review the assets, group related ones into clearly named folders, and give generically named assets descriptive names. Inspect an asset when its name is unclear. Do not delete assets or change the timeline. \(scope)"
+        ))
     }
 
     private func toolbarMenuIcon<Content: View>(
         systemName: String,
+        title: String,
+        showsTitle: Bool = false,
         foregroundStyle: some ShapeStyle = AppTheme.Text.tertiaryColor,
         @ViewBuilder content: () -> Content
     ) -> some View {
         Menu(content: content) {
-            Image(systemName: systemName)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(foregroundStyle)
-                .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+            HStack(spacing: AppTheme.Spacing.xs) {
+                Image(systemName: systemName)
+                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                if showsTitle { Text(title) }
+            }
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(foregroundStyle)
         }
+        .accessibilityLabel(title)
+        .help(title)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()

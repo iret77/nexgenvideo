@@ -1,6 +1,14 @@
+import CoreFoundation
 import Foundation
 import NexGenEngine
 import UniformTypeIdentifiers
+
+struct AgentDialogDraft: Codable, Equatable {
+    var toggles: [String: Bool] = [:]
+    var direction = ""
+    var customValues: [String: String] = [:]
+    var fileURLs: [URL] = []
+}
 
 /// The user's structured answer to a presented dialog.
 struct AgentDialogResult: Sendable, Equatable {
@@ -319,6 +327,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         self.workflowDecision = workflowDecision
     }
 
+    func hasSameControls(as other: AgentDialog) -> Bool {
+        AgentDialog(id: other.id, title: title, symbol: symbol, intro: intro,
+            costHint: costHint, confirmLabel: confirmLabel, textField: textField,
+            sections: sections, fileIntake: fileIntake, projection: projection,
+            purpose: purpose, workflowDecision: workflowDecision) == other
+    }
+
     /// Derives a compact label when the dialog omits `shortLabel`.
     static func compactTranscriptLabel(_ label: String) -> String {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -384,10 +399,23 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.
     static func parse(_ args: [String: Any]) throws -> AgentDialog {
-        guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !title.isEmpty else {
+        try validateFields(args, field: "dialog", strings: ["title", "symbol", "intro", "costHint", "confirmLabel", "workflowDecision", "textPlaceholder"],
+            containers: ["sections", "textField", "fileIntake", "projection"])
+        for field in ["textField", "fileIntake", "projection"] {
+            if let value = args[field], !(value is [String: Any]) {
+                throw ToolError("show_dialog: '\(field)' must be an object.")
+            }
+        }
+        if let value = args["workflowDecision"] as? String, WorkflowDecision(rawValue: value) == nil {
+            throw ToolError("show_dialog: unknown workflowDecision '\(value)'. Use a declared decision.")
+        }
+        if let field = args["textField"] as? [String: Any] {
+            try validateFields(field, field: "textField", strings: ["placeholder"], booleans: ["multiline"])
+        }
+        guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
             throw ToolError("show_dialog: 'title' is required.")
         }
-        let rawSections = (args["sections"] as? [[String: Any]]) ?? []
+        let rawSections = try objectArray(args["sections"], field: "sections")
         // GUARDRAIL: a dialog stays a focused decision, not a wall of controls. Overloaded dialogs must
         // be split into sub-steps by the agent — the schema won't render more than this.
         guard rawSections.count <= Self.maxSections else {
@@ -395,21 +423,34 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         }
         var sections: [Section] = []
         for (index, raw) in rawSections.enumerated() {
+            try validateFields(raw, field: "sections[\(index)]", strings: ["id", "label", "shortLabel", "type"],
+                booleans: ["defaultOn", "multiSelect", "allowsCustom"], containers: ["options"])
             let id = (raw["id"] as? String) ?? "section\(index)"
             let label = (raw["label"] as? String) ?? id
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !sections.contains(where: { $0.id == id }) else {
+                throw ToolError("show_dialog: section IDs must be unique and nonempty; labels must be nonempty.")
+            }
             let shortLabel = raw["shortLabel"] as? String
             switch (raw["type"] as? String) ?? "choices" {
             case "toggle":
                 sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .toggle(defaultOn: (raw["defaultOn"] as? Bool) ?? false)))
             case "choices":
-                let options: [Choice] = ((raw["options"] as? [[String: Any]]) ?? []).enumerated().compactMap { i, opt in
-                    guard let optLabel = opt["label"] as? String else { return nil }
-                    return Choice(id: (opt["id"] as? String) ?? "option\(i)",
-                                  label: optLabel,
-                                  shortLabel: opt["shortLabel"] as? String,
-                                  symbol: opt["symbol"] as? String,
-                                  rangeRef: opt["rangeRef"] as? String)
+                let options: [Choice] = try objectArray(raw["options"], field: "sections[\(index)].options").enumerated().map { i, opt in
+                    try validateFields(opt, field: "option[\(i)]", strings: ["id", "label", "shortLabel", "symbol", "rangeRef"])
+                    let optionID = (opt["id"] as? String) ?? "option\(i)"
+                    guard let optLabel = opt["label"] as? String,
+                          !optLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          !optionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw ToolError("show_dialog: every option needs a nonempty label and ID.")
+                    }
+                    return Choice(id: optionID, label: optLabel, shortLabel: opt["shortLabel"] as? String,
+                        symbol: opt["symbol"] as? String, rangeRef: opt["rangeRef"] as? String)
+                }
+                guard Set(options.map(\.id)).count == options.count else {
+                    throw ToolError("show_dialog: option IDs must be unique within a section.")
                 }
                 // GUARDRAIL: enough to be a choice, few enough to scan. Set allowsCustom for open sets.
                 guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
@@ -426,9 +467,17 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         let textField = parseTextField(args)
         let fileIntake = try parseFileIntake(args["fileIntake"] as? [String: Any])
         guard !sections.isEmpty || fileIntake != nil || textField != nil else {
-            throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
+            throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; use a textField for a focused written answer.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
+        let rangeIDs = Set(projection.timelineRanges.map(\.id))
+        for section in sections {
+            if case .choices(let options, _) = section.kind {
+                guard options.allSatisfy({ $0.rangeRef.map(rangeIDs.contains) ?? true }) else {
+                    throw ToolError("show_dialog: rangeRef must name a declared timeline range.")
+                }
+            }
+        }
         return AgentDialog(
             id: UUID().uuidString,
             title: title,
@@ -467,6 +516,11 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     private static func parseFileIntake(_ raw: [String: Any]?) throws -> FileIntake? {
         guard let raw else { return nil }
+        try validateFields(raw, field: "fileIntake", strings: ["prompt", "attachAs", "namePrompt"],
+            booleans: ["multiple", "required"], containers: ["accept"])
+        if let value = raw["accept"], !(value is [String]) {
+            throw ToolError("show_dialog: fileIntake.accept must contain only strings.")
+        }
         let accept = ((raw["accept"] as? [Any]) ?? [])
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -490,16 +544,23 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     private static func parseProjection(_ raw: [String: Any]?) throws -> Projection {
         guard let raw else { return Projection() }
+        try validateFields(raw, field: "projection", strings: ["reviewShot"], containers: ["timelineRanges"])
         var ranges: [TimelineRangeCandidate] = []
-        for (i, r) in ((raw["timelineRanges"] as? [[String: Any]]) ?? []).enumerated() {
+        for (i, r) in try objectArray(raw["timelineRanges"], field: "projection.timelineRanges").enumerated() {
+            try validateFields(r, field: "timelineRanges[\(i)]", strings: ["id", "label"], containers: ["startFrame", "endFrame"])
             guard let start = intValue(r["startFrame"]), let end = intValue(r["endFrame"]) else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs integer 'startFrame' and 'endFrame'.")
             }
-            guard end > start else {
+            guard start >= 0, end > start else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs endFrame > startFrame.")
             }
+            let id = (r["id"] as? String) ?? "range\(i)"
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !ranges.contains(where: { $0.id == id }) else {
+                throw ToolError("show_dialog: timeline range IDs must be nonempty and unique.")
+            }
             ranges.append(TimelineRangeCandidate(
-                id: (r["id"] as? String) ?? "range\(i)",
+                id: id,
                 label: (r["label"] as? String) ?? "Range \(i + 1)",
                 startFrame: start,
                 endFrame: end
@@ -510,11 +571,37 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
                           reviewShot: (reviewShot?.isEmpty == false) ? reviewShot : nil)
     }
 
-    private static func intValue(_ any: Any?) -> Int? {
-        if let i = any as? Int { return i }
-        if let d = any as? Double { return Int(d) }
-        return nil
+    private static func objectArray(_ value: Any?, field: String) throws -> [[String: Any]] {
+        guard let value else { return [] }
+        guard let objects = value as? [[String: Any]] else {
+            throw ToolError("show_dialog: '\(field)' must be an array of objects.")
+        }
+        return objects
     }
+
+    private static func validateFields(_ object: [String: Any], field: String,
+                                      strings: Set<String> = [], booleans: Set<String> = [],
+                                      containers: Set<String> = []) throws {
+        let allowed = strings.union(booleans).union(containers)
+        guard Set(object.keys).isSubset(of: allowed) else {
+            throw ToolError("show_dialog: unsupported field in '\(field)'. Use the declared dialog schema.")
+        }
+        for name in strings where object[name] != nil {
+            guard object[name] is String else { throw ToolError("show_dialog: '\(field).\(name)' must be a string.") }
+        }
+        for name in booleans where object[name] != nil {
+            guard let number = object[name] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw ToolError("show_dialog: '\(field).\(name)' must be a boolean.")
+            }
+        }
+    }
+
+    private static func intValue(_ any: Any?) -> Int? {
+        guard let number = any as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        if let integer = Int(number.stringValue) { return integer }
+        return Int(exactly: number.doubleValue)
+    }
+
 }
 
 extension AgentDialog.FileIntake {

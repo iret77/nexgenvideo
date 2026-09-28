@@ -40,6 +40,7 @@ struct AnthropicToolSchema: @unchecked Sendable {
 
 enum AnthropicStreamEvent: Sendable {
     case textDelta(String)
+    case thinkingComplete(AnthropicThinkingBlock)
     case toolUseComplete(id: String, name: String, inputJSON: String)
     case messageStop(stopReason: AnthropicStopReason)
 }
@@ -90,64 +91,100 @@ enum AnthropicSSE {
         bytes: URLSession.AsyncBytes,
         continuation: AsyncThrowingStream<AnthropicStreamEvent, Error>.Continuation
     ) async throws {
-        var pendingTools: [Int: (id: String, name: String, json: String)] = [:]
+        var decoder = Decoder()
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            guard line.hasPrefix("data:"),
-                  let data = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces).data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = event["type"] as? String else { continue }
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+            for event in try decoder.consume(Data(payload.utf8)) {
+                continuation.yield(event)
+            }
+        }
+        try decoder.finish()
+    }
 
+    struct Decoder {
+        private var pendingTools: [Int: (id: String, name: String, json: String)] = [:]
+        private var pendingThinking: [Int: [String: Any]] = [:]
+        private var stopReason: AnthropicStopReason?
+        private var stopped = false
+
+        mutating func consume(_ data: Data) throws -> [AnthropicStreamEvent] {
+            guard let event = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = event["type"] as? String else {
+                throw AnthropicClientError.streamError("Invalid stream event.")
+            }
             switch type {
             case "message_start":
                 if let message = event["message"] as? [String: Any],
                    let usage = message["usage"] as? [String: Any] {
                     AgentUsageLog.record(usage)
                 }
-
             case "content_block_start":
-                if let index = event["index"] as? Int,
-                   let block = event["content_block"] as? [String: Any],
-                   block["type"] as? String == "tool_use",
-                   let id = block["id"] as? String,
-                   let name = block["name"] as? String {
-                    pendingTools[index] = (id, name, "")
+                guard let index = event["index"] as? Int,
+                      let block = event["content_block"] as? [String: Any] else { break }
+                switch block["type"] as? String {
+                case "tool_use":
+                    if let id = block["id"] as? String, let name = block["name"] as? String {
+                        pendingTools[index] = (id, name, "")
+                    }
+                case "thinking", "redacted_thinking":
+                    pendingThinking[index] = block
+                default: break
                 }
-
             case "content_block_delta":
                 guard let index = event["index"] as? Int,
                       let delta = event["delta"] as? [String: Any],
                       let deltaType = delta["type"] as? String else { break }
                 if deltaType == "text_delta", let text = delta["text"] as? String, !text.isEmpty {
                     HangDiagnosticRecorder.shared.record(.apiReceive, values: [Double(text.utf8.count)])
-                    continuation.yield(.textDelta(text))
+                    return [.textDelta(text)]
                 } else if deltaType == "input_json_delta",
                           let partial = delta["partial_json"] as? String,
                           var acc = pendingTools[index] {
                     acc.json += partial
                     pendingTools[index] = acc
+                } else if deltaType == "thinking_delta" || deltaType == "signature_delta" {
+                    let key = deltaType == "thinking_delta" ? "thinking" : "signature"
+                    guard var block = pendingThinking[index],
+                          let value = delta[key] as? String else {
+                        throw AnthropicClientError.streamError("Thinking delta has no matching block.")
+                    }
+                    block[key] = (block[key] as? String ?? "") + value
+                    pendingThinking[index] = block
                 }
-
             case "content_block_stop":
-                if let index = event["index"] as? Int, let acc = pendingTools.removeValue(forKey: index) {
+                guard let index = event["index"] as? Int else { break }
+                if let block = pendingThinking.removeValue(forKey: index) {
+                    return [.thinkingComplete(try AnthropicThinkingBlock(json: block))]
+                }
+                if let acc = pendingTools.removeValue(forKey: index) {
                     let json = acc.json.isEmpty ? "{}" : acc.json
                     HangDiagnosticRecorder.shared.record(.apiReceive, values: [Double(json.utf8.count)])
-                    continuation.yield(.toolUseComplete(id: acc.id, name: acc.name, inputJSON: json))
+                    return [.toolUseComplete(id: acc.id, name: acc.name, inputJSON: json)]
                 }
-
             case "message_delta":
                 if let delta = event["delta"] as? [String: Any],
                    let raw = delta["stop_reason"] as? String {
-                    continuation.yield(.messageStop(stopReason: AnthropicStopReason(rawValue: raw) ?? .other))
+                    stopReason = AnthropicStopReason(rawValue: raw) ?? .other
                 }
-
+            case "message_stop":
+                guard let stopReason, pendingThinking.isEmpty, pendingTools.isEmpty else {
+                    throw AnthropicClientError.streamError("The response ended with incomplete content.")
+                }
+                stopped = true
+                return [.messageStop(stopReason: stopReason)]
             case "error":
-                if let err = event["error"] as? [String: Any],
-                   let msg = err["message"] as? String {
-                    continuation.finish(throwing: AnthropicClientError.streamError(msg))
-                }
-
+                let error = event["error"] as? [String: Any]
+                throw AnthropicClientError.streamError(error?["message"] as? String ?? "The stream failed.")
             default: break
+            }
+            return []
+        }
+
+        func finish() throws {
+            guard stopped else {
+                throw AnthropicClientError.streamError("The response was interrupted. Try again.")
             }
         }
     }
@@ -158,7 +195,7 @@ enum AnthropicSSE {
 enum AnthropicRequestBody {
     static func build(
         model: AnthropicModel,
-        maxTokens: Int,
+        maxTokens: Int? = nil,
         system: String,
         tools: [AnthropicToolSchema],
         messages: [AnthropicMessage]
@@ -178,18 +215,24 @@ enum AnthropicRequestBody {
         if var lastMsg = messageBlocks.popLast(),
            var content = lastMsg["content"] as? [[String: Any]],
            var lastBlock = content.popLast() {
-            lastBlock["cache_control"] = ["type": "ephemeral"]
+            if !["thinking", "redacted_thinking"].contains(lastBlock["type"] as? String ?? "") {
+                lastBlock["cache_control"] = ["type": "ephemeral"]
+            }
             content.append(lastBlock)
             lastMsg["content"] = content
             messageBlocks.append(lastMsg)
         }
         var body: [String: Any] = [
             "model": model.rawValue,
-            "max_tokens": maxTokens,
+            "max_tokens": maxTokens ?? (model == .haiku45 ? 8192 : 64000),
             "stream": true,
             "system": [["type": "text", "text": system, "cache_control": ["type": "ephemeral"]]],
             "messages": messageBlocks,
         ]
+        if model != .haiku45 {
+            body["thinking"] = ["type": "adaptive", "display": "summarized"]
+            body["output_config"] = ["effort": "high"]
+        }
         if !toolBlocks.isEmpty { body["tools"] = toolBlocks }
         return body
     }

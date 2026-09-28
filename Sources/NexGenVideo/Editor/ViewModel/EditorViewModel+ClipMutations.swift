@@ -6,7 +6,7 @@ extension EditorViewModel {
 
     // MARK: - Add / move
 
-    func addClips(assets: [MediaAsset], trackIndex: Int, startFrame: Int, linkedAudioTrackIndex: Int? = nil, segments: [String: ClosedRange<Double>] = [:]) {
+    func addClips(assets: [MediaAsset], trackIndex: Int, startFrame: Int, linkedAudioTrackIndex: Int? = nil, segments: [String: ClosedRange<Double>] = [:], sourceFrameRanges: [String: Range<Int>] = [:]) {
         // Every path that turns assets into clips lands here — drag, agent tool, paste. Documents are
         // source material the pipeline READS; they have no duration and nothing to render, so they are
         // dropped at the one choke point rather than guarded at each caller.
@@ -20,7 +20,7 @@ extension EditorViewModel {
         }
 
         withTimelineSwap(actionName: "Add Clips") {
-            let totalDur = assets.reduce(0) { $0 + clipDurationFrames(for: $1, segment: segments[$1.id]) }
+            let totalDur = assets.reduce(0) { $0 + (sourceFrameRanges[$1.id]?.count ?? clipDurationFrames(for: $1, segment: segments[$1.id])) }
             clearRegion(trackIndex: trackIndex, start: startFrame, end: startFrame + totalDur, prune: false)
             if let aid = audioTrackId,
                let audioIdx = timeline.tracks.firstIndex(where: { $0.id == aid }) {
@@ -37,7 +37,7 @@ extension EditorViewModel {
 
             createClips(
                 from: assets, trackIndex: resolvedTrackIndex, startFrame: startFrame,
-                linkedAudioTrackIndex: resolvedAudioIndex, segments: segments
+                linkedAudioTrackIndex: resolvedAudioIndex, segments: segments, sourceFrameRanges: sourceFrameRanges
             )
             sortClips(trackIndex: resolvedTrackIndex)
             pruneEmptyTracks()
@@ -618,12 +618,12 @@ extension EditorViewModel {
             !ids.contains($0.key)
         }
 
-        for id in ids { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
-        selectedMediaAssetIds.removeAll()
+        for id in ids.sorted() { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
+        selectedMediaAssetIds.subtract(ids)
+        inspectedObject = selectionInspectedObject
 
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Media")
-            vm.selectedMediaAssetIds.removeAll()
         }
         undoManager?.setActionName("Delete Media")
         if !clipIdsToRemove.isEmpty {

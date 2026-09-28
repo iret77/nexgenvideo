@@ -2,9 +2,16 @@ import SwiftUI
 
 struct GenerationView: View {
     let maxPanelHeight: Double
+    let workspace: EditorViewModel.WorkspaceFocus
 
     @Environment(EditorViewModel.self) var editor
     @State private var prompt = ""
+    @State private var reviewedGeneration: GenerationController.PreparedGeneration?
+    @State private var reviewedDraft: [String]?
+    @State private var reviewAttemptID: UUID?
+    @State private var isPreparingReview = false
+    @State private var isSubmittingReview = false
+
     @State private var selectedType: GenerationType = .video
     @State private var selectedVideoModelIndex = 0
     @State private var selectedImageModelIndex = 0
@@ -72,6 +79,34 @@ struct GenerationView: View {
     @State private var dragStartExtra: Double?
     @State private var measuredPanelHeight: CGFloat = 0
     @State private var measuredPromptHeight: CGFloat = 0
+
+    private var reviewDraft: [String] {
+        var values = [prompt, selectedType.rawValue, String(selectedVideoModelIndex), String(selectedImageModelIndex),
+            String(selectedAudioModelIndex), String(describing: selectedDuration), selectedAspectRatio, selectedResolution,
+            selectedQuality, String(selectedNumImages), selectedVoice, lyrics, styleInstructions, String(instrumental),
+            String(selectedAudioDuration), String(generateAudio), framesRefsMode.rawValue, editFolderId ?? "",
+            workspace.rawValue, editor.workspaceFocus.rawValue, editor.workingRoot?.path ?? "",
+            editor.mediaPanelCurrentFolderId ?? "", editor.pendingEditReplacementClipId ?? "", String(providerKeyRevision)]
+        for models in [videoModels.map(\.id), imageModels.map(\.id), audioModels.map(\.id)] {
+            values.append("models:\(models.count)")
+            values += models
+        }
+        for group in [[firstFrame].compactMap { $0 }, [lastFrame].compactMap { $0 }, imageReferences,
+                      refImages, refVideos, refAudios, [sourceVideo].compactMap { $0 }, [audioVideoSource].compactMap { $0 }] {
+            values.append("group:\(group.count)")
+            for asset in group { values += [asset.id, asset.url.absoluteString, String(asset.duration)] }
+        }
+        if let trim = editor.pendingEditTrimmedSource {
+            values += [trim.sourceURL.absoluteString, String(trim.trimStartFrame), String(trim.trimEndFrame),
+                String(trim.sourceFramesConsumed), String(trim.fps)]
+        }
+        if let placement = editor.pendingEditAudioPlacement {
+            values += [String(placement.startFrame), String(placement.spanSeconds), placement.actionName]
+        }
+        return values
+    }
+
+    private var isActiveWorkspace: Bool { workspace == editor.workspaceFocus }
 
     /// Everything in the panel except the prompt's variable height, recovered
     /// from two frame-consistent measurements so it never depends on the value
@@ -363,38 +398,6 @@ struct GenerationView: View {
         return supportsAudioToggle ? generateAudio : true
     }
 
-    /// Duration the cost estimate charges on for audio — video span for scoring
-    /// models, the chosen length for timed models, otherwise per-character pricing.
-    private var costAudioDuration: Int? {
-        guard selectedType == .audio else { return nil }
-        if audioModel.inputs.contains(.video) { return effectiveAudioVideoSeconds }
-        return audioModel.durations != nil ? selectedAudioDuration : nil
-    }
-
-    /// Credit estimate for the render as currently configured. Tracks the picked
-    /// model and its settings so the confirm surface always shows what a submit spends.
-    private var estimatedCost: Int? {
-        switch selectedType {
-        case .video:
-            return CostEstimator.videoCost(
-                model: videoModel,
-                durationSeconds: effectiveVideoSeconds,
-                resolution: effectiveResolution,
-                generateAudio: effectiveGenerateAudio)
-        case .image:
-            return CostEstimator.imageCost(
-                model: imageModel,
-                resolution: effectiveResolution,
-                quality: imageModel.qualities != nil ? selectedQuality : nil,
-                numImages: currentImageCount)
-        case .audio:
-            return CostEstimator.audioCost(
-                model: audioModel,
-                prompt: trimmedPrompt,
-                durationSeconds: costAudioDuration)
-        }
-    }
-
     private var promptPlaceholder: String {
         switch selectedType {
         case .image: "Describe the image"
@@ -495,6 +498,12 @@ struct GenerationView: View {
         }
         .onAppear { normalizeSelectedType() }
         .onChange(of: availableTypes) { _, _ in normalizeSelectedType() }
+        .onChange(of: reviewDraft) { _, _ in
+            reviewAttemptID = nil
+            reviewedGeneration = nil
+            reviewedDraft = nil
+        }
+        .onDisappear { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil }
     }
 
     /// selectedType must never point at an empty modality; the model accessors trap on an empty array.
@@ -655,12 +664,22 @@ struct GenerationView: View {
         .padding(.bottom, AppTheme.Spacing.sm)
         .frame(maxHeight: max(0, CGFloat(maxPanelHeight)), alignment: .top)
         .onAppear {
+            guard isActiveWorkspace else { return }
             let hadSeed = editor.pendingPanelSeed != nil
             consumePendingPanelSeed()
             // A seeded edit may reuse a now-disabled model; keep its selection.
             if !hadSeed { normalizeModelSelection() }
         }
-        .onChange(of: editor.pendingPanelSeed?.asset.id) { _, _ in consumePendingPanelSeed() }
+        .onChange(of: editor.pendingPanelSeed?.asset.id) { _, _ in
+            guard isActiveWorkspace else { return }
+            consumePendingPanelSeed()
+        }
+        .onChange(of: editor.workspaceFocus) { _, focus in
+            guard focus == workspace else { return }
+            let hadSeed = editor.pendingPanelSeed != nil
+            consumePendingPanelSeed()
+            if !hadSeed { normalizeModelSelection() }
+        }
         .onChange(of: ModelPreferences.shared.disabledIds) { _, _ in
             guard !isPopulatingPanel else { return }
             normalizeModelSelection()
@@ -682,8 +701,10 @@ struct GenerationView: View {
             clearReferences()
             if newValue == .audio { resetAudioState() }
             editFolderId = nil
-            editor.pendingEditTrimmedSource = nil
-            editor.pendingEditAudioPlacement = nil
+            if isActiveWorkspace {
+                editor.pendingEditTrimmedSource = nil
+                editor.pendingEditAudioPlacement = nil
+            }
         }
         .onChange(of: selectedVideoModelIndex) { _, _ in
             guard !isPopulatingPanel else { return }
@@ -923,6 +944,23 @@ struct GenerationView: View {
     private var inputToolbar: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             inputDivider
+            if let generation = reviewedGeneration, reviewedDraft == reviewDraft, let package = generation.reviewedPackage {
+                ScrollView {
+                    GenerationPackageReviewView(package: package)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .padding(AppTheme.Spacing.md)
+                }
+                .frame(maxHeight: AppTheme.ComponentSize.agentAssetPickerHeight)
+                HStack {
+                    Button("Discard Review") { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil }
+                        .buttonStyle(.inlineAction())
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Button(isSubmittingReview ? "Submitting…" : "Approve and Generate") { submitReviewedGeneration() }
+                        .buttonStyle(.capsule(.prominent))
+                        .disabled(isSubmittingReview || isPreparingReview || !canSubmit)
+                }
+                .padding(AppTheme.Spacing.md)
+            }
             HStack(spacing: AppTheme.Spacing.sm) {
                 modelPicker
                 if selectedType == .audio, audioModel.voices != nil {
@@ -932,26 +970,16 @@ struct GenerationView: View {
 
                 Spacer(minLength: AppTheme.Spacing.xs)
 
-                costEstimate
+                if workspace == .media {
+                    Text("New project medium")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
                 submitButton
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.vertical, AppTheme.Spacing.sm)
-        }
-    }
-
-    @ViewBuilder
-    private var costEstimate: some View {
-        if let cost = estimatedCost, cost > 0 {
-            Text(CostEstimator.format(cost))
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .monospacedDigit()
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .lineLimit(1)
-                .fixedSize()
-                .help("Estimated cost for this render.")
-                .accessibilityLabel("Estimated cost \(CostEstimator.format(cost)).")
         }
     }
 
@@ -1062,6 +1090,13 @@ struct GenerationView: View {
                     }
                 }
             }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):video-references"),
+                acceptedTypes: Set(ClipType.allCases.filter { refCap(for: $0) > refCount(for: $0) }),
+                excludedIDs: Set(allRefCardItems.map { $0.asset.id }),
+                onPick: addRefAsset
+            )
+            .disabled(isRefCapReached)
         }
     }
 
@@ -1117,7 +1152,7 @@ struct GenerationView: View {
         let inflight = editor.mediaAssets.filter(\.isGenerating).count
         Log.generation.notice("addRefAsset id=\(asset.id.prefix(8)) type=\(asset.type.rawValue) existing=\(refImages.count)+\(refVideos.count)+\(refAudios.count) inflightGen=\(inflight)")
         if allRefs.contains(where: { $0.id == asset.id }) {
-            flashDropError("\(asset.name) is already a reference")
+            flashDropError("\(asset.libraryDisplayName) is already a reference")
             return
         }
         guard let capabilities = videoTarget(for: videoModel).binding?
@@ -1277,6 +1312,11 @@ struct GenerationView: View {
                     onDrop: onDrop
                 )
             }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):\(label)"),
+                acceptedTypes: acceptedTypes,
+                onPick: onDrop
+            )
         }
     }
 
@@ -1304,11 +1344,18 @@ struct GenerationView: View {
                     iconName: "photo.badge.plus"
                 ) { asset in
                     if imageReferences.contains(where: { $0.id == asset.id }) {
-                        flashDropError("\(asset.name) is already a reference")
+                        flashDropError("\(asset.libraryDisplayName) is already a reference")
                     } else {
                         imageReferences.append(asset)
                     }
                 }
+            }
+            LibraryAssetPickerButton(
+                purpose: .generationSlot("\(workspace.rawValue):image-references"),
+                acceptedTypes: [.image],
+                excludedIDs: Set(imageReferences.map(\.id))
+            ) { asset in
+                if !imageReferences.contains(where: { $0.id == asset.id }) { imageReferences.append(asset) }
             }
         }
     }
@@ -1418,19 +1465,10 @@ struct GenerationView: View {
     // MARK: - Submit button
 
     private var submitButton: some View {
-        Button {
-            submitGeneration()
-        } label: {
-            Image(systemName: "arrow.up")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.bold)
-                .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
-        }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .tint(AppTheme.Accent.primary)
-        .disabled(!canSubmit)
-        .opacity(canSubmit ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
+        Button(isPreparingReview ? "Preparing…" : "Review Request") { prepareGenerationReview() }
+            .buttonStyle(.capsule(.secondary))
+            .disabled(!canSubmit || isPreparingReview || isSubmittingReview)
+            .help("Compile the request and review its inputs and estimated cost before generating.")
     }
 
     // MARK: - Type picker
@@ -1739,70 +1777,67 @@ struct GenerationView: View {
         )
     }
 
-    private func submitGeneration() {
-        // The panel builds ONE GenerationRequest and hands it to the shared controller (#114). Panel
-        // input is intent, not a model prompt (#100) — the controller composes it through the engine
-        // and blocks on a lint ERROR, surfaced here via flashDropError.
+    private func prepareGenerationReview() {
+        guard canSubmit, !isPreparingReview, !isSubmittingReview else { return }
+        let draft = reviewDraft
         let rawIntent = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let audioDuration: Int = {
-            guard selectedType == .audio else { return 0 }
-            if audioModel.inputs.contains(.video) { return effectiveAudioVideoSeconds }
-            return audioModel.durations != nil ? selectedAudioDuration : 0
-        }()
-
-        // Validate BEFORE consuming irreversible pending-edit state, so a failed preflight doesn't
-        // drop the pending replacement/placement. The controller re-runs the same check as its
-        // preflight step for uniformity, but the panel bails here to protect that state.
-        if let err = preflightValidation(audioDuration: audioDuration) {
-            flashDropError(err)
-            return
-        }
-
-        // Placement: an active edit replacement wins; otherwise an audio timeline placement; else the
-        // media library. These consume the pending-edit state exactly as before.
-        let replacementClipId = editor.pendingEditReplacementClipId
-        editor.pendingEditReplacementClipId = nil
-        let pendingAudioPlacement = selectedType == .audio ? editor.pendingEditAudioPlacement : nil
-        editor.pendingEditAudioPlacement = nil
-
+        let audioDuration: Int = selectedType == .audio
+            ? (audioModel.inputs.contains(.video) ? effectiveAudioVideoSeconds : audioModel.durations != nil ? selectedAudioDuration : 0)
+            : 0
+        if let error = preflightValidation(audioDuration: audioDuration) { flashDropError(error); return }
+        let replacement = workspace == .media ? nil : editor.pendingEditReplacementClipId
+        let audioPlacement = workspace == .media ? nil : editor.pendingEditAudioPlacement
         let request: GenerationRequest
         switch selectedType {
         case .video:
-            guard let videoRequest = buildVideoRequest(
-                intent: rawIntent,
-                replacementClipId: replacementClipId
-            ) else {
-                editor.pendingEditReplacementClipId = replacementClipId
-                editor.pendingEditAudioPlacement = pendingAudioPlacement
-                flashDropError(
-                    "No runnable provider endpoint has a verified video input contract."
-                )
+            guard let value = buildVideoRequest(intent: rawIntent, replacementClipId: replacement) else {
+                flashDropError("No runnable provider endpoint has a verified video input contract.")
                 return
             }
-            request = videoRequest
-        case .image:
-            request = buildImageRequest(intent: rawIntent, replacementClipId: replacementClipId)
-        case .audio:
-            request = buildAudioRequest(
-                intent: rawIntent, audioDuration: audioDuration,
-                replacementClipId: replacementClipId, pendingAudioPlacement: pendingAudioPlacement)
+            request = value
+        case .image: request = buildImageRequest(intent: rawIntent, replacementClipId: replacement)
+        case .audio: request = buildAudioRequest(intent: rawIntent, audioDuration: audioDuration,
+            replacementClipId: replacement, pendingAudioPlacement: audioPlacement)
         }
-
-        let preflightDuration = audioDuration
-        // Composition now reads the ledger off the main thread (async); await the outcome, then apply
-        // the same success/failure state transitions on the main actor.
+        let attemptID = UUID()
+        reviewAttemptID = attemptID
+        reviewedGeneration = nil
+        reviewedDraft = nil
+        isPreparingReview = true
         Task { @MainActor in
-            let outcome = await GenerationController.submit(
-                request, editor: editor,
-                preflight: { self.preflightValidation(audioDuration: preflightDuration) })
+            defer { isPreparingReview = false }
+            do {
+                let generation = try await GenerationController.prepare(request, editor: editor, preflight: {
+                    guard reviewAttemptID == attemptID, reviewDraft == draft, isActiveWorkspace, editor.showGenerationPanel else { return "The inputs changed. Review the request again." }
+                    return preflightValidation(audioDuration: audioDuration)
+                }).get()
+                _ = try await GenerationController.prepareReviewPackage(generation, editor: editor)
+                guard reviewAttemptID == attemptID, reviewDraft == draft, isActiveWorkspace, editor.showGenerationPanel else { return }
+                reviewedGeneration = generation
+                reviewedDraft = draft
+            } catch {
+                if reviewAttemptID == attemptID { flashDropError(error.localizedDescription) }
+            }
+        }
+    }
+
+    private func submitReviewedGeneration() {
+        guard let generation = reviewedGeneration, let draft = reviewedDraft, draft == reviewDraft,
+              isActiveWorkspace, !isSubmittingReview else { return }
+        isSubmittingReview = true
+        Task { @MainActor in
+            defer { isSubmittingReview = false }
+            let outcome = await GenerationController.submitPrepared(generation, editor: editor)
+            reviewedGeneration = nil
+            reviewedDraft = nil
             switch outcome {
-            case .failure(let error):
-                // Nothing was submitted — restore the pending-edit state consumed above so a compile
-                // block doesn't cost the user their replace/placement intent.
-                editor.pendingEditReplacementClipId = replacementClipId
-                editor.pendingEditAudioPlacement = pendingAudioPlacement
-                flashDropError(error.errorDescription ?? "Generation failed.")
+            case .failure(let error): flashDropError(error.errorDescription ?? "Generation failed.")
             case .success:
+                guard reviewDraft == draft else { return }
+                if workspace != .media {
+                    editor.pendingEditReplacementClipId = nil
+                    editor.pendingEditAudioPlacement = nil
+                }
                 editor.pendingEditTrimmedSource = nil
                 lyrics = ""
                 styleInstructions = ""
@@ -1989,6 +2024,7 @@ struct GenerationView: View {
     }
 
     private func consumePendingPanelSeed() {
+        guard isActiveWorkspace else { return }
         guard let seed = editor.pendingPanelSeed else { return }
         populatePanel(asset: seed.asset, stored: seed.stored)
         editor.pendingPanelSeed = nil

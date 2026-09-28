@@ -164,25 +164,29 @@ struct CaptionTab: View {
                     range: AppTheme.Caption.minFontSize...AppTheme.Caption.maxFontSize,
                     format: "%.0f",
                     valueSuffix: " pt",
+                    accessibilityName: "Caption size",
                     onChanged: { style.fontSize = $0 }
                 ) { style.fontSize = $0 }
             }
             InspectorRow(icon: "paintpalette", label: "Color") {
                 ColorField(displayColor: style.color.swiftUIColor, onUserChange: { style.color = TextStyle.RGBA($0) })
             }
-            InspectorRow(icon: "rectangle.fill", label: "Background") {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    ColorField(displayColor: style.background.color.swiftUIColor) {
-                        style.background.color = TextStyle.RGBA($0)
-                    }
-                    .opacity(style.background.enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
-                    .disabled(!style.background.enabled)
-                    Toggle("", isOn: $style.background.enabled)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                InspectorRow(icon: "rectangle.fill", label: "Background") {
+                    Toggle("Background", isOn: $style.background.enabled)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                        .accessibilityLabel("Caption background")
                 }
+                InspectorFormRow(label: "Color") {
+                    ColorField(displayColor: style.background.color.swiftUIColor) {
+                        style.background.color = TextStyle.RGBA($0)
+                    }
+                    .disabled(!style.background.enabled)
+                }
+                .padding(.leading, AppTheme.Spacing.lgXl)
             }
             InspectorRow(icon: "textformat", label: "Case") {
                 Menu {
@@ -200,11 +204,12 @@ struct CaptionTab: View {
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
             }
             InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
-                Toggle("", isOn: $censorProfanity)
+                Toggle("Censor profanity", isOn: $censorProfanity)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                    .accessibilityLabel("Censor profanity")
             }
         }
     }
@@ -212,10 +217,11 @@ struct CaptionTab: View {
     private var placementSection: some View {
         InspectorSection("Placement") {
             previewBox
-            HStack(spacing: AppTheme.Spacing.mdLg) {
-                Spacer(minLength: AppTheme.Spacing.xs)
-                posField("X", value: center.x) { center.x = $0 }
-                posField("Y", value: center.y) { center.y = $0 }
+            InspectorFormRow(label: "Position") {
+                HStack(spacing: AppTheme.Spacing.mdLg) {
+                    posField("X", value: center.x) { center.x = $0 }
+                    posField("Y", value: center.y) { center.y = $0 }
+                }
             }
         }
     }
@@ -226,18 +232,21 @@ struct CaptionTab: View {
                 removeFillerWords()
             } label: { Label("Remove filler words", systemImage: "text.badge.minus") }
             Button {
-                prefillCaptionTask("fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
+                prefillCaptionTask(title: "Fix Caption Names and Jargon", "fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
             } label: { Label("Fix names & jargon", systemImage: "checkmark.bubble") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             Button {
-                prefillCaptionTask("add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
+                prefillCaptionTask(title: "Add Caption Emoji", "add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
             } label: { Label("Add emoji", systemImage: "face.smiling") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             Menu {
                 ForEach(Self.translateLanguages, id: \.self) { language in
                     Button(language) {
-                        prefillCaptionTask("translate the captions to \(language), keeping each caption's timing unchanged.")
+                        prefillCaptionTask(title: "Translate Captions to \(language)", "translate the captions to \(language), keeping each caption's timing unchanged.")
                     }
                 }
             } label: { Label("Translate", systemImage: "globe") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")
@@ -253,7 +262,7 @@ struct CaptionTab: View {
             .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(AppTheme.aiGradient.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).focusable(false)
-        .help("Let Agent create captions for you. Choose a predefined task, or ask Agent in the chat.")
+        .help("Let Agent create captions for you. Choose a task and review its instructions before running.")
     }
 
     private func removeFillerWords() {
@@ -262,11 +271,9 @@ struct CaptionTab: View {
         if count == 0 { note = "No filler words found." }
     }
 
-    /// Visible, user-confirms-send: fills the agent input rather than sending — the scope prefix
-    /// makes it explicit this touches captions, not the whole project.
-    private func prefillCaptionTask(_ task: String) {
+    private func prefillCaptionTask(title: String, _ task: String) {
         let prompt = "Captions: If the timeline has no captions yet, transcribe the spoken audio and add captions on word boundaries first. Then \(task)"
-        editor.agentService.prefillInput(prompt)
+        editor.agentService.stageTask(.init(title: title, systemImage: "captions.bubble", prompt: prompt))
     }
 
     private func menuValueLabel(_ text: String) -> some View {
@@ -349,6 +356,7 @@ struct CaptionTab: View {
                 displayMultiplier: 100,
                 format: "%.0f",
                 valueSuffix: "%",
+                accessibilityName: "Caption position \(label)",
                 onChanged: { onChange(snapCenter($0)) }
             ) { onChange(snapCenter($0)) }
         }
@@ -366,15 +374,9 @@ struct CaptionTab: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
                     Text("Generate Captions")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Background.baseColor)
-                        .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, AppTheme.Spacing.smMd)
-                        .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Accent.primary))
-                        .opacity(effectiveCount == 0 ? AppTheme.Opacity.medium : AppTheme.Opacity.opaque)
                 }
-                .buttonStyle(.plain).focusable(false)
+                .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(effectiveCount == 0 || isGenerating)
 
                 agentMenu

@@ -133,11 +133,24 @@ struct BeatTimeline: View {
     let beats: [Double]
     let downbeats: [Double]
     let sections: [AnalysisSurfaceData.Section]
+    var selectedSectionIndex: Int? = nil
+    var onSelectSection: ((AnalysisSurfaceData.Section) -> Void)? = nil
+
+    static func section(atFraction fraction: Double, duration: Double,
+                        sections: [AnalysisSurfaceData.Section]) -> AnalysisSurfaceData.Section? {
+        guard fraction.isFinite, duration.isFinite, duration > 0, (0...1).contains(fraction) else { return nil }
+        let time = fraction * duration
+        return sections.first {
+            $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start
+                && $0.end <= duration && $0.start <= time
+                && (time < $0.end || (time == duration && $0.end == duration))
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Canvas { ctx, size in
-                guard duration > 0 else { return }
+                guard duration.isFinite, duration > 0 else { return }
                 let w = size.width, h = size.height
                 let bandHeight = AppTheme.ComponentSize.beatTimelineBandHeight
                 func x(_ t: Double) -> CGFloat { CGFloat(min(max(t, 0), duration) / duration) * w }
@@ -146,6 +159,10 @@ struct BeatTimeline: View {
                     let x0 = x(section.start), x1 = x(section.end)
                     let rect = CGRect(x: x0, y: 0, width: max(1, x1 - x0), height: bandHeight)
                     ctx.fill(Path(rect), with: .color(PackSurfacePalette.section(section.index).opacity(AppTheme.Opacity.prominent)))
+                    if section.index == selectedSectionIndex {
+                        ctx.stroke(Path(rect.insetBy(dx: AppTheme.BorderWidth.thin, dy: AppTheme.BorderWidth.thin)),
+                            with: .color(AppTheme.Text.primaryColor), lineWidth: AppTheme.BorderWidth.medium)
+                    }
                 }
                 let top = bandHeight + AppTheme.Spacing.xs
                 for beat in beats {
@@ -168,6 +185,18 @@ struct BeatTimeline: View {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
+            .overlay {
+                GeometryReader { geometry in
+                    AppTheme.Background.clearColor
+                        .contentShape(Rectangle())
+                        .gesture(SpatialTapGesture().onEnded { event in
+                            guard geometry.size.width > 0,
+                                  let section = Self.section(atFraction: Double(event.location.x / geometry.size.width),
+                                    duration: duration, sections: sections) else { return }
+                            onSelectSection?(section)
+                        })
+                }
+            }
             ruler
         }
     }
@@ -187,12 +216,28 @@ struct BeatTimeline: View {
 
 struct StructureHierarchyList: View {
     let sections: [AnalysisSurfaceData.HierarchySection]
+    var selectedSectionIndex: Int? = nil
+    var onSelectSection: ((AnalysisSurfaceData.Section) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             ForEach(sections) { section in
                 VStack(spacing: AppTheme.Spacing.none) {
-                    sectionRow(section)
+                    if let onSelectSection {
+                        Button { onSelectSection(section.section) } label: { sectionRow(section) }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(section.section.index == selectedSectionIndex ? .isSelected : [])
+                            .background {
+                                if WorkspaceUIAcceptance.isRequested {
+                                    AppRelaunchClickProbe(identifier: "analysis.section.\(section.section.index)",
+                                        acceptanceState: section.section.index == selectedSectionIndex)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                    } else {
+                        sectionRow(section)
+                    }
                     ForEach(section.segments.indices, id: \.self) { segmentOffset in
                         let segment = section.segments[segmentOffset]
                         segmentRow(segment, number: segmentOffset + 1)
@@ -232,6 +277,9 @@ struct StructureHierarchyList: View {
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.xs)
+        .contentShape(Rectangle())
+        .background(row.section.index == selectedSectionIndex
+            ? AppTheme.Background.raisedColor : AppTheme.Background.clearColor)
     }
 
     private func segmentRow(_ segment: AnalysisSurfaceData.HierarchySegment, number: Int) -> some View {
@@ -269,5 +317,72 @@ struct StructureHierarchyList: View {
         Text("\(PackSurfaceFormat.measuredTimecode(start)) – \(PackSurfaceFormat.measuredTimecode(end))")
             .foregroundStyle(color)
             .monospacedDigit()
+    }
+}
+
+
+struct AnalysisEnergyTimeline: View {
+    let duration: Double
+    let samples: [AnalysisSurfaceData.EnergySample]
+    var selectedSection: AnalysisSurfaceData.Section?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("Measured energy · normalized RMS")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Canvas { context, size in
+                guard duration.isFinite, duration > 0 else { return }
+                if let selectedSection {
+                    let start = CGFloat(selectedSection.start / duration) * size.width
+                    let end = CGFloat(selectedSection.end / duration) * size.width
+                    context.fill(Path(CGRect(x: start, y: 0, width: max(0, end - start), height: size.height)),
+                        with: .color(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint)))
+                }
+                var path = Path()
+                for (index, sample) in samples.enumerated() {
+                    let point = CGPoint(x: CGFloat(sample.t / duration) * size.width,
+                        y: CGFloat(1 - sample.rms) * size.height)
+                    if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+                context.stroke(path, with: .color(AppTheme.Accent.timecodeColor), lineWidth: AppTheme.BorderWidth.thin)
+            }
+            .frame(height: AppTheme.ComponentSize.packSurfaceRowHeight)
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .accessibilityLabel("Measured energy over \(PackSurfaceFormat.mmss(duration))")
+        }
+    }
+}
+
+
+struct AnalysisWaveformTimeline: View {
+    let samples: [Float]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("Source waveform · amplitude envelope")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Canvas { context, size in
+                guard !samples.isEmpty else { return }
+                var path = Path()
+                let columns = max(1, Int(size.width.rounded(.up)))
+                for column in 0..<columns {
+                    let first = column * samples.count / columns
+                    let end = min(samples.count, max(first + 1, (column + 1) * samples.count / columns))
+                    guard first < end else { continue }
+                    let amplitude = CGFloat(1 - (samples[first..<end].min() ?? 1)) * size.height / 2
+                    let x = CGFloat(column) * size.width / CGFloat(columns)
+                    path.move(to: CGPoint(x: x, y: size.height / 2 - amplitude))
+                    path.addLine(to: CGPoint(x: x, y: size.height / 2 + amplitude))
+                }
+                context.stroke(path, with: .color(AppTheme.Text.secondaryColor), lineWidth: AppTheme.BorderWidth.hairline)
+            }
+            .frame(height: AppTheme.ComponentSize.packSurfaceRowHeight)
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .accessibilityLabel("Waveform from the verified analyzed track")
+        }
     }
 }

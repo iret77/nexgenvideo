@@ -129,6 +129,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         parameters.referenceSlots.map { slot in
             switch parameters.parameters {
             case .image: return "image_reference"
+            case .audio: return "source_video"
             case .video(let video):
                 if video.sourceVideoURL == slot { return "source_video" }
                 if video.startFrameURL == slot { return "start_frame" }
@@ -160,7 +161,13 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
 
     @MainActor
     func requireCurrentContext(editor: EditorViewModel) async throws {
-        let modality: PromptComposer.Modality = payload.modality == "image" ? .image : .video
+        let modality: PromptComposer.Modality
+        switch payload.modality {
+        case "image": modality = .image
+        case "video": modality = .video
+        case "audio": modality = .audio
+        default: throw GenerationRequestError.gate("The generation package has an unsupported modality.")
+        }
         let home = editor.workingRoot
         guard try await PromptCompiler.currentBinding(
             editor: editor,

@@ -103,6 +103,11 @@ final class MediaAsset: Identifiable {
         }
     }
 
+    var libraryDisplayName: String {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty || MediaFilename.isContentAddressed(title) ? userFacingFilename : title
+    }
+
     var userFacingFilename: String {
         MediaFilename.display(
             originalFilename: originalFilename,

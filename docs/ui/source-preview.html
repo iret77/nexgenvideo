@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexGenVideo — Direct source selection</title>
+<style>
+:root { color-scheme:dark; --surface:#171717; --raised:#242424; --text:#ededed; --muted:#929292; --border:#393939; --accent:#d56983; font:13px -apple-system,BlinkMacSystemFont,sans-serif }
+body { background:var(--surface); color:var(--text); margin:24px }
+#spec { max-width:1100px; line-height:1.5; margin-bottom:24px } h1 { font-size:18px } li { margin:4px 0 }
+main { display:grid; grid-template-columns:200px minmax(240px,1fr) 290px; max-width:1300px; border:1px solid var(--border) }
+header { padding:12px; border-bottom:1px solid var(--border); display:flex; gap:12px } header span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+aside { border-right:1px solid var(--border) } section { min-width:0 } .inspector { border-left:1px solid var(--border); padding:12px }
+button { background:var(--raised); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; cursor:pointer }
+button:disabled { color:#666; border-color:#303030; cursor:default } .selected { border-color:var(--accent); color:var(--accent) } .remembered { border-color:var(--muted) }
+.sources { padding:12px; display:grid; gap:12px } .screen { height:280px; display:grid; place-items:center; background:#080808; color:var(--muted) }
+.transport,.timeline { padding:12px; border-top:1px solid var(--border) } .timeline { grid-column:1/-1; min-height:100px }
+.row { display:flex; justify-content:space-between; gap:12px; margin:14px 0 } .muted { color:var(--muted) } .actions { display:flex; gap:12px }
+@media(max-width:800px) { main { grid-template-columns:150px minmax(200px,1fr) } .inspector { grid-column:1/-1 } }
+</style>
+<section id="spec">
+<h1>Direct source selection</h1>
+<ul>
+<li>Select an original medium or a timeline clip to activate its preview and inspector. Headers describe the object; there are no viewer mode controls or visible source tabs.</li>
+<li>Remember each source's cursor, In/Out and target track. Timeline time remains independent. Search, type and folder filters affect only library results.</li>
+<li>Accent marks the active area's selection; the other area's remembered selection is neutral. Context-click activates its target and preserves a selected group.</li>
+<li>In/Out and Insert/Overwrite precede file metadata in Edit. Out is exclusive. Insert ripples; Overwrite replaces the target interval. Both are one undoable timeline edit.</li>
+<li>Offline media cannot be inserted. Documents use native Quick Look with no temporal transport or source-range actions. Film-only overlays stay off source previews.</li>
+<li>Source history is available in the preview's native context menu. Deleting the active medium activates a surviving preview; Undo restores the deleted source context.</li>
+</ul>
+<p class="muted">Layout illustration only. The buttons below switch illustrations; they do not execute the native engine. Native interaction and accessibility require GitHub Actions verification.</p>
+</section>
+<main>
+<aside><header>Media</header><div class="sources"><label>Search <input aria-label="Search illustration" placeholder="Filter media"></label><button id="source" class="selected">Arrival.mov</button><button disabled>Offline.mov · Relink</button><span class="muted">Notes.md · Document</span></div></aside>
+<section><header><strong id="heading">Media Preview</strong><span>Arrival.mov</span></header><div class="screen" id="screen">Original frame · 00:00:02:02</div><div class="transport" id="transport">00:00:02:02 / 00:00:10:00</div></section>
+<section class="inspector"><header id="kind">Original Media › Arrival.mov</header><div id="tools"><p>Source</p><div class="row"><span>In</span><span>00:00:01:29 · Mark In</span></div><div class="row"><span>Out</span><span>00:00:02:02 · Mark Out</span></div><div class="row"><span>Target</span><span>V1</span></div><div class="actions"><button disabled>Insert</button><button disabled>Overwrite</button></div></div><p class="muted">File</p><div class="row"><span>Type</span><span>Video</span></div></section>
+<section class="timeline"><p>Timeline · Playhead 00:00:00:20</p><button id="clip" class="remembered">Arrival.mov · Timeline clip</button></section>
+</main>
+<script>
+const source=document.querySelector('#source'), clip=document.querySelector('#clip');
+function select(film) {
+ source.className=film?'remembered':'selected'; clip.className=film?'selected':'remembered';
+ document.querySelector('#heading').textContent=film?'Film Preview':'Media Preview';
+ document.querySelector('#kind').textContent=(film?'Timeline Clip › V1':'Original Media')+' › Arrival.mov';
+ document.querySelector('#screen').textContent=film?'Film frame · 00:00:00:20':'Original frame · 00:00:02:02';
+ document.querySelector('#transport').textContent=film?'00:00:00:20 / 00:00:03:10':'00:00:02:02 / 00:00:10:00';
+ document.querySelector('#tools').hidden=film;
+}
+source.onclick=()=>select(false); clip.onclick=()=>select(true);
+</script>
+</html>

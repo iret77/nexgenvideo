@@ -3,8 +3,12 @@ import SwiftUI
 
 @MainActor
 enum ChatHangReplay {
+    static var isRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_CHAT_HANG_REPLAY"] == "1"
+    }
+
     static func runIfRequested() {
-        guard ProcessInfo.processInfo.environment["NGV_CHAT_HANG_REPLAY"] == "1" else { return }
+        guard isRequested else { return }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         BundledFonts.register()
@@ -14,13 +18,15 @@ enum ChatHangReplay {
                 refreshBackendStatusOnInit: false
             )
         )
-        editor.workspaceFocus = .produce
+        editor.setWorkspaceFocus(.production)
         editor.agentPanelVisible = true
         let service = editor.agentService
         let image = imagePayload()
         for index in 0..<24 {
             appendGeneration(index, image: image, service: service)
         }
+        guard service.stageTask(.init(title: "Review generated sheets", systemImage: "photo",
+            prompt: "Review the generated sheets.", requiresDirection: true)) else { exit(2) }
         service.isStreaming = true
         let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
         let window = NSWindow(
@@ -46,7 +52,7 @@ enum ChatHangReplay {
                     )
                 )
                 if step == 1 {
-                    service.prefillInput("")
+                    service.restoreComposerFocus()
                 }
                 if step % 80 == 20 {
                     service.isStreaming = false
@@ -59,7 +65,7 @@ enum ChatHangReplay {
                 } else if step % 80 == 35 {
                     service.abandonDialog()
                     service.isStreaming = true
-                    service.prefillInput("")
+                    service.restoreComposerFocus()
                 }
                 if step.isMultiple(of: 40) {
                     service.isStreaming = false
@@ -80,11 +86,37 @@ enum ChatHangReplay {
                     ))
                 }
                 host.layoutSubtreeIfNeeded()
+                if step % 400 == 100 {
+                    guard WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: window) == nil,
+                          await waitForSheet(in: window, presented: true) else {
+                        emit("diagnostics-open-failed", step: step)
+                        exit(2)
+                    }
+                    if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
+                    emit("diagnostics-opened", step: step)
+                } else if step % 400 == 300 {
+                    guard await waitForSheet(in: window, presented: true) else {
+                        emit("diagnostics-close-failed", step: step, reason: "sheet geometry did not settle")
+                        exit(2)
+                    }
+                    let clickFailure = window.attachedSheet.map {
+                        WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: $0)
+                    } ?? "diagnostic sheet unavailable"
+                    guard clickFailure == nil,
+                          await waitForSheet(in: window, presented: false) else {
+                        if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
+                        emit("diagnostics-close-failed", step: step,
+                             reason: clickFailure ?? "sheet remained presented after click")
+                        exit(2)
+                    }
+                    emit("diagnostics-closed", step: step)
+                }
+                let visibleHost = window.attachedSheet?.contentView ?? host
                 if window.firstResponder is NSTextView {
                     focusedTicks += 1
                 }
                 if step.isMultiple(of: 15),
-                   let scroll = scrollViews(in: host).max(by: { $0.bounds.height < $1.bounds.height }),
+                   let scroll = scrollViews(in: visibleHost).max(by: { $0.bounds.height < $1.bounds.height }),
                    let event = CGEvent(
                        scrollWheelEvent2Source: nil,
                        units: .pixel,
@@ -97,7 +129,7 @@ enum ChatHangReplay {
                     scroll.scrollWheel(with: wheel)
                 }
                 if [10, 25, 600, 1200].contains(step) {
-                    snapshot(host, step: step)
+                    snapshot(visibleHost, step: step)
                 }
                 if step.isMultiple(of: 10) {
                     emit("progress", step: step)
@@ -115,6 +147,30 @@ enum ChatHangReplay {
         }
         app.run()
         exit(1)
+    }
+
+    private static func waitForSheet(in window: NSWindow, presented: Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        var previousFrame: NSRect?
+        var stableSince = clock.now
+        while clock.now < deadline {
+            if !presented, window.attachedSheet == nil { return true }
+            if presented, let sheet = window.attachedSheet, sheet.isVisible, sheet.isKeyWindow {
+                sheet.contentView?.layoutSubtreeIfNeeded()
+                if sheet.frame != previousFrame {
+                    previousFrame = sheet.frame
+                    stableSince = clock.now
+                } else if clock.now - stableSince >= .milliseconds(300) {
+                    return true
+                }
+            } else {
+                previousFrame = nil
+                stableSince = clock.now
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+        }
+        return false
     }
 
     private static func reviewDialog(_ step: Int) -> AgentDialog {
@@ -199,12 +255,13 @@ enum ChatHangReplay {
         return bitmap.representation(using: .png, properties: [:])!.base64EncodedString()
     }
 
-    private static func emit(_ event: String, step: Int) {
-        let row: [String: Any] = [
+    private static func emit(_ event: String, step: Int, reason: String? = nil) {
+        var row: [String: Any] = [
             "event": event,
             "step": step,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
+        if let reason { row["reason"] = reason }
         let data = try! JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
         FileHandle.standardOutput.write(data + Data([10]))
     }

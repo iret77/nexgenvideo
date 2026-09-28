@@ -1072,7 +1072,10 @@
 <body>
 <main class="doc">
   <section id="spec">
-    <h1>Calm, task-oriented Agent chat</h1>
+    <h1>Agent diagnostic transcript</h1>
+    <p>The primary task interface is now specified in <a href="agent-tasks.html">agent-tasks.html</a>.
+      Its Tasks bar and structured interaction dock supersede the historical conversation navigation
+      and free-composer layout below. Transcript grammar and read-only receipt semantics remain applicable.</p>
     <p class="lead">Binding information architecture, state ownership, visual grammar and responsive
       behavior for the canonical NexGenVideo Agent panel.</p>
     <p>This contract reorganizes existing chat capabilities. It does not add a second Pipeline,
@@ -1116,6 +1119,31 @@
         different conversation.</td></tr>
     </table>
 
+    <h2>Structured task entry</h2>
+    <p>Choosing a starter stages a named task in the existing input dock. The field contains only
+      user instructions and media references; host instructions stay hidden. Required instructions
+      keep Run Task disabled until supplied. Rejected submission preserves the task, instructions,
+      and references. Pack commands requiring an argument use the same form. Task drafts are saved
+      with the project. Reload restores the latest open draft without starting the agent; closed
+      drafts remain in session history until explicitly opened.</p>
+    <p>Decisions opens a read-only projection of the current session's persisted workflow and choice
+      records. It contains no approval or execution controls. Opening it never executes a command.</p>
+    <div class="callout"><strong>Generate an AI video</strong><br>
+      Enter task instructions. Use @ to reference media.<br>
+      <button disabled>Run Task</button> — Required instructions are empty.</div>
+
+    <h3>Task entry routes</h3>
+    <table class="spec-table">
+      <tr><th>Entry</th><th>Task</th><th>Execution owner</th></tr>
+      <tr><td>Caption names, emoji, translation</td><td>Named caption task; optional instructions</td><td>AgentService staged work order</td></tr>
+      <tr><td>Music revision</td><td>Timeline music; required instructions</td><td>AgentService staged work order</td></tr>
+      <tr><td>Inspector correction</td><td>Named inspected object; required correction</td><td>AgentService scoped work order</td></tr>
+      <tr><td>Bible form / Story controls</td><td>Object changes and submitted field values</td><td>Existing AgentControlTurn</td></tr>
+    </table>
+    <p>Staging never starts execution. Running or blocked agent state refuses a new task without
+      consuming the current task or instructions. Generated control text is hidden; readable choice
+      records retain the user-visible action. A refused form submission preserves its fields.</p>
+
     <h2>Turn semantics and reading order</h2>
     <ul>
       <li>A turn is an explicit semantic projection with a stable identity. A message role alone is
@@ -1140,7 +1168,9 @@
       <tr><td>Activity</td><td>One quiet summary row. One disclosure reveals a flat ordered list of
         steps, arguments and results. There is no disclosure inside another disclosure. Host tool
         presentation and runner events supply labels; model prose does not become operational
-        status.</td></tr>
+        status. API thinking summaries appear in this flat detail list immediately before the
+        tool they precede; summaries without a following tool appear at the end. Empty and redacted
+        thinking never produces a row. Thinking is not an assistant result or host job status.</td></tr>
       <tr><td>Result</td><td>One logical assistant result per turn. Plain prose stays unframed.
         Structured content forms one bounded document surface, not one card per block. Generated
         media, provenance and durable Copy/Open/Reveal actions belong to this result.</td></tr>

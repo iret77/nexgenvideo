@@ -75,6 +75,9 @@ struct ToolDefinitionContractTests {
                     "id": "clean",
                     "label": "Clean",
                     "bogus": true,
+                ], [
+                    "id": "textured",
+                    "label": "Textured",
                 ]],
             ]],
         ])

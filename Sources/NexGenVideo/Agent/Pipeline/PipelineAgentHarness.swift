@@ -13,6 +13,25 @@ enum IntakePlanner {
         }
     }
 
+    static func restoredRepeat(
+        _ saved: ChatSessionDecision?, steps: [HardStep], phase: String?,
+        binding: ProjectPackBinding?, dataRoot: URL, ledger: IntakeLedger
+    ) -> HardStep? {
+        guard let saved, saved.origin == .direct, saved.dialog.purpose == .workflowIntake,
+              let key = saved.intakeKey, key.isRepeat,
+              key.packBinding == binding, key.phase == phase,
+              let index = steps.firstIndex(where: { $0.id == key.stepID }),
+              steps[index].repeatable, !ledger.isDeclined(key.stepID),
+              next(Array(steps.prefix(index)), dataRoot: dataRoot, ledger: ledger) == nil else { return nil }
+        let step = steps[index]
+        let count = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
+        guard count > 0, count == key.fingerprint, key.itemNumber == count + 1,
+              saved.dialog.hasSameControls(as: AgentDialog(
+                hardStep: step, isRepeat: true, itemNumber: count + 1
+              )) else { return nil }
+        return step
+    }
+
     static func next(
         _ steps: [HardStep],
         dataRoot: URL,
@@ -482,6 +501,17 @@ final class PipelineAgentHarness {
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
         var repeatStep: (step: HardStep, itemNumber: Int)?
+        if offered == nil, let phase = context.phase,
+           let step = IntakePlanner.restoredRepeat(
+            service.sessions.first(where: { $0.id == service.currentSessionId })?.decision,
+            steps: context.manifest.steps(for: phase), phase: phase,
+            binding: editor.declaredPluginBinding, dataRoot: dataRoot, ledger: ledger
+           ) {
+            if let failure = present(step, isRepeat: true, dataRoot: dataRoot, editor: editor) {
+                return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
+            }
+            return .blocked
+        }
         if let previous = offered {
             guard let resolution = intakeResolution,
                   resolution.dialogID == previous.dialogID else {
@@ -972,7 +1002,11 @@ final class PipelineAgentHarness {
             dialogID: dialog.id
         )
         do {
-            try editor.agentService.presentDialog(dialog)
+            try editor.agentService.presentDialog(dialog, intakeKey: WorkflowIntakeDraftKey(
+                packBinding: editor.declaredPluginBinding,
+                phase: step.phase, stepID: step.id, itemNumber: resolvedItemNumber,
+                fingerprint: fingerprint, isRepeat: isRepeat
+            ))
             return nil
         } catch {
             offered = nil

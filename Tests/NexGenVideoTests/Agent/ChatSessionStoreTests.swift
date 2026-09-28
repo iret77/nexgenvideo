@@ -28,6 +28,199 @@ struct ChatSessionStoreTests {
         """
         let session = try decoder.decode(ChatSession.self, from: Data(json.utf8))
         #expect(session.claudeSessionId == nil)
+        #expect(session.draft == nil)
+        #expect(session.decision == nil)
+    }
+
+    @Test("Open decisions reload in their owning session without sending or approving")
+    @MainActor
+    func openDecisionSurvivesReloadWithoutExecution() throws {
+        for embedded in [false, true] {
+            let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+            try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: home) }
+            let service = AgentService(refreshBackendStatusOnInit: false)
+            service.loadSessions(from: nil)
+            let id = try #require(service.currentSessionId)
+            let origin: ToolCallOrigin = embedded
+                ? .embeddedRuntime(chatSessionID: id, mcpSessionID: UUID())
+                : .inAppChat(sessionID: id)
+            let dialog = try AgentDialog.parse([
+                "title": "Revise the chorus", "textField": ["placeholder": "Direction"],
+                "sections": [["id": "pace", "label": "Pace", "type": "choices", "options": [
+                    ["id": "slow", "label": "Slower"], ["id": "fast", "label": "Faster"],
+                ]]],
+            ])
+            try service.presentDialog(dialog, origin: origin)
+            service.dialogDraft = AgentDialogDraft(toggles: ["keep": true], direction: "Preserve the ending",
+                customValues: ["style": "Muted"], fileURLs: [URL(fileURLWithPath: "/tmp/reference.png")])
+            service.dialogChoiceSelections = ["pace": ["slow"]]
+            let saved = try #require(service.sessions.first { $0.id == id })
+            #expect(saved.hasPersistedContent)
+            #expect(saved.decision?.origin == origin)
+            try #require(ChatSessionStore.encodeSession(saved)).write(
+                to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+            let restored = AgentService(refreshBackendStatusOnInit: false)
+            var writes = 0
+            restored.onSessionsChanged = { writes += 1 }
+            restored.onDraftChanged = { writes += 1 }
+            restored.loadSessions(from: home)
+            #expect(restored.currentSessionId == id)
+            #expect(restored.pendingDialog == dialog)
+            #expect(restored.dialogDraft.direction == "Preserve the ending")
+            #expect(restored.dialogDraft.fileURLs == [URL(fileURLWithPath: "/tmp/reference.png")])
+            #expect(restored.dialogDraft.customValues == ["style": "Muted"])
+            #expect(restored.dialogDraft.toggles == ["keep": true])
+            #expect(restored.dialogChoiceSelections == ["pace": ["slow"]])
+            #expect(restored.messages.isEmpty)
+            #expect(!restored.isStreaming)
+            #expect(restored.isComposerBlocked)
+            #expect(writes == 0)
+            #expect(throws: ToolError.self) { try restored.presentDialog(dialog, origin: origin) }
+            restored.abandonDialog()
+            #expect(restored.sessions.first { $0.id == id }?.decision == nil)
+            #expect(restored.messages.isEmpty)
+        }
+    }
+
+    @Test("Intake inputs restore only after the host reoffers the matching current step")
+    @MainActor
+    func intakeReloadRequiresMatchingHostOffer() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let binding = try #require(ProjectPackBinding(id: "musicvideo", version: "1.0.0", projectSchema: "musicvideo/1.0.0"))
+        let key = WorkflowIntakeDraftKey(packBinding: binding, phase: "story", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        func dialog(_ title: String = "Character 1") -> AgentDialog {
+            AgentDialog(id: UUID().uuidString, title: title, symbol: "person",
+                intro: nil, costHint: nil, confirmLabel: "Attach", textField: nil, sections: [],
+                fileIntake: AgentDialog.FileIntake(accept: ["image"], prompt: nil,
+                    allowsMultiple: true, attachAs: "character", namePrompt: "Name",
+                    required: false, completionLabel: "Skip"), purpose: .workflowIntake)
+        }
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        try service.presentDialog(dialog(), intakeKey: key)
+        service.dialogDraft.direction = "Lead singer"
+        service.dialogDraft.fileURLs = [URL(fileURLWithPath: "/tmp/singer.png")]
+        let saved = try #require(service.sessions.first { $0.id == id })
+        #expect(saved.decision?.intakeKey == key)
+        try #require(ChatSessionStore.encodeSession(saved)).write(
+            to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+        let changedPhase = WorkflowIntakeDraftKey(packBinding: binding, phase: "bible", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        let nextItem = WorkflowIntakeDraftKey(packBinding: binding, phase: "story", stepID: "characters",
+            itemNumber: 2, fingerprint: 1, isRepeat: true)
+        let changedPack = WorkflowIntakeDraftKey(packBinding: nil, phase: "story", stepID: "characters",
+            itemNumber: 1, fingerprint: 0, isRepeat: false)
+        for (offeredKey, title, shouldRestore) in [
+            (key, "Character 1", true), (changedPhase, "Character 1", false),
+            (nextItem, "Character 1", false), (changedPack, "Character 1", false),
+            (key, "Location 1", false),
+        ] {
+            let restored = AgentService(refreshBackendStatusOnInit: false)
+            restored.loadSessions(from: home)
+            #expect(restored.currentSessionId == id)
+            #expect(restored.pendingDialog == nil)
+            #expect(restored.messages.isEmpty)
+            let offered = dialog(title)
+            try restored.presentDialog(offered, intakeKey: offeredKey)
+            #expect(restored.pendingDialog?.id == offered.id)
+            #expect(restored.dialogDraft.direction == (shouldRestore ? "Lead singer" : ""))
+            #expect(restored.dialogDraft.fileURLs.count == (shouldRestore ? 1 : 0))
+            #expect(restored.messages.isEmpty)
+            #expect(!restored.isStreaming)
+            if shouldRestore {
+                restored.completeDialog(offered)
+                #expect(restored.dialogSubmissionError != nil)
+                #expect(restored.sessions.first { $0.id == id }?.decision?.intakeKey == key)
+                #expect(restored.dialogDraft.direction == "Lead singer")
+            }
+        }
+    }
+
+    @Test("A saved decision cannot claim another session or an external MCP connection")
+    func decisionRequiresItsOriginalSession() throws {
+        let owner = UUID()
+        let dialog = try AgentDialog.parse(["title": "Direction", "textField": [:]])
+        for origin in [ToolCallOrigin.inAppChat(sessionID: UUID()),
+                       .embeddedRuntime(chatSessionID: UUID(), mcpSessionID: UUID()),
+                       .externalMCP(sessionID: owner)] {
+            let saved = ChatSessionDecision(dialog: dialog, origin: origin,
+                draft: AgentDialogDraft(), selections: [:])
+            #expect(!saved.belongs(to: owner))
+        }
+    }
+
+    @Test("An unsent task survives disk reload without starting the agent")
+    @MainActor
+    func unsentTaskSurvivesReload() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        let task = AgentTask(title: "Revise section", systemImage: "pencil",
+            prompt: "Revise the selected section.", requiresDirection: true)
+        let reference = AgentMention(displayName: "Character", mediaRef: "character-asset", type: .image)
+        service.pendingFunction = task
+        service.draft = "Use this character @Character"
+        service.mentions = [reference]
+        let session = try #require(service.sessions.first { $0.id == id })
+        #expect(session.messages.isEmpty)
+        #expect(session.hasPersistedContent)
+        let data = try #require(ChatSessionStore.encodeSession(session))
+        try data.write(to: chat.appendingPathComponent("\(id.uuidString).json"))
+
+        let restored = AgentService(refreshBackendStatusOnInit: false)
+        var mutations = 0
+        restored.onSessionsChanged = { mutations += 1 }
+        restored.loadSessions(from: home)
+        #expect(restored.currentSessionId == id)
+        #expect(restored.pendingFunction == task)
+        #expect(restored.draft == "Use this character @Character")
+        #expect(restored.mentions == [reference])
+        #expect(restored.messages.isEmpty)
+        #expect(!restored.isStreaming)
+        #expect(mutations == 0)
+
+        restored.pendingFunction = nil
+        restored.draft = ""
+        restored.mentions = []
+        #expect(restored.sessions.first { $0.id == id }?.hasPersistedContent == false)
+    }
+
+    @Test("Closed task drafts remain available without becoming the active task on reload")
+    @MainActor
+    func closedDraftRemainsClosedOnReload() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var saved = ChatSession(title: "Deferred revision", isOpen: false)
+        saved.draft = .init(text: "Shorten the ending", mentions: [],
+            task: .init(title: "Revise ending", systemImage: "pencil", prompt: "Revise the ending.",
+                requiresDirection: true))
+        try #require(ChatSessionStore.encodeSession(saved))
+            .write(to: chat.appendingPathComponent("\(saved.id.uuidString).json"))
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: home)
+        #expect(service.currentSessionId != saved.id)
+        #expect(service.pendingFunction == nil)
+        #expect(service.sessions.first { $0.id == saved.id }?.isOpen == false)
+
+        service.selectSession(saved.id)
+        #expect(service.draft == "Shorten the ending")
+        #expect(service.pendingFunction == saved.draft?.task)
+        #expect(!service.isStreaming)
     }
 
     @Test("dialog choice presentation round-trips with the semantic user turn")

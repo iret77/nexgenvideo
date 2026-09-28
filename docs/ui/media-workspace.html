@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexGenVideo — Media workspace</title>
+<style>
+:root { color-scheme:dark; font:13px -apple-system,BlinkMacSystemFont,sans-serif; --base:#171717; --surface:#242424; --border:#393939; --text:#ededed; --muted:#999; --accent:#d56983 }
+body { margin:24px; background:var(--base); color:var(--text) } #spec { max-width:1100px; line-height:1.5; margin-bottom:24px } h1 { font-size:18px } li { margin:4px 0 }
+main { display:grid; grid-template-columns:220px minmax(350px,1fr) 360px; max-width:1400px; border:1px solid var(--border); min-height:550px }
+section,aside { min-width:0 } aside { border-right:1px solid var(--border) } header { padding:12px; display:flex; gap:12px; border-bottom:1px solid var(--border) }
+button,input,select { color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:7px } button { cursor:pointer } button:disabled { color:#666; cursor:default }
+.tree { list-style:none; padding:12px } .tree li { padding:7px } .child { margin-left:16px } .active { color:var(--accent); background:#34262b } .muted { color:var(--muted) }
+.tools { padding:12px; display:flex; flex-wrap:wrap; gap:8px } .results { padding:12px; display:grid; gap:8px } .asset { display:flex; align-items:center; gap:12px; padding:10px; border-bottom:1px solid var(--border) } .asset small { margin-left:auto; color:var(--muted) }
+.right { border-left:1px solid var(--border) } .preview { min-height:190px; background:#080808; display:grid; place-items:center; color:var(--muted) } .details { padding:16px; display:grid; gap:16px } .row { display:flex; justify-content:space-between }
+@media(max-width:900px) { main { grid-template-columns:180px minmax(300px,1fr) } .right { grid-column:1/-1 } }
+</style>
+<section id="spec">
+<h1>Media workspace and shared source pickers</h1>
+<ul>
+<li>Folders occupy the left sidebar, the library the central surface, and preview/details the right column. Hiding folders leaves the library usable. Folder navigation changes results, not the active source.</li>
+<li>Folder actions reuse canonical IDs, import, move, rename and undo. A native parent drop area must not shadow inner folder targets.</li>
+<li>Grid and list share asset selection, context actions, relink and drag payloads. Readable titles and original import filenames replace internal storage hashes.</li>
+<li>Search covers names, transcripts, visual moments and current document bytes. Type/AI filters apply before result limits. Unsearchable documents are reported, never silently treated as complete search coverage.</li>
+<li>Each workspace retains folder, filters, view, scroll position and source range. Each purpose-specific picker retains its own filter, selection and scroll state. Opening a picker does not seek or edit the timeline.</li>
+<li>Production references, intake and generation slots use the same picker. Assignment occurs only through the calling action. “Show in Media” explicitly opens the same asset in the organizer.</li>
+<li>The Edit browser is compact; folder administration stays in Media. Postproduction can preview originals without assigning or replacing a shot source.</li>
+</ul>
+<p class="muted">Static layout illustration. Native layout, keyboard, drag/drop, 500-asset navigation and undo require GitHub Actions evidence. No app execution is represented here.</p>
+</section>
+<main>
+<aside><header><strong>Folders</strong><button disabled>＋</button></header><ul class="tree"><li>Library</li><li>▾ Production</li><li class="child active">Shots</li><li class="child">Audio</li><li class="child">Scripts</li></ul></aside>
+<section><header><button disabled>＋ Import</button><button disabled>✦ Generate</button><button disabled>Organize ▾</button></header><div class="tools"><input placeholder="Search files and contents" aria-label="Search illustration"><select aria-label="View"><option>List</option><option>Grid</option></select><select aria-label="Type"><option>All media</option><option>Video</option><option>Audio</option><option>Text</option></select></div><header><span>Library › Production › Shots</span><span class="muted">4 items</span></header><div class="results"><div class="asset active">Arrival — take 2<small>Arrival_002.mov · Video</small></div><div class="asset">Room tone<small>Room.wav · Audio</small></div><div class="asset">Director notes<small>Treatment.md · Document</small></div><div class="asset">Reference portrait<small>Portrait.png · Image</small></div></div></section>
+<section class="right"><header><strong>Media Preview</strong><span>Arrival_002.mov</span></header><div class="preview">Original medium · 00:00:02:02</div><header>Original Media › Arrival — take 2</header><div class="details"><strong>File</strong><div class="row"><span>Filename</span><span>Arrival_002.mov</span></div><div class="row"><span>Type</span><span>Video</span></div><div class="row"><span>Duration</span><span>00:00:10:00</span></div></div></section>
+</main>
+</html>

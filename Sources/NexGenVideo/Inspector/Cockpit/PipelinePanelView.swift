@@ -46,11 +46,12 @@ enum PipelineSurfaceRouting {
                 destination: .pack(surface.id)
             )
         }
+        if contract?.cockpitSurfaces.contains(where: { $0.phase == phase }) == true { return nil }
         return switch entry.surface {
         case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
         case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
-        case "choice": Route(icon: "slider.horizontal.3", label: "In chat", taskClass: entry.taskClass, destination: .chat)
-        default: Route(icon: "questionmark", label: entry.surface, taskClass: entry.taskClass, destination: .chat)
+        case "choice": Route(icon: "slider.horizontal.3", label: "Open Controls", taskClass: entry.taskClass, destination: .chat)
+        default: nil
         }
     }
 
@@ -65,7 +66,7 @@ enum PipelineSurfaceRouting {
         case "sanity", "frames", "render":
             Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
         default:
-            Route(icon: "slider.horizontal.3", label: "In chat", taskClass: taskClass, destination: .chat)
+            Route(icon: "slider.horizontal.3", label: "Open Controls", taskClass: taskClass, destination: .chat)
         }
     }
 }
@@ -74,6 +75,10 @@ enum PipelineSurfaceRouting {
 // highlighted and gate mutations routed through NativeGateWriter.
 
 struct PipelinePanelView: View {
+    enum Presentation { case overview, phaseDock }
+    var presentation: Presentation = .overview
+    var viewedPhase: String? = nil
+
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
 
@@ -101,6 +106,15 @@ struct PipelinePanelView: View {
         "The pipeline state is unavailable."
     )
     @State private var storyboardReviewRequested = false
+    @State private var pendingRewind: RewindRequest?
+
+    private struct RewindRequest {
+        let home: URL
+        let revision: Int
+        let phase: String
+        let affected: [String]
+    }
+
     /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
     @State private var gateError: GateErrorState?
 
@@ -118,9 +132,9 @@ struct PipelinePanelView: View {
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            content
+            if presentation == .phaseDock { dockContent } else { content }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: presentation == .overview ? .infinity : nil, alignment: .top)
         .task(id: editor.projectURL) { await load() }
         // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
         // then, so without this the panel would keep showing the stale "Start production" state.
@@ -128,15 +142,88 @@ struct PipelinePanelView: View {
             Task { await load(showProgress: false) }
         }
         .onChange(of: editor.projectURL) { _, _ in
+            pendingRewind = nil
             gateError = nil
         }
         .onChange(of: runningPhase) { _, _ in
             refreshApprovalReadiness()
         }
+        .confirmationDialog("Rewind pipeline?", isPresented: Binding(
+            get: { pendingRewind != nil }, set: { if !$0 { pendingRewind = nil } }
+        ), presenting: pendingRewind) { request in
+            Button("Rewind to \(PhaseDisplay.label(request.phase))", role: .destructive) {
+                guard editor.workingRoot == request.home, editor.engineStateRevision == request.revision else {
+                    gateError = GateErrorState(message: "The pipeline changed. Review the rewind again.", diagnostic: "Rewind confirmation no longer matches the project revision.")
+                    return
+                }
+                apply(failureMessage: "Couldn't rewind the pipeline. Try again.") { home in
+                    guard home == request.home else { throw NativeGateWriter.WriteError.notInitialized }
+                    try NativeGateWriter.rewind(projectDir: home, targetPhase: request.phase,
+                        declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
+                        executionCoordinator: editor.pipelinePhaseRunCoordinator)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { request in
+            Text("Reset approvals from \(PhaseDisplay.label(request.phase)) onward: \(request.affected.map(PhaseDisplay.label).joined(separator: ", ")). Existing media, takes and timeline clips remain in the project.")
+        }
         .sheet(isPresented: $storyboardReviewRequested) {
             PipelineStoryboardReviewSheet()
                 .environment(editor)
         }
+    }
+
+    @ViewBuilder
+    private var dockContent: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            switch state {
+            case .idle, .loading:
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading phase controls…")
+                }
+            case .failed:
+                Text("Phase controls unavailable.")
+                Button("Retry") { Task { await load() } }
+                    .buttonStyle(.inlineAction())
+            case .loaded(nil):
+                Text("No pipeline yet.")
+            case .loaded(.some(let data)):
+                if let phase = data.phases.first(where: { $0.phase == data.nextPhaseName }) {
+                    if let viewedPhase, viewedPhase != phase.phase {
+                        Text("Viewing: \(PhaseDisplay.label(viewedPhase))")
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
+                    Text("Current phase: \(PhaseDisplay.label(phase.phase))")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        .background { acceptanceProbe("current", text: phase.phase) }
+                    HStack(spacing: AppTheme.Spacing.md) {
+                        surfaceIcon(for: phase.phase)
+                        approveButton(phase, enabled: approvalIsEnabled(for: phase.phase,
+                            isNext: true, runningPhase: runningPhase))
+                    }
+                    if let runningPhase {
+                        Text("Running: \(PhaseDisplay.label(runningPhase)). Approval is unavailable until it finishes.")
+                    } else {
+                        Text(nextActionDescription(for: phase.phase))
+                    }
+                    if editor.agentService.isComposerBlocked || !approvalReadiness.isReady {
+                        Button("Open Current Controls") {
+                            editor.agentPanelVisible = true
+                            editor.focusedPanel = .agent
+                        }
+                        .buttonStyle(.inlineAction())
+                    }
+                } else {
+                    Text(data.isComplete ? "All phases complete" : "Current phase unavailable.")
+                }
+                if let gateError { gateErrorBanner(gateError) }
+            }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Background.surfaceColor)
     }
 
     @ViewBuilder
@@ -192,10 +279,6 @@ struct PipelinePanelView: View {
                                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
                         )
                     }
-                    if data.budgetEur > 0 || data.budgetStopEur != nil
-                        || data.budgetSpentEur > 0 || !data.spendComplete {
-                        budgetCard(data)
-                    }
                 }
                 .padding(.horizontal, AppTheme.Spacing.lg)
                 .padding(.vertical, AppTheme.Spacing.md)
@@ -204,138 +287,55 @@ struct PipelinePanelView: View {
         }
     }
 
-    // MARK: - Budget (merged Cost panel — same snapshot, one pipeline-health surface)
-
-    private func budgetCard(_ data: ProjectStateData) -> some View {
-        let warn = data.budgetWarning
-        let barColor = warn ? AppTheme.Status.errorColor : AppTheme.Status.successColor
-        return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text("BUDGET")
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .tracking(AppTheme.Tracking.wide)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                Spacer(minLength: 0)
-                if !data.spendComplete {
-                    Label("Spend incomplete", systemImage: "exclamationmark.triangle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Status.errorColor)
-                } else if warn {
-                    Label((data.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Status.errorColor)
-                }
-            }
-
-            budgetBar(fraction: data.spentFraction, color: barColor)
-
-            if let next = data.nextPhaseName, let remaining = data.budgetRemainingEur {
-                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", remaining)) planning budget available")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            } else if !data.spendComplete {
-                Text("Project spend includes unpriced or legacy generation. Remaining amounts are unavailable.")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-
-            VStack(spacing: AppTheme.Spacing.smMd) {
-                amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
-                if let stop = data.budgetStopEur {
-                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
-                }
-                amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
-                          amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
-                if data.activeReservations > 0 {
-                    textRow(label: "Active reservations", value: String(data.activeReservations),
-                            color: AppTheme.Text.secondaryColor)
-                }
-                AppDivider()
-                if let remaining = data.budgetRemainingEur {
-                    amountRow(label: "Planning remaining", amount: remaining,
-                              color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                              emphasized: true)
-                } else {
-                    textRow(label: "Planning remaining", value: "Unavailable",
-                            color: AppTheme.Status.errorColor, emphasized: true)
-                }
-                if let remaining = data.hardStopRemainingEur {
-                    amountRow(label: "Hard stop remaining", amount: remaining,
-                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                              emphasized: true)
-                }
-            }
-        }
-        .padding(AppTheme.Spacing.mdLg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                .fill(AppTheme.Background.raisedColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-        )
-    }
-
-    private func budgetBar(fraction: Double, color: Color) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
-                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                    .fill(color)
-                    .frame(width: max(0, min(1, fraction)) * geo.size.width)
-            }
-        }
-        .frame(height: AppTheme.Spacing.smMd)
-    }
-
-    private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
-        HStack {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
-            Spacer()
-            Text(String(format: "€%.2f", amount))
-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
-                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func textRow(label: String, value: String, color: Color, emphasized: Bool = false) -> some View {
-        HStack {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
-            Spacer()
-            Text(value)
-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
-                .foregroundStyle(color)
-                .textSelection(.enabled)
-        }
-    }
-
     private func summaryHeader(_ data: ProjectStateData) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
+            if let runningPhase {
+                Text("Running: \(PhaseDisplay.label(runningPhase)). Approval and rewind are unavailable until it finishes.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            } else if let next = data.nextPhaseName {
+                Text("Current phase: \(PhaseDisplay.label(next))")
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                Text(nextActionDescription(for: next))
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ProgressView(value: data.progress)
                 .tint(AppTheme.Status.successColor)
                 .accessibilityLabel("Approved phases")
                 .accessibilityValue("\(data.phases.filter(\.approved).count) of \(data.phases.count)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func nextActionDescription(for phase: String) -> String {
+        if gateWriting { return "Saving the phase decision…" }
+        if let dialog = editor.agentService.pendingDialog {
+            return "Complete ‘\(dialog.title)’ in the current controls."
+        }
+        if editor.agentService.pendingSpendApproval != nil { return "Review the pending generation cost before continuing." }
+        if editor.generationBatchCoordinator.pending != nil { return "Review the pending generation batch before continuing." }
+        if editor.agentService.pendingGateApproval != nil { return "Resolve the pending phase approval in the current controls." }
+        if editor.agentService.isComposerBlocked { return "Complete the current input or approval in the agent controls." }
+        if approvalPhase != phase { return "Checking phase readiness…" }
+        if !mutationReadiness.isReady { return "Phase controls are unavailable. Resolve the project or workflow error before continuing." }
+        if approvalReadiness.isReady { return "Review this phase’s artifact, then approve it to continue." }
+        return approvalReadiness.userMessage
+            ?? "Complete this phase’s artifact before approval. Open its working surface or the agent controls to continue."
+    }
+
+    private func approvalIsEnabled(for phase: String, isNext: Bool, runningPhase: String?) -> Bool {
+        PipelineApprovalControl.isEnabled(
+            approvalReady: isNext && approvalPhase == phase && approvalReadiness.isReady,
+            controlsAvailable: mutationReadiness.isReady,
+            gateWriting: gateWriting,
+            pipelineIsRunning: runningPhase != nil,
+            hostDecisionPending: editor.agentService.isComposerBlocked
+        )
     }
 
     @ViewBuilder
@@ -353,13 +353,7 @@ struct PipelinePanelView: View {
         let readiness = isNext && approvalPhase == phase.phase
             ? approvalReadiness
             : .blocked("This phase is not current.")
-        let approvalEnabled = PipelineApprovalControl.isEnabled(
-            approvalReady: readiness.isReady,
-            controlsAvailable: mutationReadiness.isReady,
-            gateWriting: gateWriting,
-            pipelineIsRunning: pipelineIsRunning,
-            hostDecisionPending: hostDecisionPending
-        )
+        let approvalEnabled = approvalIsEnabled(for: phase.phase, isNext: isNext, runningPhase: runningPhase)
         VStack(spacing: AppTheme.Spacing.none) {
             let layout = compact
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
@@ -419,6 +413,17 @@ struct PipelinePanelView: View {
             .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+            .background { acceptanceProbe("phase.\(phase.phase)", text: PhaseDisplay.label(phase.phase)) }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ part: String, enabled: Bool? = nil, text: String? = nil) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "pipeline.\(presentation == .overview ? "overview" : "dock").\(part)",
+                acceptanceState: enabled, acceptanceText: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
     }
 
     /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
@@ -446,6 +451,7 @@ struct PipelinePanelView: View {
         }
         .buttonStyle(.inlineAction(.approval))
         .disabled(!enabled)
+        .background { acceptanceProbe("approve.\(phase.phase)", enabled: enabled) }
         .help(
             enabled
                 ? "Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase"
@@ -503,16 +509,11 @@ struct PipelinePanelView: View {
             .disabled(!phase.approved || !controlsAvailable)
             Divider() // app-theme: native-menu-divider
             // Rewind to a phase already reached (active or completed) — never to the future.
-            Button("Rewind to here", role: .destructive) {
-                apply(failureMessage: "Couldn't rewind the pipeline. Try again.") {
-                    try NativeGateWriter.rewind(
-                        projectDir: $0,
-                        targetPhase: phase.phase,
-                        declaredPack: editor.declaredPluginName,
-                        declaredBinding: editor.declaredPluginBinding,
-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
-                    )
-                }
+            Button("Rewind to here…", role: .destructive) {
+                guard let home = editor.workingRoot, case .loaded(.some(let data)) = state,
+                      let index = data.phases.firstIndex(where: { $0.phase == phase.phase }) else { return }
+                pendingRewind = RewindRequest(home: home, revision: editor.engineStateRevision,
+                    phase: phase.phase, affected: data.phases[index...].map(\.phase))
             }
             .disabled(isFuture || !controlsAvailable)
         } label: {
@@ -641,7 +642,7 @@ struct PipelinePanelView: View {
             contract: editor.uiContract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces
         ) {
-            let isEnabled = route.destination != .chat
+            let isEnabled = route.destination != .chat || approvalPhase == phase
             Button {
                 switch route.destination {
                 case .tab(let target):
@@ -652,7 +653,8 @@ struct PipelinePanelView: View {
                 case .storyboard:
                     storyboardReviewRequested = true
                 case .chat:
-                    break
+                    editor.agentPanelVisible = true
+                    editor.focusedPanel = .agent
                 }
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
@@ -668,8 +670,8 @@ struct PipelinePanelView: View {
             .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)
             .help(isEnabled
-                  ? "Open \(route.label) to read this phase's work · compute: \(route.taskClass)"
-                  : "Answered in the chat · compute: \(route.taskClass)")
+                  ? "Open this phase’s artifact or current input controls"
+                  : "Input controls are available for the current phase")
         }
     }
 

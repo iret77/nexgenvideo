@@ -72,7 +72,7 @@ private struct AgentReceiptGroupView: View {
     }
 }
 
-private struct AgentReceiptView: View {
+struct AgentReceiptView: View {
     let receipt: AgentTranscriptReceipt
 
     var body: some View {
@@ -236,7 +236,7 @@ struct AgentMessageView: View {
                     } else {
                         ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
                     }
-                case .toolResult:
+                case .thinking, .toolResult:
                     EmptyView()
                 }
             }
@@ -595,12 +595,18 @@ struct AgentActivityView: View {
                             }
                         }
                         ForEach(activity.steps) { step in
+                            ForEach(Array(step.thinkingSummaries.enumerated()), id: \.offset) { _, summary in
+                                AgentThinkingSummaryView(summary: summary)
+                            }
                             ToolRunDetail(
                                 name: step.name,
                                 inputJSON: step.inputJSON,
                                 result: toolResults[step.id],
                                 showsHeader: true
                             )
+                        }
+                        ForEach(Array(activity.trailingThinkingSummaries.enumerated()), id: \.offset) { _, summary in
+                            AgentThinkingSummaryView(summary: summary)
                         }
                     }
                     .padding(.leading, AppTheme.Spacing.xxs)
@@ -965,5 +971,20 @@ private struct ToolResultImagePreview: View {
             AppTheme.ComponentSize.toolImageViewerMaxZoom,
             max(AppTheme.ComponentSize.toolImageViewerMinZoom, scale)
         )
+    }
+}
+
+private struct AgentThinkingSummaryView: View {
+    let summary: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+            Text("Thinking")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            MarkdownText(text: summary)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

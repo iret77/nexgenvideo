@@ -47,6 +47,9 @@ struct InspectorView: View {
         .onChange(of: editor.selectedMediaAssetIds) { _, _ in
             promoteSelection()
         }
+        .onChange(of: editor.activePreviewTabId) { _, _ in
+            promoteSelection()
+        }
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
             promoteSelection()
@@ -60,7 +63,9 @@ struct InspectorView: View {
     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
     /// rule. Batch editing across selected clips stays a first-class NLE feature.
     private var isMultiClipSelection: Bool {
-        !editor.isMarqueeSelecting && editor.selectedClipIds.count > 1
+        editor.activePreviewTab == .timeline
+            && !editor.isMarqueeSelecting
+            && editor.selectedClipIds.count > 1
     }
 
     @ViewBuilder
@@ -388,16 +393,19 @@ struct InspectorView: View {
         }
     }
 
-    /// A scoped, temporary thread about the inspected object (ladder rung 4): a fresh agent chat,
-    /// the scope visible in the prefilled opener, context accumulating across turns.
     private var scopedThreadButton: some View {
-        Button("Thread…") {
-            editor.agentService.newChat()
-            editor.agentService.draft = "About \(currentBreadcrumb.flatText): "
-            editor.agentPanelVisible = true
+        Button("Revise Object…") {
+            guard let scope = editor.inspectedObject?.taskTarget else { return }
+            _ = editor.agentService.stageTask(AgentTask(
+                title: "Revise \(currentBreadcrumb.flatText)", systemImage: "pencil",
+                prompt: "Revise only this object: \(scope). Apply the supplied instructions through the existing tools. Preserve approved artifacts and request explicit rewind when needed. Clarify ambiguous changes with a structured dialog.",
+                requiresDirection: true
+            ))
         }
         .controlSize(.small)
-        .help("Start a focused thread about this object")
+        .disabled(editor.inspectedObject == nil || editor.agentService.isStreaming
+            || editor.agentService.isComposerBlocked)
+        .help("Prepare an object-specific revision task")
     }
 
     /// Structured Bible editing: the form composes ONE precise agent command — the bible phase
@@ -418,6 +426,7 @@ struct InspectorView: View {
                 Spacer()
                 Button("Apply via Agent") { applyEntityEdit(entity) }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -438,15 +447,15 @@ struct InspectorView: View {
         }
         diff("name", new: entityEditName, old: entity.name, clearable: false)
         diff("visual_prompt", new: entityEditPrompt, old: entity.visualPrompt, clearable: true)
-        entityEditTarget = nil
-        guard !changes.isEmpty else { return }
+        guard !changes.isEmpty else { entityEditTarget = nil; return }
         let kind = entityKind(of: entity).rawValue
-        editor.agentService.send(
-            text: "Update the Bible \(kind) \u{201C}\(entity.id)\u{201D}: "
+        let accepted = editor.agentService.send(controlTurn: AgentControlTurn(
+            command: "Update the Bible \(kind) \u{201C}\(entity.id)\u{201D}: "
                 + changes.joined(separator: "; ")
                 + ". Apply it through the bible tooling (keep schema + sheets consistent) and confirm the diff.",
-            mentions: []
-        )
+            selections: [.init(label: "Object", values: [entity.name]), .init(label: "Changes", values: changes)]
+        ))
+        if accepted { entityEditTarget = nil }
         editor.agentPanelVisible = true
     }
 
@@ -459,10 +468,6 @@ struct InspectorView: View {
 
     // MARK: - Contextual one-shot prose (ladder rung 3 — docs/UI_UX_CONCEPT.md §4)
 
-    /// A one-shot prompt bound to the inspected object: the prose goes to the agent as typed, and the
-    /// scope chip above it shows what "this" resolves to — the inspected object IS the scope, so it's
-    /// always visible whenever this field is (docs/UI_UX_CONCEPT.md §2.2). Not a mini-chat — the field
-    /// clears on send and the Agent tab opens to show the work.
     private func contextualPromptField(placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let hint = editor.selectionContextHint {
@@ -476,11 +481,13 @@ struct InspectorView: View {
                 Button {
                     sendContextualPrompt()
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .interfaceFont(size: AppTheme.Typography.section)
+                    Label("Run Task", systemImage: "arrow.up")
+                        .interfaceFont(size: AppTheme.Typography.ui)
                 }
-                .buttonStyle(.plain)
-                .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.inlineAction())
+                .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || editor.agentService.isStreaming || editor.agentService.isComposerBlocked
+                    || editor.selectionContextHint == nil)
             }
         }
     }
@@ -488,8 +495,13 @@ struct InspectorView: View {
     private func sendContextualPrompt() {
         let text = contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        contextualPromptDraft = ""
-        editor.agentService.send(text: text, mentions: [])
+        guard let target = editor.selectionContextHint else { return }
+        let accepted = editor.agentService.sendWorkOrder(
+            .init(title: "Revise: " + target, systemImage: "pencil",
+                prompt: "Revise only this selected object: " + target + ". Respect phase gates and use the existing project tools.",
+                requiresDirection: true),
+            direction: text, mentions: [])
+        if accepted { contextualPromptDraft = "" }
         editor.agentPanelVisible = true
     }
 
@@ -523,7 +535,7 @@ struct InspectorView: View {
         var names: [String: String] = [:]
         var paths: [String: String] = [:]
         for asset in editor.mediaAssets {
-            names[asset.id] = asset.name
+            names[asset.id] = asset.libraryDisplayName
             paths[asset.id] = asset.url.path
         }
         return ObjectGraph.from(
@@ -565,7 +577,8 @@ struct InspectorView: View {
                     let label = Text(segment.label)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: isLast ? .semibold : .regular)
                         .foregroundStyle(isLast ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     // Parent segments that resolve to an object navigate to it — the graph's payoff.
                     if !isLast, let target = segment.object {
                         Button { editor.inspectedObject = target } label: { label }
@@ -575,6 +588,12 @@ struct InspectorView: View {
                     }
                 }
                 Spacer(minLength: 0)
+            }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "inspector.breadcrumb", acceptanceText: crumb.flatText)
+                        .allowsHitTesting(false)
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.top, AppTheme.Spacing.smMd)
@@ -641,10 +660,7 @@ struct InspectorView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            Text(title.uppercased())
-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                .tracking(AppTheme.Tracking.wide)
-                .foregroundStyle(AppTheme.Text.mutedColor)
+            InspectorSectionHeading(title: title)
             VStack(spacing: AppTheme.Spacing.sm) {
                 content()
             }
@@ -655,25 +671,20 @@ struct InspectorView: View {
         label: String,
         value: String,
         valueHelp: String? = nil,
-        truncate: Text.TruncationMode = .tail
+        stacked: Bool = false
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .fixedSize()
-            Spacer()
+        InspectorFormRow(label: label, stacked: stacked) {
             Text(value)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-                .truncationMode(truncate)
                 .multilineTextAlignment(.trailing)
+                .lineLimit(stacked ? 3 : nil)
+                .truncationMode(stacked ? .middle : .tail)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .help(valueHelp ?? value)
-                .padding(.horizontal, AppTheme.Spacing.xs)
         }
-        .frame(height: AppTheme.IconSize.md)
+        .frame(minHeight: AppTheme.IconSize.md)
     }
 
     // MARK: - Clip Inspector
@@ -753,6 +764,17 @@ struct InspectorView: View {
                     }
                 }
             }
+            if activeTab == .video || activeTab == .audio {
+                keyframesToggleBar(
+                    enabled: activeTab == .video
+                        ? nonTextVisualClips.count == 1
+                        : selectedAudioClips.count == 1
+                )
+                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .background(AppTheme.Background.surfaceColor)
+            }
         }
     }
 
@@ -777,6 +799,7 @@ struct InspectorView: View {
             titles: titles, selected: selected,
             raisedBackground: raisedBackground,
             accentedTitles: [ClipTab.ai.rawValue],
+            acceptanceProbePrefix: "inspector.tab",
             onSelect: onSelect
         )
     }
@@ -787,26 +810,24 @@ struct InspectorView: View {
         let single = clips.count == 1 ? clips.first : nil
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
-        if let clip = single, kfVisible {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
+        InspectorKeyframesContent(isPresented: kfVisible) {
+            if kfVisible {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     transformSection(clips: clips)
                     speedSection(clips: clips + selectedAudioClips)
-                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, AppTheme.Spacing.sm)
-                AppDivider()
+            } else {
+                transformSection(clips: clips)
+                speedSection(clips: clips + selectedAudioClips)
+            }
+        } keyframes: {
+            if let clip = single {
                 KeyframesPanel(clip: clip)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, AppTheme.Spacing.sm)
             }
-        } else {
-            transformSection(clips: clips)
-            speedSection(clips: clips + selectedAudioClips)
         }
-
-        keyframesToggleBar(enabled: single != nil)
+        .inspectorKeyframeAccessoryColumn(single != nil)
     }
 
     func keyframesToggleBar(enabled: Bool) -> some View {
@@ -831,6 +852,12 @@ struct InspectorView: View {
             .disabled(!enabled)
             .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
             .help(enabled ? (on ? "Hide keyframe timeline" : "Show keyframe timeline") : "Select a single clip to enable")
+            .background {
+                AppRelaunchClickProbe(
+                    identifier: "inspector.keyframes",
+                    acceptanceState: on
+                )
+            }
         }
     }
 
@@ -845,6 +872,7 @@ struct InspectorView: View {
                         range: 0.25...4.0,
                         format: "%.2f",
                         valueSuffix: "x",
+                        accessibilityName: "Speed",
                         dragSensitivity: 0.01,
                         fieldWidth: 50,
                         onChanged: { newVal in
@@ -901,17 +929,15 @@ struct InspectorView: View {
         label: String,
         clipId: String?,
         property: AnimatableProperty,
-        @ViewBuilder fields: () -> Fields
+        @ViewBuilder fields: @escaping () -> Fields
     ) -> some View {
-        propertyRow(label: label) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                fields()
-                if let clipId {
-                    keyframeControls(clipId: clipId, property: property)
-                }
+        InspectorAnimatableFormRow(label: label, showsAccessory: clipId != nil) {
+            fields()
+        } accessory: {
+            if let clipId {
+                keyframeControls(clipId: clipId, property: property)
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func keyframeControls(clipId: String, property: AnimatableProperty) -> some View {
@@ -1004,6 +1030,7 @@ struct InspectorView: View {
             displayMultiplier: 100,
             format: "%.0f",
             valueSuffix: "%",
+            accessibilityName: "Scale",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyScale(clipId: c.id, newScale: newVal) }
@@ -1024,6 +1051,7 @@ struct InspectorView: View {
             displayMultiplier: 1,
             format: "%.0f",
             valueSuffix: "°",
+            accessibilityName: "Rotation",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyRotation(clipId: c.id, valueDeg: newVal) }
@@ -1044,6 +1072,7 @@ struct InspectorView: View {
             displayMultiplier: 100,
             format: "%.0f",
             valueSuffix: "%",
+            accessibilityName: "Opacity",
             fieldWidth: 50,
             onChanged: { newVal in
                 for c in clips { editor.applyOpacity(clipId: c.id, value: newVal) }
@@ -1065,18 +1094,7 @@ struct InspectorView: View {
         resetHelp: String? = nil,
         onReset: (() -> Void)? = nil
     ) -> some View {
-        HStack {
-            Button(action: onToggle) {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    sectionTitleLabel(title: title)
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Spacer()
+        InspectorSectionHeading(title: title, expanded: expanded, onToggle: onToggle) {
             if let onReset {
                 resetButton(onReset: onReset, help: resetHelp)
             }
@@ -1084,11 +1102,7 @@ struct InspectorView: View {
     }
 
     func sectionTitleLabel(title: String) -> some View {
-        Text(title.uppercased())
-            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-            .tracking(AppTheme.Tracking.wide)
-            .foregroundStyle(AppTheme.Text.mutedColor)
-            .fixedSize()
+        InspectorSectionLabel(title: title)
     }
 
     func resetButton(onReset: @escaping () -> Void, help: String?) -> some View {
@@ -1101,21 +1115,14 @@ struct InspectorView: View {
         }
         .buttonStyle(.plain)
         .help(help ?? "Reset")
+        .accessibilityLabel(help ?? "Reset")
     }
 
     func propertyRow<Trailing: View>(
         label: String,
-        @ViewBuilder trailing: () -> Trailing
+        @ViewBuilder trailing: @escaping () -> Trailing
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-                .fixedSize()
-            Spacer()
-            trailing()
-        }
+        InspectorFormRow(label: label, trailing: trailing)
     }
 
     // MARK: - Flip
@@ -1148,7 +1155,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func iconToggleButton(
@@ -1182,8 +1189,8 @@ struct InspectorView: View {
     private func cropRow(single: Clip?) -> some View {
         let editing = editor.cropEditingActive && single != nil
         let disabled = single == nil
-        propertyRow(label: "Crop") {
-            HStack(spacing: AppTheme.Spacing.sm) {
+        InspectorAnimatableFormRow(label: "Crop", showsAccessory: single != nil) {
+            InspectorAdaptiveControlPair(spacing: AppTheme.Spacing.sm) {
                 iconToggleButton(
                     systemName: "crop",
                     isOn: editing,
@@ -1194,13 +1201,14 @@ struct InspectorView: View {
                     editor.cropEditingActive.toggle()
                 }
                 .disabled(disabled)
+            } second: {
                 cropMenu(single: single)
-                if let cid = single?.id {
-                    keyframeControls(clipId: cid, property: .crop)
-                }
+            }
+        } accessory: {
+            if let cid = single?.id {
+                keyframeControls(clipId: cid, property: .crop)
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
         .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
     }
 
@@ -1220,17 +1228,7 @@ struct InspectorView: View {
                 }
             }
         } label: {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Text(active.label)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Image(systemName: "chevron.down")
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-            .padding(.horizontal, AppTheme.Spacing.sm)
-            .padding(.vertical, AppTheme.Spacing.xxs)
-            .contentShape(Rectangle())
+            InspectorCropAspectLabel(label: active.label)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -1255,19 +1253,21 @@ struct InspectorView: View {
 
     // MARK: - Media Asset Inspector
 
-    @ViewBuilder
     private func mediaAssetInspectorContent(_ asset: MediaAsset) -> some View {
-        if asset.type.isVisual {
-            VStack(spacing: AppTheme.Spacing.none) {
+        VStack(spacing: AppTheme.Spacing.none) {
+            assetIdentityHeader(asset)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+            if asset.type.isVisual {
                 assetTabBar([.details, .ai])
                 if preferredAssetTab == .ai {
                     AIEditTab(asset: asset)
                 } else {
                     assetDetailsContent(asset)
                 }
+            } else {
+                assetDetailsContent(asset)
             }
-        } else {
-            assetDetailsContent(asset)
         }
     }
 
@@ -1275,9 +1275,12 @@ struct InspectorView: View {
     private func assetDetailsContent(_ asset: MediaAsset) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                assetIdentityHeader(asset)
+                if editor.workspaceFocus == .edit, asset.type.isPlaceable {
+                    SourceRangeInspector(asset: asset)
+                }
 
                 fileSection(asset)
+                AssetProvenanceSection(asset: asset)
 
                 if let gen = asset.generationInput {
                     if GenerationReferencesStrip.hasResolvableReferences(gen, in: editor.mediaAssets) {
@@ -1286,8 +1289,7 @@ struct InspectorView: View {
                         }
                     }
 
-                    metadataSection(title: "Generated") {
-                        plainMetadataRow(label: "Model", value: ModelRegistry.displayName(for: gen.model))
+                    metadataSection(title: "Generation Parameters") {
                         if !gen.aspectRatio.isEmpty {
                             plainMetadataRow(label: "Aspect Ratio", value: gen.aspectRatio)
                         }
@@ -1323,22 +1325,59 @@ struct InspectorView: View {
             if let fileSize = fileSize(for: asset.url) {
                 plainMetadataRow(label: "Size", value: fileSize)
             }
-            plainMetadataRow(
-                label: "Path",
-                value: asset.url.path,
-                truncate: .middle
-            )
+            if editor.isMediaOffline(asset.id) {
+                Button("Relink…", systemImage: "link") { editor.presentRelinkPanel(for: asset) }
+                    .buttonStyle(.inlineAction())
+                    .disabled(asset.isGenerating)
+                    .background { assetAcceptanceProbe(asset, part: "relink", enabled: !asset.isGenerating) }
+            }
+            Button("Reveal in Finder", systemImage: "folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([asset.url])
+            }
+            .buttonStyle(.inlineAction())
+            .disabled(editor.isMediaOffline(asset.id) || asset.isGenerating)
+            .background { assetAcceptanceProbe(asset, part: "reveal", enabled: !editor.isMediaOffline(asset.id) && !asset.isGenerating) }
         }
     }
 
-    @ViewBuilder
     private func assetIdentityHeader(_ asset: MediaAsset) -> some View {
-        // The breadcrumb header already names the asset; surface only the AI-generated badge here.
-        if asset.generationInput != nil {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                aiBadge
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text(asset.libraryDisplayName)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if asset.libraryDisplayName != asset.userFacingFilename {
+                Text(asset.userFacingFilename)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Text(asset.type.trackLabel)
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                if asset.generationInput != nil { aiBadge }
+                if editor.isMediaOffline(asset.id) {
+                    Label("Offline", systemImage: "exclamationmark.triangle")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+                Spacer(minLength: AppTheme.Spacing.none)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { assetAcceptanceProbe(asset, part: "identity", enabled: editor.isMediaOffline(asset.id)) }
+    }
+
+    @ViewBuilder
+    private func assetAcceptanceProbe(_ asset: MediaAsset, part: String, enabled: Bool) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "asset.\(asset.id).\(part)", acceptanceState: enabled,
+                acceptanceText: asset.libraryDisplayName)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
         }
     }
 

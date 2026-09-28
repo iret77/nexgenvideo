@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct FolderTileView: View {
+    @Environment(EditorViewModel.self) private var editor
     let folder: MediaFolder
     let isSelected: Bool
     let isDropHover: Bool
@@ -16,7 +17,6 @@ struct FolderTileView: View {
 
     @State private var renameDraft: String = ""
     @FocusState private var isRenameFieldFocused: Bool
-    @State private var lastClickTime: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
@@ -82,7 +82,15 @@ struct FolderTileView: View {
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
-        .onTapGesture { handleClick() }
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "media.folder-tile.\(folder.id)")
+                    .allowsHitTesting(false)
+            }
+        }
+        .onTapGesture(count: 2, perform: onOpen)
+        .onTapGesture(count: 1, perform: onTap)
+        .background { ContextClickActivation { editor.activateFolderContext(folder.id) } }
         .contextMenu { contextMenuItems }
         .onAppear {
             if shouldAutoFocus {
@@ -116,23 +124,12 @@ struct FolderTileView: View {
         Button("Open") { onOpen() }
         Button("Rename") { beginRename() }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { onDelete() }
+        Button(editor.selectedFolderIds.count + editor.selectedMediaAssetIds.count > 1 ? "Delete Selected Items" : "Delete", role: .destructive) { onDelete() }
     }
 
     private func beginRename() {
         renameDraft = folder.name
         isRenaming = true
-    }
-
-    private func handleClick() {
-        let now = Date()
-        if let last = lastClickTime, now.timeIntervalSince(last) < NSEvent.doubleClickInterval {
-            onOpen()
-            lastClickTime = nil
-        } else {
-            onTap()
-            lastClickTime = now
-        }
     }
 
     private func commit() {

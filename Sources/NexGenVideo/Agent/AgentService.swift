@@ -149,7 +149,8 @@ final class AgentService {
     }
 
     func refreshBackendStatus() {
-        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil
+            || WorkspaceUIAcceptance.isRequested {
             isCheckingAPIKey = false
             isCheckingClaude = false
             claudeStatus = .init(executableURL: nil, version: "offline-replay", isAuthenticated: true)
@@ -230,19 +231,21 @@ final class AgentService {
     var streamError: AgentStreamError?
     var onSessionsChanged: (@MainActor () -> Void)?
 
-    var draft: String = ""
-    var mentions: [AgentMention] = []
+    var draft: String = "" {
+        didSet { persistComposerDraft() }
+    }
+    var mentions: [AgentMention] = [] {
+        didSet { persistComposerDraft() }
+    }
 
     /// A starter or pack function staged in the composer as a colored pill: its full prompt is hidden
     /// from the text field, keeping the composer clean. On send the prompt is composed with any typed
     /// note into the outgoing message. Only one may be pending; staging another replaces it.
-    var pendingFunction: PendingFunction?
-
-    struct PendingFunction: Equatable {
-        let title: String
-        let systemImage: String
-        let prompt: String
+    var pendingFunction: PendingFunction? {
+        didSet { persistComposerDraft() }
     }
+
+    typealias PendingFunction = AgentTask
 
     private struct ComposerState {
         let draft: String
@@ -291,9 +294,12 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
+            clearSavedDecision(id: oldValue?.id)
             dialogChoiceSelections = [:]
+            dialogDraft = AgentDialogDraft()
             dialogSubmissionError = nil
             submittingDialogID = nil
+            if pendingDialog == nil { activeIntakeDraftKey = nil }
         }
     }
 
@@ -320,7 +326,8 @@ final class AgentService {
 
     func presentDialog(
         _ dialog: AgentDialog,
-        origin: ToolCallOrigin = .direct
+        origin: ToolCallOrigin = .direct,
+        intakeKey: WorkflowIntakeDraftKey? = nil
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
@@ -332,9 +339,16 @@ final class AgentService {
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
             )
         }
+        let saved = sessions.first { $0.id == currentSessionId }?.decision
+        activeIntakeDraftKey = intakeKey
         dialogOrigins[dialog.id] = origin
         suspendToolCalls(from: origin)
         pendingDialog = dialog
+        if let intakeKey, let saved, saved.intakeKey == intakeKey,
+           saved.dialog.hasSameControls(as: dialog), origin == .direct {
+            dialogDraft = saved.draft
+            dialogChoiceSelections = saved.selections
+        }
         editor?.agentPanelVisible = true
     }
 
@@ -372,7 +386,9 @@ final class AgentService {
     /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
     /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
     /// range selects its choice here, and the card's chip reflects it. Keyed by sectionId → option ids.
-    var dialogChoiceSelections: [String: Set<String>] = [:]
+    var dialogChoiceSelections: [String: Set<String>] = [:] {
+        didSet { persistDecisionDraft() }
+    }
 
     /// The pending dialog's canvas projection, or nil when there's nothing to project (plain card).
     var pendingDialogProjection: AgentDialog.Projection? {
@@ -836,7 +852,7 @@ final class AgentService {
         ) {
             guard let assigned = editor.mediaManifest.intakeRoleByAssetID[asset.id],
                   assigned != requestedRole else { continue }
-            return (asset.name, assigned)
+            return (asset.libraryDisplayName, assigned)
         }
         return nil
     }
@@ -1161,10 +1177,16 @@ final class AgentService {
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
+        let preservedIntakeKey = activeIntakeDraftKey
+        let preservedDraft = dialogDraft
+        let preservedSelections = dialogChoiceSelections
         submittingDialogID = nil
         pendingDialog = nil
         guard let editor else {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = "The project is unavailable. Reopen it and try again."
             return
         }
@@ -1177,7 +1199,10 @@ final class AgentService {
             editor: editor
         )
         if let failure = reconciliation.failure {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = failure
             return
         }
@@ -2229,9 +2254,36 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
-    /// Insert `text` into the input field and focus it — used by the plugin launcher for commands that
-    /// still need an argument, so the user lands in the field ready to type rather than sending an
-    /// incomplete command. Clears mentions (a slash-command carries no media references).
+    @discardableResult
+    func stageTask(_ task: PendingFunction) -> Bool {
+        guard !isStreaming, !isComposerBlocked else { return false }
+        var staged = task
+        if staged.originContext == nil, let editor {
+            let target: String
+            if editor.activePreviewTab == .timeline && editor.selectedClipIds.count > 1 {
+                target = "Task-origin clip IDs: " + editor.selectedClipIds.sorted().joined(separator: ", ")
+            } else {
+                target = editor.inspectedObject.map { "Task-origin object: " + $0.taskTarget }
+                    ?? "No object target was selected."
+            }
+            staged.originContext = Self.selectionHint(editor: editor)
+                .map { $0 + " " + target + " Task-origin timeline frame: \(editor.currentFrame). This is the context captured when the task was chosen; later workspace selections and get_timeline playheads do not replace its target or frame." }
+        }
+        editor?.agentPanelVisible = true
+        pendingFunction = staged
+        recordComposerFocus(true)
+        restoreComposerFocus()
+        return true
+    }
+
+    @discardableResult
+    func stageReply(to messageID: UUID) -> Bool {
+        guard messages.contains(where: { $0.id == messageID && $0.role == .assistant }) else { return false }
+        return stageTask(PendingFunction(title: "Reply to agent", systemImage: "arrowshape.turn.up.left",
+            prompt: "Answer the agent's preceding message. Treat the supplied text as an answer, not as a new project-change request. Preserve all phase and spending approval requirements.",
+            requiresDirection: true, replyToMessageID: messageID))
+    }
+
     func prefillInput(_ text: String) {
         editor?.agentPanelVisible = true
         draft = text
@@ -2241,8 +2293,24 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
+    var canAttachTaskReference: Bool { !isStreaming && !isComposerBlocked }
+
+    private func prepareReferenceTask() -> Bool {
+        stageTask(pendingFunction ?? PendingFunction(
+            title: "Apply a project change", systemImage: "pencil",
+            prompt: "Apply the requested change using the attached references. Respect the current phase and approval gates. Ask for clarification when the requested change is ambiguous.",
+            requiresDirection: true
+        ))
+    }
+
+    static func hasWorkOrderDirection(_ direction: String, mentions: [AgentMention]) -> Bool {
+        let names = mentions.map(\.displayName).sorted { $0.count > $1.count }
+        let text = names.reduce(direction) { $0.replacingOccurrences(of: "@" + $1, with: "") }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func attachMention(for asset: MediaAsset) {
-        editor?.agentPanelVisible = true
+        guard !asset.isGenerating, prepareReferenceTask() else { return }
         pruneDetachedMentions()
         guard !mentions.contains(where: { $0.mediaRef == asset.id && !$0.referencesTimelineContext }) else { return }
         let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
@@ -2252,11 +2320,12 @@ final class AgentService {
 
     func attachMentions(forClipIds clipIds: [String]) {
         guard let editor, !clipIds.isEmpty else { return }
-        editor.agentPanelVisible = true
+        let references = Self.clipMentionReferences(for: clipIds, editor: editor)
+        guard !references.isEmpty, prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let existingClipIds = Set(mentions.compactMap(\.clipId))
-        for ref in Self.clipMentionReferences(for: clipIds, editor: editor) where !existingClipIds.contains(ref.clip.id) {
+        for ref in references where !existingClipIds.contains(ref.clip.id) {
             let displayName = Self.disambiguatedClipMentionName(
                 for: ref.clip,
                 label: ref.label,
@@ -2275,8 +2344,8 @@ final class AgentService {
     }
 
     func attachSelectedTimelineRangeMention() {
-        guard let editor, let range = editor.validSelectedTimelineRange else { return }
-        editor.agentPanelVisible = true
+        guard let editor, let range = editor.validSelectedTimelineRange,
+              prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let timelineRange = AgentTimelineRangeMention(range: range, fps: editor.timeline.fps)
@@ -2374,6 +2443,8 @@ final class AgentService {
     private var currentTask: Task<Void, Never>?
 
     func loadSessions(from projectURL: URL?) {
+        isRestoringComposer = true
+        defer { isRestoringComposer = false }
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
         abandonDialog()
@@ -2387,8 +2458,10 @@ final class AgentService {
         _claudeRuntime?.stop()
         _claudeRuntime = nil
         composerStates.removeAll()
-        sessions = ChatSessionStore.load(from: projectURL)
-            .filter { !$0.messages.isEmpty }
+        let loadedSessions = ChatSessionStore.load(from: projectURL).filter(\.hasPersistedContent)
+        let resumeID = loadedSessions.first { $0.isOpen && $0.decision?.belongs(to: $0.id) == true }?.id
+            ?? loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
+        sessions = loadedSessions
             .map {
                 var session = $0
                 session.isOpen = false
@@ -2396,18 +2469,29 @@ final class AgentService {
             }
             .sorted { $0.updatedAt > $1.updatedAt }
 
-        let session = ChatSession()
-        sessions.insert(session, at: 0)
-        currentSessionId = session.id
-        messages = []
+        if let resumeID, let index = sessions.firstIndex(where: { $0.id == resumeID }) {
+            sessions[index].isOpen = true
+            currentSessionId = resumeID
+            messages = sessions[index].messages
+        } else {
+            let session = ChatSession()
+            sessions.insert(session, at: 0)
+            currentSessionId = session.id
+            messages = []
+        }
         isStreaming = false
         draft = ""
         mentions.removeAll()
         pendingFunction = nil
         composerHeight = Self.preferredComposerHeight
         composerWantsFocus = false
+        if let resumeID {
+            restoreComposerState(for: resumeID)
+            restoreDecision(for: resumeID)
+        }
         streamError = nil
         toolExecutor?.resetFeedbackState()
+        editor?.resetWorkflowForSessionReload()
     }
 
     var canStartNewConversation: Bool {
@@ -2512,6 +2596,7 @@ final class AgentService {
         currentSessionId = id
         messages = sessions[idx].messages
         restoreComposerState(for: id)
+        restoreDecision(for: id)
         isStreaming = false
         _claudeRuntime?.stop()
         _claudeRuntime = nil
@@ -2609,7 +2694,8 @@ final class AgentService {
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
-        allowWhileBlocked: Bool = false
+        allowWhileBlocked: Bool = false,
+        taskContext: String? = nil
     ) -> Bool {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
@@ -2626,7 +2712,8 @@ final class AgentService {
                 trimmed,
                 mentions: mentions,
                 hidden: hidden,
-                presentation: presentation
+                presentation: presentation,
+                taskContext: taskContext
             )
         }
         guard canStream else {
@@ -2640,7 +2727,7 @@ final class AgentService {
         let mentionHint = referencedMentions.isEmpty
             ? nil
             : AgentMentionContext.hint(referencedMentions, editor: editor)
-        let hints = [mentionHint, Self.selectionHint(editor: editor)].compactMap(\.self)
+        let hints = [mentionHint, taskContext ?? Self.selectionHint(editor: editor)].compactMap(\.self)
         let contextHint = hints.isEmpty ? nil : hints.joined(separator: " ")
 
         resolveOrphanToolUses()
@@ -2655,10 +2742,42 @@ final class AgentService {
         return true
     }
 
-    func send(controlTurn: AgentControlTurn) {
-        send(
+    @discardableResult
+    func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
+        guard !isStreaming else { return false }
+        if let replyID = function.replyToMessageID {
+            guard messages.contains(where: { $0.id == replyID && $0.role == .assistant }) else { return false }
+        }
+        let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !function.requiresDirection || Self.hasWorkOrderDirection(note, mentions: mentions) else { return false }
+        let presentation = AgentUserPresentation(
+            choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])],
+                attachmentNames: mentions.map(\.displayName), confirmed: true),
+            typedText: note.isEmpty ? nil : note
+        )
+        let prompt: String
+        if let replyID = function.replyToMessageID,
+           let index = messages.firstIndex(where: { $0.id == replyID }) {
+            let question = messages[index...].filter { $0.role == .assistant }
+                .flatMap(\.blocks).compactMap { block -> String? in
+                    if case .text(let text) = block { return text }
+                    return nil
+                }.joined(separator: "\n")
+            prompt = function.prompt + "\nAgent message being answered:\n" + question
+        } else {
+            prompt = function.prompt
+        }
+        return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
+            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
+    }
+
+    @discardableResult
+    func send(controlTurn: AgentControlTurn) -> Bool {
+        guard !isStreaming else { return false }
+        return send(
             text: controlTurn.command,
             mentions: [],
+            hidden: true,
             presentation: controlTurn.presentation
         )
     }
@@ -2796,7 +2915,8 @@ final class AgentService {
         _ trimmed: String,
         mentions: [AgentMention],
         hidden: Bool = false,
-        presentation: AgentUserPresentation? = nil
+        presentation: AgentUserPresentation? = nil,
+        taskContext: String? = nil
     ) -> Bool {
         // One turn at a time per chat: the composer disables send while streaming, but programmatic
         // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
@@ -2808,7 +2928,7 @@ final class AgentService {
         let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
         guard !referenced.isEmpty else {
             // No attachments — send synchronously (the selection/plugin context only).
-            let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
+            let context = (taskContext ?? Self.selectionHint(editor: editor)).map { "<app-context>\($0)</app-context>" }
             let started = claudeRuntime.send(
                 text: trimmed,
                 context: context,
@@ -2818,7 +2938,7 @@ final class AgentService {
             checkpointCurrentSession()
             return started
         }
-        let selection = Self.selectionHint(editor: editor)
+        let selection = taskContext ?? Self.selectionHint(editor: editor)
         let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
         let pathNote = Self.mentionPathNote(referenced, editor: editor)
         // Encoding is async: fence the turn to the chat that sent it, so a switch / new-chat / second
@@ -2905,7 +3025,8 @@ final class AgentService {
         loop: while !Task.isCancelled {
             resolveOrphanToolUses()
             let apiMsgs = await apiMessages()
-            let assistant = AgentMessage(role: .assistant, blocks: [])
+            var assistant = AgentMessage(role: .assistant, blocks: [])
+            assistant.isIncompleteAPIResponse = true
             messages.append(assistant)
             let assistantID = assistant.id
 
@@ -2916,7 +3037,7 @@ final class AgentService {
                     messages: apiMsgs
                 )
 
-                var stopReason: AnthropicStopReason = .endTurn
+                var stopReason: AnthropicStopReason?
 
                 for try await event in stream {
                     let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
@@ -2925,6 +3046,10 @@ final class AgentService {
                     }
                     try Task.checkCancellation()
                     switch event {
+                    case .thinkingComplete(let block):
+                        if let index = assistantMessageIndex(id: assistantID) {
+                            messages[index].blocks.append(.thinking(block))
+                        }
                     case .textDelta(let chunk):
                         appendTextDelta(chunk, toAssistant: assistantID)
                     case .toolUseComplete(let id, let name, let inputJSON):
@@ -2934,6 +3059,13 @@ final class AgentService {
                     }
                 }
 
+                try Task.checkCancellation()
+                guard let stopReason else {
+                    throw AnthropicClientError.streamError("The response was interrupted. Try again.")
+                }
+                if let index = assistantMessageIndex(id: assistantID) {
+                    messages[index].isIncompleteAPIResponse = false
+                }
                 if stopReason == .toolUse {
                     if await runPendingToolUses(
                         assistantID: assistantID,
@@ -2988,7 +3120,8 @@ final class AgentService {
         assistantID: UUID,
         origin: ToolCallOrigin
     ) async -> Bool {
-        guard let assistantIndex = assistantMessageIndex(id: assistantID) else { return false }
+        guard let assistantIndex = assistantMessageIndex(id: assistantID),
+              !messages[assistantIndex].isIncompleteAPIResponse else { return false }
         let toolUses: [(id: String, name: String, input: String)] = messages[assistantIndex].blocks.compactMap {
             if case let .toolUse(id, name, input) = $0 { return (id, name, input) }
             return nil
@@ -3052,7 +3185,8 @@ final class AgentService {
         var i = 0
         while i < messages.count {
             defer { i += 1 }
-            guard messages[i].role == .assistant else { continue }
+            guard messages[i].role == .assistant,
+                  !messages[i].isIncompleteAPIResponse else { continue }
             let toolUseIds: [String] = messages[i].blocks.compactMap {
                 if case let .toolUse(id, _, _) = $0 { return id }
                 return nil
@@ -3093,6 +3227,54 @@ final class AgentService {
         return obj
     }
 
+    private func clearSavedDecision(id: String?) {
+        guard !isRestoringComposer, let id,
+              let owner = dialogOrigins[id]?.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }),
+              sessions[index].decision?.dialog.id == id else { return }
+        sessions[index].decision = nil
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func persistDecisionDraft() {
+        guard !isRestoringComposer, let dialog = pendingDialog,
+              let origin = dialogOrigins[dialog.id],
+              let owner = origin.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }) else { return }
+        let decision = ChatSessionDecision(dialog: dialog, origin: origin,
+            draft: dialogDraft, selections: dialogChoiceSelections, intakeKey: activeIntakeDraftKey)
+        guard decision.belongs(to: owner), sessions[index].decision != decision else { return }
+        sessions[index].decision = decision
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func restoreDecision(for id: UUID) {
+        guard pendingDialog == nil,
+              let saved = sessions.first(where: { $0.id == id })?.decision,
+              saved.belongs(to: id), saved.dialog.purpose == .chatClarification else { return }
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
+        dialogOrigins[saved.dialog.id] = saved.origin
+        suspendToolCalls(from: saved.origin)
+        pendingDialog = saved.dialog
+        dialogDraft = saved.draft
+        dialogChoiceSelections = saved.selections
+    }
+
+    private func persistComposerDraft() {
+        guard !isRestoringComposer, let id = currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let value = ChatSessionDraft(text: draft, mentions: mentions, task: pendingFunction)
+        let saved = value.isEmpty ? nil : value
+        guard sessions[index].draft != saved else { return }
+        sessions[index].draft = saved
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
     private func saveComposerState() {
         guard let id = currentSessionId else { return }
         composerStates[id] = ComposerState(
@@ -3112,10 +3294,14 @@ final class AgentService {
     }
 
     private func restoreComposerState(for id: UUID) {
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
         guard let state = composerStates[id] else {
-            draft = ""
-            mentions = []
-            pendingFunction = nil
+            let saved = sessions.first { $0.id == id }?.draft
+            draft = saved?.text ?? ""
+            mentions = saved?.mentions ?? []
+            pendingFunction = saved?.task
             composerHeight = Self.preferredComposerHeight
             composerWantsFocus = false
             return
@@ -3150,9 +3336,9 @@ final class AgentService {
         }
     }
 
-    private func apiMessages() async -> [AnthropicMessage] {
+    func apiMessages() async -> [AnthropicMessage] {
         var result: [AnthropicMessage] = []
-        for msg in messages {
+        for msg in messages where !msg.isIncompleteAPIResponse {
             var content = msg.blocks.compactMap(Self.contentBlockJSON)
             if msg.role == .user, !msg.mentions.isEmpty || msg.contextHint != nil {
                 let inlined = await inlineImageBlocks(for: msg.mentions)
@@ -3205,8 +3391,10 @@ final class AgentService {
         return out
     }
 
-    private static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
+    static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
         switch block {
+        case .thinking(let block):
+            return block.json
         case .text(let s):
             guard !s.isEmpty else { return nil }
             return ["type": "text", "text": s]
@@ -3261,6 +3449,13 @@ final class AgentService {
             + "…"
             + String(normalized.suffix(trailingCount))
     }
+    private var isRestoringComposer = false
+    var onDraftChanged: (@MainActor () -> Void)?
+    var dialogDraft = AgentDialogDraft() {
+        didSet { persistDecisionDraft() }
+    }
+    private var activeIntakeDraftKey: WorkflowIntakeDraftKey?
+
 }
 
 struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
@@ -3276,6 +3471,7 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     var hidden: Bool = false
     /// Optional rendering for a structured user action whose blocks remain model-facing.
     var userPresentation: AgentUserPresentation?
+    var isIncompleteAPIResponse: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -3296,7 +3492,7 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation, isIncompleteAPIResponse
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -3310,22 +3506,26 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
+        isIncompleteAPIResponse = try c.decodeIfPresent(Bool.self, forKey: .isIncompleteAPIResponse) ?? false
     }
 }
 
 enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
+    case thinking(AnthropicThinkingBlock)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)
 
-    private enum Kind: String, Codable { case text, toolUse, toolResult }
+    private enum Kind: String, Codable { case text, thinking, toolUse, toolResult }
     private enum CodingKeys: String, CodingKey {
-        case kind, text, id, name, input, toolUseId, content, isError
+        case kind, text, id, name, input, toolUseId, content, isError, thinking
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .kind) {
+        case .thinking:
+            self = .thinking(try c.decode(AnthropicThinkingBlock.self, forKey: .thinking))
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
         case .toolUse:
@@ -3346,6 +3546,9 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .thinking(let block):
+            try c.encode(Kind.thinking, forKey: .kind)
+            try c.encode(block, forKey: .thinking)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)
