@@ -14,6 +14,11 @@ enum ProjectWorkingCopy {
         generationMarker,
     ])
 
+    static func isPackageRuntimePath(_ relativePath: String) -> Bool {
+        !relativePath.contains("/")
+            && (internalNames.contains(relativePath) || relativePath.hasPrefix(".chat-"))
+    }
+
     static func home(_ key: String) -> URL { AppPaths.workingCopy(projectId: key) }
 
     struct OpenResult: Sendable {

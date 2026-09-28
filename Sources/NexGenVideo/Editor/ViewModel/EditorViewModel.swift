@@ -472,10 +472,17 @@ final class EditorViewModel {
         let phaseIsRunning = dataRoot.map {
             phaseCoordinator.runningPhase(projectRoot: $0) != nil
         } ?? false
+        let exportIsRunning = ExportQueue.shared.jobs(ownerKey: key).contains {
+            !$0.status.isTerminal
+        }
+        if exportIsRunning {
+            ExportQueue.shared.cancelAll(ownerKey: key)
+        }
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if importTail != nil || extractionTask != nil || phaseIsRunning {
+        if importTail != nil || extractionTask != nil || phaseIsRunning || exportIsRunning {
+
             Task { @MainActor [phaseCoordinator] in
                 _ = await importTail?.value
                 _ = await extractionTask?.value
@@ -484,12 +491,17 @@ final class EditorViewModel {
                         projectRoot: dataRoot
                     )
                 }
+                if exportIsRunning {
+                    await ExportQueue.shared.waitUntilIdle(ownerKey: key)
+                }
+                ExportQueue.shared.release(ownerKey: key)
                 ProjectWorkingCopy.discard(
                     key: key,
                     ifGeneration: generation
                 )
             }
         } else {
+            ExportQueue.shared.release(ownerKey: key)
             ProjectWorkingCopy.discard(
                 key: key,
                 ifGeneration: generation
@@ -545,9 +557,11 @@ final class EditorViewModel {
         hasProductionPipeline = roots.contains { DataRootResolver.dataRoot(of: $0) != nil }
         if let dataRoot = workingCopyHome.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
             do {
-                if try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot),
-                   let key = openWorkingCopyKey {
-                    try ProjectWorkingCopy.markDirty(key: key)
+                if let key = openWorkingCopyKey,
+                   try ExportQueue.shared.recoverInterruptedDeliveries(
+                       ownerKey: key,
+                       dataRoot: dataRoot
+                   ) {
                     onPipelineChanged?()
                 }
             } catch {

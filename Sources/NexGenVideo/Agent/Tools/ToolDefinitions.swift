@@ -854,7 +854,8 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .exportProject,
-            description: "Exports from the current project using the same modes as the Export dialog. mode defaults to video. video renders H.264, H.265, ProRes, or HEVC Main10 HDR (HLG); the HDR option converts the Rec. 709 timeline to BT.2020 HLG at reference-white level and records delivery QC. xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use xml for Premiere Pro and fcpxml for Final Cut Pro or DaVinci Resolve. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten by default; pass overwrite=false to refuse. video renders in the background and returns status=started with the destination path; the app posts a system notification on completion or failure. xml, fcpxml, and nexgen finish before returning and report their result inline.",
+            description: "Queues an export from the current project using the same host queue as the Export dialog. mode defaults to video. video renders H.264, H.265, ProRes, or HEVC Main10 HDR (HLG) and records delivery/QC provenance, including BT.2020 HLG conversion and HDR QC when selected; xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use one stable UUID requestID when retrying the same tool call after a reconnect; the host joins that exact job and rejects changed inputs under the same ID. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten only if they remain unchanged from enqueue; pass overwrite=false to refuse immediately. video returns after enqueue. xml, fcpxml, and nexgen wait for their queued job.",
+
             inputSchema: objectSchema(
                 properties: [
                     "mode": ["type": "string", "enum": ["video", "xml", "fcpxml", "nexgen"], "description": "Optional. Default video."],
@@ -865,6 +866,7 @@ enum ToolDefinitions {
                     "target": ["type": "string", "enum": ["final-cut-pro", "resolve"], "description": "FCPXML mode only. Optional. Default final-cut-pro."],
                     "outputPath": ["type": "string", "description": "Optional. Absolute destination path. If omitted, a unique project-named file is written to ~/Downloads. If no extension is provided, the mode's extension is appended."],
                     "overwrite": ["type": "boolean", "description": "Optional. Default true, matching the UI save flow. false refuses when outputPath already exists."],
+                    "requestID": ["type": "string", "format": "uuid", "description": "Optional stable job UUID. Reuse only to join the exact same export after reconnect."],
                 ]
             )
         ),

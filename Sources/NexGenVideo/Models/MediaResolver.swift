@@ -4,10 +4,16 @@ import Foundation
 final class MediaResolver: @unchecked Sendable {
     private let manifest: () -> MediaManifest
     private let projectURL: () -> URL?
+    private let urlOverrides: [String: URL]
 
-    init(manifest: @escaping () -> MediaManifest, projectURL: @escaping () -> URL?) {
+    init(
+        manifest: @escaping () -> MediaManifest,
+        projectURL: @escaping () -> URL?,
+        urlOverrides: [String: URL] = [:]
+    ) {
         self.manifest = manifest
         self.projectURL = projectURL
+        self.urlOverrides = urlOverrides
     }
 
     var projectHome: URL? { projectURL() }
@@ -15,7 +21,21 @@ final class MediaResolver: @unchecked Sendable {
     func snapshot() -> MediaResolver {
         let entries = manifest()
         let home = projectURL()
-        return MediaResolver(manifest: { entries }, projectURL: { home })
+        return MediaResolver(
+            manifest: { entries },
+            projectURL: { home },
+            urlOverrides: urlOverrides
+        )
+    }
+
+    func snapshot(overriding urls: [String: URL]) -> MediaResolver {
+        let entries = manifest()
+        let home = projectURL()
+        return MediaResolver(
+            manifest: { entries },
+            projectURL: { home },
+            urlOverrides: urls
+        )
     }
 
     func resolveURL(for assetId: String) -> URL? {
@@ -24,6 +44,11 @@ final class MediaResolver: @unchecked Sendable {
     }
 
     func expectedURL(for assetId: String) -> URL? {
+        if let override = urlOverrides[assetId] { return override }
+        return interchangeURL(for: assetId)
+    }
+
+    func interchangeURL(for assetId: String) -> URL? {
         guard let entry = entry(for: assetId) else { return nil }
         switch entry.source {
         case .external(let absolutePath):
@@ -80,7 +105,7 @@ final class MediaResolver: @unchecked Sendable {
 
     func interchangeFilename(for assetId: String) -> String {
         guard let entry = entry(for: assetId),
-              let url = expectedURL(for: assetId) else {
+              let url = interchangeURL(for: assetId) else {
             return "Offline media"
         }
         return MediaFilename.display(

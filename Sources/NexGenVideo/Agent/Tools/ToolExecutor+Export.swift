@@ -42,19 +42,25 @@ extension ToolExecutor {
                 editor,
                 format: format,
                 resolution: resolution,
-                outputURL: outputURL
+                outputURL: outputURL,
+                requestID: input.requestID
             )
         case .xml:
-            return try await exportXML(editor, outputURL: outputURL)
+            return try await exportXML(editor, outputURL: outputURL, requestID: input.requestID)
         case .fcpxml:
             return try await exportFCPXML(
                 editor,
                 outputURL: outputURL,
                 version: try FCPXMLVersion(named: input.version),
-                target: try FCPXMLTarget(named: input.target)
+                target: try FCPXMLTarget(named: input.target),
+                requestID: input.requestID
             )
         case .nexgen:
-            return try await exportProjectPackage(editor, outputURL: outputURL)
+            return try await exportProjectPackage(
+                editor,
+                outputURL: outputURL,
+                requestID: input.requestID
+            )
         }
     }
 
@@ -62,125 +68,103 @@ extension ToolExecutor {
         _ editor: EditorViewModel,
         format: ExportFormat,
         resolution: ExportResolution,
-        outputURL: URL
+        outputURL: URL,
+        requestID: String?
     ) async throws -> ToolResult {
         if format.isHDR {
-            try await HDRVideoExporter.requireCapability(renderSize: resolution.renderSize(for: CGSize(
-                width: editor.timeline.width,
-                height: editor.timeline.height
-            )), fps: editor.timeline.fps)
+            try await HDRVideoExporter.requireCapability(
+                renderSize: resolution.renderSize(for: CGSize(
+                    width: editor.timeline.width,
+                    height: editor.timeline.height
+                )),
+                fps: editor.timeline.fps
+            )
         }
-        guard ExportCoordinator.beginExportIfIdle() else {
-            throw ToolError("export_project: Another export is already in progress.")
-        }
-
+        let specID = "agent.\(format.displayName).\(resolution.id)"
+        let spec = try PipelineDeliveryStore.defaultSpec(
+            id: specID,
+            targetKind: format.isHDR ? .master : .derivative,
+            timeline: editor.timeline,
+            format: format,
+            resolution: resolution,
+            requireSequenceReview: false
+        )
         let timeline = editor.timeline
-        let resolver = editor.mediaResolver
-        let name = outputURL.lastPathComponent
-        let hdrSpec: DeliverySpecV1?
-        do {
-            if format.isHDR {
-                _ = try PipelineDeliveryStore.adoptCurrentTimeline(
-                    editor: editor,
-                    requireSequenceReview: false
-                )
-                hdrSpec = try PipelineDeliveryStore.defaultSpec(
-                    id: "master.hevc-main10-hlg.\(resolution.id)",
-                    targetKind: .master,
-                    timeline: timeline,
-                    format: format,
-                    resolution: resolution,
-                    requireSequenceReview: false
-                )
-            } else {
-                hdrSpec = nil
-            }
-        } catch {
-            ExportCoordinator.endExport()
-            throw error
+        let job: ExportJob
+        if let joined = try ExportQueue.shared.joinedDeliveryJob(
+            editor: editor,
+            specID: specID,
+            format: format,
+            resolution: resolution,
+            outputURL: outputURL,
+            requestID: requestID
+        ) {
+            job = joined
+        } else {
+            _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
+                editor: editor,
+                requireSequenceReview: false
+            )
+            job = try await ExportQueue.shared.enqueueDelivery(
+                editor: editor,
+                spec: spec,
+                format: format,
+                resolution: resolution,
+                outputURL: outputURL,
+                requestID: requestID
+            )
+
         }
 
-        Task { @MainActor in
-            defer { ExportCoordinator.endExport() }
-            let service = ExportService()
-            if let hdrSpec {
-                do {
-                    _ = try await PipelineDeliveryStore.export(
-                        editor: editor,
-                        spec: hdrSpec,
-                        format: format,
-                        resolution: resolution,
-                        outputURL: outputURL,
-                        service: service,
-                        acquireSlot: false
-                    )
-                } catch {
-                    service.error = error.localizedDescription
-                }
-            } else {
-                await service.export(
-                    timeline: timeline,
-                    resolver: resolver,
-                    format: format,
-                    resolution: resolution,
-                    outputURL: outputURL,
-                    acquireSlot: false
-                )
-            }
-            if let error = service.error {
-                AppNotifications.exportFailed(name: name, reason: error)
-            } else {
-                let report = service.lastReport
-                let warningCount = (report?.offlineMediaRefs.count ?? 0) + (report?.unprocessableMediaRefs.count ?? 0)
-                AppNotifications.exportComplete(
-                    name: name,
-                    outputURL: outputURL,
-                    size: report?.outputSize,
-                    warningCount: warningCount
-                )
-            }
-        }
-
-        return try jsonResult([
-            "status": "started",
+        var result: [String: Any] = [
+            "status": job.status.rawValue,
+            "jobID": job.id,
             "mode": ExportProjectMode.video.rawValue,
-            "path": outputURL.path,
+            "path": job.destinationURL?.path ?? outputURL.path,
             "codec": format.displayName,
             "resolution": resolution.rawValue,
-            "durationFrames": editor.timeline.totalFrames,
-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
-            "fps": editor.timeline.fps,
-            "note": "Rendering in the background. A system notification will report completion or failure.",
-        ])
+            "durationFrames": job.durationFrames ?? timeline.totalFrames,
+            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
+                / Double(max(1, job.fps ?? timeline.fps)),
+            "fps": job.fps ?? timeline.fps,
+            "note": videoExportNote(for: job),
+        ]
+        if let failure = job.failure { result["error"] = failure }
+        if let sha256 = job.outputSHA256 { result["outputSha256"] = sha256 }
+        if let byteCount = job.outputByteCount { result["outputByteCount"] = byteCount }
+        if !job.warnings.isEmpty { result["warnings"] = job.warnings }
+        return try jsonResult(result)
     }
 
-    private func exportXML(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
-        guard ExportCoordinator.beginExportIfIdle() else {
-            throw ToolError("export_project: Another export is already in progress.")
-        }
-        defer { ExportCoordinator.endExport() }
-        do {
-            try XMLExporter.export(
-                timeline: editor.timeline,
-                resolver: editor.mediaResolver,
-                outputURL: outputURL
-            )
-        } catch {
-            throw ToolError("export_project: \(error.localizedDescription)")
-        }
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw ToolError("export_project: XML export did not create “\(outputURL.lastPathComponent)”. Choose another writable location and try again.")
-        }
+    private func exportXML(
+        _ editor: EditorViewModel,
+        outputURL: URL,
+        requestID: String?
+    ) async throws -> ToolResult {
+        let timeline = editor.timeline
+        let job = try await ExportQueue.shared.enqueueInterchange(
+            editor: editor,
+            format: .xml,
+            outputURL: outputURL,
+            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+            requestID: requestID
+        )
+        try await requireCompleted(job)
+
         return try jsonResult([
-            "status": "exported",
+            "status": job.warnings.isEmpty ? "exported" : "exportedWithWarnings",
+            "jobID": job.id,
             "mode": ExportProjectMode.xml.rawValue,
             "path": outputURL.path,
-            "width": editor.timeline.width,
-            "height": editor.timeline.height,
-            "durationFrames": editor.timeline.totalFrames,
-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
-            "fps": editor.timeline.fps,
-            "warnings": [],
+            "width": job.width ?? timeline.width,
+            "height": job.height ?? timeline.height,
+            "durationFrames": job.durationFrames ?? timeline.totalFrames,
+            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
+                / Double(max(1, job.fps ?? timeline.fps)),
+            "fps": job.fps ?? timeline.fps,
+            "outputSha256": job.outputSHA256 ?? "",
+            "outputByteCount": job.outputByteCount ?? 0,
+            "warnings": job.warnings,
         ])
     }
 
@@ -188,30 +172,31 @@ extension ToolExecutor {
         _ editor: EditorViewModel,
         outputURL: URL,
         version: FCPXMLVersion,
-        target: FCPXMLTarget
+        target: FCPXMLTarget,
+        requestID: String?
     ) async throws -> ToolResult {
-        guard ExportCoordinator.beginExportIfIdle() else {
-            throw ToolError("export_project: Another export is already in progress.")
+        let timeline = editor.timeline
+        let job = try await ExportQueue.shared.enqueueInterchange(
+            editor: editor,
+            format: .fcpxml,
+            outputURL: outputURL,
+            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+            fcpxmlVersion: version,
+            fcpxmlTarget: target,
+            requestID: requestID
+        )
+        try await requireCompleted(job)
+        guard let report = job.fcpxmlReport else {
+            throw ToolError("export_project: FCPXML evidence is unavailable")
         }
-        defer { ExportCoordinator.endExport() }
-        let report: FCPXMLExportReport
-        do {
-            report = try await FCPXMLExporter.export(
-                timeline: editor.timeline,
-                resolver: editor.mediaResolver.snapshot(),
-                projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
-                version: version,
-                target: target,
-                outputURL: outputURL
-            )
-        } catch {
-            throw ToolError("export_project: \(error.localizedDescription)")
-        }
-        let warnings = report.warnings.map { warning -> [String: Any] in
+        var warnings = report.warnings.map { warning -> [String: Any] in
             var value: [String: Any] = ["code": warning.code, "message": warning.message]
             if let clipID = warning.clipID { value["clipId"] = clipID }
             return value
         }
+        warnings.append(contentsOf: job.warnings
+            .filter { message in !report.warnings.contains { $0.message == message } }
+            .map { ["code": "publication_cleanup_pending", "message": $0] })
         let bindings = report.mediaBindings.map { binding -> [String: Any] in
             var value: [String: Any] = [
                 "assetId": binding.assetID,
@@ -239,15 +224,17 @@ extension ToolExecutor {
         }
         return try jsonResult([
             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
+            "jobID": job.id,
             "mode": ExportProjectMode.fcpxml.rawValue,
             "path": outputURL.path,
             "version": report.version.rawValue,
             "target": report.target.rawValue,
-            "width": editor.timeline.width,
-            "height": editor.timeline.height,
-            "durationFrames": editor.timeline.totalFrames,
-            "durationSeconds": Double(editor.timeline.totalFrames) / Double(max(1, editor.timeline.fps)),
-            "fps": editor.timeline.fps,
+            "width": job.width ?? timeline.width,
+            "height": job.height ?? timeline.height,
+            "durationFrames": job.durationFrames ?? timeline.totalFrames,
+            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
+                / Double(max(1, job.fps ?? timeline.fps)),
+            "fps": job.fps ?? timeline.fps,
             "schemaProfile": report.validation.schemaProfile,
             "assetCount": report.validation.assetCount,
             "storyElementCount": report.validation.storyElementCount,
@@ -261,39 +248,63 @@ extension ToolExecutor {
         ])
     }
 
-    private func exportProjectPackage(_ editor: EditorViewModel, outputURL: URL) async throws -> ToolResult {
-        guard ExportCoordinator.beginExportIfIdle() else {
-            throw ToolError("export_project: Another export is already in progress.")
-        }
-        defer { ExportCoordinator.endExport() }
-
-        let service = ExportService()
-        guard let report = await service.exportProjectPackage(
-            timeline: editor.timeline,
-            manifest: editor.mediaManifest,
-            generationLog: editor.generationLog,
-            sourceProjectURL: editor.workingRoot,
+    private func exportProjectPackage(
+        _ editor: EditorViewModel,
+        outputURL: URL,
+        requestID: String?
+    ) async throws -> ToolResult {
+        let job = try await ExportQueue.shared.enqueueProjectPackage(
+            editor: editor,
             outputURL: outputURL,
-            acquireSlot: false
-        ) else {
-            throw ToolError("export_project: \(service.error ?? "NexGenVideo project export failed")")
+            requestID: requestID
+        )
+        try await requireCompleted(job)
+        guard let report = job.projectReport else {
+            throw ToolError("export_project: NexGenVideo project export evidence is unavailable")
         }
 
         let missing = report.missing.map { ["id": $0.id, "name": $0.name] }
-        let warnings = missing.isEmpty
+        var warnings = missing.isEmpty
             ? []
             : ["Exported, but \(missing.count) media file\(missing.count == 1 ? "" : "s") were missing and could not be included."]
+        warnings.append(contentsOf: job.warnings.filter { !warnings.contains($0) })
 
         return try jsonResult([
             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
+            "jobID": job.id,
             "mode": ExportProjectMode.nexgen.rawValue,
             "path": outputURL.path,
             "collectedMediaRefs": report.collected,
             "copiedInternalMediaCount": report.copiedInternal,
             "missingMedia": missing,
             "totalBytes": report.totalBytes,
+            "outputSha256": job.outputSHA256 ?? "",
+            "outputByteCount": job.outputByteCount ?? report.totalBytes,
             "warnings": warnings,
         ])
+    }
+
+    private func requireCompleted(_ job: ExportJob) async throws {
+        let completed = await ExportQueue.shared.waitForCompletion(jobID: job.id)
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        guard let completed, completed.status == .completed else {
+            throw ToolError("export_project: \(completed?.failure ?? "export did not complete")")
+        }
+    }
+
+    private func videoExportNote(for job: ExportJob) -> String {
+        switch job.status {
+        case .pending: "Waiting for earlier exports."
+        case .preparing: "Preparing the bound export sources."
+        case .exporting: "Rendering in the background."
+        case .cancelling: "Cancelling the export."
+        case .completed: "Export completed."
+        case .failed: "Export failed."
+        case .cancelled: "Export cancelled."
+        case .interrupted: "Export interrupted before completion."
+        }
     }
 
     private func exportDestination(
@@ -384,7 +395,7 @@ extension ToolExecutor {
 
 private struct ExportProjectArgs: DecodableToolArgs {
     static let allowedKeys: Set<String> = [
-        "mode", "codec", "resolution", "version", "target", "outputPath", "overwrite",
+        "mode", "codec", "resolution", "version", "target", "outputPath", "overwrite", "requestID",
     ]
 
     var mode: String?
@@ -394,6 +405,7 @@ private struct ExportProjectArgs: DecodableToolArgs {
     var target: String?
     var outputPath: String?
     var overwrite: Bool?
+    var requestID: String?
 }
 
 private enum ExportProjectMode: String {

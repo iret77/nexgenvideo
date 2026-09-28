@@ -58,11 +58,29 @@ enum XMLExporter {
         }
     }
 
-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) throws {
+    static func export(
+        timeline: Timeline,
+        resolver: MediaResolver,
+        outputURL: URL,
+        preserveOutputIdentity: Bool = false,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws {
+        if isCancelled() { throw CancellationError() }
         let xml = Builder(timeline: timeline, resolver: resolver).build()
+        if isCancelled() { throw CancellationError() }
         let data = try serializedData(xml, target: outputURL)
+        if isCancelled() { throw CancellationError() }
         do {
-            try data.write(to: outputURL, options: .atomic)
+            if preserveOutputIdentity {
+                let handle = try FileHandle(forWritingTo: outputURL)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+            } else {
+                try data.write(to: outputURL, options: .atomic)
+            }
+            if isCancelled() { throw CancellationError() }
             guard try Data(contentsOf: outputURL) == data else {
                 throw ExportError.writeFailed(target: outputURL)
             }
@@ -260,7 +278,7 @@ enum XMLExporter {
             emittedFiles.insert(key)
 
             let entry = resolver.entry(for: mediaRef)
-            let url = resolver.resolveURL(for: mediaRef)
+            let url = resolver.interchangeURL(for: mediaRef)
             // Resolve matches media by exact filename + extension.
             let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.
