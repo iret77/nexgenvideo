@@ -100,4 +100,32 @@ struct ExportProjectToolTests {
         #expect(xml?["mode"] as? String == "xml")
         #expect(try String(contentsOf: xmlURL, encoding: .utf8).contains("<xmeml version=\"4\">"))
     }
+
+    @Test func xmlWriteFailureReportsTargetAndSafeRetry() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-tool-read-only-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = directory.appendingPathComponent("delivery.xml")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("previous export".utf8).write(to: outputURL)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
+        ]))
+        let result = await h.runRaw("export_project", args: [
+            "mode": "xml",
+            "outputPath": outputURL.path,
+        ])
+        let message = ToolHarness.textOf(result)
+
+        #expect(result.isError)
+        #expect(message.contains("delivery.xml"))
+        #expect(message.contains("Choose another writable location"))
+        #expect(!message.contains("NSCocoaErrorDomain"))
+        #expect(try String(contentsOf: outputURL, encoding: .utf8) == "previous export")
+    }
 }
