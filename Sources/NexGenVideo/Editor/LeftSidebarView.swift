@@ -23,6 +23,9 @@ struct LeftSidebarView: View {
             if let progress = editor.mediaImportProgress {
                 MediaImportProgressBanner(progress: progress)
             }
+            if let progress = editor.audioExtractionProgress {
+                AudioExtractionProgressBanner(progress: progress)
+            }
             Group {
                 switch effectiveTab {
                 case .media: MediaPanelView()

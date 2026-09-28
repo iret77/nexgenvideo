@@ -38,3 +38,32 @@ struct MediaImportProgressBanner: View {
         .background(AppTheme.Background.raisedColor)
     }
 }
+
+struct AudioExtractionProgressBanner: View {
+    @Environment(EditorViewModel.self) private var editor
+    let progress: AudioExtractionProgress
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            ProgressView()
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text(progress.stage.title)
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
+                        weight: AppTheme.FontWeight.semibold
+                    )
+                Text(progress.sourceName)
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Button("Cancel") { editor.cancelAudioExtraction() }
+                .buttonStyle(.capsule(.secondary, size: .small))
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .background(AppTheme.Background.raisedColor)
+    }
+}

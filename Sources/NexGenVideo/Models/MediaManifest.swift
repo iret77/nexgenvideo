@@ -2,7 +2,7 @@ import Foundation
 import NexGenEngine
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    static let currentVersion = 6
+    static let currentVersion = 7
 
     var version: Int = currentVersion
     var entries: [MediaManifestEntry] = []
@@ -62,6 +62,19 @@ struct MediaManifestEntry: Codable, Sendable, Equatable, Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String? = nil
+    var origin: MediaAssetOrigin? = nil
+}
+
+struct MediaAssetOrigin: Codable, Sendable, Equatable {
+    enum Kind: String, Codable, Sendable {
+        case extractedAudio
+    }
+
+    let kind: Kind
+    let sourceAssetID: String
+    let sourceFilename: String
+    let audioTrackNumber: Int
+    let audioTrackLabel: String
 }
 
 struct GenerationInput: Codable, Sendable, Equatable {

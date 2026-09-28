@@ -56,6 +56,15 @@ enum AgentMentionContext {
                     if let originalFilename = asset.originalFilename {
                         entry["originalFilename"] = originalFilename
                     }
+                    if let origin = asset.origin {
+                        entry["origin"] = [
+                            "kind": origin.kind.rawValue,
+                            "sourceAssetId": origin.sourceAssetID,
+                            "sourceFilename": origin.sourceFilename,
+                            "audioTrackNumber": origin.audioTrackNumber,
+                            "audioTrackLabel": origin.audioTrackLabel,
+                        ]
+                    }
                 }
             }
             if let type = mention.type { entry["type"] = type.rawValue }

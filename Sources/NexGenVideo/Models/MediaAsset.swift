@@ -73,6 +73,7 @@ final class MediaAsset: Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String?
+    var origin: MediaAssetOrigin?
 
     /// Returns the cached URL if it's set AND not expired; else nil.
     var freshRemoteURL: String? {
@@ -141,6 +142,7 @@ final class MediaAsset: Identifiable {
         self.generationInput = generationInput
         self.hasAudio = (type == .video)
         self.originalFilename = MediaFilename.normalized(originalFilename)
+        self.origin = nil
     }
 
     /// Reconstruct from a manifest entry + resolved URL.
@@ -161,6 +163,7 @@ final class MediaAsset: Identifiable {
         self.folderId = entry.folderId
         self.cachedRemoteURL = entry.cachedRemoteURL
         self.cachedRemoteURLExpiresAt = entry.cachedRemoteURLExpiresAt
+        self.origin = entry.origin
     }
 
     /// Produce a serializable manifest entry from this asset.
@@ -187,6 +190,7 @@ final class MediaAsset: Identifiable {
             cachedRemoteURL: fresh,
             cachedRemoteURLExpiresAt: fresh == nil ? nil : cachedRemoteURLExpiresAt,
             originalFilename: originalFilename,
+            origin: origin,
         )
     }
 

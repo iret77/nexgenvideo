@@ -1286,6 +1286,13 @@ struct InspectorView: View {
 
                 fileSection(asset)
 
+                if let origin = asset.origin {
+                    metadataSection(title: "Source") {
+                        plainMetadataRow(label: "Derived From", value: origin.sourceFilename)
+                        plainMetadataRow(label: "Audio Track", value: origin.audioTrackLabel)
+                    }
+                }
+
                 if let gen = asset.generationInput {
                     if GenerationReferencesStrip.hasResolvableReferences(gen, in: editor.mediaAssets) {
                         metadataSection(title: "References") {
@@ -1321,6 +1328,7 @@ struct InspectorView: View {
     private func fileSection(_ asset: MediaAsset) -> some View {
         metadataSection(title: "File") {
             plainMetadataRow(label: "Type", value: asset.type.trackLabel)
+            plainMetadataRow(label: "Filename", value: asset.userFacingFilename, truncate: .middle)
             if asset.type != .audio, let width = asset.sourceWidth, let height = asset.sourceHeight {
                 plainMetadataRow(label: "Dimensions", value: "\(width) × \(height)")
             }
