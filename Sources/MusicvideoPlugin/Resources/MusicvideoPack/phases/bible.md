@@ -230,6 +230,10 @@ canonical sheet path with exact prompt/model/hash provenance.
    model is present in `models`; never guess key presence. If
    unavailable: quote the reason and offer a registered alternative
    model.
+   If GPT Image 2.5 is selected, use Flare for ordinary sheets and drafts.
+   Use Sunburst only for precision-critical identity, fine-detail, or strict
+   edit work. Choose the matching edit route whenever anchors or a mask are
+   supplied; never send references to a text-to-image route.
 3. **Anchor images.** When you have user uploads or a prior sheet to
    anchor against, first `import_media(source={path: <abs path to the
    anchor PNG>})` to get a `mediaRef`, then pass those mediaRefs in
@@ -246,6 +250,9 @@ canonical sheet path with exact prompt/model/hash provenance.
 6. **Stage:** `copy_project_file(media=<completed asset id>,
    to="bible/<id>/<view>.png")`. The host records exact generated-media
    provenance. Only then record that path in `sheets[<view>]`.
+
+Provider completion does not approve a sheet. Inspect the generated image and
+apply the Bible identity/view audit before staging it as canonical.
 
 #### Cross-sheet anchor chain (MANDATORY for multi-view sets)
 

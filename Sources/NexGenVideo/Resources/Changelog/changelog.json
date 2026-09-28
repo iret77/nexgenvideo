@@ -2,6 +2,26 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.0",
+      "date": "2026-09-21",
+      "sections": [
+        {
+          "heading": "Models",
+          "items": [
+            "GPT Image 2.5 Flare replaces GPT Image 2 as the default fal image route, with Sunburst available for precision-critical keyframes and edits.",
+            "GPT Image 2.5 generation and edit routes expose current output counts, quality levels, resolutions, transparency, formats, reference limits and mask support from the live provider schema."
+          ]
+        },
+        {
+          "heading": "Workflow",
+          "items": [
+            "Image generation preserves compiled prompts, exact request options, reference roles, masks and output provenance across approval, rerun and batch restore.",
+            "Music Video 0.5.9 routes ordinary sketches, Bible sheets and Frames through Flare and reserves Sunburst for precision work."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.8",
       "date": "2026-09-11",
       "sections": [

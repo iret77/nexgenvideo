@@ -56,8 +56,10 @@ struct FalImageInputTests {
         let entries = FalModelRegistry.discoveredEntries(availableModelIds: [
             "fal-ai/nano-banana",
             "fal-ai/nano-banana/edit",
-            "openai/gpt-image-2",
-            "openai/gpt-image-2/edit",
+            "openai/gpt-image-2.5/flare/text-to-image",
+            "openai/gpt-image-2.5/flare/edit",
+            "openai/gpt-image-2.5/sunburst/text-to-image",
+            "openai/gpt-image-2.5/sunburst/edit",
         ])
         let offers = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
             entry.offers?.first.map { (entry.id, $0.providerRef) }
@@ -65,8 +67,10 @@ struct FalImageInputTests {
 
         #expect(offers["fal-ai/nano-banana"] == "fal-ai/nano-banana")
         #expect(offers["fal-ai/gemini-25-flash-image/edit"] == "fal-ai/nano-banana/edit")
-        #expect(offers["fal-ai/gpt-image-2"] == "openai/gpt-image-2")
-        #expect(offers["fal-ai/gpt-image-2/edit"] == "openai/gpt-image-2/edit")
+        #expect(offers["fal-ai/gpt-image-2.5/flare/text-to-image"] == "openai/gpt-image-2.5/flare/text-to-image")
+        #expect(offers["fal-ai/gpt-image-2.5/flare/edit"] == "openai/gpt-image-2.5/flare/edit")
+        #expect(offers["fal-ai/gpt-image-2.5/sunburst/text-to-image"] == "openai/gpt-image-2.5/sunburst/text-to-image")
+        #expect(offers["fal-ai/gpt-image-2.5/sunburst/edit"] == "openai/gpt-image-2.5/sunburst/edit")
 
         let textModel = try #require(
             FalModelRegistry.model(for: "fal-ai/nano-banana")
@@ -94,22 +98,38 @@ struct FalImageInputTests {
         #expect(nanoInput["aspect_ratio"] as? String == "9:16")
         #expect(nanoInput["resolution"] as? String == "2K")
 
-        let gpt = try #require(FalModelRegistry.model(for: "fal-ai/gpt-image-2/edit"))
+        let gpt = try #require(FalModelRegistry.model(for: "fal-ai/gpt-image-2.5/flare/edit"))
         let gptInput = FalInputBuilder.imageInput(
             ImageGenerationParams(
-                prompt: "preserve the style", aspectRatio: "9:16", resolution: nil,
-                quality: "high", imageURLs: refs, numImages: 1
+                prompt: "preserve the style", aspectRatio: "16:9", resolution: "1920x1080",
+                quality: "high", imageURLs: refs, numImages: 3, maskURL: "mask",
+                background: "transparent", outputFormat: "webp", outputCompression: 85
+            ),
+            model: gpt,
+            count: 3
+        )
+        #expect(gptInput["image_urls"] as? [String] == refs)
+        #expect(gptInput["image_size"] as? [String: Int] == ["width": 1920, "height": 1080])
+        #expect(gptInput["quality"] as? String == "high")
+        #expect(gptInput["num_images"] as? Int == 3)
+        #expect(gptInput["mask_url"] as? String == "mask")
+        #expect(gptInput["background"] as? String == "transparent")
+        #expect(gptInput["output_format"] as? String == "webp")
+        #expect(gptInput["output_compression"] as? Int == 85)
+        let automatic = FalInputBuilder.imageInput(
+            ImageGenerationParams(
+                prompt: "choose dimensions", aspectRatio: "1:1", resolution: "auto",
+                quality: "auto", imageURLs: refs, numImages: 1
             ),
             model: gpt,
             count: 1
         )
-        #expect(gptInput["image_urls"] as? [String] == refs)
-        #expect(gptInput["image_size"] as? String == "portrait_16_9")
-        #expect(gptInput["quality"] as? String == "high")
+        #expect(automatic["image_size"] as? String == "auto")
         let gptEntry = try #require(FalModelRegistry.entries.first { $0.id == gpt.entry.id })
         #expect(gptEntry.offers?.first?.productionQualityTargetIDs == [
-            "auto", "low", "medium", "high",
+            "auto", "low", "medium", "high", "xhigh", "max",
         ])
+        #expect(FalModelRegistry.model(for: "fal-ai/gpt-image-2") == nil)
     }
 
     @Test func imageSizeEnumMapping() {
@@ -119,15 +139,115 @@ struct FalImageInputTests {
         #expect(FalInputBuilder.imageSizeEnum("4:3") == "landscape_4_3")
         #expect(FalInputBuilder.imageSizeEnum("3:4") == "portrait_4_3")
     }
+
+    @Test func gptImage25FourRoutesExposeLiveSchemaCapabilitiesAndPrices() throws {
+        let ids = [
+            "fal-ai/gpt-image-2.5/flare/text-to-image",
+            "fal-ai/gpt-image-2.5/flare/edit",
+            "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "fal-ai/gpt-image-2.5/sunburst/edit",
+        ]
+        #expect(FalModelRegistry.models.first?.entry.id == ids[0])
+        for id in ids {
+            let model = try #require(FalModelRegistry.model(for: id))
+            guard case .image(let caps) = model.entry.uiCapabilities else {
+                Issue.record("Expected image capabilities for \(id)")
+                continue
+            }
+            #expect(caps.maxImages == 10)
+            #expect(caps.qualities == ["auto", "low", "medium", "high", "xhigh", "max"])
+            #expect(caps.backgrounds == ["auto", "transparent", "opaque"])
+            #expect(caps.outputFormats == ["png", "jpeg", "webp"])
+            #expect(caps.defaultOutputFormat == "png")
+            #expect(caps.supportsOutputCompression)
+            #expect(caps.supportsMask == id.hasSuffix("/edit"))
+            #expect(caps.maxReferenceImages == (id.hasSuffix("/edit") ? 16 : 0))
+            #expect(caps.customSize?.dimensionMultiple == 16)
+            #expect(caps.customSize?.maxEdge == 3_840)
+            #expect(caps.customSize?.minPixels == 655_360)
+            #expect(caps.customSize?.maxPixels == 8_294_400)
+            #expect(model.entry.creditsPerImage?["1920x1080|high"] == (id.hasSuffix("/edit") ? 0.0478 : 0.0395))
+            #expect(model.entry.card?.rank == (id.contains("sunburst") ? 2 : 1))
+        }
+    }
+
+    @Test func gptImage25ValidationRejectsImpossibleOutputCombinations() throws {
+        let entry = try #require(
+            FalModelRegistry.model(for: "fal-ai/gpt-image-2.5/flare/text-to-image")?.entry
+        )
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("Expected image capabilities")
+            return
+        }
+        let model = ImageModelConfig(entry: entry, caps: caps)
+        #expect(model.validate(
+            aspectRatio: "16:9", resolution: "1920x1080", quality: "high",
+            imageRefCount: 0, numImages: 10, background: "transparent",
+            outputFormat: "png"
+        ) == nil)
+        #expect(model.validate(
+            aspectRatio: "16:9", resolution: "1024x1024", quality: "high",
+            imageRefCount: 0, numImages: 1
+        ) != nil)
+        #expect(model.validate(
+            aspectRatio: "2.4:1", resolution: "2400x1008", quality: "high",
+            imageRefCount: 0, numImages: 1
+        ) == nil)
+        #expect(model.validate(
+            aspectRatio: "2.4:1", resolution: "2401x1008", quality: "high",
+            imageRefCount: 0, numImages: 1
+        ) != nil)
+        #expect(model.validate(
+            aspectRatio: "auto", resolution: "auto", quality: "high",
+            imageRefCount: 0, numImages: 1
+        ) == nil)
+        #expect(model.validate(
+            aspectRatio: "16:9", resolution: "auto", quality: "high",
+            imageRefCount: 0, numImages: 1
+        ) != nil)
+        #expect(model.validate(
+            aspectRatio: "16:9", resolution: "1920x1080", quality: "high",
+            imageRefCount: 0, numImages: 1, background: "transparent",
+            outputFormat: "jpeg"
+        ) != nil)
+        #expect(ImageModelConfig.resolutionDisplayLabel("1024x768") == "Landscape 1024×768")
+        #expect(ImageModelConfig.resolutionDisplayLabel("1536x1024") == "Landscape 1536×1024")
+    }
+
+    @Test func gptImage25VerifiedGenerationPriceUsesEveryRequestedOutput() {
+        let model = "fal-ai/gpt-image-2.5/sunburst/text-to-image"
+        #expect(FalModelRegistry.gptImage25VerifiedGenerationPriceUSD(
+            modelID: model,
+            resolution: "3840x2160",
+            quality: "max",
+            outputCount: 3
+        ) == 0.40026 * 3)
+        #expect(FalModelRegistry.gptImage25VerifiedGenerationPriceUSD(
+            modelID: "fal-ai/gpt-image-2.5/sunburst/edit",
+            resolution: "3840x2160",
+            quality: "high",
+            outputCount: 1
+        ) == nil)
+        #expect(FalModelRegistry.gptImage25VerifiedGenerationPriceUSD(
+            modelID: model,
+            resolution: "auto",
+            quality: "auto",
+            outputCount: 1
+        ) == nil)
+    }
 }
 
 @Suite("FalInputBuilder — video")
 struct FalVideoInputTests {
+    @MainActor
     @Test func legacyGenerationInputDecodesAsNumericDuration() throws {
         let legacy = #"{"prompt":"p","model":"m","duration":5,"aspectRatio":"16:9"}"#
         let input = try JSONDecoder().decode(GenerationInput.self, from: Data(legacy.utf8))
         #expect(input.duration == 5)
         #expect(input.videoDuration == nil)
+        #expect(input.imageMaskAssetId == nil)
+        #expect(input.imageOutputFormat == nil)
+        #expect(ModelRegistry.displayName(for: "fal-ai/gpt-image-2") == "GPT Image 2 (legacy)")
     }
 
     @Test func automaticDurationRoundTripsInManifest() throws {
@@ -324,20 +444,23 @@ struct FalRegistryTests {
         let entries = FalModelRegistry.discoveredEntries(availableModelIds: [
             "fal-ai/nano-banana-2",
             "fal-ai/nano-banana-pro/edit",
-            "openai/gpt-image-2",
-            "openai/gpt-image-2/edit",
+            "openai/gpt-image-2.5/flare/text-to-image",
+            "openai/gpt-image-2.5/flare/edit",
+            "openai/gpt-image-2.5/sunburst/text-to-image",
+            "openai/gpt-image-2.5/sunburst/edit",
             "unmapped/image-tool",
         ])
         #expect(Set(entries.map(\.id)) == [
             "fal-ai/nano-banana-2",
             "fal-ai/nano-banana-pro/edit",
-            "fal-ai/gpt-image-2",
-            "fal-ai/gpt-image-2/edit",
+            "fal-ai/gpt-image-2.5/flare/text-to-image",
+            "fal-ai/gpt-image-2.5/flare/edit",
+            "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "fal-ai/gpt-image-2.5/sunburst/edit",
         ])
-        #expect(entries.first(where: { $0.id == "fal-ai/gpt-image-2" })?
-            .offers?.first?.providerRef == "openai/gpt-image-2")
-        #expect(entries.first(where: { $0.id == "fal-ai/gpt-image-2/edit" })?
-            .offers?.first?.providerRef == "openai/gpt-image-2/edit")
+        for entry in entries where entry.id.contains("gpt-image-2.5") {
+            #expect(entry.offers?.first?.providerRef == entry.id.replacingOccurrences(of: "fal-ai/", with: "openai/"))
+        }
     }
 
     @Test func nanoBananaModelsExposeTheirExactAspectRatioSets() throws {

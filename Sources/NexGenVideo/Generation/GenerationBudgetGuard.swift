@@ -434,6 +434,25 @@ enum LiveGenerationPricing {
     ) async throws -> GenerationMoney {
         switch (target.provider, target.transport) {
         case (.fal, .api):
+            if target.modelId.contains("gpt-image-2.5") {
+                guard let amount = FalModelRegistry.gptImage25VerifiedGenerationPriceUSD(
+                    modelID: target.modelId,
+                    resolution: input.resolution,
+                    quality: input.quality,
+                    outputCount: input.outputCount,
+                    promptUTF8ByteCount: input.promptUTF8ByteCount
+                ) else {
+                    throw GenerationBudgetError.blocked(
+                        "GPT Image 2.5 pricing is token-dependent for this size, quality, or edit input set. "
+                        + "Use a published fixed matrix combination or continue without a budget stop."
+                    )
+                }
+                return try await ProviderMoneyClient.shared.normalize(
+                    nativeAmount: amount,
+                    currency: "USD",
+                    pricingSource: "https://fal.ai/gpt-image-2.5"
+                )
+            }
             guard let apiKey = ProviderKeychain.load(.fal) else {
                 throw GenerationBudgetError.blocked("Add a fal.ai API key to retrieve live pricing.")
             }

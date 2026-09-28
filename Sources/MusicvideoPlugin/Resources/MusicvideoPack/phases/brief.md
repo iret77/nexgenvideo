@@ -209,6 +209,16 @@ explain the affected approvals and use an explicit rewind before rewriting it.
    - `flash` / cheap-fast — a cheap & fast image model for storyboards
      and bulk drafts without a premium quality requirement.
 
+   When the live catalog offers GPT Image 2.5, present Flare as the default
+   fast route and Sunburst only as the precision option for hero keyframes,
+   strict identity/detail work, or exact edits. Do not select Sunburst merely
+   because it ranks as premium, and do not assume either route exists without
+   `list_models`. The schema-valid values are
+   `fal:fal-ai/gpt-image-2.5/{flare|sunburst}/{text-to-image|edit}`. Store the
+   text route for prompt-only work and the matching edit route when that brief
+   role requires anchors or masks. Tool calls use the exact `id` returned by
+   `list_models`, not the brief's provider namespace prefix.
+
    Output into `brief.yaml`:
    - `hybrid` → `bible_image_model` and `composite_image_model` set
      separately, `frame_image_model` stays the high-consistency model as

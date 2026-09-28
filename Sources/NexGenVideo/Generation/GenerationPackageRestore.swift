@@ -10,6 +10,10 @@ extension GenerationPackageV1 {
             let quality: String?
             let imageURLs: [String]?
             let numImages: Int?
+            let maskURL: String?
+            let background: String?
+            let outputFormat: String?
+            let outputCompression: Int?
             let duration: VideoDuration?
             let sourceVideoURL: String?
             let startFrameURL: String?
@@ -29,7 +33,9 @@ extension GenerationPackageV1 {
                 throw GenerationRequestError.gate("The saved image output count is invalid.")
             }
             parameters = .image(.init(prompt: saved.prompt, aspectRatio: saved.aspectRatio, resolution: saved.resolution,
-                quality: saved.quality, imageURLs: saved.imageURLs ?? [], numImages: count))
+                quality: saved.quality, imageURLs: saved.imageURLs ?? [], numImages: count,
+                maskURL: saved.maskURL, background: saved.background, outputFormat: saved.outputFormat,
+                outputCompression: saved.outputCompression))
         case "video":
             guard let duration = saved.duration, let audio = saved.generateAudio,
                   payload.modality == "video", payload.outputCount == 1 else {

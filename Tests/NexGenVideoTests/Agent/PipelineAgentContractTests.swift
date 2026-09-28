@@ -189,6 +189,29 @@ struct PipelineAgentContractTests {
         #expect(!document.contains("Ask the user explicitly per character"))
     }
 
+    @Test("Image workflow defaults to Flare and reserves Sunburst for precision")
+    func gptImage25WorkflowRouting() throws {
+        let schemaRoutes = Set(FrameImageModel.allCases.map(\.rawValue).filter {
+            $0.contains("gpt-image-2.5")
+        })
+        #expect(schemaRoutes == Set([
+            "fal:fal-ai/gpt-image-2.5/flare/text-to-image",
+            "fal:fal-ai/gpt-image-2.5/flare/edit",
+            "fal:fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "fal:fal-ai/gpt-image-2.5/sunburst/edit",
+        ]))
+        for phase in ["brief", "bible", "frame"] {
+            let document = try PackKnowledge.phaseDoc(name: phase)
+            #expect(document.contains("Flare"), "\(phase) must name the default route")
+            #expect(document.contains("Sunburst"), "\(phase) must name the precision route")
+            #expect(document.contains("list_models"), "\(phase) must use the live catalog")
+        }
+        let bible = try PackKnowledge.phaseDoc(name: "bible")
+        let frame = try PackKnowledge.phaseDoc(name: "frame")
+        #expect(bible.contains("does not approve a sheet"))
+        #expect(frame.contains("vision audit still decide acceptance"))
+    }
+
     @Test("Cover is a reachable post-pipeline utility, never a hidden phase")
     func coverIsPostPipelineUtility() throws {
         let document = try PackKnowledge.phaseDoc(name: "cover")

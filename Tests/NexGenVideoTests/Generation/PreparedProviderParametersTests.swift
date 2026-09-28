@@ -75,4 +75,33 @@ struct PreparedProviderParametersTests {
         #expect(actual.quality == "high")
         #expect(actual.imageURLs == ["hosted-reference"])
     }
+
+    @Test func imageMaskAndOutputOptionsAreFrozenAndBoundByRole() throws {
+        let prepared = try PreparedProviderParameters(referenceCount: 2) { slots in
+            .image(ImageGenerationParams(
+                prompt: "Preserve identity",
+                aspectRatio: "16:9",
+                resolution: "1920x1080",
+                quality: "xhigh",
+                imageURLs: [slots[0]],
+                numImages: 2,
+                maskURL: slots[1],
+                background: "transparent",
+                outputFormat: "webp",
+                outputCompression: 90
+            ))
+        }
+        guard case .image(let actual) = try prepared.bind(["reference", "mask"]) else {
+            Issue.record("Expected prepared image parameters")
+            return
+        }
+        #expect(actual.imageURLs == ["reference"])
+        #expect(actual.maskURL == "mask")
+        #expect(actual.background == "transparent")
+        #expect(actual.outputFormat == "webp")
+        #expect(actual.outputCompression == 90)
+        #expect(GenerationPackageV1.referenceRoles(parameters: prepared) == [
+            "image_reference", "image_mask",
+        ])
+    }
 }

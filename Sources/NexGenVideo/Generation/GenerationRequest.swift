@@ -222,7 +222,7 @@ enum GenerationController {
                 let parameters = try PreparedProviderParameters(referenceCount: count, build: value.buildParams)
                 guard case .image(let image) = parameters.parameters, image.prompt == compiledPrompt,
                       value.genInput.prompt == compiledPrompt, image.numImages == value.numImages,
-                      (1...4).contains(image.numImages) else {
+                      (1...10).contains(image.numImages) else {
                     throw GenerationRequestError.optionsInvalid("The image output count does not match the prepared request.")
                 }
                 self = .image(value, parameters)
@@ -384,8 +384,9 @@ enum GenerationController {
                 if let plan = image.genInput.frameReferencePlan {
                     guard plan.isExecutable,
                           let referenceSnapshot,
-                          plan.bindings.count == referenceSnapshot.receipts.count,
-                          zip(plan.bindings, referenceSnapshot.receipts).allSatisfy({ pair in
+                          plan.bindings.count + (image.genInput.imageMaskAssetId == nil ? 0 : 1)
+                              == referenceSnapshot.receipts.count,
+                          zip(plan.bindings, referenceSnapshot.receipts.prefix(plan.bindings.count)).allSatisfy({ pair in
                               pair.0.sha256 == pair.1.sourceSHA256
                                   && pair.0.sha256 == pair.1.submittedSHA256
                           }) else {
@@ -688,6 +689,7 @@ enum GenerationController {
             resolution: resolution,
             quality: quality,
             promptCharacterCount: compiledPrompt.count,
+            promptUTF8ByteCount: compiledPrompt.utf8.count,
             generateAudio: generateAudio
         )
     }

@@ -51,7 +51,15 @@ struct ImageGenerationSubmission {
             folderId: folderId,
             buildParams: buildParams,
             preparedParameters: preparedParameters,
-            fileExtension: "jpg",
+            snapshotRefs: { input, uploaded in
+                let referenceCount = input.imageURLAssetIds?.count ?? uploaded.count
+                let primary = Array(uploaded.prefix(referenceCount))
+                input.imageURLs = primary.isEmpty ? nil : primary
+                input.imageMaskURL = uploaded.count > referenceCount
+                    ? uploaded[referenceCount]
+                    : nil
+            },
+            fileExtension: Self.fileExtension(for: genInput.imageOutputFormat),
             projectURL: projectURL,
             editor: editor,
             authorization: authorization,
@@ -66,6 +74,7 @@ struct ImageGenerationSubmission {
         model: ImageModelConfig,
         references: [MediaAsset],
         referenceAssetIDs: [String]? = nil,
+        mask: MediaAsset? = nil,
         name: String? = nil,
         numImages: Int = 1,
         folderId: String? = nil
@@ -73,9 +82,11 @@ struct ImageGenerationSubmission {
         var genInput = baseInput
         let assetIDs = referenceAssetIDs ?? references.map(\.id)
         genInput.imageURLAssetIds = assetIDs.isEmpty ? nil : assetIDs
+        genInput.imageMaskAssetId = mask?.id
+        let referenceCount = references.count
         return ImageGenerationSubmission(
             genInput: genInput,
-            references: references,
+            references: references + [mask].compactMap { $0 },
             name: name,
             numImages: numImages,
             folderId: folderId,
@@ -85,8 +96,12 @@ struct ImageGenerationSubmission {
                     aspectRatio: genInput.aspectRatio,
                     resolution: genInput.resolution,
                     quality: genInput.quality,
-                    imageURLs: uploaded,
-                    numImages: numImages
+                    imageURLs: Array(uploaded.prefix(referenceCount)),
+                    numImages: numImages,
+                    maskURL: uploaded.count > referenceCount ? uploaded[referenceCount] : nil,
+                    background: genInput.imageBackground,
+                    outputFormat: genInput.imageOutputFormat,
+                    outputCompression: genInput.imageOutputCompression
                 ))
             }
         )
@@ -120,9 +135,20 @@ struct ImageGenerationSubmission {
                     resolution: genInput.resolution,
                     quality: genInput.quality,
                     imageURLs: uploaded,
-                    numImages: 1
+                    numImages: 1,
+                    background: genInput.imageBackground,
+                    outputFormat: genInput.imageOutputFormat,
+                    outputCompression: genInput.imageOutputCompression
                 ))
             }
         )
+    }
+
+    private static func fileExtension(for outputFormat: String?) -> String {
+        switch outputFormat {
+        case "png": "png"
+        case "webp": "webp"
+        default: "jpg"
+        }
     }
 }

@@ -197,6 +197,9 @@ enum MCPMediaUpload {
         switch params {
         case .image(let value):
             return value.imageURLs.map { ReferenceInput(locator: $0, mediaType: "image") }
+                + [value.maskURL].compactMap { $0 }.map {
+                    ReferenceInput(locator: $0, mediaType: "image")
+                }
         case .video(let value):
             return [value.sourceVideoURL].compactMap { $0 }.map {
                 ReferenceInput(locator: $0, mediaType: "video")
@@ -228,7 +231,11 @@ enum MCPMediaUpload {
                 resolution: value.resolution,
                 quality: value.quality,
                 imageURLs: value.imageURLs.map(transform),
-                numImages: value.numImages
+                numImages: value.numImages,
+                maskURL: value.maskURL.map(transform),
+                background: value.background,
+                outputFormat: value.outputFormat,
+                outputCompression: value.outputCompression
             ))
         case .video(let value):
             return .video(VideoGenerationParams(

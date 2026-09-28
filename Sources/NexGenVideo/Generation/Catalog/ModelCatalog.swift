@@ -42,7 +42,12 @@ enum ModelRegistry {
         case .image(let m): m.displayName
         case .audio(let m): m.displayName
         case .upscale(let m): m.displayName
-        case .none: id
+        case .none:
+            switch id {
+            case "fal-ai/gpt-image-2", "openai/gpt-image-2": "GPT Image 2 (legacy)"
+            case "fal-ai/gpt-image-2/edit", "openai/gpt-image-2/edit": "GPT Image 2 Edit (legacy)"
+            default: id
+            }
         }
     }
 }
@@ -618,7 +623,11 @@ final class ModelCatalog {
         resolution: String?,
         quality: String?,
         referenceCount: Int,
-        numImages: Int = 1
+        numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false
     ) -> [CatalogImageOfferingCandidate] {
         let discovered = discoveredByProvider
         let discoveryStates = providerDiscovery
@@ -631,6 +640,10 @@ final class ModelCatalog {
             quality: quality,
             referenceCount: referenceCount,
             numImages: numImages,
+            background: background,
+            outputFormat: outputFormat,
+            outputCompression: outputCompression,
+            hasMask: hasMask,
             activation: .current(),
             isEnabled: ModelPreferences.shared.isEnabled,
             offeringIsVerified: { modelID, binding in
@@ -691,6 +704,10 @@ final class ModelCatalog {
         quality: String?,
         referenceCount: Int,
         numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false,
         activation: ProviderActivation,
         isEnabled: (String) -> Bool,
         offeringIsVerified: (String, ProviderBinding) -> Bool
@@ -705,7 +722,11 @@ final class ModelCatalog {
                         resolution: resolution,
                         quality: quality,
                         imageRefCount: referenceCount,
-                        numImages: numImages
+                        numImages: numImages,
+                        background: background,
+                        outputFormat: outputFormat,
+                        outputCompression: outputCompression,
+                        hasMask: hasMask
                     ) == nil else { return nil }
                     adapted = ImageAlternativeCandidate(
                         model: model,
@@ -721,6 +742,10 @@ final class ModelCatalog {
                         resolution: resolution,
                         quality: quality,
                         referenceCount: referenceCount,
+                        background: background,
+                        outputFormat: outputFormat,
+                        outputCompression: outputCompression,
+                        hasMask: hasMask,
                         isAvailable: { _ in true }
                     ).first,
                     candidate.model.validate(
@@ -728,7 +753,11 @@ final class ModelCatalog {
                         resolution: candidate.resolution,
                         quality: candidate.quality,
                         imageRefCount: referenceCount,
-                        numImages: numImages
+                        numImages: numImages,
+                        background: background,
+                        outputFormat: outputFormat,
+                        outputCompression: outputCompression,
+                        hasMask: hasMask
                     ) == nil else { return nil }
                     adapted = candidate
                 }
@@ -1579,6 +1608,15 @@ enum ImageReferenceLimit: Sendable, Equatable {
     }
 }
 
+struct ImageCustomSizeCaps: Decodable, Sendable {
+    let dimensionMultiple: Int
+    let maxEdge: Int
+    let minPixels: Int
+    let maxPixels: Int
+    let minAspectRatio: Double
+    let maxAspectRatio: Double
+}
+
 struct ImageCaps: Decodable, Sendable {
     let resolutions: [String]?
     let aspectRatios: [String]
@@ -1588,6 +1626,12 @@ struct ImageCaps: Decodable, Sendable {
     let minReferenceImages: Int
     let referenceImageLimit: ImageReferenceLimit
     let maxImages: Int
+    let backgrounds: [String]?
+    let outputFormats: [String]?
+    let defaultOutputFormat: String?
+    let supportsOutputCompression: Bool
+    let supportsMask: Bool
+    let customSize: ImageCustomSizeCaps?
 
     var maxReferenceImages: Int { referenceImageLimit.effectiveMaximum }
 
@@ -1600,7 +1644,13 @@ struct ImageCaps: Decodable, Sendable {
         minReferenceImages: Int? = nil,
         maxReferenceImages: Int? = nil,
         referenceImageLimit: ImageReferenceLimit? = nil,
-        maxImages: Int
+        maxImages: Int,
+        backgrounds: [String]? = nil,
+        outputFormats: [String]? = nil,
+        defaultOutputFormat: String? = nil,
+        supportsOutputCompression: Bool = false,
+        supportsMask: Bool = false,
+        customSize: ImageCustomSizeCaps? = nil
     ) {
         let minimum = max(0, minReferenceImages ?? (requiresImageReference ? 1 : 0))
         let limit = referenceImageLimit ?? .bounded(
@@ -1614,11 +1664,19 @@ struct ImageCaps: Decodable, Sendable {
         self.minReferenceImages = minimum
         self.referenceImageLimit = limit
         self.maxImages = maxImages
+        self.backgrounds = backgrounds
+        self.outputFormats = outputFormats
+        self.defaultOutputFormat = defaultOutputFormat
+        self.supportsOutputCompression = supportsOutputCompression
+        self.supportsMask = supportsMask
+        self.customSize = customSize
     }
 
     private enum CodingKeys: String, CodingKey {
         case resolutions, aspectRatios, qualities, supportsImageReference
         case requiresImageReference, minReferenceImages, maxReferenceImages, maxImages
+        case backgrounds, outputFormats, defaultOutputFormat, supportsOutputCompression, supportsMask
+        case customSize
     }
 
     init(from decoder: Decoder) throws {
@@ -1647,7 +1705,16 @@ struct ImageCaps: Decodable, Sendable {
             requiresImageReference: requiresImageReference,
             minReferenceImages: minReferenceImages,
             maxReferenceImages: maxReferenceImages,
-            maxImages: try container.decode(Int.self, forKey: .maxImages)
+            maxImages: try container.decode(Int.self, forKey: .maxImages),
+            backgrounds: try container.decodeIfPresent([String].self, forKey: .backgrounds),
+            outputFormats: try container.decodeIfPresent([String].self, forKey: .outputFormats),
+            defaultOutputFormat: try container.decodeIfPresent(String.self, forKey: .defaultOutputFormat),
+            supportsOutputCompression: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .supportsOutputCompression
+            ) ?? false,
+            supportsMask: try container.decodeIfPresent(Bool.self, forKey: .supportsMask) ?? false,
+            customSize: try container.decodeIfPresent(ImageCustomSizeCaps.self, forKey: .customSize)
         )
     }
 }

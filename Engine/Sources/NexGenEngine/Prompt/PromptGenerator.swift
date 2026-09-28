@@ -17,6 +17,9 @@ public enum PromptGenerator {
         modelID: String, payload: PromptPayload, sheetKind: String = "character"
     ) throws -> String {
         let (provider, model) = providerAndModel(modelID)
+        if modelID.lowercased().contains("gpt-image-2.5") {
+            return try ImageBuilders.gptImage25(payload, sheetKind: sheetKind)
+        }
         if provider == "google" {
             if model.lowercased().contains("imagen") {
                 return try ImageBuilders.imagen(payload, sheetKind: sheetKind)

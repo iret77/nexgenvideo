@@ -390,10 +390,12 @@ enum ImageModelCaps {
         switch model {
         case .googleGemini3Pro, .googleGemini31Flash, .falNanoBanana: return 6
         case .openaiGptImage2, .openaiGptImage1: return 10
+        case .falGptImage25FlareEdit, .falGptImage25SunburstEdit: return 16
         case .runwayGemini3Pro, .runwayGemini31Flash, .runwayGemini25Flash, .runwayGen4Image, .runwayGen4ImageTurbo: return 3
         case .falGptImage1: return 4
         // supports_reference_images == false → no cap (caller falls back to 9).
-        case .googleImagen4Ultra, .falImagen4Ultra, .falFluxPro11: return nil
+        case .googleImagen4Ultra, .falImagen4Ultra, .falFluxPro11,
+             .falGptImage25Flare, .falGptImage25Sunburst: return nil
         case .other: return nil
         }
     }

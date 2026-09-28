@@ -91,10 +91,10 @@ struct ImageOfferingSelectionTests {
         let entries = FalModelRegistry.discoveredEntries(
             availableModelIds: [
                 "fal-ai/nano-banana",
-                "openai/gpt-image-2",
+                "openai/gpt-image-2.5/flare/text-to-image",
             ]
         ).filter { entry in
-            ["fal-ai/nano-banana", "fal-ai/gpt-image-2"].contains(entry.id)
+            ["fal-ai/nano-banana", "fal-ai/gpt-image-2.5/flare/text-to-image"].contains(entry.id)
         }
         let discovered = [GenerationProvider.fal: entries]
         let candidates = ModelCatalog.compatibleImageOfferings(
@@ -120,10 +120,10 @@ struct ImageOfferingSelectionTests {
         )
 
         let gpt = try #require(candidates.first {
-            $0.model.id == "fal-ai/gpt-image-2"
+            $0.model.id == "fal-ai/gpt-image-2.5/flare/text-to-image"
         })
-        #expect(gpt.target.modelId == "fal-ai/gpt-image-2")
-        #expect(gpt.target.endpoint == "openai/gpt-image-2")
+        #expect(gpt.target.modelId == "fal-ai/gpt-image-2.5/flare/text-to-image")
+        #expect(gpt.target.endpoint == "openai/gpt-image-2.5/flare/text-to-image")
         #expect(candidates.contains { $0.model.id == "fal-ai/nano-banana" })
     }
 
