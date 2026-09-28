@@ -67,6 +67,55 @@ enum RippleEngine {
             .map { ClipShift(clipId: $0.id, newStartFrame: $0.startFrame + pushAmount) }
     }
 
+    /// Maps markers through deletions, preserving one when any affected track retains it.
+    static func rippleMarkers(
+        _ markers: [TimelineMarker],
+        closing trackRanges: [[FrameRange]]
+    ) -> [TimelineMarker] {
+        let mergedByTrack = trackRanges
+            .map { mergeRanges($0.filter { $0.length > 0 }) }
+            .filter { !$0.isEmpty }
+        guard !mergedByTrack.isEmpty else { return markers }
+
+        return markers.compactMap { marker in
+            let mapped = mergedByTrack.compactMap { ranges -> TimelineMarker? in
+                mapMarker(marker, closing: ranges)
+            }
+            guard var result = mapped.min(by: { $0.startFrame < $1.startFrame }) else { return nil }
+            if marker.durationFrames > 0 {
+                let earliestEnd = mapped.map(\.endFrame).min() ?? result.endFrame
+                guard earliestEnd > result.startFrame else { return nil }
+                result.durationFrames = earliestEnd - result.startFrame
+            }
+            return result
+        }
+    }
+
+    /// Opens for inserts or closes the tail removed by a ripple trim.
+    static func rippleMarkers(
+        _ markers: [TimelineMarker],
+        openingAt frame: Int,
+        by delta: Int
+    ) -> [TimelineMarker] {
+        guard delta != 0 else { return markers }
+        if delta < 0 {
+            return rippleMarkers(
+                markers,
+                closing: [[FrameRange(start: max(0, frame + delta), end: frame)]]
+            )
+        }
+
+        return markers.map { marker in
+            var result = marker
+            if marker.startFrame >= frame {
+                result.startFrame += delta
+            } else if marker.durationFrames > 0, marker.endFrame > frame {
+                result.durationFrames += delta
+            }
+            return result
+        }
+    }
+
     // MARK: - Helpers
 
     static func mergeRanges(_ ranges: [FrameRange]) -> [FrameRange] {
@@ -80,5 +129,41 @@ enum RippleEngine {
             }
         }
         return merged
+    }
+
+    private static func mapMarker(
+        _ marker: TimelineMarker,
+        closing ranges: [FrameRange]
+    ) -> TimelineMarker? {
+        if marker.durationFrames == 0 {
+            guard !ranges.contains(where: { $0.start <= marker.startFrame && marker.startFrame < $0.end }) else {
+                return nil
+            }
+            var result = marker
+            result.startFrame = mapFrame(marker.startFrame, closing: ranges)
+            return result
+        }
+
+        let survivingLength = ranges.reduce(marker.durationFrames) { length, range in
+            let overlapStart = max(marker.startFrame, range.start)
+            let overlapEnd = min(marker.endFrame, range.end)
+            return length - max(0, overlapEnd - overlapStart)
+        }
+        guard survivingLength > 0 else { return nil }
+
+        var result = marker
+        result.startFrame = mapFrame(marker.startFrame, closing: ranges)
+        result.durationFrames = survivingLength
+        return result
+    }
+
+    private static func mapFrame(_ frame: Int, closing ranges: [FrameRange]) -> Int {
+        var removedBefore = 0
+        for range in ranges {
+            if frame < range.start { break }
+            if frame < range.end { return range.start - removedBefore }
+            removedBefore += range.length
+        }
+        return frame - removedBefore
     }
 }

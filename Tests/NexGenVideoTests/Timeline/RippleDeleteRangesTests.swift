@@ -24,10 +24,12 @@ struct RippleDeleteRangesTests {
     @Test func cutsMidClipAndClosesGap() {
         // [0,100), remove [40,50): head [0,40) stays, tail slides left by 10 to meet it.
         let e = editor([Fixtures.videoTrack(clips: [Fixtures.clip(id: "c1", start: 0, duration: 100)])])
+        e.timeline.markers = [TimelineMarker(id: "marker", startFrame: 80, title: "After cut")]
         let outcome = e.rippleDeleteRanges(anchorClipId: "c1", ranges: [FrameRange(start: 40, end: 50)])
         guard case .ok(let report) = outcome else { Issue.record("expected .ok"); return }
         #expect(report.removedFrames == 10)
         #expect(spans(e.timeline.tracks[0]) == [[0, 40], [40, 90]])
+        #expect(e.timeline.markers.first?.startFrame == 70)
     }
 
     @Test func multipleRangesAccumulateShifts() {
@@ -128,6 +130,7 @@ struct RippleDeleteRangesTests {
             Fixtures.clip(id: "c2", start: 50, duration: 50),
         ])
         let e = editor([track])
+        e.timeline.markers = [TimelineMarker(id: "marker", startFrame: 50, title: "Insert edge")]
         let asset = MediaAsset(id: "m1", url: URL(fileURLWithPath: "/tmp/m1.mov"), type: .video, name: "m1", duration: 1.0)
         asset.hasAudio = false
         e.mediaAssets.append(asset)
@@ -137,6 +140,7 @@ struct RippleDeleteRangesTests {
         #expect(s.contains([0, 50]))
         #expect(s.contains([50, 80]))
         #expect(s.contains([80, 130]))
+        #expect(e.timeline.markers.first?.startFrame == 80)
     }
 
     @Test func refusesWhenSyncLockedFollowerWouldCollide() {

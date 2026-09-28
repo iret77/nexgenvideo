@@ -107,10 +107,38 @@ final class EditorViewModel {
     }
     var activeFrame: Int { playheadState.timelineFrame }
     var isPlaying: Bool = false
-    var selectedClipIds: Set<String> = []
+    var selectedClipIds: Set<String> = [] {
+        didSet {
+            guard !selectedClipIds.isEmpty else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
     var isMarqueeSelecting: Bool = false
-    var selectedGap: GapSelection?
-    var selectedTimelineRange: TimelineRangeSelection?
+    var selectedGap: GapSelection? {
+        didSet {
+            guard selectedGap != nil else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
+    var selectedTimelineRange: TimelineRangeSelection? {
+        didSet {
+            guard selectedTimelineRange != nil else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
+    var selectedTimelineMarkerIds: Set<String> = [] {
+        didSet {
+            guard !selectedTimelineMarkerIds.isEmpty else { return }
+            selectedClipIds = []
+            selectedGap = nil
+            selectedTimelineRange = nil
+        }
+    }
+    var timelineMarkerPreview: TimelineMarker?
+    var markerPanelPresented = false
     var selectedMediaAssetIds: Set<String> = []
     var selectedFolderIds: Set<String> = []
 
@@ -135,6 +163,12 @@ final class EditorViewModel {
     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
     var selectionContextHint: String? {
+        if selectedTimelineMarkerIds.count > 1 {
+            return "\(selectedTimelineMarkerIds.count) timeline markers are selected"
+        }
+        if let marker = selectedTimelineMarker {
+            return "the timeline marker \u{201C}\(marker.title)\u{201D} at \(formatTimecode(frame: marker.startFrame, fps: timeline.fps))"
+        }
         if selectedClipIds.count > 1 {
             return "\(selectedClipIds.count) timeline clips are selected"
         }
@@ -774,6 +808,8 @@ final class EditorViewModel {
         selectedClipIds = []
         selectedGap = nil
         selectedTimelineRange = nil
+        selectedTimelineMarkerIds = []
+        timelineMarkerPreview = nil
         isMarqueeSelecting = false
         if case .clip = inspectedObject { inspectedObject = nil }
         if case .mediaAsset = inspectedObject { inspectedObject = nil }
