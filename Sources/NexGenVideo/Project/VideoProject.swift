@@ -626,11 +626,7 @@ final class VideoProject: NSDocument {
         super.close()
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .projectDocumentSetChanged, object: self)
-            if AppState.shared.activeProject === self {
-                // The review already resolved save/don't-save — navigate Home WITHOUT re-saving (a save
-                // here fails on the released working copy and its alert would block app termination).
-                AppState.shared.showHome(persist: false)
-            }
+            AppState.shared.projectDidClose(self)
         }
     }
 
@@ -727,13 +723,16 @@ final class VideoProject: NSDocument {
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
 
         let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
+        controller.onBecameKey = { [weak self] window in
+            guard let self else { return }
+            AppState.shared.projectWindowDidBecomeKey(self, window: window)
+        }
+        window.delegate = controller
         controller.shouldCascadeWindows = true
         controller.installKeyMonitor()
         addWindowController(controller)
 
         window.standardWindowButton(.documentIconButton)?.isHidden = true
-
-        AppState.shared.showEditor(for: self)
 
         if let manifest = loadedManifest {
             editorViewModel.mediaManifest = manifest

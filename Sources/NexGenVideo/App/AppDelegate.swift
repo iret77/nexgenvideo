@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
             // (e.g. a document launch), in which case the editor owns the screen.
             SplashScreenController.shared.showAtLaunch {
-                if AppState.shared.activeProject == nil {
+                if !AppState.shared.hasVisibleKeyProjectWindow {
                     HomeWindowController.shared.showWindow(nil)
                 }
             }
