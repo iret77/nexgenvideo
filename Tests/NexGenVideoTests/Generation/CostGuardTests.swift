@@ -556,7 +556,7 @@ struct CostGuardTests {
         service.isStreaming = true
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: try #require(service.currentSessionId),
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "m1",
@@ -624,7 +624,7 @@ struct CostGuardTests {
         let sessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: sessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "fal-ai/nano-banana-pro/edit",
@@ -677,7 +677,7 @@ struct CostGuardTests {
         let chatSessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: chatSessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "fal-ai/nano-banana-pro/edit",
@@ -757,7 +757,7 @@ struct CostGuardTests {
         let sessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: sessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "m1",
@@ -810,7 +810,7 @@ struct CostGuardTests {
         let originSessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: originSessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "fal-ai/nano-banana-pro/edit",
@@ -892,7 +892,7 @@ struct CostGuardTests {
         let sessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: sessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "fal-ai/nano-banana-pro/edit",
@@ -988,7 +988,7 @@ struct CostGuardTests {
         let firstSessionID = try #require(service.currentSessionId)
         let firstOrigin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: firstSessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "m1",
@@ -1029,7 +1029,7 @@ struct CostGuardTests {
 
         let secondOrigin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: secondSessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         service.messages = [AgentMessage(role: .user, blocks: [
             .toolResult(
@@ -1112,7 +1112,7 @@ struct CostGuardTests {
         let chatSessionID = try #require(service.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: chatSessionID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
         let selected = option(
             modelId: "m1",

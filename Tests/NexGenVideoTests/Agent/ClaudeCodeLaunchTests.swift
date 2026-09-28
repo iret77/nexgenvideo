@@ -17,11 +17,11 @@ struct ClaudeCodeLaunchTests {
 
     @Test func embeddedSessionIdentityIsCarriedInTheMCPHeader() {
         let sessionID = UUID(uuidString: "7D713075-EF8D-4428-BD9B-33888359267C")!
-        let turnID = UUID(uuidString: "C73A3F70-A49C-4F05-BD9F-EA1223673554")!
+        let runtimeID = UUID(uuidString: "C73A3F70-A49C-4F05-BD9F-EA1223673554")!
         let json = ClaudeCodeLaunch.mcpConfigJSON(
             port: 19789,
             appSessionId: sessionID,
-            agentTurnId: turnID
+            runtimeGenerationId: runtimeID
         )
         let object = try? JSONSerialization.jsonObject(
             with: Data(json.utf8)
@@ -31,7 +31,7 @@ struct ClaudeCodeLaunchTests {
         let headers = nexgen?["headers"] as? [String: String]
 
         #expect(headers?[MCPHTTPServer.agentSessionHeader] == sessionID.uuidString)
-        #expect(headers?[MCPHTTPServer.agentTurnHeader] == turnID.uuidString)
+        #expect(headers?[MCPHTTPServer.agentRuntimeHeader] == runtimeID.uuidString)
     }
 
     @Test("#201: claude -p gets the FULL manual as --append-system-prompt (parity with the API agent)")

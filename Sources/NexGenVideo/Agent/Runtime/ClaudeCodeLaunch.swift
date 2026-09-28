@@ -33,7 +33,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     /// The in-app chat that owns this embedded runtime's MCP calls.
     var appSessionId: UUID?
     /// The subprocess lifetime that owns suspension and retry state for its MCP calls.
-    var agentTurnId: UUID?
+    var runtimeGenerationId: UUID?
 
     init(
         workingDirectory: URL,
@@ -47,7 +47,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         sessionId: String? = nil,
         resumeSessionId: String? = nil,
         appSessionId: UUID? = nil,
-        agentTurnId: UUID? = nil
+        runtimeGenerationId: UUID? = nil
     ) {
         self.workingDirectory = workingDirectory
         self.pluginDirectories = pluginDirectories
@@ -60,7 +60,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.sessionId = sessionId
         self.resumeSessionId = resumeSessionId
         self.appSessionId = appSessionId
-        self.agentTurnId = agentTurnId
+        self.runtimeGenerationId = runtimeGenerationId
     }
 }
 
@@ -72,7 +72,7 @@ enum ClaudeCodeLaunch {
     static func mcpConfigJSON(
         port: Int,
         appSessionId: UUID? = nil,
-        agentTurnId: UUID? = nil,
+        runtimeGenerationId: UUID? = nil,
         pluginServers: [String: String] = [:]
     ) -> String {
         var headerFields: [String] = []
@@ -81,9 +81,9 @@ enum ClaudeCodeLaunch {
                 "\"\(MCPHTTPServer.agentSessionHeader)\":\"\(appSessionId.uuidString)\""
             )
         }
-        if let agentTurnId {
+        if let runtimeGenerationId {
             headerFields.append(
-                "\"\(MCPHTTPServer.agentTurnHeader)\":\"\(agentTurnId.uuidString)\""
+                "\"\(MCPHTTPServer.agentRuntimeHeader)\":\"\(runtimeGenerationId.uuidString)\""
             )
         }
         let headers = headerFields.isEmpty
@@ -111,7 +111,7 @@ enum ClaudeCodeLaunch {
             "--mcp-config", mcpConfigJSON(
                 port: cfg.mcpPort,
                 appSessionId: cfg.appSessionId,
-                agentTurnId: cfg.agentTurnId,
+                runtimeGenerationId: cfg.runtimeGenerationId,
                 pluginServers: cfg.pluginMcpServers
             ),
             "--strict-mcp-config",

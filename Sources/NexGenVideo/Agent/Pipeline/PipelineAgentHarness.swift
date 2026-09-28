@@ -613,17 +613,30 @@ final class PipelineAgentHarness {
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding
             )
-            if let tool,
-               let contract,
-               !contract.allowsPhaseBound(tool, phase: phase) {
-                throw GateBlocked(
-                    "\(tool.rawValue) is not part of the "
-                        + "\(PhaseDisplay.label(phase)) phase contract."
-                )
-            }
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message, kind: .agentCorrection)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .agentCorrection)
+        }
+        if let tool,
+           let contract,
+           !contract.allowsPhaseBound(tool, phase: phase) {
+            throw ToolError(
+                "\(tool.rawValue) is not part of the "
+                    + "\(PhaseDisplay.label(phase)) phase contract.",
+                kind: .agentCorrection
+            )
+        }
+        do {
             try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
-            if let index = order.firstIndex(of: phase), index > 0 {
-                let prior = order[index - 1]
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message, kind: .reviewChangedSource)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
+        }
+        if let index = order.firstIndex(of: phase), index > 0 {
+            let prior = order[index - 1]
+            do {
                 try GateGuard.checkApprovable(
                     phase: prior,
                     dataRoot: dataRoot,
@@ -633,9 +646,11 @@ final class PipelineAgentHarness {
                         registry: registry
                     )
                 )
+            } catch let blocked as GateBlocked {
+                throw ToolError(blocked.message, kind: .reviewChangedSource)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
             }
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
         }
     }
 
@@ -986,7 +1001,7 @@ final class PipelineAgentHarness {
                 declaredPack: declaredPack
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
     }
 

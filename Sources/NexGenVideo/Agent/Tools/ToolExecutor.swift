@@ -2,9 +2,33 @@ import CoreFoundation
 import Foundation
 import NexGenEngine
 
+enum ToolFailureKind: Sendable, Equatable {
+    case agentCorrection
+    case reviewChangedSource
+    case reopenProject
+    case hostBusy
+    case phaseRecordRepair
+    case approvalStructure
+
+    var hostAction: AgentHostStateRecord.Action {
+        switch self {
+        case .reviewChangedSource: .reviewChangedSource
+        case .reopenProject: .reopenProject
+        case .hostBusy: .retryAfterHostRecovery
+        case .agentCorrection, .phaseRecordRepair, .approvalStructure: .agentCorrection
+        }
+    }
+}
+
 struct ToolError: LocalizedError, Sendable {
     let message: String
-    init(_ message: String) { self.message = message }
+    let kind: ToolFailureKind
+
+    init(_ message: String, kind: ToolFailureKind = .agentCorrection) {
+        self.message = message
+        self.kind = kind
+    }
+
     var errorDescription: String? { message }
 }
 
@@ -64,10 +88,20 @@ enum ToolIntegerArgument {
 /// Tool implementations live in the `ToolExecutor+*.swift` extension files.
 @MainActor
 final class ToolExecutor {
+    typealias PhaseMutationRecorder = @MainActor (
+        _ editor: EditorViewModel,
+        _ phase: String,
+        _ dataRoot: URL,
+        _ captureLineage: Bool,
+        _ declaredPack: String?,
+        _ declaredBinding: ProjectPackBinding?
+    ) async throws -> Void
+
     private let editorProvider: () -> EditorViewModel?
     let providerActivation: () -> ProviderActivation
     let productionRouteCandidates: ProductionRouteCandidateProvider
     let modelCatalog: ModelCatalog
+    private let phaseMutationRecorder: PhaseMutationRecorder
     var editor: EditorViewModel? { editorProvider() }
 
     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
@@ -80,12 +114,14 @@ final class ToolExecutor {
         enforceHardGates: Bool = true,
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
         modelCatalog: ModelCatalog = .shared,
-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
         self.modelCatalog = modelCatalog
+        self.phaseMutationRecorder = phaseMutationRecorder
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
         }
@@ -96,15 +132,33 @@ final class ToolExecutor {
         enforceHardGates: Bool = true,
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
         modelCatalog: ModelCatalog = .shared,
-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
         self.modelCatalog = modelCatalog
+        self.phaseMutationRecorder = phaseMutationRecorder
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
         }
+    }
+
+    static let defaultPhaseMutationRecorder: PhaseMutationRecorder = {
+        editor,
+        phase,
+        dataRoot,
+        captureLineage,
+        declaredPack,
+        declaredBinding in
+        try await editor.pipelineAgentHarness.recordPhaseMutation(
+            phase: phase,
+            dataRoot: dataRoot,
+            captureLineage: captureLineage,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        )
     }
 
     private var agentUndoStack: [String] = []
@@ -119,7 +173,8 @@ final class ToolExecutor {
             projectRoot: dataRoot
         ) else { return }
         throw ToolError(
-            "Can't change pipeline state while \(running) is running. Wait for the phase to finish."
+            "Can't change pipeline state while \(running) is running. Wait for the phase to finish.",
+            kind: .hostBusy
         )
     }
 
@@ -145,9 +200,13 @@ final class ToolExecutor {
                 binding: editor.declaredPluginBinding
             )
         }
-        return try ProjectPackGate.captureMutationDeclaration(
-            projectURL: projectURL
-        )
+        do {
+            return try ProjectPackGate.captureMutationDeclaration(
+                projectURL: projectURL
+            )
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
+        }
     }
 
     func reserveDurablePipelineMutation(
@@ -178,7 +237,8 @@ final class ToolExecutor {
             ) ?? "pipeline phase"
             throw ToolError(
                 "Can't change pipeline state while \(active) is running. "
-                    + "Wait for the phase to finish."
+                    + "Wait for the phase to finish.",
+                kind: .hostBusy
             )
         }
         return id
@@ -233,19 +293,32 @@ final class ToolExecutor {
     func execute(
         name: String,
         args: [String: Any],
-        origin: ToolCallOrigin = .direct
+        origin: ToolCallOrigin = .direct,
+        toolUseID: String? = nil
     ) async -> ToolResult {
         guard let tool = ToolName(rawValue: name) else {
             return .error("Unknown tool: \(name)")
         }
         guard let editor else { return .error("Editor not available") }
         let origin = normalizedToolCallOrigin(origin, editor: editor)
+        let hostTurnReference = editor.agentService.captureHostTurnReference(
+            origin: origin
+        )
         let before = editor.timeline
         var result: ToolResult
         var guardedPhase: String?
         var guardedRoot: URL?
         var guardedDeclaration: ProjectPackGate.MutationDeclaration?
+        var hostStatePhase: String?
+        var hostStateRoot: URL?
         var mutationLease: (root: URL, id: UUID)?
+        var artifactBefore: HostArtifactSnapshot?
+        var writerEntered = false
+        var writerReturnedSuccess = false
+        var phaseRecordFailed = false
+        var failureKind: ToolFailureKind = .agentCorrection
+        let hostStateID = UUID()
+        let hostToolUseID = toolUseID
         defer {
             if let mutationLease {
                 editor.pipelinePhaseRunCoordinator.endMutation(
@@ -273,6 +346,10 @@ final class ToolExecutor {
             }
             try validateToolInput(in: args, against: schema, path: tool.rawValue)
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
+            if tool.isCanonicalArtifactWriter {
+                hostStatePhase = tool.advancingPhase(args: resolved)
+                hostStateRoot = try? resolveDataRoot(resolved, editor: editor)
+            }
             if enforceHardGates {
                 if let phase = tool.advancingPhase(args: resolved) {
                     let root = try resolveDataRoot(resolved, editor: editor)
@@ -280,6 +357,9 @@ final class ToolExecutor {
                         editor,
                         dataRoot: root
                     )
+                    guardedPhase = phase
+                    guardedRoot = root
+                    guardedDeclaration = declaration
                     try editor.pipelineAgentHarness.guardPhaseWork(
                         tool: tool,
                         phase: phase,
@@ -287,9 +367,6 @@ final class ToolExecutor {
                         declaredPack: declaration.packName,
                         declaredBinding: declaration.binding
                     )
-                    guardedPhase = phase
-                    guardedRoot = root
-                    guardedDeclaration = declaration
                 } else if tool.usesCurrentPipelinePhase {
                     let root = try resolveDataRoot(resolved, editor: editor)
                     let declaration = try mutationPackDeclaration(
@@ -331,23 +408,73 @@ final class ToolExecutor {
                         dataRoot: mutationRoot
                     )
                 }
-                _ = try ProjectPackGate.requireLiveMutation(
-                    projectURL: FrameInventory.projectHome(of: mutationRoot),
-                    declaredPack: declaration.packName,
-                    declaredBinding: declaration.binding
-                )
+                do {
+                    _ = try ProjectPackGate.requireLiveMutation(
+                        projectURL: FrameInventory.projectHome(of: mutationRoot),
+                        declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding
+                    )
+                } catch {
+                    throw ToolError(error.localizedDescription, kind: .reopenProject)
+                }
             }
             if tool.isDurableWrite,
                tool != .writeShotlist,
                editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
-                        "The project working copy is unavailable. Reopen the project before writing."
+                        "The project working copy is unavailable. Reopen the project before writing.",
+                        kind: .reopenProject
                     )
                 }
-                try ProjectWorkingCopy.markDirty(key: key)
+                do {
+                    try ProjectWorkingCopy.markDirty(key: key)
+                } catch {
+                    throw ToolError(error.localizedDescription, kind: .reopenProject)
+                }
             }
-            result = try await run(tool, editor, resolved, origin: origin)
+            if tool.isCanonicalArtifactWriter,
+               artifactBefore == nil,
+               let hostStateRoot {
+                artifactBefore = await hostArtifactSnapshot(
+                    phase: hostStatePhase,
+                    dataRoot: hostStateRoot
+                )
+            }
+            if tool.isCanonicalArtifactWriter, let phase = hostStatePhase {
+                editor.agentService.recordHostState(
+                    AgentHostStateRecord(
+                        id: hostStateID,
+                        toolUseID: hostToolUseID,
+                        state: .draft,
+                        phase: phase,
+                        toolName: tool.rawValue,
+                        action: .none,
+                        artifactPath: artifactBefore?.path,
+                        byteComparison: nil,
+                        previousSHA256: artifactBefore?.bytes.map {
+                            FileDigest.sha256(of: $0)
+                        },
+                        currentSHA256: nil
+                    ),
+                    origin: origin,
+                    toolUseID: hostToolUseID,
+                    turnReference: hostTurnReference
+                )
+            }
+            writerEntered = tool.isCanonicalArtifactWriter
+            result = try await run(
+                tool,
+                editor,
+                resolved,
+                origin: origin,
+                toolUseID: hostToolUseID,
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
+            )
+            writerReturnedSuccess = tool.isCanonicalArtifactWriter
+                && !result.isError
+                && result.turnDisposition == .continueTurn
             if tool != .runPhase,
                tool != .writeShotlist,
                !result.isError,
@@ -367,17 +494,28 @@ final class ToolExecutor {
                         dataRoot: root
                     )
                 }
-                try await editor.pipelineAgentHarness.recordPhaseMutation(
-                    phase: phase,
-                    dataRoot: root,
-                    captureLineage: tool.writesPhaseArtifact(
-                        args: resolved,
-                        dataRoot: root
-                    ),
-                    declaredPack: declaration.packName,
-                    declaredBinding: declaration.binding
-                )
-                await editor.refreshEngineState()
+                do {
+                    try await phaseMutationRecorder(
+                        editor,
+                        phase,
+                        root,
+                        tool.writesPhaseArtifact(
+                            args: resolved,
+                            dataRoot: root
+                        ),
+                        declaration.packName,
+                        declaration.binding
+                    )
+                    await editor.refreshEngineState()
+                } catch {
+                    phaseRecordFailed = true
+                    failureKind = .phaseRecordRepair
+                    result = .error(
+                        "The artifact bytes were written, but the host could not record the "
+                            + "phase mutation. The written bytes remain in the working copy. "
+                            + "Repair the phase record before approval: \(error.localizedDescription)"
+                    )
+                }
             }
             // Record any edit that actually changed the timeline so `undo` can revert it.
             if tool != .undo, !result.isError, editor.timeline != before,
@@ -385,13 +523,50 @@ final class ToolExecutor {
                 agentUndoStack.append(actionName)
             }
         } catch let err as ToolError {
+            failureKind = err.kind
             result = .error(err.message)
         } catch {
             result = .error(error.localizedDescription)
         }
+        let state = await hostStateRecord(
+            tool: tool,
+            args: args,
+            result: result,
+            phase: hostStatePhase ?? guardedPhase,
+            dataRoot: hostStateRoot ?? guardedRoot,
+            artifactBefore: artifactBefore,
+            writerEntered: writerEntered,
+            writerReturnedSuccess: writerReturnedSuccess,
+            phaseRecordFailed: phaseRecordFailed,
+            failureKind: failureKind,
+            pendingApproval: editor.agentService.pendingGateApproval,
+            toolUseID: hostToolUseID,
+            hostStateID: hostStateID
+        )
+        if let state {
+            editor.agentService.recordHostState(
+                state,
+                origin: origin,
+                toolUseID: hostToolUseID,
+                turnReference: hostTurnReference
+            )
+            if state.state == .persistedPhaseRecordFailed,
+               !phaseRecordFailed {
+                let detail = result.content.compactMap { block -> String? in
+                    guard case .text(let text) = block else { return nil }
+                    return text
+                }.joined(separator: " ")
+                result = .error(
+                    "The writer reported an error after the project artifact bytes changed. "
+                        + "The changed bytes remain in the working copy, but phase bookkeeping "
+                        + "must be repaired before approval. Writer error: \(detail)"
+                )
+            }
+        }
         // A successful pipeline write diverges the working copy from the saved package — mark the
         // document edited so ⌘S persists it and the user is warned before closing without saving.
-        if !result.isError,
+        if (!result.isError || writerReturnedSuccess
+            || state?.state == .persistedPhaseRecordFailed),
            result.turnDisposition == .continueTurn,
            tool.isDurableWrite {
             editor.onPipelineChanged?()
@@ -421,22 +596,248 @@ final class ToolExecutor {
         return shorteningIds(in: result, editor: editor)
     }
 
+    struct HostArtifactSnapshot: Sendable {
+        let path: String
+        let exists: Bool
+        let bytes: Data?
+    }
+
+    private func hostStateRecord(
+        tool: ToolName,
+        args: [String: Any],
+        result: ToolResult,
+        phase guardedPhase: String?,
+        dataRoot: URL?,
+        artifactBefore: HostArtifactSnapshot?,
+        writerEntered: Bool,
+        writerReturnedSuccess: Bool,
+        phaseRecordFailed: Bool,
+        failureKind: ToolFailureKind,
+        pendingApproval: GateApproval?,
+        toolUseID: String?,
+        hostStateID: UUID
+    ) async -> AgentHostStateRecord? {
+        let phase = guardedPhase ?? tool.advancingPhase(args: args)
+        if tool.isCanonicalArtifactWriter, let phase {
+            guard writerEntered else {
+                let action = failureKind.hostAction
+                guard action != .agentCorrection else { return nil }
+                return AgentHostStateRecord(
+                    id: hostStateID,
+                    toolUseID: toolUseID,
+                    state: .writeBlocked,
+                    phase: phase,
+                    toolName: tool.rawValue,
+                    action: action,
+                    artifactPath: nil,
+                    byteComparison: nil,
+                    previousSHA256: nil,
+                    currentSHA256: nil
+                )
+            }
+            let artifactAfter: HostArtifactSnapshot?
+            if let dataRoot {
+                artifactAfter = await hostArtifactSnapshot(
+                    phase: phase,
+                    dataRoot: dataRoot
+                )
+            } else {
+                artifactAfter = nil
+            }
+            let comparison = compare(before: artifactBefore, after: artifactAfter)
+            let state: AgentHostStateRecord.State
+            let action: AgentHostStateRecord.Action
+            if writerReturnedSuccess, !phaseRecordFailed {
+                state = .persisted
+                action = .reviewForApproval
+            } else if phaseRecordFailed
+                || comparison == .created
+                || comparison == .changed {
+                state = .persistedPhaseRecordFailed
+                action = .agentCorrection
+            } else if comparison == .unchanged {
+                state = .writeRejected
+                action = failureKind.hostAction
+            } else {
+                state = .writeOutcomeUnavailable
+                action = failureKind.hostAction
+            }
+            return AgentHostStateRecord(
+                id: hostStateID,
+                toolUseID: toolUseID,
+                state: state,
+                phase: phase,
+                toolName: tool.rawValue,
+                action: action,
+                artifactPath: artifactAfter?.path ?? artifactBefore?.path,
+                byteComparison: comparison,
+                previousSHA256: artifactBefore?.bytes.map {
+                    FileDigest.sha256(of: $0)
+                },
+                currentSHA256: artifactAfter?.bytes.map {
+                    FileDigest.sha256(of: $0)
+                }
+            )
+        }
+
+        let requestsApproval = tool == .approveGate || (
+            tool == .setGateState
+                && (args["state"] as? String).flatMap(GateState.init(rawValue:))
+                    .map(GateApproval.isApproval) == true
+        )
+        guard requestsApproval,
+              !result.isError,
+              result.turnDisposition == .suspendTurn,
+              let phase = (args["phase"] as? String)?.trimmingCharacters(
+                  in: .whitespacesAndNewlines
+              ),
+              !phase.isEmpty,
+              let payload = result.content.compactMap({ block -> String? in
+                  guard case .text(let text) = block else { return nil }
+                  return text
+              }).first.flatMap({ text -> [String: Any]? in
+                  guard let data = text.data(using: .utf8) else { return nil }
+                  guard let object = try? JSONSerialization.jsonObject(with: data) else {
+                      return nil
+                  }
+                  return object as? [String: Any]
+              }),
+              payload["status"] as? String == "approval_pending",
+              payload["phase"] as? String == phase,
+              payload["requested_phase"] as? String == phase,
+              payload["new_request"] as? Bool == true,
+              pendingApproval?.phase == phase else { return nil }
+        return AgentHostStateRecord(
+            id: hostStateID,
+            toolUseID: toolUseID,
+            state: .checked,
+            phase: phase,
+            toolName: tool.rawValue,
+            action: .reviewForApproval,
+            artifactPath: nil,
+            byteComparison: nil,
+            previousSHA256: nil,
+            currentSHA256: nil
+        )
+    }
+
+    func hostArtifactSnapshot(
+        phase: String?,
+        dataRoot: URL
+    ) async -> HostArtifactSnapshot? {
+        guard let phase, let url = currentArtifactURL(phase: phase, dataRoot: dataRoot) else {
+            return nil
+        }
+        return await Task.detached(priority: .utility) {
+            let root = dataRoot.standardizedFileURL
+            let candidate = url.standardizedFileURL
+            let lexicalPrefix = root.path + "/"
+            guard candidate.path.hasPrefix(lexicalPrefix) else { return nil }
+            let relativePath = String(candidate.path.dropFirst(lexicalPrefix.count))
+            let resolvedRoot = root.resolvingSymlinksInPath()
+            let target = candidate.resolvingSymlinksInPath()
+            let resolvedPrefix = resolvedRoot.path + "/"
+            guard target.path.hasPrefix(resolvedPrefix) else { return nil }
+            let manager = FileManager.default
+            guard manager.fileExists(atPath: target.path) else {
+                return HostArtifactSnapshot(
+                    path: relativePath,
+                    exists: false,
+                    bytes: nil
+                )
+            }
+            let values = try? target.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .fileSizeKey,
+            ])
+            let maximumBytes = 16 * 1_024 * 1_024
+            guard values?.isRegularFile == true,
+                  let fileSize = values?.fileSize,
+                  fileSize >= 0,
+                  fileSize <= maximumBytes else {
+                return HostArtifactSnapshot(
+                    path: relativePath,
+                    exists: true,
+                    bytes: nil
+                )
+            }
+            guard let handle = try? FileHandle(forReadingFrom: target) else {
+                return HostArtifactSnapshot(
+                    path: relativePath,
+                    exists: true,
+                    bytes: nil
+                )
+            }
+            defer { try? handle.close() }
+            guard let bytes = try? handle.read(upToCount: maximumBytes + 1),
+                  bytes.count <= maximumBytes else {
+                return HostArtifactSnapshot(
+                    path: relativePath,
+                    exists: true,
+                    bytes: nil
+                )
+            }
+            return HostArtifactSnapshot(
+                path: relativePath,
+                exists: true,
+                bytes: bytes
+            )
+        }.value
+    }
+
+    private func currentArtifactURL(phase: String, dataRoot: URL) -> URL? {
+        let relative: String?
+        switch phase {
+        case "analysis":
+            return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
+        case "brief": relative = PipelineLayout.briefFile
+        case "production_design": relative = PipelineLayout.productionDesignFile
+        case "treatment": relative = PipelineLayout.treatmentCurrentFile
+        case "storyboard": relative = PipelineLayout.storyboardCurrentFile
+        case "bible": relative = PipelineLayout.bibleFile
+        case "shotlist":
+            guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
+            relative = PipelineLayout.shotlistVersionFile(version)
+        default: relative = nil
+        }
+        return relative.map { PipelineLayout.url($0, in: dataRoot) }
+    }
+
+    private func compare(
+        before: HostArtifactSnapshot?,
+        after: HostArtifactSnapshot?
+    ) -> AgentHostStateRecord.ByteComparison {
+        guard let before, let after else { return .unavailable }
+        if !before.exists, !after.exists { return .unchanged }
+        if before.exists, !after.exists { return .changed }
+        guard after.exists, let current = after.bytes else { return .unavailable }
+        if !before.exists { return .created }
+        guard let previous = before.bytes else { return .unavailable }
+        return previous == current ? .unchanged : .changed
+    }
+
     private func normalizedToolCallOrigin(
         _ origin: ToolCallOrigin,
         editor: EditorViewModel
     ) -> ToolCallOrigin {
-        guard case .embeddedRuntime(let chatSessionID, let mcpSessionID) = origin,
+        guard case .embeddedRuntime(
+            let chatSessionID,
+            let runtimeGenerationID
+        ) = origin,
               !editor.agentService.sessions.contains(where: { $0.id == chatSessionID }) else {
             return origin
         }
-        return .externalMCP(sessionID: mcpSessionID)
+        return .externalMCP(sessionID: runtimeGenerationID)
     }
 
     private func run(
         _ tool: ToolName,
         _ editor: EditorViewModel,
         _ args: [String: Any],
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String?,
+        hostStateID: UUID,
+        hostTurnReference: AgentHostTurnReference?
     ) async throws -> ToolResult {
         switch tool {
         case .getProductionKnowledge: return try getProductionKnowledge(args)
@@ -516,7 +917,15 @@ final class ToolExecutor {
         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
-        case .approveGate:          return try await approveGateTool(editor, args, origin: origin)
+        case .approveGate:
+            return try await approveGateTool(
+                editor,
+                args,
+                origin: origin,
+                toolUseID: toolUseID,
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
+            )
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
@@ -539,7 +948,15 @@ final class ToolExecutor {
         case .removeLedgerAttribute: return try removeLedgerAttributeTool(editor, args)
         case .resolveModel:         return try resolveModelTool(editor, args)
         case .getUIContract:        return try getUIContractTool(editor)
-        case .setGateState:         return try await setGateStateTool(editor, args, origin: origin)
+        case .setGateState:
+            return try await setGateStateTool(
+                editor,
+                args,
+                origin: origin,
+                toolUseID: toolUseID,
+                hostStateID: hostStateID,
+                hostTurnReference: hostTurnReference
+            )
         case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
         }
     }

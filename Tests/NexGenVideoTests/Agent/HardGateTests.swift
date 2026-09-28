@@ -93,12 +93,21 @@ struct HardGateTests {
         )
     }
 
-    private func scaffold() throws -> (ToolHarness, String, URL) {
+    private func scaffold(
+        phaseMutationRecorder: @escaping ToolExecutor.PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+    ) throws -> (ToolHarness, String, URL) {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("hard-gate-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (ToolHarness(enforceHardGates: true), dataRoot.path, tmp)
+        return (
+            ToolHarness(
+                enforceHardGates: true,
+                phaseMutationRecorder: phaseMutationRecorder
+            ),
+            dataRoot.path,
+            tmp
+        )
     }
 
     private func briefArgs(projectDir: String) -> [String: Any] {
@@ -133,5 +142,42 @@ struct HardGateTests {
         // gate, or missing content — but never again on project_init.)
         let after = await h.runRaw("write_brief", args: briefArgs(projectDir: dir))
         #expect(!ToolHarness.textOf(after).contains("project_init"))
+    }
+
+    @Test("written bytes remain explicit when phase mutation recording fails")
+    func phaseRecordFailureIsNotApprovalReady() async throws {
+        let (h, dir, cleanup) = try scaffold { _, _, _, _, _, _ in
+            throw ToolError("injected phase record failure")
+        }
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try await h.runGateOK(
+            "approve_gate",
+            args: ["project_dir": dir, "phase": "project_init"]
+        )
+        h.editor.agentService.newChat()
+        let sessionID = try #require(h.editor.agentService.currentSessionId)
+        h.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "writer", name: "write_brief", inputJSON: "{}")]
+        )]
+
+        let result = await h.executor.execute(
+            name: "write_brief",
+            args: briefArgs(projectDir: dir),
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "writer"
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("bytes were written"))
+        #expect(FileManager.default.fileExists(
+            atPath: PipelineLayout.url(PipelineLayout.briefFile, in: URL(fileURLWithPath: dir)).path
+        ))
+        let state = try #require(
+            h.editor.agentService.messages.flatMap(\.hostStateRecords).last
+        )
+        #expect(state.state == .persistedPhaseRecordFailed)
+        #expect(state.action == .agentCorrection)
+        #expect(state.currentSHA256?.count == 64)
     }
 }

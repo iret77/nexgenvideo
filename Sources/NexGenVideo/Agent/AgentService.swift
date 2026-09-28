@@ -223,6 +223,12 @@ final class AgentService {
     var messages: [AgentMessage] = [] {
         didSet { captureDiagnosticTranscript() }
     }
+
+    @ObservationIgnored
+    private var projectGenerationID = UUID()
+
+    @ObservationIgnored
+    private var hostTurnReferences: [UUID: AgentHostTurnReference] = [:]
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
@@ -1259,6 +1265,180 @@ final class AgentService {
         checkpointCurrentSession()
     }
 
+    func recordHostState(
+        _ record: AgentHostStateRecord,
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        turnReference: AgentHostTurnReference? = nil
+    ) {
+        guard let sessionID = origin.chatSessionID else { return }
+        let verifiedTurnReference = verifiedHostTurnReference(
+            turnReference,
+            origin: origin
+        )
+        if turnReference != nil, verifiedTurnReference == nil {
+            Log.agent.notice(
+                "discarded host state with a stale turn reference id=\(record.id.uuidString)"
+            )
+            return
+        }
+        if sessionID == currentSessionId {
+            guard Self.attachHostState(
+                record,
+                toolUseID: toolUseID,
+                turnReference: verifiedTurnReference,
+                to: &messages
+            ) else { return }
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+            return
+        }
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            return
+        }
+        guard Self.attachHostState(
+            record,
+            toolUseID: toolUseID,
+            turnReference: verifiedTurnReference,
+            to: &sessions[index].messages
+        ) else { return }
+        sessions[index].updatedAt = Date()
+        onSessionsChanged?()
+    }
+
+    func captureHostTurnReference(
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        let chatSessionID: UUID
+        let generationID: UUID
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .inAppChat(let sessionID):
+            guard let runtimeGenerationID else { return nil }
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .direct, .externalMCP:
+            return nil
+        }
+        guard
+            let reference = hostTurnReferences[generationID],
+            reference.projectGenerationID == projectGenerationID,
+            reference.chatSessionID == chatSessionID,
+            reference.runtimeGenerationID == generationID,
+            sessionContainsMessage(
+                reference.inputMessageID,
+                sessionID: chatSessionID
+            ) else { return nil }
+        return reference
+    }
+
+    private func verifiedHostTurnReference(
+        _ reference: AgentHostTurnReference?,
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        guard let reference,
+              reference.projectGenerationID == projectGenerationID,
+              reference.chatSessionID == origin.chatSessionID,
+              sessionContainsMessage(
+                  reference.inputMessageID,
+                  sessionID: reference.chatSessionID
+              ) else { return nil }
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            return sessionID == reference.chatSessionID
+                    && runtimeGenerationID == reference.runtimeGenerationID
+                ? reference
+                : nil
+        case .inAppChat(let sessionID):
+            return sessionID == reference.chatSessionID ? reference : nil
+        case .direct, .externalMCP:
+            return nil
+        }
+    }
+
+    private func sessionContainsMessage(
+        _ messageID: UUID,
+        sessionID: UUID
+    ) -> Bool {
+        if currentSessionId == sessionID {
+            return messages.contains { $0.id == messageID }
+        }
+        return sessions.first(where: { $0.id == sessionID })?.messages.contains {
+            $0.id == messageID
+        } == true
+    }
+
+    @discardableResult
+    private static func attachHostState(
+        _ record: AgentHostStateRecord,
+        toolUseID: String?,
+        turnReference: AgentHostTurnReference?,
+        to messages: inout [AgentMessage]
+    ) -> Bool {
+        let searchableIndices: [Int]
+        if let turnReference {
+            guard let anchor = messages.firstIndex(where: {
+                $0.id == turnReference.inputMessageID && $0.role == .user
+            }) else { return false }
+            let end = messages.indices.dropFirst(anchor + 1).first(where: {
+                messages[$0].role == .user && messages[$0].blocks.contains {
+                    if case .text = $0 { return true }
+                    return false
+                }
+            }) ?? messages.endIndex
+            searchableIndices = Array(anchor..<end)
+        } else {
+            searchableIndices = Array(messages.indices)
+        }
+        if let messageIndex = searchableIndices.reversed().first(where: { index in
+            messages[index].hostStateRecords.contains { $0.id == record.id }
+        }), let stateIndex = messages[messageIndex].hostStateRecords.firstIndex(where: {
+            $0.id == record.id
+        }) {
+            let prior = messages[messageIndex].hostStateRecords[stateIndex]
+            messages[messageIndex].hostStateRecords[stateIndex] = record.associated(
+                with: toolUseID ?? prior.toolUseID,
+                retaining: prior.id
+            )
+            return true
+        }
+        let requestedID = toolUseID ?? record.toolUseID
+        if let requestedID,
+           let messageIndex = searchableIndices.first(where: { index in
+               messages[index].role == .assistant
+                   && messages[index].blocks.contains {
+                       if case .toolUse(let id, _, _) = $0 {
+                           return id == requestedID
+                       }
+                       return false
+                   }
+           }) {
+            let associated = record.associated(with: requestedID)
+            if let index = messages[messageIndex].hostStateRecords.firstIndex(where: {
+                $0.toolUseID == requestedID && $0.phase == associated.phase
+            }) {
+                let priorID = messages[messageIndex].hostStateRecords[index].id
+                messages[messageIndex].hostStateRecords[index] = associated.associated(
+                    with: requestedID,
+                    retaining: priorID
+                )
+            } else {
+                messages[messageIndex].hostStateRecords.append(associated)
+            }
+            return true
+        }
+        guard let turnReference,
+              let messageIndex = messages.firstIndex(where: {
+                  $0.id == turnReference.inputMessageID && $0.role == .user
+              }) else { return false }
+        messages[messageIndex].hostStateRecords.append(
+            record.associated(with: requestedID)
+        )
+        return true
+    }
+
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
     /// direction, comma-joined (matches the music tab's original composition).
     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
@@ -1337,12 +1517,42 @@ final class AgentService {
     private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
 
     func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+        guard batch.totalEUR != nil else {
+            let unpricedItems: [[String: Any]] = batch.payload.items.enumerated().compactMap {
+                index, item in
+                guard item.package.payload.estimate == nil else { return nil }
+                let target = item.package.payload.target
+                let tool = item.package.payload.modality == "image"
+                    ? ToolName.generateImage.rawValue
+                    : ToolName.generateVideo.rawValue
+                return [
+                    "index": index,
+                    "reason": "no_host_price_for_route",
+                    "tool": tool,
+                    "purpose": item.purpose,
+                    "route": [
+                        "provider": target.provider.rawValue,
+                        "transport": target.transport.rawValue,
+                        "model": target.modelId,
+                        "endpoint": target.endpoint,
+                    ],
+                ]
+            }
+            let payload = try NativeCockpitReader.serialize([
+                "status": "preparation_incomplete",
+                "reason": "missing_cost_estimates",
+                "unpriced_items": unpricedItems,
+                "message": "No approval was opened. Repair or re-prepare the indexed inputs with host-verified prices.",
+            ])
+            return .error(String(decoding: payload, as: UTF8.self))
+        }
         if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("Finish the current native decision before reviewing a generation batch.")
         }
         let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
         generationBatchOrigins[batch.id] = (origin, marker)
+        editor.agentPanelVisible = true
         editor.generationBatchCoordinator.pending = batch
         suspendToolCalls(from: origin)
         return .suspended(marker)
@@ -2080,9 +2290,11 @@ final class AgentService {
                 return .error("The approval is already being applied.")
             }
             guard let toolExecutor else {
-                let message = "The gate writer is unavailable. The approval request remains open."
-                gateApprovalError = message
-                return .error(message)
+                return recordGateApprovalFailure(
+                    "The gate writer is unavailable. The approval request remains open.",
+                    kind: .hostBusy,
+                    approval: approval
+                )
             }
             gateApprovalIsWriting = true
             defer { gateApprovalIsWriting = false }
@@ -2092,6 +2304,23 @@ final class AgentService {
                 pendingGateOrigin = nil
                 gateApprovalError = nil
                 if approval.sessionId != nil {
+                    recordHostState(
+                        AgentHostStateRecord(
+                            id: approval.sourceHostStateID,
+                            toolUseID: approval.sourceToolUseID,
+                            state: .approved,
+                            phase: approval.phase,
+                            toolName: approval.sourceToolName,
+                            action: .none,
+                            artifactPath: nil,
+                            byteComparison: nil,
+                            previousSHA256: nil,
+                            currentSHA256: nil
+                        ),
+                        origin: origin,
+                        toolUseID: approval.sourceToolUseID,
+                        turnReference: approval.sourceHostTurnReference
+                    )
                     enqueueGateFollowUp(
                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
                             + "Continue from the updated project state; do not request this approval again.",
@@ -2103,21 +2332,60 @@ final class AgentService {
                 }
                 return .ok(payload)
             } catch let error as ToolError {
-                return recordGateApprovalFailure(error.message, approval: approval)
+                return recordGateApprovalFailure(
+                    error.message,
+                    kind: error.kind,
+                    approval: approval
+                )
             } catch {
-                return recordGateApprovalFailure(error.localizedDescription, approval: approval)
+                return recordGateApprovalFailure(
+                    error.localizedDescription,
+                    kind: .agentCorrection,
+                    approval: approval
+                )
             }
         }
     }
 
-    private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
+    private func recordGateApprovalFailure(
+        _ reason: String,
+        kind: ToolFailureKind,
+        approval: GateApproval
+    ) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
         gateApprovalError = message
+        let origin = pendingGateOrigin ?? .direct
+        if kind == .approvalStructure
+            || kind == .reviewChangedSource
+            || kind == .agentCorrection
+            || kind == .phaseRecordRepair {
+            pendingGateApproval = nil
+            pendingGateOrigin = nil
+        }
+        recordHostState(
+            AgentHostStateRecord(
+                id: approval.sourceHostStateID,
+                toolUseID: approval.sourceToolUseID,
+                state: .approvalFailed,
+                phase: approval.phase,
+                toolName: approval.sourceToolName,
+                action: kind.hostAction,
+                artifactPath: nil,
+                byteComparison: nil,
+                previousSHA256: nil,
+                currentSHA256: nil
+            ),
+            origin: origin,
+            toolUseID: approval.sourceToolUseID,
+            turnReference: approval.sourceHostTurnReference
+        )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
-                + "The approval card remains open. Address the stated cause without claiming approval, "
-                + "inventing a support team, or asking the user to restart the app.",
-            origin: pendingGateOrigin ?? .direct
+                + (pendingGateApproval == nil
+                    ? "Correct the stated cause before requesting approval again. "
+                    : "The approval card remains open. Address the stated cause before retrying. ")
+                + "Do not claim approval, invent a support team, or ask the user to restart the app.",
+            origin: origin
         )
         return .error(message)
     }
@@ -2380,6 +2648,9 @@ final class AgentService {
     private var runtimeSessionID: UUID?
 
     @ObservationIgnored
+    private var runtimeGenerationID: UUID?
+
+    @ObservationIgnored
     private var pendingTurnImages: [AgentRuntimeImage] = []
 
     private(set) var lastRuntimeUsage: AgentRuntimeUsage?
@@ -2413,6 +2684,8 @@ final class AgentService {
         pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
+        projectGenerationID = UUID()
+        hostTurnReferences.removeAll()
         rotateRuntime()
         composerStates.removeAll()
         sessions = ChatSessionStore.load(from: projectURL)
@@ -2606,6 +2879,9 @@ final class AgentService {
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
+        hostTurnReferences = hostTurnReferences.filter {
+            $0.value.chatSessionID != id
+        }
         composerStates.removeValue(forKey: id)
         if deletingActive {
             currentTask?.cancel()
@@ -2717,6 +2993,7 @@ final class AgentService {
         currentTask?.cancel()
         currentTask = nil
         runtimeAdapter = nil
+        runtimeGenerationID = nil
         runtimeSessionID = nil
         runtimeContextSignature = nil
         isStreaming = false
@@ -2893,8 +3170,10 @@ final class AgentService {
             }
         }
         let providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        let generationID = UUID()
         let request = AgentRuntimeSessionRequest(
             sessionID: sessionID,
+            runtimeGenerationID: generationID,
             providerSessionID: providerSessionID,
             priorMessages: messages,
             hostContext: hostContext,
@@ -2912,7 +3191,8 @@ final class AgentService {
                 return await executor.execute(
                     name: name,
                     args: Self.parseJSONObject(inputJSON),
-                    origin: .inAppChat(sessionID: sessionID)
+                    origin: .inAppChat(sessionID: sessionID),
+                    toolUseID: id
                 )
             }
         )
@@ -2923,6 +3203,7 @@ final class AgentService {
         }
         runtimeAdapter = adapter
         runtimeSessionID = sessionID
+        runtimeGenerationID = generationID
         runtimeContextSignature = signature
         return adapter
     }
@@ -2933,6 +3214,7 @@ final class AgentService {
         }
         runtimeAdapter = nil
         runtimeSessionID = nil
+        runtimeGenerationID = nil
         runtimeContextSignature = nil
     }
 
@@ -2968,6 +3250,8 @@ final class AgentService {
                 isError: isError
             )
             if messages.last?.role == .user,
+               messages.last?.userPresentation == nil,
+               messages.last?.blocks.isEmpty == false,
                messages.last?.blocks.allSatisfy({
                    if case .toolResult = $0 { return true }
                    return false
@@ -3047,6 +3331,8 @@ final class AgentService {
         let runtimeMessages = await runtimeMessages(transientImages: transientImages)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
+              let inputMessage = messages.last,
+              inputMessage.role == .user,
               let currentMessage = runtimeMessages.last else { return }
         let adapter: any AgentRuntimeAdapter
         do {
@@ -3059,6 +3345,17 @@ final class AgentService {
             return
         }
         let turnID = UUID()
+        guard let runtimeGenerationID else {
+            streamError = .upstream("The agent runtime has no execution identity.")
+            return
+        }
+        hostTurnReferences[runtimeGenerationID] = AgentHostTurnReference(
+            projectGenerationID: projectGenerationID,
+            chatSessionID: sessionID,
+            runtimeGenerationID: runtimeGenerationID,
+            logicalTurnID: turnID,
+            inputMessageID: inputMessage.id
+        )
         var fence = AgentRuntimeEventFence()
         fence.begin(sessionID: sessionID, turnID: turnID)
         do {
@@ -3161,7 +3458,8 @@ final class AgentService {
             let result = await executor.execute(
                 name: use.name,
                 args: Self.parseJSONObject(use.input),
-                origin: origin
+                origin: origin,
+                toolUseID: use.id
             )
             resultBlocks.append(.toolResult(toolUseId: use.id, content: result.content, isError: result.isError))
             turnSuspended = result.turnDisposition == .suspendTurn
@@ -3173,12 +3471,33 @@ final class AgentService {
     }
 
     private func resolvedToolUseIds(afterAssistantAt index: Int) -> Set<String> {
-        let next = index + 1
-        guard next < messages.count, messages[next].role == .user else { return [] }
-        return Set(messages[next].blocks.compactMap {
-            if case let .toolResult(id, _, _) = $0 { return id }
-            return nil
-        })
+        Self.resolvedToolUseIds(afterAssistantAt: index, in: messages)
+    }
+
+    private static func resolvedToolUseIds(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Set<String> {
+        var resolved: Set<String> = []
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { break }
+            } else {
+                guard message.blocks.allSatisfy({
+                    if case .toolResult = $0 { return true }
+                    return false
+                }) else { break }
+                for block in message.blocks {
+                    if case let .toolResult(id, _, _) = block {
+                        resolved.insert(id)
+                    }
+                }
+            }
+            cursor += 1
+        }
+        return resolved
     }
 
     private func resolveOrphanToolUses(reason: String = "Cancelled") {
@@ -3193,18 +3512,10 @@ final class AgentService {
             guard !toolUseIds.isEmpty else { continue }
 
             let next = i + 1
-            let nextIsToolResult = next < messages.count
-                && messages[next].role == .user
-                && messages[next].blocks.contains(where: {
-                    if case .toolResult = $0 { return true }
-                    return false
-                })
-            let resolved: Set<String> = nextIsToolResult
-                ? Set(messages[next].blocks.compactMap {
-                    if case let .toolResult(id, _, _) = $0 { return id }
-                    return nil
-                })
-                : []
+            let resolved = Self.resolvedToolUseIds(
+                afterAssistantAt: i,
+                in: messages
+            )
 
             let orphans = toolUseIds.filter { !resolved.contains($0) }
             guard !orphans.isEmpty else { continue }
@@ -3212,12 +3523,37 @@ final class AgentService {
             let synthetic: [AgentContentBlock] = orphans.map {
                 .toolResult(toolUseId: $0, content: [.text(reason)], isError: true)
             }
-            if nextIsToolResult {
-                messages[next].blocks.insert(contentsOf: synthetic, at: 0)
+            if let resultIndex = Self.firstToolResultMessageIndex(
+                afterAssistantAt: i,
+                in: messages
+            ) {
+                messages[resultIndex].blocks.insert(contentsOf: synthetic, at: 0)
             } else {
                 messages.insert(AgentMessage(role: .user, blocks: synthetic), at: next)
             }
         }
+    }
+
+    private static func firstToolResultMessageIndex(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Int? {
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { return nil }
+            } else if message.blocks.allSatisfy({
+                if case .toolResult = $0 { return true }
+                return false
+            }) {
+                return cursor
+            } else {
+                return nil
+            }
+            cursor += 1
+        }
+        return nil
     }
 
     private static func parseJSONObject(_ json: String) -> [String: Any] {
@@ -3410,6 +3746,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     var hidden: Bool = false
     /// Optional rendering for a structured user action whose blocks remain model-facing.
     var userPresentation: AgentUserPresentation?
+    /// Host-authored tool-call metadata that never becomes provider-facing user content.
+    var hostStateRecords: [AgentHostStateRecord]
 
     init(
         id: UUID = UUID(),
@@ -3418,7 +3756,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         mentions: [AgentMention] = [],
         contextHint: String? = nil,
         hidden: Bool = false,
-        userPresentation: AgentUserPresentation? = nil
+        userPresentation: AgentUserPresentation? = nil,
+        hostStateRecords: [AgentHostStateRecord] = []
     ) {
         self.id = id
         self.role = role
@@ -3427,10 +3766,11 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         self.contextHint = contextHint
         self.hidden = hidden
         self.userPresentation = userPresentation
+        self.hostStateRecords = hostStateRecords
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -3444,6 +3784,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
+        hostStateRecords = try c.decodeIfPresent(
+            [AgentHostStateRecord].self,
+            forKey: .hostStateRecords
+        ) ?? []
     }
 }
 

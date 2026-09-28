@@ -8,7 +8,7 @@ enum ToolCallOrigin: Hashable, Sendable {
 
     case direct
     case inAppChat(sessionID: UUID)
-    case embeddedRuntime(chatSessionID: UUID, mcpSessionID: UUID)
+    case embeddedRuntime(chatSessionID: UUID, runtimeGenerationID: UUID)
     case externalMCP(sessionID: UUID)
 
     var chatSessionID: UUID? {
@@ -23,8 +23,17 @@ enum ToolCallOrigin: Hashable, Sendable {
         switch self {
         case .direct: nil
         case .inAppChat(let sessionID): .inAppChat(sessionID)
-        case .embeddedRuntime(_, let mcpSessionID): .mcpSession(mcpSessionID)
+        case .embeddedRuntime(_, let runtimeGenerationID):
+            .mcpSession(runtimeGenerationID)
         case .externalMCP(let sessionID): .mcpSession(sessionID)
         }
     }
+}
+
+struct AgentHostTurnReference: Hashable, Sendable {
+    let projectGenerationID: UUID
+    let chatSessionID: UUID
+    let runtimeGenerationID: UUID
+    let logicalTurnID: UUID
+    let inputMessageID: UUID
 }

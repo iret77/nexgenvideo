@@ -227,17 +227,65 @@ struct GenerationBatchTests {
     }
 
     @Test func unknownPricingCannotCreateAnUnattendedAuthorization() async throws {
-        let (root, _, batch) = try await fixture()
+        let (root, editor, batch) = try await fixture()
         defer { cleanup(root) }
         let original = batch.payload.items[0].package
         var payloadJSON = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(original.payload)) as? [String: Any])
         payloadJSON.removeValue(forKey: "estimate")
         let payload = try JSONDecoder().decode(GenerationPackageV1.Payload.self, from: JSONSerialization.data(withJSONObject: payloadJSON))
         let unpriced = try GenerationPackageV1(payload: payload)
-        let manifest = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey, phase: nil,
-            items: [.init(id: UUID().uuidString, purpose: "Unpriced generation", package: unpriced)]))
+        let pricedID = UUID().uuidString
+        let unpricedID = UUID().uuidString
+        let manifest = try GenerationBatch(payload: .init(
+            nonce: UUID(),
+            projectKey: batch.payload.projectKey,
+            phase: nil,
+            items: [
+                .init(
+                    id: pricedID,
+                    purpose: "Priced generation",
+                    package: original
+                ),
+                .init(
+                    id: unpricedID,
+                    purpose: "Unpriced generation",
+                    package: unpriced
+                ),
+            ]
+        ))
         #expect(manifest.totalEUR == nil)
         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
+        let result = try editor.agentService.presentGenerationBatch(
+            manifest,
+            origin: .direct,
+            editor: editor
+        )
+        #expect(result.isError)
+        #expect(result.turnDisposition == .continueTurn)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        let payload = try #require(JSONSerialization.jsonObject(
+            with: Data(ToolHarness.textOf(result).utf8)
+        ) as? [String: Any])
+        #expect(payload["status"] as? String == "preparation_incomplete")
+        #expect(payload["reason"] as? String == "missing_cost_estimates")
+        let unpricedItems = try #require(
+            payload["unpriced_items"] as? [[String: Any]]
+        )
+        #expect(unpricedItems.count == 1)
+        let item = try #require(unpricedItems.first)
+        #expect(item["index"] as? Int == 1)
+        #expect(item["reason"] as? String == "no_host_price_for_route")
+        #expect(item["purpose"] as? String == "Unpriced generation")
+        let expectedTool = unpriced.payload.modality == "image"
+            ? ToolName.generateImage.rawValue
+            : ToolName.generateVideo.rawValue
+        #expect(item["tool"] as? String == expectedTool)
+        let route = try #require(item["route"] as? [String: Any])
+        #expect(route["provider"] as? String == unpriced.payload.target.provider.rawValue)
+        #expect(route["transport"] as? String == unpriced.payload.target.transport.rawValue)
+        #expect(route["model"] as? String == unpriced.payload.target.modelId)
+        #expect(route["endpoint"] as? String == unpriced.payload.target.endpoint)
+        #expect(!ToolHarness.textOf(result).contains(unpricedID))
     }
 
     @Test func changedArchivedInputsCannotResumeUnderTheOriginalPackage() async throws {

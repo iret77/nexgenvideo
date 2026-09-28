@@ -333,6 +333,23 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!summary.contains("AppTheme.Text.mutedColor"))
     }
 
+    @Test func hostStateOwnsWriteTruthAndKeepsDiagnosticsExpandable() throws {
+        let message = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
+        )
+        let batch = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/GenerationBatchCard.swift"
+        )
+
+        #expect(message.contains("private struct AgentHostStateView"))
+        #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
+        #expect(message.contains("Previous fingerprint"))
+        #expect(message.contains("editor.revealCockpit"))
+        #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
+        #expect(!batch.contains("Waiting for cost estimates"))
+        #expect(batch.contains("batch.totalEUR == nil"))
+    }
+
     @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
         let card = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"

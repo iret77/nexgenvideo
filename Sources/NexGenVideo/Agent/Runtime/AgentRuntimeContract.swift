@@ -175,6 +175,7 @@ typealias AgentRuntimeToolExecutor = @MainActor @Sendable (
 
 struct AgentRuntimeSessionRequest: @unchecked Sendable {
     let sessionID: UUID
+    let runtimeGenerationID: UUID
     let providerSessionID: String?
     let priorMessages: [AgentMessage]
     let hostContext: AgentRuntimeHostContext

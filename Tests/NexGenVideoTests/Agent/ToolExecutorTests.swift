@@ -18,7 +18,8 @@ final class ToolHarness {
             ProviderActivation.current()
         },
         modelCatalog: ModelCatalog = .shared,
-        productionRouteCandidates: ProductionRouteCandidateProvider? = nil
+        productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        phaseMutationRecorder: @escaping ToolExecutor.PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         let editor = EditorViewModel()
         editor.timeline = timeline
@@ -28,7 +29,8 @@ final class ToolHarness {
             enforceHardGates: enforceHardGates,
             providerActivation: providerActivation,
             modelCatalog: modelCatalog,
-            productionRouteCandidates: productionRouteCandidates
+            productionRouteCandidates: productionRouteCandidates,
+            phaseMutationRecorder: phaseMutationRecorder
         )
     }
 
@@ -96,6 +98,41 @@ final class ToolHarness {
 @Suite("ToolExecutor — smoke")
 @MainActor
 struct ToolExecutorSmokeTests {
+
+    @Test("a call blocked before writer entry does not replace artifact state")
+    func preWriterBlockDoesNotRecordArtifactState() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        harness.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "writer", name: "write_storyboard", inputJSON: "{}")]
+        )]
+
+        let result = await harness.executor.execute(
+            name: "write_storyboard",
+            args: [:],
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "writer"
+        )
+
+        #expect(result.isError)
+        #expect(harness.editor.agentService.messages.flatMap(\.hostStateRecords).isEmpty)
+    }
+
+    @Test("host actions come from typed failures, never message substrings")
+    func hostActionsAreTyped() {
+        #expect(ToolError("lineage changed").kind.hostAction == .agentCorrection)
+        #expect(
+            ToolError("opaque", kind: .reviewChangedSource).kind.hostAction
+                == .reviewChangedSource
+        )
+        #expect(ToolError("opaque", kind: .reopenProject).kind.hostAction == .reopenProject)
+        #expect(
+            ToolError("opaque", kind: .hostBusy).kind.hostAction
+                == .retryAfterHostRecovery
+        )
+    }
 
     @Test func unknownToolReturnsError() async {
         let h = ToolHarness()

@@ -42,11 +42,13 @@ final class ClaudeCodeRuntime {
     private var reportedSessionId = false
     private var resumeFailureHandled = false
     private let appSessionId: UUID?
+    private let runtimeGenerationID: UUID
 
     init(
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
         appSessionId: UUID? = nil,
+        runtimeGenerationID: UUID = UUID(),
         resumeSessionId: String? = nil,
         seedMessages: [AgentMessage] = [],
         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
@@ -62,6 +64,7 @@ final class ClaudeCodeRuntime {
         self.pluginDirectories = pluginDirectories
         self.mcpPort = mcpPort
         self.appSessionId = appSessionId
+        self.runtimeGenerationID = runtimeGenerationID
         self.resumeSessionId = resumeSessionId
         self.resolveExecutable = resolveExecutable
         self.resolveWorkingDirectory = resolveWorkingDirectory
@@ -139,8 +142,6 @@ final class ClaudeCodeRuntime {
             fail("No project folder is selected for the Claude Code runtime.")
             return false
         }
-        let agentTurnId = UUID()
-
         let config = ClaudeCodeLaunchConfig(
             workingDirectory: workingDirectory,
             pluginDirectories: pluginDirectories,
@@ -154,7 +155,7 @@ final class ClaudeCodeRuntime {
             appendSystemPrompt: systemInstructions,
             resumeSessionId: resumeSessionId,
             appSessionId: appSessionId,
-            agentTurnId: agentTurnId
+            runtimeGenerationId: runtimeGenerationID
         )
         let newProcess = ClaudeCodeProcess()
         do {

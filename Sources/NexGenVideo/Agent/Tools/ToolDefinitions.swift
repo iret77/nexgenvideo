@@ -153,6 +153,17 @@ enum ToolName: String, CaseIterable, Sendable {
         }
     }
 
+    var isCanonicalArtifactWriter: Bool {
+        switch self {
+        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+             .writePhaseExtension:
+            true
+        default:
+            false
+        }
+    }
+
     func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
         guard isDurableWrite else { return false }
         switch self {
@@ -193,7 +204,7 @@ struct AgentTool: @unchecked Sendable {
 enum ToolDefinitions {
     static let all: [AgentTool] = base + [
         AgentTool(name: .prepareGenerationBatch,
-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, this returns preparation_incomplete with its original input index and route and opens no approval. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
             inputSchema: objectSchema(properties: [
                 "requestID": ["type": "string"],
                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
