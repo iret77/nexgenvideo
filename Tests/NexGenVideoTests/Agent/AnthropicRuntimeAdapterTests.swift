@@ -94,6 +94,41 @@ private final class ControlledAnthropicClient: AgentClient, @unchecked Sendable 
 @MainActor
 @Suite("Anthropic runtime adapter")
 struct AnthropicRuntimeAdapterTests {
+    @Test("signed thinking survives the host tool round trip")
+    func signedThinkingSurvivesToolRoundTrip() async throws {
+        let thinking = try AnthropicThinkingBlock(json: [
+            "type": "thinking", "thinking": "Inspect the edit.", "signature": "signed==",
+        ])
+        let client = ScriptedAnthropicClient(scripts: [
+            [
+                .event(.thinkingComplete(thinking)),
+                .event(.toolUseComplete(id: "tool-1", name: "host_tool", inputJSON: "{}")),
+                .event(.messageStop(stopReason: .toolUse)),
+            ],
+            [.event(.textDelta("Done.")), .event(.messageStop(stopReason: .endTurn))],
+        ])
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        try adapter.start(testSessionRequest(
+            sessionID: sessionID,
+            hostContext: testHostContext(),
+            executeTool: { _, _, _ in .ok("done") }
+        ))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Review")])
+        let stream = try adapter.send(.init(
+            sessionID: sessionID,
+            turnID: UUID(),
+            messages: [current],
+            currentMessage: current
+        ))
+        let events = await collectAnthropicEvents(stream)
+        #expect(events.map(\.event).contains(.thinking(messageID: nil, block: thinking)))
+        let replay = try #require(client.recordedCalls.last?.messages.dropLast().last?.content)
+        #expect(replay.first?["type"] as? String == "thinking")
+        #expect(replay.first?["signature"] as? String == "signed==")
+        #expect(replay.last?["type"] as? String == "tool_use")
+    }
+
     @Test("host owns the Anthropic tool round trip and executes each call once")
     func hostRoundTripExecutesOneToolExactlyOnce() async throws {
         let usage = AgentRuntimeUsage(

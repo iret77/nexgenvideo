@@ -48,7 +48,9 @@ struct AnthropicThinkingTests {
         #expect(restored.blocks == blocks)
         let body = AnthropicRequestBody.build(
             model: .sonnet46, system: "Edit a film.", tools: [], messages: [
-                .init(role: .assistant, content: restored.blocks.compactMap(AgentService.contentBlockJSON)),
+                .init(role: .assistant, content: restored.blocks
+                    .compactMap(AgentService.runtimeContent)
+                    .map(AnthropicRuntimeAdapter.anthropicContent)),
                 .init(role: .user, content: [["type": "tool_result", "tool_use_id": "tool-1", "content": "ok"]]),
             ]
         )

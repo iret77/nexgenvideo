@@ -214,7 +214,7 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
         )
     }
 
-    private static func anthropicContent(_ content: AgentRuntimeContent) -> [String: Any] {
+    static func anthropicContent(_ content: AgentRuntimeContent) -> [String: Any] {
         switch content {
         case .thinking(let block):
             block.json

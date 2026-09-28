@@ -169,7 +169,7 @@ struct XMLExporterTests {
 
         let xml = try readXML(at: outURL)
         #expect(xml.contains("<clipitem id=\"clipitem-clip-1\">"))
-        #expect(xml.contains("<name>MyVideo</name>"))
+        #expect(xml.contains("<name>MyVideo.mp4</name>"))
         #expect(xml.contains("<start>30</start>"))
         #expect(xml.contains("<end>90</end>")) // 30 + 60
     }

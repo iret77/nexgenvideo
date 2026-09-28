@@ -107,8 +107,8 @@ struct SourceTimingBinaryFixtureTests {
                     + be32(2) + be32(2) + be32(1)
             )
             let stszBody: Data = variableSampleSizes
-                ? be32(0) + be32(3) + be32(declaredFirstSampleSize) + be32(10) + be32(10)
-                : be32(declaredFirstSampleSize) + be32(3)
+                ? be32(0) + be32(0) + be32(3) + be32(declaredFirstSampleSize) + be32(10) + be32(10)
+                : be32(0) + be32(declaredFirstSampleSize) + be32(3)
             let stsz = box("stsz", stszBody)
             let offsets: Data
             if useCo64 {

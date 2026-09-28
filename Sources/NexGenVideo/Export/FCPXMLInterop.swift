@@ -123,8 +123,28 @@ enum FCPXMLSchemaValidator {
     static func validate(_ data: Data, version: FCPXMLVersion) throws -> FCPXMLValidationReport {
         let document: XMLDocument
         do {
-            document = try XMLDocument(data: data, options: [.nodePreserveAll])
-            document.dtd = try XMLDTD(data: try schemaData(for: version), options: [])
+            guard var xml = String(data: data, encoding: .utf8),
+                  xml.range(of: "<fcpxml") != nil else {
+                throw ExportError.xmlValidationFailed(
+                    version: version.rawValue,
+                    reason: "The FCPXML document is not valid UTF-8 or has no fcpxml root."
+                )
+            }
+            if let declaration = xml.range(of: "<!DOCTYPE", options: .caseInsensitive) {
+                guard xml[declaration.lowerBound...].hasPrefix("<!DOCTYPE fcpxml>") else {
+                    throw ExportError.xmlValidationFailed(
+                        version: version.rawValue,
+                        reason: "The FCPXML document has an unsupported document type."
+                    )
+                }
+                xml.removeSubrange(declaration.lowerBound..<xml.index(declaration.lowerBound, offsetBy: "<!DOCTYPE fcpxml>".count))
+            }
+            let dtd = String(decoding: try schemaData(for: version), as: UTF8.self)
+            guard let validatedRoot = xml.range(of: "<fcpxml") else {
+                throw ExportError.xmlValidationFailed(version: version.rawValue, reason: "The fcpxml root is missing.")
+            }
+            xml.insert(contentsOf: "<!DOCTYPE fcpxml [\n\(dtd)\n]>\n", at: validatedRoot.lowerBound)
+            document = try XMLDocument(data: Data(xml.utf8), options: [.nodePreserveAll])
             try document.validate()
         } catch {
             throw ExportError.xmlValidationFailed(

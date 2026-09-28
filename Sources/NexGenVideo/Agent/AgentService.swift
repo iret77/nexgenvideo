@@ -3042,6 +3042,10 @@ final class AgentService {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
         let wasStreaming = isStreaming
+        if wasStreaming, backend == .anthropicAPI,
+           let index = messages.indices.last, messages[index].role == .assistant {
+            messages[index].isIncompleteAPIResponse = true
+        }
         if let currentSessionId {
             runtimeAdapter?.cancel(sessionID: currentSessionId)
         }
@@ -3847,7 +3851,7 @@ final class AgentService {
         return out
     }
 
-    private static func runtimeContent(_ block: AgentContentBlock) -> AgentRuntimeContent? {
+    static func runtimeContent(_ block: AgentContentBlock) -> AgentRuntimeContent? {
 
         switch block {
         case .thinking(let block):
