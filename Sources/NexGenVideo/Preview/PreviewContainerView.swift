@@ -46,6 +46,9 @@ struct PreviewContainerView: View {
                     } else {
                         TransformOverlayView()
                     }
+                    if isTimeline, let slipPreview = editor.slipPreview {
+                        SlipTwoUpView(state: slipPreview)
+                    }
                 }
                 .frame(width: scaledWidth, height: scaledHeight)
                 .overlay(

@@ -22,6 +22,10 @@ struct TimelineContainerView: NSViewRepresentable {
         let timelineView = TimelineView(editor: editor)
         timelineView.autoresizingMask = []
         scrollView.documentView = timelineView
+        headerView.requestCanvasRedraw = { [weak timelineView] in
+            timelineView?.updateContentSize()
+            timelineView?.needsDisplay = true
+        }
 
         scrollView.frame = NSRect(x: AppTheme.Layout.trackHeaderWidth, y: 0, width: 0, height: 0)
         scrollView.autoresizingMask = [.width, .height]
@@ -65,6 +69,7 @@ struct TimelineContainerView: NSViewRepresentable {
         let renderState = RenderState(
             revision: editor.timelineRenderRevision,
             zoomScale: editor.zoomScale,
+            allowsTimelineEditChrome: editor.allowsTimelineEditChrome,
             selectedClipIds: editor.selectedClipIds,
             selectedTimelineRange: editor.selectedTimelineRange,
             selectedTimelineMarkerIds: editor.selectedTimelineMarkerIds,
@@ -104,6 +109,7 @@ struct TimelineContainerView: NSViewRepresentable {
     struct RenderState: Equatable {
         let revision: Int
         let zoomScale: Double
+        let allowsTimelineEditChrome: Bool
         let selectedClipIds: Set<String>
         let selectedTimelineRange: TimelineRangeSelection?
         let selectedTimelineMarkerIds: Set<String>

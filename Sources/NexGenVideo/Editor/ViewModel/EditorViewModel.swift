@@ -1362,5 +1362,6 @@ final class EditorViewModel {
     }
 
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+    var slipPreview: SlipPreviewState?
 
 }

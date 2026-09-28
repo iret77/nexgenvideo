@@ -53,6 +53,58 @@ extension EditorViewModel {
         removeTracks(ids: [id])
     }
 
+    struct TrackReorderResult: Equatable {
+        let trackId: String
+        let fromIndex: Int
+        let toIndex: Int
+    }
+
+    @discardableResult
+    func reorderTrack(id: String, to targetIndex: Int) -> TrackReorderResult? {
+        guard let fromIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let toIndex = trackReorderDestination(from: fromIndex, requested: targetIndex)
+        let result = TrackReorderResult(trackId: id, fromIndex: fromIndex, toIndex: toIndex)
+        guard fromIndex != toIndex else { return result }
+
+        withTimelineSwap(actionName: "Reorder Track") {
+            moveTrack(from: fromIndex, to: toIndex)
+        }
+        return result
+    }
+
+    @discardableResult
+    func reorderTrackLive(id: String, to targetIndex: Int) -> TrackReorderResult? {
+        guard let fromIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let toIndex = trackReorderDestination(from: fromIndex, requested: targetIndex)
+        let result = TrackReorderResult(trackId: id, fromIndex: fromIndex, toIndex: toIndex)
+        guard fromIndex != toIndex else { return result }
+        moveTrack(from: fromIndex, to: toIndex)
+        return result
+    }
+
+    @discardableResult
+    func commitTrackReorder(id: String, before: Timeline) -> TrackReorderResult? {
+        guard let toIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else {
+            timeline = before
+            return nil
+        }
+        timeline = before
+        return reorderTrack(id: id, to: toIndex)
+    }
+
+    private func trackReorderDestination(from index: Int, requested: Int) -> Int {
+        let zone = zones
+        let isAudio = timeline.tracks[index].type == .audio
+        let lower = isAudio ? zone.firstAudioIndex : 0
+        let upper = isAudio ? zone.trackCount - 1 : zone.firstAudioIndex - 1
+        return max(lower, min(upper, requested))
+    }
+
+    private func moveTrack(from source: Int, to destination: Int) {
+        let track = timeline.tracks.remove(at: source)
+        timeline.tracks.insert(track, at: destination)
+    }
+
     func removeTracks(ids: [String]) {
         let set = Set(ids)
         guard timeline.tracks.contains(where: { set.contains($0.id) }) else { return }

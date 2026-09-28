@@ -33,6 +33,218 @@ extension EditorViewModel {
         undoManager?.setActionName(edits.count == 1 ? "Trim Clip" : "Trim Clips")
     }
 
+    struct RippleTrimPlan {
+        struct Resize: Equatable {
+            let clipId: String
+            let trimStart: Int
+            let trimEnd: Int
+            let duration: Int
+        }
+
+        let durationDelta: Int
+        let resizes: [Resize]
+        let shifts: [ClipShift]
+        let blockedAtFrame: Int?
+
+        var targetIds: Set<String> { Set(resizes.map(\.clipId)) }
+    }
+
+    func planRippleTrim(
+        clipId: String,
+        edge: TrimEdge,
+        deltaFrames: Int,
+        propagateToLinked: Bool
+    ) -> RippleTrimPlan? {
+        guard deltaFrames != 0, let leadLoc = findClip(id: clipId) else { return nil }
+        let lead = timeline.tracks[leadLoc.trackIndex].clips[leadLoc.clipIndex]
+        let targets = rippleTrimTargets(clipId: clipId, propagateToLinked: propagateToLinked)
+        let targetIds = Set(targets.map(\.id))
+        guard !targets.isEmpty else { return nil }
+
+        var durationDelta = edge == .right ? deltaFrames : -deltaFrames
+        if durationDelta < 0 {
+            let shrinkRoom = targets.map { max(0, $0.durationFrames - 1) }.min() ?? 0
+            durationDelta = max(durationDelta, -shrinkRoom)
+        } else {
+            for target in targets where target.mediaType != .image && target.mediaType != .text {
+                guard target.speed.isFinite, target.speed > 0 else { return nil }
+                let totalSourceFrames = target.sourceDurationFrames
+                let fixedTrim = edge == .right ? target.trimStartFrame : target.trimEndFrame
+                let availableSourceFrames = totalSourceFrames - fixedTrim
+                guard availableSourceFrames >= target.sourceFramesConsumed else { return nil }
+                durationDelta = min(
+                    durationDelta,
+                    maximumRippleExtension(
+                        clip: target,
+                        requestedDelta: durationDelta,
+                        availableSourceFrames: availableSourceFrames
+                    )
+                )
+            }
+        }
+
+        var blockedAtFrame: Int?
+        if durationDelta < 0 {
+            let limits = timeline.tracks.compactMap { track -> (room: Int, obstacle: Int)? in
+                guard track.syncLocked,
+                      !track.clips.contains(where: { targetIds.contains($0.id) }) else { return nil }
+                return syncLockedLeftRoom(track: track, insertFrame: lead.endFrame)
+            }
+            if let tightest = limits.min(by: { $0.room < $1.room }), durationDelta < -tightest.room {
+                durationDelta = -tightest.room
+                blockedAtFrame = tightest.obstacle
+            }
+        }
+        guard durationDelta != 0 || blockedAtFrame != nil else { return nil }
+
+        let resizes = targets.compactMap {
+            rippleResize(clip: $0, edge: edge, durationDelta: durationDelta)
+        }
+        guard resizes.count == targets.count else { return nil }
+
+        var shifts: [ClipShift] = []
+        for track in timeline.tracks {
+            let targetEnd = track.clips.first(where: { targetIds.contains($0.id) })?.endFrame
+            guard targetEnd != nil || track.syncLocked else { continue }
+            shifts += RippleEngine.computeRipplePush(
+                clips: track.clips,
+                insertFrame: targetEnd ?? lead.endFrame,
+                pushAmount: durationDelta,
+                excludeIds: targetIds
+            )
+        }
+
+        return RippleTrimPlan(
+            durationDelta: durationDelta,
+            resizes: resizes,
+            shifts: shifts,
+            blockedAtFrame: blockedAtFrame
+        )
+    }
+
+    @discardableResult
+    func rippleTrimClip(
+        clipId: String,
+        edge: TrimEdge,
+        deltaFrames: Int,
+        propagateToLinked: Bool
+    ) -> RippleTrimPlan? {
+        guard let leadLoc = findClip(id: clipId),
+              let plan = planRippleTrim(
+                clipId: clipId,
+                edge: edge,
+                deltaFrames: deltaFrames,
+                propagateToLinked: propagateToLinked
+              ),
+              plan.durationDelta != 0 else { return nil }
+        let leadEnd = timeline.tracks[leadLoc.trackIndex].clips[leadLoc.clipIndex].endFrame
+        let touched = plan.targetIds.union(plan.shifts.map(\.clipId))
+
+        withTimelineSwap(actionName: "Ripple Trim") {
+            for resize in plan.resizes {
+                guard let location = findClip(id: resize.clipId) else { continue }
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = resize.trimStart
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = resize.trimEnd
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].setDuration(resize.duration)
+            }
+            applyShifts(plan.shifts)
+            timeline.markers = RippleEngine.rippleMarkers(
+                timeline.markers,
+                openingAt: leadEnd,
+                by: plan.durationDelta
+            )
+            for index in timeline.tracks.indices
+            where timeline.tracks[index].clips.contains(where: { touched.contains($0.id) }) {
+                sortClips(trackIndex: index)
+            }
+        }
+        return plan
+    }
+
+    private func rippleTrimTargets(clipId: String, propagateToLinked: Bool) -> [Clip] {
+        var ids: Set<String> = [clipId]
+        if propagateToLinked {
+            ids.formUnion(linkedPartnerIds(of: clipId))
+        }
+        return timeline.tracks.flatMap(\.clips).filter { ids.contains($0.id) }
+    }
+
+    private func maximumRippleExtension(
+        clip: Clip,
+        requestedDelta: Int,
+        availableSourceFrames: Int
+    ) -> Int {
+        var lower = 0
+        var upper = max(0, requestedDelta)
+        while lower < upper {
+            let candidate = lower + (upper - lower + 1) / 2
+            let duration = clip.durationFrames + candidate
+            let consumed = Int((Double(duration) * clip.speed).rounded())
+            if consumed <= availableSourceFrames {
+                lower = candidate
+            } else {
+                upper = candidate - 1
+            }
+        }
+        return lower
+    }
+
+    private func rippleResize(
+        clip: Clip,
+        edge: TrimEdge,
+        durationDelta: Int
+    ) -> RippleTrimPlan.Resize? {
+        let duration = clip.durationFrames + durationDelta
+        guard duration >= 1 else { return nil }
+
+        if clip.mediaType == .image || clip.mediaType == .text {
+            let fields = trimValues(
+                for: clip,
+                edge: edge,
+                delta: edge == .right ? durationDelta : -durationDelta
+            )
+            return .init(
+                clipId: clip.id,
+                trimStart: fields.trimStart,
+                trimEnd: fields.trimEnd,
+                duration: duration
+            )
+        }
+
+        guard clip.speed.isFinite, clip.speed > 0 else { return nil }
+        let totalSourceFrames = clip.sourceDurationFrames
+        let consumed = Int((Double(duration) * clip.speed).rounded())
+        let trimStart: Int
+        let trimEnd: Int
+        switch edge {
+        case .left:
+            trimEnd = clip.trimEndFrame
+            trimStart = totalSourceFrames - trimEnd - consumed
+        case .right:
+            trimStart = clip.trimStartFrame
+            trimEnd = totalSourceFrames - trimStart - consumed
+        }
+        guard trimStart >= 0, trimEnd >= 0 else { return nil }
+        return .init(
+            clipId: clip.id,
+            trimStart: trimStart,
+            trimEnd: trimEnd,
+            duration: duration
+        )
+    }
+
+    private func syncLockedLeftRoom(track: Track, insertFrame: Int) -> (room: Int, obstacle: Int)? {
+        guard let first = track.clips
+            .filter({ $0.startFrame >= insertFrame })
+            .map(\.startFrame)
+            .min() else { return nil }
+        let obstacle = track.clips
+            .filter { $0.startFrame < insertFrame }
+            .map(\.endFrame)
+            .max() ?? 0
+        return (max(0, first - obstacle), obstacle)
+    }
+
     /// Ripple delete: remove selected clips and close the gaps. Sync-locked tracks shift
     /// along to preserve cross-track alignment; refuses if any would collide.
     func rippleDeleteSelectedClips() {

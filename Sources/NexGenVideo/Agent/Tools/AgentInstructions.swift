@@ -148,6 +148,8 @@ enum AgentInstructions {
           selection:
           • move_clips: change track and/or startFrame. Linked partners follow the frame delta; \
             track changes don't propagate.
+          • reorder_track: move a stable trackId within its visual or audio zone without changing \
+            the track's clips, flags, or routing role.
           • set_clip_properties: apply the same values (durationFrames, trim, speed, volume, \
             opacity, blendMode, transform, static crop, or text-style fields) to one or more clipIds. For per-clip \
             differences, make separate calls. Setting volume or opacity here clears any \
@@ -157,8 +159,13 @@ enum AgentInstructions {
           • set_keyframes: replace the keyframe track for one (clipId, property) pair. Empty \
             array clears. Frames are clip-relative.
           • split_clip: atFrame must be strictly inside the clip.
+          • ripple_trim: move one clip edge and shift later material. Linked clips and sync-locked \
+            tracks follow by default; source handles bound the edit.
+          • slip_clip: shift source in/out points while timeline position, duration, transitions, \
+            and keyframes stay fixed. Linked partners follow by default.
           • sync_audio: align one or more clips to a reference (usually the camera) by compatible \
             source timecode or confirmed multi-anchor audio. Use for dual-system sound \
+
             or multicam (pass targetClipIds); it returns per-clip confidence and refuses \
             weak matches.
         - speed 1.0 is normal; <1.0 stretches the clip longer on the timeline; >1.0 shortens \

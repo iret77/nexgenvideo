@@ -25,6 +25,34 @@ final class TimelineInputController {
         self.view = view
     }
 
+    private func slipPreviewState(
+        for clip: Clip,
+        deltaFrames: Int,
+        linked: Bool
+    ) -> SlipPreviewState? {
+        var display = clip
+        if display.mediaType != .video {
+            guard linked,
+                  let partner = editor.slipPropagationPartnerIds(of: clip.id)
+                    .compactMap({ editor.clipFor(id: $0) })
+                    .first(where: { $0.mediaType == .video }) else { return nil }
+            display = partner
+        }
+        guard let url = editor.mediaResolver.expectedURL(for: display.mediaRef) else { return nil }
+        let update = editor.planSlipEdit(
+            clipId: clip.id,
+            deltaFrames: deltaFrames,
+            propagateToLinked: linked
+        )?.updates.first(where: { $0.clipId == display.id })
+        let inFrame = update?.trimStart ?? display.trimStartFrame
+        return SlipPreviewState(
+            url: url,
+            inSourceFrame: inFrame,
+            outSourceFrame: inFrame + max(0, display.sourceFramesConsumed - 1),
+            fps: editor.timeline.fps
+        )
+    }
+
     // MARK: - Mouse down
 
     func mouseDown(with event: NSEvent, geometry: TimelineGeometry) {
@@ -121,7 +149,16 @@ final class TimelineInputController {
             // Linked behavior is always on; Option is the per-drag override.
             let linkedOn = !isOption
 
-            if isShift {
+            let localX = point.x - rect.minX
+            let onTrimHandle = Self.isOnTrimZone(localX: localX, clipWidth: rect.width)
+            let rippleTrim = isShift && onTrimHandle
+            let allowsTrim = !isOption || rippleTrim
+
+            if rippleTrim {
+                if !editor.selectedClipIds.contains(clip.id) {
+                    editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
+                }
+            } else if isShift {
                 if editor.selectedClipIds.contains(clip.id) {
                     if linkedOn {
                         editor.selectedClipIds.subtract(editor.expandToLinkGroup([clip.id]))
@@ -139,7 +176,6 @@ final class TimelineInputController {
                 editor.selectedClipIds = linkedOn ? editor.expandToLinkGroup([clip.id]) : [clip.id]
             }
 
-            let localX = point.x - rect.minX
             let isCommand = event.modifierFlags.contains(.command)
             let allowsEditChrome = editor.allowsTimelineEditChrome
 
@@ -169,7 +205,7 @@ final class TimelineInputController {
             } else if allowsEditChrome, isCommand, clip.mediaType == .audio,
                       addVolumeKeyframeOnClick(at: point, clip: clip, clipRect: rect) {
                 dragState = .idle
-            } else if allowsEditChrome, !isOption, localX <= AppTheme.Timeline.trimHandleWidth {
+            } else if allowsEditChrome, allowsTrim, localX <= AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimLeft(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -178,9 +214,10 @@ final class TimelineInputController {
                     originalStartFrame: clip.startFrame,
                     originalDuration: clip.durationFrames,
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
-                    propagateToLinked: linkedOn
+                    propagateToLinked: linkedOn,
+                    isRipple: rippleTrim
                 ))
-            } else if allowsEditChrome, !isOption, localX >= rect.width - AppTheme.Timeline.trimHandleWidth {
+            } else if allowsEditChrome, allowsTrim, localX >= rect.width - AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimRight(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -189,8 +226,34 @@ final class TimelineInputController {
                     originalStartFrame: clip.startFrame,
                     originalDuration: clip.durationFrames,
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
+                    propagateToLinked: linkedOn,
+                    isRipple: rippleTrim
+                ))
+            } else if allowsEditChrome, editor.toolMode == .slip {
+                guard editor.isSlipEligible(clip),
+                      let limits = editor.slipTimelineLimits(
+                        clipId: clip.id,
+                        propagateToLinked: linkedOn
+                      ),
+                      limits.right > 0 || limits.left > 0 else {
+                    dragState = .idle
+                    view.needsDisplay = true
+                    return
+                }
+                Self.slipCursor.set()
+                if editor.isPlaying { editor.pause() }
+                dragState = .slip(DragState.SlipDrag(
+                    clipId: clip.id,
+                    grabFrame: geometry.frameAt(x: point.x),
+                    maxRightDelta: limits.right,
+                    maxLeftDelta: limits.left,
                     propagateToLinked: linkedOn
                 ))
+                editor.slipPreview = slipPreviewState(
+                    for: clip,
+                    deltaFrames: 0,
+                    linked: linkedOn
+                )
             } else {
                 let grabFrame = geometry.frameAt(x: point.x)
                 var companions: [DragState.Participant] = []
@@ -387,7 +450,9 @@ final class TimelineInputController {
             }
             let delta = snappedStart - drag.originalStartFrame
             let maxDelta = drag.originalDuration - 1
-            let minDelta = drag.hasNoSourceMedia ? -drag.originalStartFrame : -drag.originalTrimStart
+            let minDelta = drag.isRipple
+                ? -drag.originalStartFrame
+                : (drag.hasNoSourceMedia ? -drag.originalStartFrame : -drag.originalTrimStart)
             drag.deltaFrames = max(minDelta, min(maxDelta, delta))
             dragState = .trimLeft(drag)
 
@@ -416,15 +481,31 @@ final class TimelineInputController {
                 snappedEnd = candidateEnd
             }
             drag.deltaFrames = snappedEnd - originalEndFrame
-            // Can't shrink past 1 frame; for non-image clips, can't expand past source material
             let minDelta = -(drag.originalDuration - 1)
-            if drag.hasNoSourceMedia {
+            if drag.hasNoSourceMedia || drag.isRipple {
                 drag.deltaFrames = max(minDelta, drag.deltaFrames)
             } else {
                 let maxDelta = drag.originalTrimEnd
                 drag.deltaFrames = max(minDelta, min(maxDelta, drag.deltaFrames))
             }
             dragState = .trimRight(drag)
+
+        case .slip(var drag):
+            snapIndicatorX = nil
+            Self.slipCursor.set()
+            let delta = max(
+                -drag.maxLeftDelta,
+                min(drag.maxRightDelta, frame - drag.grabFrame)
+            )
+            if delta != drag.deltaFrames, let clip = editor.clipFor(id: drag.clipId) {
+                editor.slipPreview = slipPreviewState(
+                    for: clip,
+                    deltaFrames: delta,
+                    linked: drag.propagateToLinked
+                )
+            }
+            drag.deltaFrames = delta
+            dragState = .slip(drag)
 
         case .audioVolumeKf(let drag):
             dragState = .audioVolumeKf(applyVolumeKfDrag(drag, cursorFrame: frame, cursorY: point.y, geometry: geometry))
@@ -525,19 +606,46 @@ final class TimelineInputController {
 
         case .trimLeft(let drag):
             if drag.deltaFrames != 0 {
-                editor.commitTrim(
-                    clipId: drag.clipId,
-                    edge: .left,
-                    deltaFrames: drag.deltaFrames,
-                    propagateToLinked: drag.propagateToLinked
-                )
+                if drag.isRipple {
+                    editor.rippleTrimClip(
+                        clipId: drag.clipId,
+                        edge: .left,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                } else {
+                    editor.commitTrim(
+                        clipId: drag.clipId,
+                        edge: .left,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                }
             }
 
         case .trimRight(let drag):
             if drag.deltaFrames != 0 {
-                editor.commitTrim(
+                if drag.isRipple {
+                    editor.rippleTrimClip(
+                        clipId: drag.clipId,
+                        edge: .right,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                } else {
+                    editor.commitTrim(
+                        clipId: drag.clipId,
+                        edge: .right,
+                        deltaFrames: drag.deltaFrames,
+                        propagateToLinked: drag.propagateToLinked
+                    )
+                }
+            }
+
+        case .slip(let drag):
+            if drag.deltaFrames != 0 {
+                editor.slipClip(
                     clipId: drag.clipId,
-                    edge: .right,
                     deltaFrames: drag.deltaFrames,
                     propagateToLinked: drag.propagateToLinked
                 )
@@ -584,6 +692,30 @@ final class TimelineInputController {
 
         dragState = .idle
         snapIndicatorX = nil
+        editor.slipPreview = nil
+        view.needsDisplay = true
+    }
+
+    func cancelActiveDrag() {
+        stopPlayheadAutoScroll()
+        switch dragState {
+        case .scrubPlayhead:
+            finishPlayheadScrub()
+        case .audioVolumeKf(let drag):
+            editor.revertClipProperty(clipId: drag.clipId)
+        case .fadeKnee(let drag):
+            editor.revertClipProperty(clipId: drag.clipId)
+        case .marquee:
+            editor.isMarqueeSelecting = false
+        case .timelineMarker:
+            editor.timelineMarkerPreview = nil
+        default:
+            break
+        }
+        dragState = .idle
+        snapIndicatorX = nil
+        editor.slipPreview = nil
+        NSCursor.arrow.set()
         view.needsDisplay = true
     }
 
@@ -660,6 +792,19 @@ final class TimelineInputController {
                 NSCursor.openHand.set()
                 return
             }
+            if editor.toolMode == .slip {
+                if editor.isSlipEligible(clip),
+                   let limits = editor.slipTimelineLimits(
+                    clipId: clip.id,
+                    propagateToLinked: !event.modifierFlags.contains(.option)
+                   ),
+                   limits.right > 0 || limits.left > 0 {
+                    Self.slipCursor.set()
+                } else {
+                    NSCursor.operationNotAllowed.set()
+                }
+                return
+            }
         }
         NSCursor.arrow.set()
     }
@@ -676,6 +821,47 @@ final class TimelineInputController {
 
     static func fadeCursor(_ edge: FadeEdge) -> NSCursor {
         edge == .left ? fadeInCursor : fadeOutCursor
+    }
+
+    private static let slipCursor = makeSlipCursor()
+
+    private static func makeSlipCursor() -> NSCursor {
+        let size = NSSize(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let midX = rect.midX
+            let midY = rect.midY
+            let ticks = NSBezierPath()
+            for direction: CGFloat in [-1, 1] {
+                let x = midX + direction * AppTheme.Spacing.md
+                ticks.move(to: NSPoint(x: x, y: midY - AppTheme.Spacing.smMd))
+                ticks.line(to: NSPoint(x: x, y: midY + AppTheme.Spacing.smMd))
+            }
+            ticks.lineCapStyle = .square
+            AppTheme.Background.base.setStroke()
+            ticks.lineWidth = AppTheme.BorderWidth.thick + AppTheme.BorderWidth.thin
+            ticks.stroke()
+            AppTheme.Status.error.setStroke()
+            ticks.lineWidth = AppTheme.BorderWidth.thick
+            ticks.stroke()
+
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: midX - AppTheme.Spacing.sm, y: midY))
+            arrow.line(to: NSPoint(x: midX - AppTheme.Spacing.xxs, y: midY + AppTheme.Spacing.xs))
+            arrow.line(to: NSPoint(x: midX - AppTheme.Spacing.xxs, y: midY - AppTheme.Spacing.xs))
+            arrow.close()
+            arrow.move(to: NSPoint(x: midX + AppTheme.Spacing.sm, y: midY))
+            arrow.line(to: NSPoint(x: midX + AppTheme.Spacing.xxs, y: midY + AppTheme.Spacing.xs))
+            arrow.line(to: NSPoint(x: midX + AppTheme.Spacing.xxs, y: midY - AppTheme.Spacing.xs))
+            arrow.close()
+            arrow.lineJoinStyle = .round
+            arrow.lineWidth = AppTheme.BorderWidth.thick
+            AppTheme.Text.primary.setStroke()
+            arrow.stroke()
+            AppTheme.Status.error.setFill()
+            arrow.fill()
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: size.width / 2, y: size.height / 2))
     }
 
     private static func makeFadeCursor(rising: Bool) -> NSCursor {
