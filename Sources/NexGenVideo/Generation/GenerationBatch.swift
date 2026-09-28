@@ -60,6 +60,22 @@ struct GenerationBatch: Codable, Sendable, Equatable, Identifiable {
         return try Self(payload: .init(nonce: payload.nonce, projectKey: payload.projectKey,
             phase: payload.phase, items: payload.items.filter { !itemIDs.contains($0.id) }, requestSHA256: payload.requestSHA256))
     }
+
+    func replacingPackage(itemID: String, with package: GenerationPackageV1) throws -> Self {
+        try validate()
+        guard let index = payload.items.firstIndex(where: { $0.id == itemID }) else {
+            throw GenerationRequestError.gate("The repriced item is not part of this batch.")
+        }
+        var items = payload.items
+        items[index] = .init(id: items[index].id, purpose: items[index].purpose, package: package)
+        return try Self(payload: .init(
+            nonce: payload.nonce,
+            projectKey: payload.projectKey,
+            phase: payload.phase,
+            items: items,
+            requestSHA256: payload.requestSHA256
+        ))
+    }
 }
 
 struct GenerationBatchJournal: Codable, Sendable, Equatable {

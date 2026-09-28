@@ -1,6 +1,39 @@
 import Foundation
 
 extension GenerationPackageV1 {
+    func pricingInput() throws -> GenerationPricingInput {
+        let parameters = try restoreParameters()
+        var duration: Double?
+        var resolution: String?
+        var quality: String?
+        var generateAudio: Bool?
+        switch parameters.parameters {
+        case .image(let image):
+            resolution = image.resolution
+            quality = image.quality
+        case .video(let video):
+            duration = video.duration.seconds.map(Double.init)
+                ?? (payload.generationInput.duration > 0
+                    ? Double(payload.generationInput.duration)
+                    : nil)
+            resolution = video.resolution
+            generateAudio = video.generateAudio
+        default:
+            throw GenerationRequestError.gate("This saved request has no supported pricing input.")
+        }
+        return GenerationPricingInput(
+            modelId: payload.target.modelId,
+            modality: payload.modality == "image" ? .image : .video,
+            durationSeconds: duration,
+            outputCount: payload.outputCount,
+            resolution: resolution,
+            quality: quality,
+            promptCharacterCount: payload.prompt.count,
+            generateAudio: generateAudio,
+            referenceCount: parameters.referenceSlots.count
+        )
+    }
+
     func restoreParameters() throws -> PreparedProviderParameters {
         struct Parameters: Decodable {
             let kind: String

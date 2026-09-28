@@ -1536,36 +1536,12 @@ final class AgentService {
     @ObservationIgnored
     private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
 
-    func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
-        guard batch.totalEUR != nil else {
-            let unpricedItems: [[String: Any]] = batch.payload.items.enumerated().compactMap {
-                index, item in
-                guard item.package.payload.estimate == nil else { return nil }
-                let target = item.package.payload.target
-                let tool = item.package.payload.modality == "image"
-                    ? ToolName.generateImage.rawValue
-                    : ToolName.generateVideo.rawValue
-                return [
-                    "index": index,
-                    "reason": "no_host_price_for_route",
-                    "tool": tool,
-                    "purpose": item.purpose,
-                    "route": [
-                        "provider": target.provider.rawValue,
-                        "transport": target.transport.rawValue,
-                        "model": target.modelId,
-                        "endpoint": target.endpoint,
-                    ],
-                ]
-            }
-            let payload = try NativeCockpitReader.serialize([
-                "status": "preparation_incomplete",
-                "reason": "missing_cost_estimates",
-                "unpriced_items": unpricedItems,
-                "message": "No approval was opened. Repair or re-prepare the indexed inputs with host-verified prices.",
-            ])
-            return .error(String(decoding: payload, as: UTF8.self))
-        }
+    func presentGenerationBatch(
+        _ batch: GenerationBatch,
+        recoveries: [String: GenerationBatchRecovery],
+        origin: ToolCallOrigin,
+        editor: EditorViewModel
+    ) throws -> ToolResult {
         if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("Finish the current native decision before reviewing a generation batch.")
@@ -1573,7 +1549,12 @@ final class AgentService {
         let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
         generationBatchOrigins[batch.id] = (origin, marker)
         editor.agentPanelVisible = true
-        editor.generationBatchCoordinator.pending = batch
+        do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
+        catch {
+            generationBatchOrigins.removeValue(forKey: batch.id)
+            throw error
+        }
+
         suspendToolCalls(from: origin)
         return .suspended(marker)
     }
@@ -1607,12 +1588,6 @@ final class AgentService {
         let prepare: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
-    }
-
-    private struct SpendPipelineMutationLease {
-        let coordinator: PipelinePhaseRunCoordinator
-        let dataRoot: URL
-        let id: UUID
     }
 
     struct SpendRunStatus: Equatable, Sendable {
@@ -1697,68 +1672,7 @@ final class AgentService {
                     "The project closed before the approved operation could start."
                 )
             }
-            let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
-                .resolvingSymlinksInPath()
-            guard let workingRoot = editor.workingRoot,
-                  let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
-                  currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
-                    == expectedRoot else {
-                throw ToolError(
-                    "The project changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            guard editor.declaredPluginName == pipelineScope.declaredPack,
-                  editor.declaredPluginBinding == pipelineScope.declaredBinding else {
-                throw ToolError(
-                    "The project format changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            let projectHome = FrameInventory.projectHome(of: expectedRoot)
-            guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
-                    == pipelineScope.bindingResolution else {
-                throw ToolError(
-                    "The project format binding changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            do {
-                _ = try ProjectPackGate.requireLiveMutation(
-                    projectURL: projectHome,
-                    declaredPack: pipelineScope.declaredPack,
-                    declaredBinding: pipelineScope.declaredBinding
-                )
-            } catch {
-                throw ToolError(
-                    "The project format binding changed while the spend approval was open: "
-                        + error.localizedDescription
-                )
-            }
-            let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
-                tool: pipelineScope.tool,
-                dataRoot: expectedRoot,
-                declaredPack: pipelineScope.declaredPack,
-                declaredBinding: pipelineScope.declaredBinding
-            )
-            guard currentPhase == pipelineScope.phase else {
-                throw ToolError(
-                    "The pipeline phase changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
-                projectRoot: expectedRoot,
-                label: pipelineScope.phase ?? approval.actionLabel
-            ) else {
-                let active = editor.pipelinePhaseRunCoordinator.runningPhase(
-                    projectRoot: expectedRoot
-                ) ?? "pipeline work"
-                throw ToolError(
-                    "Can't start the approved operation while \(active) is running. Wait for it to finish."
-                )
-            }
-            return SpendPipelineMutationLease(
-                coordinator: editor.pipelinePhaseRunCoordinator,
-                dataRoot: expectedRoot,
-                id: id
-            )
+            return try pipelineScope.acquireMutation(editor: editor, label: approval.actionLabel)
         }
         let prepareOperation: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         if let prepare {

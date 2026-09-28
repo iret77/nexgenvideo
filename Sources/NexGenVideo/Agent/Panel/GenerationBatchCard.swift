@@ -1,11 +1,28 @@
 import SwiftUI
 
+struct GenerationBatchReviewControls: Equatable {
+    let canEdit: Bool
+    let canRetryPricing: Bool
+    let canApprove: Bool
+
+    init(hasVerifiedTotal: Bool, hasRetryablePricingFailure: Bool, isBusy: Bool) {
+        canEdit = !isBusy
+        canRetryPricing = hasRetryablePricingFailure && !isBusy
+        canApprove = hasVerifiedTotal && !isBusy
+    }
+}
+
 struct GenerationBatchCard: View {
     let editor: EditorViewModel
 
     var body: some View {
         let coordinator = editor.generationBatchCoordinator
         if let batch = coordinator.pending {
+            let controls = GenerationBatchReviewControls(
+                hasVerifiedTotal: batch.totalEUR != nil,
+                hasRetryablePricingFailure: coordinator.canRetryPricing,
+                isBusy: coordinator.approving || coordinator.isRecovering
+            )
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text(batch.totalEUR == nil
                     ? String(localized: "Prepare \(batch.payload.items.count) generations")
@@ -19,9 +36,32 @@ struct GenerationBatchCard: View {
                                     Text("\(index + 1). \(item.purpose)")
                                     Spacer()
                                     Button("Remove") { coordinator.remove(itemID: item.id, editor: editor) }
-                                        .buttonStyle(InlineActionButtonStyle()).disabled(coordinator.approving)
+                                        .buttonStyle(InlineActionButtonStyle())
+                                        .disabled(!controls.canEdit)
                                 }
                                 GenerationPackageReviewView(package: item.package)
+                                if coordinator.recoveringItemIDs.contains(item.id) {
+                                    Text("Preparing updated review…")
+                                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                                }
+                                let options = coordinator.routeOptions(itemID: item.id)
+                                if item.package.payload.estimate == nil, !options.isEmpty {
+                                    Text("Choose another route and prepare this request again:")
+                                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                                    ForEach(options) { option in
+                                        Button("Use \(option.modelName) · \(option.providerLabel)") {
+                                            Task {
+                                                await coordinator.changeRoute(
+                                                    itemID: item.id,
+                                                    option: option,
+                                                    editor: editor
+                                                )
+                                            }
+                                        }
+                                        .buttonStyle(InlineActionButtonStyle())
+                                        .disabled(!controls.canEdit)
+                                    }
+                                }
                             }
                         }
                     }
@@ -32,20 +72,24 @@ struct GenerationBatchCard: View {
                     Text("Cost estimates are missing. Approval is unavailable until every generation is priced.")
                         .foregroundStyle(AppTheme.Status.warningColor)
                 }
+                if coordinator.canRetryPricing {
+                    Button("Retry pricing") {
+                        Task { await coordinator.retryPricing(editor: editor) }
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .disabled(!controls.canRetryPricing)
+                }
                 if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
                 HStack {
-                    Button(batch.totalEUR == nil ? "Dismiss" : "Decline") {
-                        coordinator.decline(editor: editor)
-                    }
-                        .buttonStyle(.capsule(.secondary, size: .regular)).disabled(coordinator.approving)
-                    if batch.totalEUR != nil {
-                        Spacer()
-                        Button("Approve \(batch.payload.items.count) generations") {
-                            Task { await coordinator.approve(editor: editor) }
-                        }
-                        .buttonStyle(.capsule(.prominent, size: .regular))
-                        .disabled(coordinator.approving)
-                    }
+                    Button("Decline") { coordinator.decline(editor: editor) }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .disabled(!controls.canEdit)
+                    Spacer()
+                    Button("Approve \(batch.payload.items.count) generations") {
+                        Task { await coordinator.approve(editor: editor) }
+                    }.buttonStyle(.capsule(.prominent, size: .regular))
+                        .disabled(!controls.canApprove)
+
                 }
             }
             .padding(AppTheme.Spacing.md)

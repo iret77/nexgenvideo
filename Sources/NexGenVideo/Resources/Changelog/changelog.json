@@ -23,7 +23,11 @@
           "heading": "Reliability",
           "items": [
             "Confirmed identity references keep creative intake lineage stable while retaining exact source and staged-target hash proofs.",
-            "Affected older projects show outdated approvals and offer an explicit audited provenance recovery without changing gate decisions."
+            "Affected older projects show outdated approvals and offer an explicit audited provenance recovery without changing gate decisions.",
+            "Generation batches show verified Runway Gemini Image costs and distinguish unsupported options, pricing outages and unavailable exchange rates.",
+            "Failed pricing can be retried, or an affected request can be prepared again on an explicitly selected route, without submitting a generation.",
+            "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch."
+
           ]
         }
       ]
