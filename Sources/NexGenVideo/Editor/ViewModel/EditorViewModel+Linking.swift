@@ -287,7 +287,7 @@ extension EditorViewModel {
     func resolveDropPlan(cursor: TrackDropTarget, assets: [MediaAsset], atFrame: Int, segments: [String: ClosedRange<Double>] = [:]) -> DropPlan {
         var placements: [DropPlan.Placement] = []
         var c = atFrame
-        for asset in assets {
+        for asset in assets where asset.type.isPlaceable {
             let dur = clipDurationFrames(for: asset, segment: segments[asset.id])
             let hasVisual = asset.type.isVisual
             let hasAudio = asset.type == .audio || (asset.type == .video && asset.hasAudio)

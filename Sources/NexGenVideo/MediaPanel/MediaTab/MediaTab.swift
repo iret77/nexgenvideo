@@ -55,7 +55,7 @@ struct MediaTab: View {
 
     /// Only media types that can actually appear in the panel. ClipType.text
     /// exists for timeline clips but is never assigned to a MediaAsset.
-    private static let filterableTypes: [ClipType] = [.video, .audio, .image]
+    private static let filterableTypes: [ClipType] = [.video, .audio, .image, .subtitle]
 
     private enum ThumbnailPreset: String, CaseIterable, Identifiable {
         case small, medium, large, xlarge

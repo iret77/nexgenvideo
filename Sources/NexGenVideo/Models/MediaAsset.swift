@@ -217,6 +217,10 @@ final class MediaAsset: Identifiable {
             return
         }
 
+        if type == .subtitle {
+            return
+        }
+
         let avAsset = AVURLAsset(url: url)
         if type != .video, let d = try? await avAsset.load(.duration) {
             duration = d.seconds

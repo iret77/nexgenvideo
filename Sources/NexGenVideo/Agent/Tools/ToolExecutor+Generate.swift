@@ -540,6 +540,8 @@ extension ToolExecutor {
             throw ToolError("Text generation is not wired through the generate tool.")
         case .lottie:
             throw ToolError("Lottie animations aren't generated through this tool.")
+        case .subtitle:
+            throw ToolError("Caption files are imported, not generated through this tool.")
         case .document:
             throw ToolError("Documents are source material you import, not something this tool generates.")
         }
