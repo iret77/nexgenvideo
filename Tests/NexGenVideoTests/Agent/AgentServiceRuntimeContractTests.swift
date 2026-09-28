@@ -73,7 +73,10 @@ struct AgentServiceRuntimeContractTests {
         #expect(claudeRequest.currentMessage == anthropicRequest.currentMessage)
         #expect(claudeRequest.currentMessage == .init(
             role: .user,
-            content: [.text("Continue")]
+            content: [
+                .text("<app-context>No format plugin is active — this project uses the generic production workflow.</app-context>"),
+                .text("Continue"),
+            ]
         ))
 
         for fixture in fixtures {
@@ -110,7 +113,10 @@ struct AgentServiceRuntimeContractTests {
         let turn = try #require(adapter.sendRequests.first)
         #expect(turn.currentMessage == .init(
             role: .user,
-            content: [.text("Private kickoff")]
+            content: [
+                .text("<app-context>No format plugin is active — this project uses the generic production workflow.</app-context>"),
+                .text("Private kickoff"),
+            ]
         ))
         #expect(service.messages.first?.hidden == true)
         #expect(AgentTranscriptProjection.turns(
