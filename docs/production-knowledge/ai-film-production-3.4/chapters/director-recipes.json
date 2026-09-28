@@ -1,0 +1,1470 @@
+[
+  {
+    "id": "director-recipes-81e938d026df",
+    "title": "Director Recipes: Combined Style Packages (Appendix)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 1,
+      "endLine": 8,
+      "sha256": "6341daa336855933a0d249e57b5571452897ea11b296bdf6a3dd5058803ee710",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "# Director Recipes: Combined Style Packages (Appendix)\n\n**Contents — read only the part the routing row names:** preamble (packages, cap, Verify-line and `[edit]` rule) · selection index (brief signal → shortlist → constraint filter) + recipe roster · director recipes (one `###` heading each — read only the one chosen) · DoP signatures · harmony map. A recipe's camera, lens, light and colour values are look controls the project steers deliberately (SKILL rule 7), never per-prompt boilerplate.\n\nOptional starting points, NOT a replacement for film-craft.md — each recipe combines composition, camera, editing, light, color, and timing into one coherent package a project can adopt and adapt. Tags and confidence labels: legend in sources.md. Legally these are aesthetic lineages (\"References in spirit, fully original execution\" — the established formula, platforms-models ch. 13b); never reproduce protected characters, titles-as-content, or scenes. Offer recipes when the user wants a fast style decision. Package cap (the only cap in this file): ONE director recipe (the *structure package* — not the story container of ch. 23) + at most ONE DoP signature = two packages max, one dominant. Never two director recipes side by side — a user naming two directors is routed to synthesis (index step 6: one base, deviations from the other). Villeneuve + Deakins counts as ONE package (Villeneuve embeds the Deakins grammar, see its recipe). Recipe Editing lines describe the NLE assembly; the in-take rules (renderability §5 camera & cut rules, production-pipeline ch. 7 dialogue locks) apply INSIDE every generation regardless of recipe — a recipe may change what you cut between, never what one take is allowed to do.\n\nFormat per recipe: Feels like → Composition · Camera · Editing · Light · Color · Timing · Sound cue · Best for · Verify. The **Verify line is the reroll gate**: binary checks to run against generated stills/takes before accepting a result as on-style — a shot that fails its Verify checks is off-recipe even if it looks good. Checks on cut order, VO, score, cross-cutting or transitions are ASSEMBLY checks — tagged `[edit]`; they run at the NLE stage (W9 close) and never gate a reroll. Every Verify line keeps at least three take-level checks. Sound cue = score/needle-drop direction for post (SKILL rule 10); only diegetic sound enters a prompt.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "film-craft.md",
+        "entryIDs": [
+          "film-craft-75a9ed8ed8d0",
+          "film-craft-34e3ba884125",
+          "film-craft-4b45699903a8",
+          "film-craft-34906478034d",
+          "film-craft-be14c68f83c1",
+          "film-craft-2fe59608cae9",
+          "film-craft-1941e7dbc0a7",
+          "film-craft-5690118f43cb",
+          "film-craft-a0b4813c7816",
+          "film-craft-46f09b3b77df"
+        ]
+      },
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-1599c8413d5d"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-fa864b103760",
+    "title": "Selection index: brief → recipe",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Selection index: brief → recipe"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 9,
+      "endLine": 72,
+      "sha256": "4ac20d6d71f16bc2a3470a10e48dbb2f82f60ec99637daf6f81a82ecfea347be",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "## Selection index: brief → recipe\n\nEntry paths, in priority order:\n\n1. **Genre named or evident** → `genre-baselines.md` carries the per-genre recipe shortlist; come back here for the full package + Verify line.\n2. **Director/DoP named and listed** → use that recipe directly.\n3. **Director/DoP named but NOT listed** → check the alias table below first; otherwise map to the nearest package on the eight dimensions and say so (\"closest package here: X\") — never silently substitute.\n4. **Mood/feeling given** → mood table below; offer max 2 candidates with their \"Feels like\" line, the user picks.\n5. **Brief too vague to map** → micro-interview, max 3 questions, grouped into the single intake message (SKILL Workflow 1): one-word feeling? · fast or slow? · real or stylized? — then mood table + constraint filter, offer 2; unanswered → ship with the recipe marked `ASSUMED`. Never dump the recipe list on the user.\n6. **No single recipe fits** (\"something between X and Y\") → synthesis: pick ONE base recipe, negotiate deviations dimension by dimension (the eight dimensions are the interview agenda), keep the base's Verify checks where undeviated (cap: preamble). Two directors named outright (\"Greengrass + Kurosawa\") is this case too: one is the base, the other supplies deviations — never two full recipes.\n7. **Always before recommending:** run the constraint filter, then pick the DoP pairing from the harmony map (documented partnership first). House-signature directors (Kubrick, Tarantino, Fincher, Scorsese, Ridley Scott, Wright, Wachowskis, Gilligan) get NO DoP package — the pairing is \"none\", the recipe is complete.\n8. **After the pick:** the chosen recipe (or synthesis) is carried per the project's technique (SKILL rule 4): its load-bearing look tokens in the Caption Spine STYLE line (12h) / distributed across blocks (ch. 12) / as the opening Master Style Block (style-control §6c); a recipe's camera, lens, light or colour values are deliberate look controls — written only where a beat needs them and listed in `Crew choices`, never as boilerplate in every prompt (SKILL rule 7). Its Verify line joins the QA gate for stills and takes. Record recipe + look tokens in the production bible (ch. 22, section B2). The recipe is the bridge from story dialogue into preproduction — not a mood board.\n\n**Mood → shortlist:**\n| Brief signal (feel/tone words) | Candidates |\n|---|---|\n| epic, vast, monumental, sublime | Villeneuve · Deakins lineage · Nolan (+ Hoytema) |\n| dread, slow-burn, oppressive, uncanny | Kubrick · Lynch · Villeneuve (+ Fraser or Young) |\n| wonder, warm, family, adventure | Spielberg (+ Kamiński) · Miyazaki · Pixar → pixar-look.md |\n| whimsical, deadpan, storybook order | Anderson (+ Storaro only if heightened) |\n| raw, real, urgent, \"found\" | Greengrass · UGC (+ Kamiński for combat) |\n| cold, controlled, precise, paranoid | Fincher · Hitchcock (+ Willis or Hoytema) |\n| romantic, longing, memory of love | Wong Kar-wai (+ Doyle) · Malick (+ Lubezki) |\n| quiet, observational, on the road | Wenders · Ozu |\n| spiritual, dreamlike, grief, faith | Tarkovsky (+ Fraser) · Malick · Bergman |\n| intimate, face-driven, confessional | Bergman (+ Nykvist) · Ozu (+ Nykvist) |\n| kinetic, euphoric, music-driven | Boyle (+ Doyle — keep one counterweight scene) |\n| mythic, operatic, standoff | Leone (+ Storaro) |\n| pulpy, talky menace, genre homage | Tarantino |\n| slow-burn, methodical, corrosive, consequence | Gilligan · Fincher |\n| spoof, absurd, silly played straight | ZAZ/Brooks (+ the target genre's own package) |\n| witty, verbal, neurotic, urbane | Allen lineage (+ Willis) · Anderson |\n| gag-precise, beat-synced, genre-blend comedy | Wright |\n| dynamic, elemental, ensemble motion | Kurosawa (+ Kamiński) |\n| tender desire, the exchanged gaze | Sciamma (+ Mathon) · Wong Kar-wai |\n| unvarnished, precarious, lived-in | Dardenne/Arnold |\n| sleek, techno-noir, simulated worlds | Wachowskis/Pope |\n| propulsive, seductive, rise-and-fall | Scorsese · Boyle |\n| dense, breathable worlds, atmosphere | Ridley Scott · Villeneuve (+ Fraser) |\n\n**Constraint filter (veto BEFORE recommending):**\n| Project constraint | Favors | Penalizes |\n|---|---|---|\n| Low reroll budget / tight deadline | Malick (mosaic of short moments), Boyle (montage), Ozu (locked frontal statics), Gilligan (wordless process montage) | Tarkovsky, Lubezki-style oners — long coherent takes mean extension chains + high reroll cost |\n| Complex action, crowds, physics risk | Greengrass, UGC, Lynch — absorb or legitimize artifacts; Kurosawa — telephoto crowd planes + weather cover | Fincher, Kubrick — surgical frames expose every flaw |\n| Dialogue-heavy | Ozu (frontal singles sidestep reverse-angle continuity), Tarantino, Bergman | Greengrass — verité dialogue coverage burns takes |\n| Film lives on face performance | Bergman + Nykvist — spend the reroll budget here | Willis (buried eyes), heavy-silhouette styles |\n| High continuity risk (many locations/outfits/characters) | Malick, Lynch — elliptical/dream logic tolerates jumps | Nolan cross-cutting — parallel lines punish continuity errors |\n| Stylized/animated format | Miyazaki, Anderson, Pixar → pixar-look.md | Fraser/Willis deep underexposure — clashes with readable-face warmth |\n\nIf the mood pick and a constraint collide, state the trade in one sentence and let the user decide — never silently downgrade the style.\n\n**Alias table — directors covered by combination (no own package; compile from existing ones):**\n| Named | Compile as | Notes |\n|---|---|---|\n| Coppola (Godfather register) | Willis signature + Leone opera timing | Power geometry static and frontal; ritual cross-cut against violence (the baptism logic — Hitchcock's cross-cutting grammar) |\n| Coppola (Apocalypse Now register) | Storaro signature + Malick's elliptical VO-journey structure | Color as ideology over a sensory drift downriver; war as hallucination |\n| Cameron | Spielberg structure + Hoytema signature | Action geography even stricter than Spielberg — every cut preserves the map; steel-blue tech sublime; escalation engineered act by act |\n| Jarmusch | Wenders structure + Müller signature + Ozu statics | Drier deadpan, longer holds; hangout, not journey |\n\nNOT reducible to combinations — open candidates, add as own recipes only if a project demands them: Bong Joon-ho (vertical class geometry, tonal whiplash) · Michael Mann (digital nocturne) · claustrophobic-subjectivity paranoia (Polanski-style apartment dread) · Herzog (ecstatic documentary truth). Tell the user the gap instead of faking a mapping.\n\nRecipe roster: Anderson · ZAZ/Brooks · Allen lineage · Wright · Fincher · Deakins lineage · Kubrick · Spielberg · Villeneuve · Ridley Scott · Boyle · Greengrass · Dardenne/Arnold · Kurosawa · Leone · Gilligan · Wong Kar-wai · Sciamma · Nolan · Wachowskis/Pope · Miyazaki · Pixar → pixar-look.md · Tarantino · Scorsese · Hitchcock · Wenders · Tarkovsky · Ozu · Bergman · Malick · Lynch · UGC — DoP signatures: Lubezki · Hoytema · Fraser · Storaro · Willis · Kamiński · Doyle · Müller · Nykvist · Young · Mathon. Read only the heading you need.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "genre-baselines.md",
+        "entryIDs": [
+          "genre-baselines-c1ea9b0b61cc",
+          "genre-baselines-d1d7fee175c6",
+          "genre-baselines-5d2aca0e4d2a",
+          "genre-baselines-fc0a41b8eecb",
+          "genre-baselines-16e2ed4970e6",
+          "genre-baselines-257b9e00feb2",
+          "genre-baselines-bedce636bafd",
+          "genre-baselines-89739f0f5f06",
+          "genre-baselines-a3b630716318",
+          "genre-baselines-631110cd5c2f",
+          "genre-baselines-fba7c684d7d0",
+          "genre-baselines-09791a4ddb97",
+          "genre-baselines-2e86fb41eb39",
+          "genre-baselines-69e8e2add9cd",
+          "genre-baselines-d1706e309e1f"
+        ]
+      },
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-3dfb4e2f19e1",
+          "pixar-look-4e12a0564475",
+          "pixar-look-70fc2dc072af",
+          "pixar-look-61bf03e96e25",
+          "pixar-look-d866f797cf8b",
+          "pixar-look-8d77a7371d87",
+          "pixar-look-dbab5966991e",
+          "pixar-look-b200d5eaccc4",
+          "pixar-look-14f8ed06620b",
+          "pixar-look-96f0389f0642",
+          "pixar-look-8df617736836",
+          "pixar-look-7fe4492e5b13",
+          "pixar-look-8a6443c51889",
+          "pixar-look-aa1deace90d1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-8a360cf04e4a",
+    "title": "Director recipes (structure packages)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 73,
+      "endLine": 74,
+      "sha256": "9b4d47499507e3633050a1649f3be6570cfe59e98c4fe6ceeffa32cb8f0c6dce",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "## Director recipes (structure packages)\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-3ea4eb837609",
+    "title": "Wes Anderson (symmetry & deadpan)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Wes Anderson (symmetry & deadpan)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 75,
+      "endLine": 77,
+      "sha256": "13b26de9cd576e5518b5776dd54dc82b18bfd2916e60ec8c7a28e994ad770b5b",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Wes Anderson (symmetry & deadpan)\nFeels like a storybook diorama with dry wit. Composition: dead-center symmetry, planimetric (flat-on) tableaus, meticulous production design. Camera: locked-off or precise 90° whip pans, lateral tracking like page-turns. Editing: rhythmic, chapter cards, inserts of objects/hands. Light: soft, even, almost shadowless. Color: pastel palettes, one accent per world. Timing: metronomic; deadpan holds after punchlines. Sound: needle-drops, narrated formality. Best for: whimsy, families, melancholy comedy, stylized worlds. Verify: subject dead-center, flanks mirrored? camera exactly frontal, no perspective diagonals? light shadowless? ONE accent color against pastel? deadpan hold after the beat?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-534008e5bc56",
+    "title": "ZAZ / Mel Brooks (parody deadpan)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "ZAZ / Mel Brooks (parody deadpan)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 78,
+      "endLine": 80,
+      "sha256": "90c998460cc218754d4611a51d6fdea3613d1a96368ec1b94de9ced491b17894",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### ZAZ / Mel Brooks (parody deadpan)\nFeels like a serious film that has no idea it's ridiculous. The META-recipe: adopt the TARGET genre's package verbatim (cop procedural, disaster movie, western) and play it 100% straight — comedy arises from content against faithful form, never from a winking camera. Composition: the parodied genre's framing, plus gag layering — foreground action earnest, absurdity in background/midground planes. Camera: exactly what the target genre would do; no comedic moves. Editing: straight genre pacing; cutaways deliver punchlines deadpan. Light/Color: the target genre's package, unbroken. Timing: gag density over gag size — next joke before the laugh dies; rule of three, the fourth breaks it. Sound: earnest genre score played straight (the score never laughs). (Monty Python variant: the FORM itself breaks instead — intertitles, animation inserts, abrupt endings; anarchy of format, not of frame.) Best for: spoofs, genre parody, sketch features. (AI note: cheap and robust — reuse an existing recipe wholesale and inject gags as content; background-gag layers are still-friendly; deadpan is written as positive micro-cues inside the beat — \"faces flat, mouths still, eyes steady\" — SKILL rule 6; the PERFORMANCE block only in technique B.) Verify: would a muted single frame pass as the SERIOUS genre? background gag present but not framed as the subject? no camera move that \"knows\" the joke? score earnest? [edit] faces dead straight?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-aefaa10f53a2",
+    "title": "Woody Allen lineage (master-shot talk comedy)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Woody Allen lineage (master-shot talk comedy)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 81,
+      "endLine": 83,
+      "sha256": "b1e32045434ff75222c8161caa2e1c47640003346b2304e50a170387ce07fe09",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Woody Allen lineage (master-shot talk comedy)\nFeels like eavesdropping on smart people failing at life. Composition: warm book-lined interiors and city exteriors as conversation arenas; two-shots over singles; characters allowed to LEAVE frame while the dialogue continues. Camera: long-take masters, walk-and-talk lateral tracking, reframes instead of cuts; almost no coverage. Editing: scenes play whole in one or two setups; cuts between scenes, rarely inside them. Light: warm practical interiors, autumn-city naturalism (the Willis NY period: underexposed amber rooms). Color: amber/brown warmth, muted city palettes. Timing: overlapping neurotic dialogue tempo against calm static frames; the joke lands verbally, the frame stays polite. Sound: jazz/classical needle beds; direct address or essayistic VO legitimate. Best for: intellectual/dialogue comedy, relationship pieces, essayistic city films. (AI note: master-shot discipline = few setups per scene = cheap coverage; but long dialogue takes demand lip-sync quality and multi-beat acting micro-cues — budget there; dialogue continuing OUT of frame is a legitimate lip-sync rescue.) Verify: scene holds in one or two setups? characters permitted out of frame mid-line? warm practical interior light? two-shot preferred over shot/reverse? no cut inside a joke? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-236d31505d43",
+    "title": "Edgar Wright (comedy in the cut)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Edgar Wright (comedy in the cut)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 84,
+      "endLine": 86,
+      "sha256": "35c2db100a3a53a134b18657d63a2863a09aa73983cc58d89383057a89d63be6",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Edgar Wright (comedy in the cut)\nFeels like the film itself is telling the jokes. Composition: center-punched frames set up FOR the gag, symmetry as setup, inserts as punchlines. Camera: crash zooms, whip pans, snap push-ins timed to the beat — every move is a gag or a setup. Editing: THE instrument — match cuts, hyper-compressed montage (mundane tasks cut like action scenes), rhythmic repetition with escalation, scene transitions that are jokes. Light/Color: genre-bright saturated pop; pastiche lighting when the scene parodies a genre. Timing: everything ON the beat — needle-drops synced to cuts, gags on the downbeat, rule of three across scenes. Sound: effects as punchlines (every whoosh scored), diegetic music timed to action. Best for: action-comedy, genre-blend comedy, montage humor, music-driven set pieces. (AI note: the comedy lives in POST — generate clean coverage of each beat and build the timing in the edit; crash zooms/whips are cheap prompt moves; the mundane-task-as-action montage is generation-friendly — short independent clips.) Verify: cuts landing on the beat? [edit] at least one transition IS a joke? [edit] inserts fired as punchlines — fast, tight, loud? camera moves motivated by comedy, not coverage? escalating repetition present?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-eec9d98be428",
+    "title": "David Fincher (surgical control)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "David Fincher (surgical control)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 87,
+      "endLine": 89,
+      "sha256": "87635fe94e2b6cd389de1dc004544151e6bdfbbccd1eae4426aa32946bf36331",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### David Fincher (surgical control)\nFeels like being watched by something patient. Composition: geometric, ruled lines, subject boxed by architecture. Camera: the \"silent machine\" — motivated micro-moves, no handheld tremor, camera height at subject logic. Editing: invisible, information-dense, cuts on cognition. Light: low-key, top-ish soft sources, shadowed eyes, greenish-yellow practicals. Color: desaturated teal/amber/sickly green. Timing: relentless even pulse, no wasted frame. Sound: low ambience beds. Best for: thrillers, procedurals, tech dread. Verify: zero handheld tremor, every move slow + motivated? eyes shadowed by top-ish key? subject boxed by architecture lines? teal/amber/sickly-green grade, no clean whites? every cut lands new information? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-091af5277834",
+    "title": "Roger Deakins lineage (DoP grammar, Mendes class)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Roger Deakins lineage (DoP grammar, Mendes class)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 90,
+      "endLine": 92,
+      "sha256": "3bd85a4493df481a8f72fe85e4446e7eabf8821f4da20546e2b814bacbab5cc6",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Roger Deakins lineage (DoP grammar, Mendes class)\nFeels like monumental clarity. Composition: vast negative space, tiny humans in geometry, silhouettes against gradients. Camera: slow disciplined moves, long holds, one idea per shot. Editing: patient, cuts as chapter beats. Light: single motivated source pushed to its limit (fire, window slab, sodium). Color: constrained near-monochrome fields (dust orange, fog gray, night blue). Timing: dread through duration. Sound: bass swells, silence weaponized. Best for: epic sci-fi, war, existential scale. Verify: ONE readable idea per frame? human tiny against geometry or silhouetted against a gradient? single motivated source, no fill from nowhere? near-monochrome color field? shot held long enough to feel duration?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-ffe08b65f950",
+    "title": "Stanley Kubrick (one-point dread)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Stanley Kubrick (one-point dread)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 93,
+      "endLine": 95,
+      "sha256": "b9541e0e2db321617cdf191bb964aa900dc61c121a74d4941048d64bc9bcc46d",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Stanley Kubrick (one-point dread)\nFeels like fate has a floor plan. Composition: one-point perspective corridors, ruthless symmetry. Camera: slow dolly/steadicam glides, wide lenses close to faces. Editing: long takes, then brutal cuts; classical music against horror. Light: motivated-but-exaggerated (candles, fluorescents), often flat-wide. Color: era-saturated, single-color rooms as psychology. Timing: glacial escalation. Best for: horror, hubris, institutions. Verify: one-point perspective, vanishing point centered? flanks mirror each other? glide perfectly steady, no wobble? room owned by one dominant color? escalation glacial, no early cut? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-24cac9599a54",
+    "title": "Steven Spielberg (invisible blockbuster grammar)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Steven Spielberg (invisible blockbuster grammar)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 96,
+      "endLine": 98,
+      "sha256": "81ae17b84f8d4046f96896f74b9f3840a852d5330249316d5ee294952019942b",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Steven Spielberg (invisible blockbuster grammar)\nFeels like being told a story by a master who never shows his hands. Composition: depth-staged frames (action on three planes at once), faces framed against wonder or threat. Camera: the \"oner\" — long takes where BLOCKING creates new framings instead of cuts (actors and camera reposition into fresh compositions); slow push-in on a realizing face (the \"Spielberg face\"); low angles at child eye-height for awe. Editing: invisible continuity, reaction before reveal — we see the face FIRST, then what it sees (builds anticipation); geography always clear. Light: motivated god-rays, backlit door/silhouette entrances, warm practicals against cool night. Color: naturalistic warmth, amber nostalgia vs. steel threat. Timing: suspense by withholding the full view of the threat (show pieces, delay the whole); sentiment earned through delay, then held. Sound: score carries emotion openly, silence before impact. Best for: adventure, family wonder, awe-and-threat storytelling, anything that must feel effortlessly classical. Verify: three depth planes active? reaction face BEFORE the reveal? [edit] god-rays/backlight motivated by an in-world source? threat shown only in pieces? geography never lost across cuts? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-68ec1f6ed38d",
+    "title": "Denis Villeneuve (slow monumental dread)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Denis Villeneuve (slow monumental dread)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 99,
+      "endLine": 101,
+      "sha256": "db06f30df11dff829e4fffbacf79a203e12c9c88a92e80d59fe4cbb3464b77ed",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Denis Villeneuve (slow monumental dread)\nFeels like standing before something vast that does not care about you. Composition/Light/Color: Deakins lineage above + extreme scale contrast (tiny human vs. megastructure/landscape), brutalist geometry, fog/dust as depth; deep underexposure trusted to hold; one near-monochrome field per sequence (ochre, slate, pale gray) with desaturated humanity inside it. Camera: glacial dolly and crane moves with absolute discipline, long approach shots that let dread accumulate, aerials as chapter punctuation. Editing: very long takes, cuts as slow heartbeats; information released in measured drops. Timing: tension through DURATION and approach, not cutting; the pause before contact is the scene. Sound: sub-bass drones and BRAAM-class hits fused with score, silence as pressure. Best for: sci-fi of scale, first contact, institutional dread, existential thrillers. (Deakins is the embedded signature here — Villeneuve adds the slower macro-rhythm, scale obsession, and sound-design fusion.) Verify: scale contrast extreme — tiny human vs. mass? atmosphere (fog/dust) building depth? one massive motivated source? one near-monochrome field per sequence? tension carried by approach/duration, not cut rate? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-bb715ec26764",
+    "title": "Ridley Scott (layered atmosphere)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Ridley Scott (layered atmosphere)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 102,
+      "endLine": 104,
+      "sha256": "4af5d523bffa6ae0aac3946f917cbdba1e66adb133d196b8f80010cf858d8542",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Ridley Scott (layered atmosphere)\nFeels like a world so dense you could breathe it. Composition: deep frames layered with foreground obstruction — smoke, rain, fans, grids, silhouettes; monumental establishing shots; figures INSIDE environments, never in front of them. Camera: classical moves through volumetric space, slow reveals of scale, hard cuts to detail. Editing: patient world-building punctuated by violence; parallel tension lines. Light: shafts through smoke as signature (blinds, searchlights, god-rays), backlit atmosphere over clean key, practicals multiplied (candles, monitors, neon). Color: world-defining palette per project (amber candle-gold, steel blue-rain, desert bleach), always atmosphere-thickened. Timing: dread accumulates through environment; setpieces erupt from ambience. Sound: environment as score — rain, hum, machinery, wind chimes. Best for: sci-fi worldbuilding, creature dread, historical epics, any project where the WORLD is the star. (AI note: atmosphere is the free lunch — smoke/rain/backlight are prompt-cheap, hide artifacts, and read as production value; layered foreground occlusion breaks the sterile-AI-frame look; his ad-craft polish makes this the bridge recipe for commercials.) Verify: at least two atmosphere layers between lens and subject? light arriving as visible shafts/backlit volume? establishing monumental, figure inside the world? palette world-defining and held? environment audible?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-e4ad6f426d40",
+    "title": "Danny Boyle (kinetic euphoria)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Danny Boyle (kinetic euphoria)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 105,
+      "endLine": 107,
+      "sha256": "abf01affcf79f66dd5a8208434b636b8281b191a30c0458fe27c60dd2d6bc3dd",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Danny Boyle (kinetic euphoria)\nFeels like adrenaline with a heartbeat. Composition: canted and wide-angle-close frames, subjects pinned to frame edges, bold graphic crops. Camera: restless energy — snap zooms, whip pans, low wide lenses running WITH characters; digital/available-light textures embraced. Editing: fast rhythmic montage cut to music, freeze-frames with inserted titles/graphics, time-lapse and speed shifts, fantasy inserts crashing into reality. Light: hard saturated practicals (sodium, neon, fluorescent), unashamed mixed color temperatures. Color: hyper-saturated pop palettes — acid greens, oranges, cyans. Timing: sprint-and-drop — euphoric acceleration, then a sudden held beat of stillness or horror; needle-drop as structural device. Sound: driving contemporary tracks fused to cut rhythm. Best for: urban energy, addiction/obsession stories, survival against the clock, montage-driven arcs. Verify: wide-angle-close distortion present? mixed color temperatures hot and saturated? cut rhythm locked to the track? [edit] at least one freeze/speed-shift/insert device? a held still beat after the sprint? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-c4f13da6233a",
+    "title": "Paul Greengrass (chaos verité)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Paul Greengrass (chaos verité)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 108,
+      "endLine": 110,
+      "sha256": "e50c511559126160c0c46132096e379073108d471bc63cd4ef165c642ff68565",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Paul Greengrass (chaos verité)\nFeels like being inside the event. Composition: none held for long — found framings, crops, obstruction. Camera: handheld urgency, whip refocus, snap zooms. Editing: fast fragmentary, geography sacrificed for pulse (keep ONE orienting master per beat or the audience truly loses the room). Light: available/practical, unpolished. Color: newsprint desaturation. Timing: accelerando to impact. Best for: action, thrillers, docu-drama. (AI note: this style ABSORBS model artifacts — a legitimate rescue look.) Verify: framing genuinely found — crops, obstruction, late refocus? ONE orienting master per beat present? [edit] light available/unpolished? newsprint desaturation? no move reads choreographed?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-269b82898f83",
+    "title": "Dardenne / Arnold (social realism)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Dardenne / Arnold (social realism)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 111,
+      "endLine": 113,
+      "sha256": "e7d0cb2bbb9660c7053fb0209bb736a456a56985af90c90b87b8c6a3f1aee127",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Dardenne / Arnold (social realism)\nFeels like life won't pause for the camera. Composition: tight following framings (the nape-of-the-neck shot), 4:3 or tight ratios boxing the subject, locations as found — no dressing glamour. Camera: handheld that BREATHES with the subject — following through doors, stairwells, streets in long unbroken takes; nothing a person couldn't carry, no crane, no drone. Editing: cuts only when attention shifts; scenes run past comfort into truth; no montage shortcuts. Light: available only — overcast daylight, institutional fluorescents, home practicals. Color: muted unglamorous naturalism, no grade beautification. Timing: real-time pressure; tasks and labor shown at true length; drama erupts mid-ordinary. Sound: location sound only, no score (or one diegetic song carrying everything). Best for: social drama, precarious lives, youth on the margins, moral pressure-cooker stories. (AI note: the anti-gloss is the hard part — models beautify by default: lock the anti-gloss POSITIVELY in the style anchor — \"overcast available light, ungraded camera-native colour, unflattering fluorescents, skin as it is\" (a repeated \"no cinematic lighting\" ban attracts it, video-prompting ch. 14 third class) — and lint outputs for accidental glamour; long following takes = plan extension chains.) Verify: camera plausibly human-carried, following not leading? zero beautification — light believable as found? location lived-in, undressed? scene runs past its \"point\"? [edit] no score present? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-5630f6c3cb23",
+    "title": "Akira Kurosawa (motion and weather)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Akira Kurosawa (motion and weather)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 114,
+      "endLine": 116,
+      "sha256": "56ab48fa1f7ce1cb6d7d1c1d119601fb55aa346e88f97cd2bd684803df19057c",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Akira Kurosawa (motion and weather)\nFeels like history moving as one body. Composition: telephoto compression stacking crowds and armies into planes, triangular group blocking, frames alive in fore/mid/background at once. Camera: long-lens coverage of uninterrupted action, lateral tracking with runners and riders, static frames traversed by motion. Editing: cut ON movement to hide the cut, axial punch-ins, wipes as chapter turns. Light: hard sun and weather as co-director — rain, wind, dust, fog dramatized to the point of choreography. Color: B&W tonal richness or bold heraldic blocks (banners, costume as battlefield legend). Timing: stillness → eruption; group scenes breathe, battles land in waves. Sound: wind and weather beds, drums, silence before the charge. Best for: ensemble action, war epics, samurai/martial arts, any scene where motion itself is the spectacle. (AI note: weather is prompt-cheap production value AND hides artifacts; telephoto crowd planes tolerate face softness naturally; choreography is written beat-by-beat — who does what in which order and the state each move ends in, never the body mechanics of a move (Division of labour), one main action per shot (SKILL rule 3).) Verify: motion layered in at least two depth planes? weather/element actively moving? telephoto compression — background stacked close? cuts landing ON movement? [edit] group blocking triangular and readable?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-303ba46bd91d",
+    "title": "Sergio Leone (opera of faces)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Sergio Leone (opera of faces)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 117,
+      "endLine": 119,
+      "sha256": "630a6a3bd4e0d52883d89ae3e49a142456a1030d8ee7d18f03e79257bcf87552",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Sergio Leone (opera of faces)\nFeels like myth stretched over minutes. Composition: extreme wides ↔ extreme close-ups (eyes), horizon staging. Camera: slow push-ins to duel framings, crane reveals. Editing: elastic time — long waiting, explosive resolution in seconds. Light: hard sun, dust, deep hat shadows. Color: bleached earth tones. Timing: the wait IS the scene; score and cut in lockstep. Best for: westerns, standoffs, revenge arcs. Verify: extreme wide ↔ eye-level extreme close-up alternation? [edit] hard sun, deep hat/face shadows? bleached earth palette? the wait held long before the burst? horizon staged as a line?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-8946db934613",
+    "title": "Vince Gilligan (procedural corrosion)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Vince Gilligan (procedural corrosion)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 120,
+      "endLine": 122,
+      "sha256": "16a0a49c5335e7173e9d1d74494a1d0a521d409dbf79b846881aef98f9722754",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Vince Gilligan (procedural corrosion)\nFeels like watching consequence assemble itself, one careful step at a time. Composition: neo-western wides (tiny figures against desert and sky), foreground-object dominance, the signature object-POV (camera inside/under the thing — barrel, safe, shovel, dryer); symmetry when institutions appear. Camera: locked wide masters held long, slow creeping push-ins, God's-eye overheads, time-lapse skies as chapter punctuation. Editing: cryptic cold opens (flash-forward fragments), wordless process montages cut to ironic needle-drops (the HOW is the scene), patient takes broken by sudden violence. Light: hard high-desert sun with deep face shadows, sodium-and-fluorescent interiors, silhouettes in doorways against blown exteriors; chiaroscuro deepens as the moral rot does. Color: character-coded wardrobe as arc state (the palette IS the character sheet), desert ochre against sky cyan, sickly institutional greens. Timing: slow-burn procedure — suspense from watching competence, dread from knowing the cost; long silence, short eruption. Sound: desert wind, amplified diegetic detail (clicks, hums, tools), needle-drops at ironic distance. Best for: slow-burn crime, transformation/corrosion arcs, procedure-as-suspense, neo-western Americana. (AI note: unusually AI-friendly — object-POVs are prompt-cheap distinctiveness with zero continuity cost, and wordless process montages fit generation limits perfectly: short independent clips, no lip-sync; but color-coded wardrobe demands the continuity ledger.) Verify: one object-POV or God's-eye per sequence? figures small against desert/sky wides? process steps wordless, each step readable? wardrobe color matching the character's arc state? hard sun shadows or sickly practicals — never neutral studio light?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-676ca871d8c4",
+    "title": "Wong Kar-wai (romantic blur)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Wong Kar-wai (romantic blur)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 123,
+      "endLine": 125,
+      "sha256": "b93bb778e41da0efa131e5c52f532e271f26d34be437ef4f44225956d1d9bcb0",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Wong Kar-wai (romantic blur)\nFeels like memory in a rainy neon city. Composition: frames within frames, mirrors-as-shape, bodies cropped. Camera: handheld intimacy, step-printed smear on motion. Editing: elliptical, repetition as longing, voiceover over time-jumps. Light/Color: → Doyle signature (below). Timing: languid loops, sudden accelerations. Sound: repeated musical motif as memory. Best for: romance, longing, city nocturnes. Verify: frame-within-frame or mirror shape? motion smeared (step-print feel)? neon practicals + wet reflections? red/green/gold saturation? a motif repeating? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-f10255884495",
+    "title": "Céline Sciamma (the exchanged gaze)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Céline Sciamma (the exchanged gaze)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 126,
+      "endLine": 128,
+      "sha256": "e87264d6bc140e73a644717789a77a01f34aac6229cee172661b68a049e67afc",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Céline Sciamma (the exchanged gaze)\nFeels like desire studied until it becomes mutual. Composition: painterly static frames — figures composed like canvases, faces given the time and centrality of landscapes; two people sharing frames as equals; interiors and nature pared to essentials. Camera: calm, frontal, unhurried; movement rare and meaningful (a turn, an approach); we look WITH, never AT. Editing: long takes; patient shot/reverse of gazes held past comfort into intimacy; ellipsis over exposition. Light: → Mathon signature (below). Color: restrained earth-and-sea palettes, one burning accent (a dress, a fire). Timing: slow reciprocity — every look answered; silence carries the negotiation. Sound: diegetic only, until music becomes an EVENT (never wallpaper — when it comes, it means). Best for: love stories, desire and consent arcs, period intimacy, quiet emancipation. (AI note: extremely still-friendly — static painterly frames are the stills-first pipeline's home turf; gaze shot/reverse needs the 180° lock and matched eyelines; music-as-event aligns with the no-generated-music doctrine.) Verify: frame would hold as a painting? gaze exchanged — both sides shot with equal weight? light honest from candle/window/dusk only? one accent color max? music absent until it's an event? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-9a24973591ec",
+    "title": "Christopher Nolan (engineered time)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Christopher Nolan (engineered time)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 129,
+      "endLine": 131,
+      "sha256": "840c74bf9747f0e3dbf815ab45f8472ec5a4e325e689ce77ff121ed575970afa",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Christopher Nolan (engineered time)\nFeels like a mechanism assembling. Composition: IMAX-scale clean wides, functional close-ups. Camera: mounted realism, aerial majesty, minimal ornament. Editing: cross-cut timelines converging (the structure IS the suspense), hard sound-bridge transitions. Light: naturalistic, cool. Color: steel blue/gray with warm human pockets. Timing: interleaved accelerando across parallel lines. Best for: heists, time mechanics, large-canvas thrillers. Verify: wides clean and monumental, no ornament moves? light naturalistic and cool? steel blue/gray with warm pockets only where humans are? each cross-cut line legible on its own? [edit] sound bridging the cuts? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-2b3767511666",
+    "title": "Wachowskis / Bill Pope (digital baroque)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Wachowskis / Bill Pope (digital baroque)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 132,
+      "endLine": 134,
+      "sha256": "84374267a90ff9314a7003dc3391f0fd0d0b9568f6d3f2755eb52977b04dfebd",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Wachowskis / Bill Pope (digital baroque)\nFeels like reality is a rendering you can bend. Composition: comic-panel decisiveness — poses as icons, low heroic angles, symmetrical confrontations, trench-coat silhouettes in sterile architecture. Camera: time-slice/bullet-time as signature (ultra-slowed moment orbited by the camera), wire-fu verticality, aggressive rack focus. Editing: action cut for choreography legibility (the Hong Kong debt); philosophical dialogue in formal shot/reverse. Light: green-tinted fluorescence for the constructed world vs. warmer truth — world-coding as dramaturgy; hard specular surfaces, rain and glass. Color: the green digital veil, black leather and chrome, desaturated real world. Timing: monumental pause before eruption; the held superhuman moment. Sound: impacts as sub-bass events, silence inside the frozen moment. Best for: cyberpunk, simulated realities, techno-noir action, transcendence arcs. (AI note: time-slice/speed-ramp is a documented model strength (ch. 14: keep the term, write the visible change and its parameters — each value a look control listed in `Crew choices`); world-color-coding is a cheap dramaturgical win; wire-fu: choreography is written beat-by-beat — who does what in which order and the state each move ends in, never the body mechanics of a move (Division of labour), one main action per shot (SKILL rule 3) — plus hero-physics linting.) Verify: worlds color-coded and consistently held? max ONE time-slice moment per sequence, orbit readable? poses iconic — frame works as a comic panel? architecture sterile and specular? choreography legible through the cut? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-002a53f1337c",
+    "title": "Hayao Miyazaki / Ghibli (animated humanism)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Hayao Miyazaki / Ghibli (animated humanism)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 135,
+      "endLine": 137,
+      "sha256": "376dcc8903b04b9f03ed1a118c2008d36274a31ac70d00700a57fe2de9dd10dd",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Hayao Miyazaki / Ghibli (animated humanism)\nFeels like wind you can trust. Composition: layered nature depth, characters small in living landscapes. Camera: calm pans, few cuts inside beats. Editing: \"ma\" — deliberate empty beats (riding, resting, weather) between plot beats; they ARE the film's breathing. Light: soft daylight, golden interiors. Color: watercolor greens/blues/creams (style-control §6 vocabulary). Timing: unhurried; action bursts read harder against calm. Best for: family, nature, quiet wonder. Verify: layered nature depth — fore/mid/background all alive? characters small in a living landscape? watercolor greens/blues/creams? \"ma\" beats present between plot beats? [edit] pans calm? no restless cutting? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-a25310443715",
+    "title": "Pixar house style (→ pixar-look.md)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Pixar house style (→ pixar-look.md)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 138,
+      "endLine": 140,
+      "sha256": "e186de51583ba6f1083ed11168c5b66daee443ce48426e157f0e0daa8c393199",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Pixar house style (→ pixar-look.md)\nCovered as its own sourced look bible: pixar-look.md (believability-not-realism, simplexity, saturation dramaturgy, Calahan light, curated lens imperfection).\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-3dfb4e2f19e1",
+          "pixar-look-4e12a0564475",
+          "pixar-look-70fc2dc072af",
+          "pixar-look-61bf03e96e25",
+          "pixar-look-d866f797cf8b",
+          "pixar-look-8d77a7371d87",
+          "pixar-look-dbab5966991e",
+          "pixar-look-b200d5eaccc4",
+          "pixar-look-14f8ed06620b",
+          "pixar-look-96f0389f0642",
+          "pixar-look-8df617736836",
+          "pixar-look-7fe4492e5b13",
+          "pixar-look-8a6443c51889",
+          "pixar-look-aa1deace90d1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-af0e1404a8a1",
+    "title": "Quentin Tarantino (pulp tension)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Quentin Tarantino (pulp tension)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 141,
+      "endLine": 143,
+      "sha256": "04f66be2b2eec23876ec55df2b901e2569a4d82fce3c07558444b462f7856cd0",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Quentin Tarantino (pulp tension)\nFeels like a conversation that might kill you. Composition: low \"trunk shot\" angles, table geographies, foot-level inserts. Camera: slow creeping push-ins during dialogue, sudden crash zooms. Editing: chapters, long dialogue takes, violence in abrupt spurts; needle-drop cuts. Light: warm practicals, 70s glow. Color: saturated pulp warmth. Timing: extreme delay before release (the Leone debt). Best for: crime, dialogue-driven tension, genre homage. Verify: low trunk-shot angle or table geography present? slow push-in during dialogue? warm 70s practical glow? violence abrupt and SHORT against long talk? [edit] chapter/needle-drop structure felt? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-8cc9f625a1d0",
+    "title": "Martin Scorsese (guilty momentum)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Martin Scorsese (guilty momentum)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 144,
+      "endLine": 146,
+      "sha256": "24442cfd2dcb4537b698af395bf5e5a588a21fe14547d3be1798a28c8ba7a5cc",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Martin Scorsese (guilty momentum)\nFeels like being seduced by what will destroy you. Composition: subject pinned in a world too alive — busy frames, mirrors, neon interiors; the slow push-in on a face deciding. Camera: propulsive tracking oners through kitchens and clubs (the camera as insider), whip pans, crash zooms, God's-eye tableaus of aftermath. Editing: VO-driven momentum — freeze-frames, jump cuts, needle-drop hard cuts; pace as moral intoxication, then the long deflating comedown. Light: saturated practicals (bar red, club neon); violence erupts in ordinary flat light. Color: hot reds and ambers against urban grime. Timing: rush → stumble — sequences accelerate on the way up and hollow out on the way down; violence sudden, matter-of-fact, over. Sound: wall-to-wall needle-drops at ironic distance, VO confiding directly. Best for: rise-and-fall arcs, crime seduction, faith-and-guilt stories, unreliable charm. (AI note: the VO-plus-montage spine is generation-friendly — short clips stitched by narration, no lip-sync; the tracking-oner showpiece is the ONE expensive shot: plan it via the blockout path.) Verify: VO or music driving the cut rhythm? [edit] camera moving WITH the world's energy, not observing it? saturated practicals (red/amber) in frame? violence brief and unglamorous in ordinary light? one freeze/jump-cut device present? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-428ef9659e1e",
+    "title": "Alfred Hitchcock (pure suspense grammar)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Alfred Hitchcock (pure suspense grammar)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 147,
+      "endLine": 149,
+      "sha256": "88f2561e451a6ff29bcf8624b0fdef749e64ec67c013433571fb404654c307cb",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Alfred Hitchcock (pure suspense grammar)\nFeels like knowing too much. Composition: POV triads (look → seen → reaction), significant objects enlarged. Camera: dolly-in on realization, the vertigo shot for inner vertigo, god's-eye at moral distance. Editing: cross-cut bomb-under-the-table, cutaways that withhold. Light: hard noir keys on faces. Color: restrained with symbolic accents. Timing: audience ahead of character, always. Best for: thrillers, paranoia, one-location tension. Verify: look → seen → reaction triad complete? [edit] the significant object enlarged? dolly-in landing exactly on the realization? audience ahead of the character? [edit] hard key modelling the face?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-456a7fc8952f",
+    "title": "Wim Wenders (the seeing road)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Wim Wenders (the seeing road)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 150,
+      "endLine": 152,
+      "sha256": "2d22584b7b5e21c83462688e1853f9568e808343e04d66e93df1c2739db43560",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Wim Wenders (the seeing road)\nFeels like travelling with someone who notices everything and hurries nothing. Composition: landscape as co-protagonist — figures small against horizons, signage, gas stations; frames that hold after people leave them. Camera: patient observational pans and drives (through-the-windshield as worldview), lateral tracking past facades. Editing: unhurried, cuts follow attention not plot; scenes allowed to breathe past their \"point\". Light/Color: → Müller signature (below). Timing: journey rhythm — arrival, looking, moving on; dialogue sparse, listening long. Sound: diegetic radio/jukebox, slide-guitar loneliness. Best for: road movies, urban wandering, quiet redemption stories, documentary-fiction hybrids. Verify: landscape/signage co-starring — frame holds after people leave? light reads available, never studio? Americana saturation or luminous B&W held consistently? lateral tracking or windshield POV present? pacing follows attention, not plot? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-50f79001d21a",
+    "title": "Andrei Tarkovsky (sculpting in time)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Andrei Tarkovsky (sculpting in time)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 153,
+      "endLine": 155,
+      "sha256": "a324f9f0081510708c8e8eb5e431961f20250b41a1ac30216a733f169d1f6bc8",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Andrei Tarkovsky (sculpting in time)\nFeels like a dream remembering you. Composition: painterly depth, ruins and nature interpenetrating, figures dwarfed by rooms and weather. Camera: very slow drifting takes that reframe meaning within one shot; imperceptible push-ins over minutes. Editing: minimal — the take IS the edit; time pressure inside the shot, not between shots. Light: natural gloom, windows as altars, candle/fire as fragile life. Color: desaturated earth and sepia, shifts to B&W or color as memory states. Elements as recurring matter: water dripping and pooling, wind through grass, fire, milk, mirrors-as-idea. Timing: duration as spiritual instrument — hold until discomfort becomes contemplation. Best for: memory, faith, grief, poetic sci-fi. (AI note: demands long coherent takes — plan extension chains and accept a high reroll budget.) Verify: take long with INTERNAL reframing — meaning shifts inside the shot? an element present (water/wind/fire/mirror)? natural gloom, window as altar? desaturated earth/sepia? push-in imperceptible?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-bd1f67d718c9",
+    "title": "Yasujirō Ozu (domestic stillness)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Yasujirō Ozu (domestic stillness)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 156,
+      "endLine": 158,
+      "sha256": "401235d2fc0ba970176f559218bd1ee029f4b228dfbd38afbe099852756dd3c2",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Yasujirō Ozu (domestic stillness)\nFeels like sitting with a family as seasons change. Composition: tatami-height camera (lens level with a seated adult's eyes), frontal symmetrical interiors, corridors and doorframes as frames, \"pillow shots\" — cutaways to objects/townscapes as breathing pauses. Camera: locked off, almost never moves; characters address nearly into the lens. Editing: 360°-space cutting in the EDIT (the cut order deliberately ignores the 180° rule — matched frontal singles assembled from any side), rhythmic regularity. Light: even, shadowless domestic daylight. Color: restrained interiors with one recurring red accent. Timing: ellipsis of the dramatic (deaths, weddings happen off-screen), attention on before and after. Best for: family drama, generational change, quiet heartbreak. (AI note: the frontal-singles system conveniently sidesteps reverse-angle continuity problems — but only edit-side: generate each frontal single as its OWN take (one locked camera, one character, eyeline near-lens), and state the eyeline side (left or right of lens) in each single — the one axis fact a one-character locked take needs for the NLE pairing (production-pipeline ch. 7). Never put two singles from opposite sides of the axis into one multishot generation — the 360° assembly happens in the NLE, not inside a take.) Verify: camera at seated eye level, frontal? zero camera movement? dialogue in matched frontal singles, eyeline near-lens? pillow shots between scenes? [edit] the one red accent recurring?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-57462f67e311",
+    "title": "Ingmar Bergman (the face as landscape)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Ingmar Bergman (the face as landscape)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 159,
+      "endLine": 161,
+      "sha256": "35b58b073d3de75303d0a641029886c91ecaf6d5538d4a4cc41d4910b86288f5",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Ingmar Bergman (the face as landscape)\nFeels like being unable to look away from a soul. Composition: faces huge and centered, two faces overlapping in one frame (profile + frontal), stark figure-against-void. Camera: slow creep toward faces, long static holds on monologue. Editing: sparse; scenes as confessions played whole. Light: → Nykvist signature (below) + hard summer-island sun for exteriors. Color: austere — chalk, black, blood red as eruption; or graphic B&W. Timing: silence between lines heavier than lines; dream inserts without warning. Best for: chamber drama, crisis of faith, marriages, illness. (AI note: lives on close-up performance — spend the reroll budget here.) Verify: face huge, centered, fully modelled? two-face overlap composition used somewhere? window-soft key against blackness? chalk/black austerity, red only as eruption? silence held between lines?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-93d4cea60da6",
+    "title": "Terrence Malick (whispered creation)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "Terrence Malick (whispered creation)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 162,
+      "endLine": 164,
+      "sha256": "dcbb6fb1d5cda66820419f65b41e7bd83083acccb4dbdd1514a8fa82f84f43f1",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Terrence Malick (whispered creation)\nFeels like memory praying. Composition: low sun through grass and hands, figures wading through nature, horizon-worship. Camera: wandering steadicam that circles and brushes past people, wide lenses close to skin, always moving gently. Editing: elliptical mosaic — moments not scenes, cut on emotional association; whispered voiceover stitches time. Light: → Lubezki signature (below). Color: golden wheat, deep green, sky pastel. Timing: drift; narrative dissolved into remembered fragments. Best for: memory pieces, nature-spiritual arcs, love and loss montage. (AI note: montage-of-moments structure fits generation limits unusually well — no long continuity chains.) Verify: magic-hour backlight, sun low and in or brushing frame? camera drifting/circling, never locked? cuts on emotional association, not scene logic? [edit] golden/green/pastel naturalism? whispered VO stitching the fragments? [edit]\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-63470032fe7c",
+    "title": "David Lynch (dream logic)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "David Lynch (dream logic)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 165,
+      "endLine": 167,
+      "sha256": "ea6b488fcb845cc00edd66c6cfe0c4fd026ae10869cc424b4a8bb95429bc0863",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### David Lynch (dream logic)\nFeels like the familiar turned inside out. Composition: ordinary Americana framed a beat too long and too centered; curtains, corridors, stages. Camera: slow floating dollies into darkness, sudden static wrongness. Editing: scene logic obeys dream association, not causality; inserts of objects charged with menace. Light: pools of light in black voids, flickering practicals, red lamps. Color: saturated red/blue against wood-panel browns. Timing: scenes held past comfort; sound arrives before its source. Sound: room-tone drones, industrial hum, sudden silence — the true horror instrument. Best for: surreal thriller, uncanny small towns, subconscious narratives. (AI note: dream logic legitimizes discontinuity — model inconsistencies can read as intention; still lock the recurring faces.) Verify: ordinary subject framed too centered, held too long? light pooling in black voids? red/blue saturation against browns? sound arriving before its source? [edit] recurring faces still locked despite the dream logic?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-dc0ed43a456e",
+    "title": "UGC/found-footage (authorless camera)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Director recipes (structure packages)",
+      "UGC/found-footage (authorless camera)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 168,
+      "endLine": 171,
+      "sha256": "b87b3d625854c489b417e69d5564d48ac248f3ed76c2201e54b244009c8d7d0b",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### UGC/found-footage (authorless camera)\nFeels like it really happened. The anti-recipe: composition accidental, camera device-logic (phone/bodycam/CCTV — one device per sequence, style-control §6b four-tell rule), editing in-camera cuts or none, light available-only, color device-processed, timing unshaped. Best for: horror, virality, testimony. (AI note: highest artifact tolerance of all styles.) Verify: ONE device logic held for the whole sequence (§6b four tells)? composition genuinely accidental? no grade beyond device processing? timing unshaped — in-camera cuts or none? nothing \"cinematic\" leaked in (no motivated key light, no smooth dolly)?\n\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-b353bbc6e2ca",
+    "title": "DoP signatures (light/lens packages — combinable with any structure above)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 172,
+      "endLine": 175,
+      "sha256": "c19c5aa6575accd91f862004215eda06a9259eea28e08c4efeb662841cfff9d9",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "## DoP signatures (light/lens packages — combinable with any structure above)\n\nLeaner format: pure image signatures without editing/dramaturgy; mix ONE DoP signature with ONE director recipe (cap: preamble). Deakins lineage is a STRUCTURE recipe (editing and timing included) — chosen as structure it allows no second signature; inside Villeneuve it is the embedded signature.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-1573e0df68ba",
+    "title": "Emmanuel Lubezki (natural light, magic hour)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Emmanuel Lubezki (natural light, magic hour)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 176,
+      "endLine": 178,
+      "sha256": "1e32b3bb22e9ab3fa977c1b68dd1f5aff5a7faef0e99bbdd70649157954416ec",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Emmanuel Lubezki (natural light, magic hour)\nNatural light only, magic hour as religion; ultra-wide lens close enough to distort the face (distorted intimacy); flowing unbroken steadicam oners, camera as a body among bodies; sun flares hitting the lens as grace notes. Grade: naturalistic, luminous. Pairs with: Malick drift, survival epics, spiritual realism. Verify: light plausible as natural-only? wide lens close enough to distort the face? flare motivated by in-frame sun?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-707dad7af71f",
+    "title": "Hoyte van Hoytema (monumental cool naturalism)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Hoyte van Hoytema (monumental cool naturalism)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 179,
+      "endLine": 181,
+      "sha256": "acb0c17447530cc34a1c380c022fcc63f4c7fde280a8b932ddb8700a760123f8",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Hoyte van Hoytema (monumental cool naturalism)\nMonumental cool naturalism; IMAX-scale sharpness with soft-window softness on faces; restrained palette (slate, sand, sea gray); practical-driven interiors, giant single sources; aerial majesty without gloss. Pairs with: Nolan mechanisms, cold-war textures, sober sci-fi. Verify: faces window-soft inside monumental sharpness? palette slate/sand/sea-gray? one giant source per interior?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-7a5845d653e5",
+    "title": "Greig Fraser (texture-first low light)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Greig Fraser (texture-first low light)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 182,
+      "endLine": 184,
+      "sha256": "0e8d6101b5ece6f589d6a0b77b1c68c13546dfc4cc77d19f5fae42d3039382ea",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Greig Fraser (texture-first low light)\nTexture-first low-light digital: skin grain, dust, breath visible; underexposure trusted deep into shadow; silhouettes against atmospheric voids; anamorphic softness with brutal contrast pockets. Grade: monochromatic warmth or bone-dry desaturation. Pairs with: Villeneuve scale, noir superhero, candlelit intrigue. Verify: shadows deep but texture alive (grain/dust/breath)? silhouettes against atmosphere? contrast pockets brutal, rest soft?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-2bddaf771c1c",
+    "title": "Vittorio Storaro (color as ideology)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Vittorio Storaro (color as ideology)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 185,
+      "endLine": 187,
+      "sha256": "f74aefa7008bd98e7639c3a92e6d2f4f2080d48f6cf4dd6862dd60ca95efe388",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Vittorio Storaro (color as ideology)\nColor as ideology: each act OWNS a hue (red passion, blue reason, gold decadence); painterly artificial light unashamed of theatricality; symmetrical torch-and-lantern compositions; moving light DURING the shot as dramaturgy. Pairs with: opera-scale drama, psychedelic war, myth. Verify: the act's OWNED hue dominating? light unashamedly theatrical? light moving DURING a shot somewhere?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-0214ad0dc40c",
+    "title": "Gordon Willis (the prince of darkness)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Gordon Willis (the prince of darkness)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 188,
+      "endLine": 190,
+      "sha256": "4d78cb21401e0382cf1f710f7cf5d28b85fa949d91b3fdc4cf5be1b3a03d3545",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Gordon Willis (the prince of darkness)\nThe prince of darkness: top-light that buries eyes in shadow (moral unreadability); amber-and-black interiors, whole frames underexposed but composed; static formal wides, power geometry. Pairs with: crime dynasties, institutional evil, 70s paranoia. Verify: eyes actually unreadable in shadow? amber-and-black palette? frame underexposed yet shapes still composed?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-31c223032c7b",
+    "title": "Janusz Kamiński (blown backlight through smoke)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Janusz Kamiński (blown backlight through smoke)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 191,
+      "endLine": 193,
+      "sha256": "8bbb230246ff1fc32baaff04343e7d95f8a5f59b4a0a083615ebfd639f23a4fa",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Janusz Kamiński (blown backlight through smoke)\nBlown backlit highlights through smoke/dust; desaturated silver skin (bleach-bypass feel); handheld combat realism OR godlight sentiment — both extremes, nothing between; hard shafts through windows. Pairs with: Spielberg grammar, war memory, testimony. Verify: highlights blown through smoke/dust? skin desaturated silver? either handheld grit OR godlight — never a middle register?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-20d4f2f3a9fa",
+    "title": "Christopher Doyle (handheld color fever)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Christopher Doyle (handheld color fever)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 194,
+      "endLine": 196,
+      "sha256": "90cd442721b05dc0c73d87549e9afd9a2c75ab9ef202f7b370e4eb5377001f51",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Christopher Doyle (handheld color fever)\nHandheld color fever: saturated neon smear, step-printed motion trails; cramped interiors shot through glass, rain, fabric; available fluorescents mixed hot; frames cropped by architecture. Pairs with: Wong Kar-wai longing, urban fever dreams, romantic disorientation. Verify: neon saturation with motion trails? shot through glass/rain/fabric somewhere? fluorescents mixed hot?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-66adee4d4bb0",
+    "title": "Robby Müller (available light trusted completely)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Robby Müller (available light trusted completely)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 197,
+      "endLine": 199,
+      "sha256": "0df7a0c7abe9672107461aea63d428337913fa1dda19d365ee52e2805e8d6b60",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Robby Müller (available light trusted completely)\nAvailable light trusted completely: neon, dusk, fluorescents, motel and gas-station practicals as the ONLY sources; Americana color fields (desert ochre, neon red, sky cyan) or luminous silver-gray B&W as a project-level decision; unforced compositions that let landscape and signage speak; camera moves only when a vehicle moves. Grade: naturalistic saturation without gloss. Pairs with: Wenders road patience, Jarmusch-adjacent minimalism, urban nocturnes. Verify: every source visible/diegetic in the world? color fields clean, no gloss grade? frame calm, nothing decorative?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-091fb074492b",
+    "title": "Sven Nykvist (the face light standard)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Sven Nykvist (the face light standard)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 200,
+      "endLine": 202,
+      "sha256": "38095c5e508bc67358a4471f55c68590516d12dc3eeb9f73523a498760ad252b",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Sven Nykvist (the face light standard)\nThe face light standard: soft window-side modelling, two faces one frame, nothing decorative; Nordic gray exteriors, candle-warm interiors; invisible technique in total service of performance. Pairs with: Bergman chamber work, intimate drama, illness and faith. Verify: face modelled from the window side, soft? nothing decorative in frame? warmth only from candles/interiors?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-e406a07c48a3",
+    "title": "Bradford Young (deep soft darkness)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Bradford Young (deep soft darkness)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 203,
+      "endLine": 205,
+      "sha256": "4edbb010b7262f396d30fdeeafe356ff4d3d7f5c9cc3a5d988a97c0eb3d583d0",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Bradford Young (deep soft darkness)\nDeep soft darkness with protected skin tones; underexposed frames that stay tender, not grim; practical pools in black rooms; haze halos around single sources. Grade: warm dark browns, muted jewel accents. Pairs with: quiet sci-fi, intimate histories, night interiors. Verify: darkness soft and warm, skin tones protected (not muddy)? practical pools in black rooms? haze halos around single sources?\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-6f21caedf70d",
+    "title": "Claire Mathon (dusk and flame)",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "DoP signatures (light/lens packages — combinable with any structure above)",
+      "Claire Mathon (dusk and flame)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 206,
+      "endLine": 209,
+      "sha256": "e259c7bef4a95d4e01df05ab441c23f4b3904f98fb44ad6dfea5d25c627709b4",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "### Claire Mathon (dusk and flame)\nDusk and flame as primary sources: candlelight that actually models, blue-hour sea light, night trusted to real darkness; painterly stillness with digital cleanness (no nostalgic grain); skin luminous across tones; frames lit to hold as portraits. Grade: deep naturalism, velvet blacks, restrained saturation. Pairs with: Sciamma gaze work, period intimacy, sensual realism, night-sea poetry. Verify: source honest (flame/window/dusk) and actually modelling the face? blacks velvet, not crushed? frame holds as a portrait?\n\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "director-recipes-20d7579eed5a",
+    "title": "Harmony map: which packages combine",
+    "ancestry": [
+      "Director Recipes: Combined Style Packages (Appendix)",
+      "Harmony map: which packages combine"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "blueprints",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/director-recipes.md",
+      "startLine": 210,
+      "endLine": 245,
+      "sha256": "f2713b573c629657ea516669a9a2c75c7aa81988d441e6a9a08c5763b5194e12",
+      "localDocument": "handbook/director-recipes.md"
+    },
+    "contentMarkdown": "## Harmony map: which packages combine\n\nReal-world partnerships are the proof that these pairings work — directors keep their DoPs because structure and image philosophy complete each other. Use the documented pairs as safe defaults, the cross-pairings as informed experiments, and respect the clash list.\n\n**Documented partnerships (safe defaults):**\n| Director recipe | DoP signature | Why it harmonizes |\n|---|---|---|\n| Spielberg | Kamiński | Blown godlight + smoke gives the wonder-and-threat grammar its sentiment and its war-memory grit — both extremes in one toolkit |\n| Nolan | Hoytema | Monumental sober naturalism scales to IMAX mechanisms without gloss; cool restraint matches engineered structure |\n| Villeneuve | Deakins → Fraser | Deakins built the monumental-clarity phase; Fraser's texture-first underexposure carries the later dust-and-dread scale — both serve duration-dread |\n| Wong Kar-wai | Doyle | Step-printed neon smear IS the longing; structure and image are inseparable here — adopt them together or not at all |\n| Bergman | Nykvist | The face-as-landscape structure needs the face-light standard; nothing decorative survives the chamber |\n| Allen lineage | Willis | The amber NY period — master-shot talk in underexposed warm rooms; comedy that trusts darkness |\n| Sciamma | Mathon | The gaze structure needs flame-and-dusk honesty; portrait stillness is shared doctrine |\n| Malick | Lubezki | Wandering whisper-montage requires a camera that lives in natural light and moves like breath |\n| Wenders | Müller | Available-light Americana trust — the seeing-road structure needs a camera that treats neon and dusk as sufficient |\n| Gilligan | (Michael Slovis / BCS lineage) | Hard-sun neo-western wides, object-POV wit, and time-lapse punctuation were built WITH the house camera department — the image grammar is part of the recipe; no full second package |\n| Kubrick / Tarantino / Fincher / Scorsese / Ridley Scott / Wright / Wachowskis | (house signatures) | Their image grammar is baked into the director recipe itself — no external DoP package needed; adding one dilutes |\n\n**Recommended cross-pairings (coherent experiments):**\n- Hitchcock structure × Willis light — suspense grammar in moral darkness (paranoia thrillers).\n- Leone timing × Storaro color — operatic waiting with ideological hues (myth, revenge).\n- Boyle kinetics × Doyle fever — double adrenaline for urban delirium; keep ONE counterweight scene or it exhausts.\n- Ozu stillness × Nykvist faces — domestic chamber pieces of great tenderness.\n- Lynch dream logic × Bradford Young darkness — soft uncanny instead of harsh horror.\n- Tarkovsky duration × Fraser texture — modern low-light poetry (grief, faith, slow sci-fi).\n- Greengrass verité × Kamiński combat realism — war/action documentary punch.\n- Kurosawa motion × Kamiński combat realism — weather-blown war epics with blown-highlight grit.\n- Anderson symmetry × Storaro color — heightened storybook theatricality (dose it; two maximalists).\n\n**Clashes (don't combine):**\n- Lubezki natural-light flow × Fincher/Kubrick control — improvised light against surgical structure contradicts both.\n- Storaro theatricality × Greengrass/UGC verité — ideological color dies in found-footage logic.\n- Willis darkness × Miyazaki/Pixar family warmth — buried eyes against readable faces.\n- Doyle smear × Nolan mechanism — motion fever blurs the machine's legibility.\n- Scott atmosphere layering × Dardenne/Arnold anti-gloss — production value against found truth contradicts both.\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]
