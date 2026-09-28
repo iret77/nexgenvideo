@@ -45,7 +45,6 @@ let package = Package(
         // Contents/Frameworks. A same-package target dependency would statically absorb
         // the engine into both binaries and break the cross-bundle PackEntry cast.
         .package(path: "Engine"),
-        .package(url: "https://github.com/dmrschmidt/DSWaveformImage", from: "14.2.2"),
         .package(
             url: "https://github.com/modelcontextprotocol/swift-sdk.git",
             .upToNextMinor(from: "0.12.0")
@@ -72,7 +71,6 @@ let package = Package(
             dependencies: [
                 "HangDiagnostics",
                 "HangStackSampler",
-                .product(name: "DSWaveformImage", package: "DSWaveformImage"),
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Sentry", package: "sentry-cocoa"),
