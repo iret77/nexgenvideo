@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import CryptoKit
 import ImageIO
+import NexGenEngine
 import UniformTypeIdentifiers
 
 @MainActor
@@ -161,8 +162,13 @@ final class MediaVisualCache {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
     }
 
-    private nonisolated static func loadOrGenerateWaveform(url: URL) async -> [Float]? {
-        let cacheKey = diskCacheKey(for: url)
+    nonisolated static func loadOrGenerateWaveform(url: URL, expectedSourceSHA256: String? = nil) async -> [Float]? {
+        if let expectedSourceSHA256,
+           (try? FileDigest.sha256(of: url)) != expectedSourceSHA256 { return nil }
+        let cacheKey = expectedSourceSHA256.map { hash in
+            SHA256.hash(data: Data("analysis-waveform-v1|\(hash)".utf8))
+                .map { String(format: "%02x", $0) }.joined()
+        } ?? diskCacheKey(for: url)
         if let cacheKey, let cached = loadWaveform(key: cacheKey) { return cached }
 
         do {
@@ -179,6 +185,9 @@ final class MediaVisualCache {
             Log.editor.warning("waveform failed file=\(url.lastPathComponent) error=\(Log.detail(error))")
             return nil
         }
+        if let expectedSourceSHA256,
+           (try? FileDigest.sha256(of: url)) != expectedSourceSHA256 { return nil }
+
         if let cacheKey { saveWaveform(samples, key: cacheKey) }
         return samples
     }

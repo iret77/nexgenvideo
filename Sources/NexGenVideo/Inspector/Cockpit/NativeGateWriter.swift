@@ -3,19 +3,38 @@ import NexGenEngine
 
 struct NativeGateApprovalReadiness: Sendable, Equatable {
     let blocker: String?
+    var userMessage: String? = nil
 
     var isReady: Bool { blocker == nil }
 
     static let ready = NativeGateApprovalReadiness(blocker: nil)
 
-    static func blocked(_ reason: String) -> NativeGateApprovalReadiness {
-        NativeGateApprovalReadiness(blocker: reason)
+    static func blocked(_ reason: String, userMessage: String? = nil) -> NativeGateApprovalReadiness {
+        NativeGateApprovalReadiness(blocker: reason, userMessage: userMessage)
     }
 }
 
 struct NativeGateControlReadiness: Sendable, Equatable {
     let mutations: NativeGateApprovalReadiness
     let approval: NativeGateApprovalReadiness
+}
+
+enum NativeGateApprovalStage: Sendable {
+    case phaseAccess, priorApprovals, artifact, productionStyle, treatment, storyboard, frames, render, executionPlan
+
+    var userMessage: String {
+        switch self {
+        case .phaseAccess: "Complete the current phase’s required input before approval."
+        case .priorApprovals: "Approve the preceding phases before continuing."
+        case .artifact: "Complete or update this phase’s artifact, then review it again."
+        case .productionStyle: "Complete the production style record before approval."
+        case .treatment: "Update the treatment’s story relationships before approval."
+        case .storyboard: "Update the storyboard’s story relationships before approval."
+        case .frames: "Review the generated frames against the current production style."
+        case .render: "Review the selected render takes before approval."
+        case .executionPlan: "Update the shot execution plan to match the current Shot List."
+        }
+    }
 }
 
 private struct NativeGateApprovalCheckContext: Sendable {
@@ -316,23 +335,63 @@ enum NativeGateWriter {
 
     nonisolated private static func checkApproval(
         context: NativeGateApprovalCheckContext,
-        gates: Gates
+        gates: Gates,
+        onStage: ((NativeGateApprovalStage) -> Void)? = nil
     ) throws {
+        onStage?(.phaseAccess)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
             context.phase,
             dataRoot: context.dataRoot,
             prepared: context.phaseAccess
         )
+        onStage?(.priorApprovals)
         try GateGuard.requirePriorApproved(
             gates,
             order: context.order,
             phase: context.phase
         )
+        onStage?(.artifact)
         try PipelineGateEvidenceValidator.requireCurrent(
+
             phase: context.phase,
             dataRoot: context.dataRoot,
             requirement: context.requirement
         )
+        if context.phase == "production_design" {
+            onStage?(.productionStyle)
+            _ = try ProductionStyleStoreV1.load(dataRoot: context.dataRoot)
+        }
+        if context.phase == "treatment" {
+            onStage?(.treatment)
+            _ = try StoryCausalityStoreV1.requireCurrent(dataRoot: context.dataRoot)
+        }
+        if context.phase == "storyboard" {
+            onStage?(.storyboard)
+            _ = try StoryboardCausalityV1.requireCurrent(dataRoot: context.dataRoot)
+        }
+        if context.phase == "frames" {
+            onStage?(.frames)
+            try FrameObservationStoreV1.requireProjectStyleFrames(dataRoot: context.dataRoot)
+        }
+        if context.phase == "render" {
+            onStage?(.render)
+            try TakeReview.requireSelected(dataRoot: context.dataRoot, phase: "final")
+        }
+        if context.phase == "shotlist" {
+            onStage?(.executionPlan)
+            try PipelineExecutionPlanWriter.requireCurrent(dataRoot: context.dataRoot)
+            try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+                dataRoot: context.dataRoot
+            )
+            try PipelineLineageStore.requireCurrent(
+                phase: PipelineExecutionPlanWriter.lineagePhaseID,
+                snapshot: try PipelineExecutionPlanWriter.lineageSnapshot(
+                    dataRoot: context.dataRoot
+                ),
+                dataRoot: context.dataRoot
+            )
+        }
+
     }
 
     /// Reset `phase` and every following phase to unapproved. Port of `gates.rewind_to` /
@@ -571,13 +630,26 @@ enum NativeGateWriter {
         context: NativeGateApprovalCheckContext,
         gates: Gates
     ) -> NativeGateApprovalReadiness {
+        var stage = NativeGateApprovalStage.phaseAccess
         do {
             try FileDigest.$readinessCache.withValue(readinessDigests) {
-                try checkApproval(context: context, gates: gates)
+                try checkApproval(context: context, gates: gates, onStage: { stage = $0 })
             }
             return .ready
         } catch {
-            return .blocked(error.localizedDescription)
+            var message = stage.userMessage
+            if case .phaseAccess = stage {
+                let current = context.order.first { !gates.get($0).approved }
+                if current != context.phase {
+                    message = current.map { "Continue with \(PhaseDisplay.label($0)) before approving this phase." }
+                        ?? "All phases are approved. Rewind explicitly before changing an approved artifact."
+                } else if let manifest = context.phaseAccess.manifest,
+                          let step = IntakePlanner.next(manifest.steps(for: context.phase), dataRoot: context.dataRoot,
+                              ledger: IntakeLedger.load(dataRoot: context.dataRoot)) {
+                    message = "Complete the \(step.title) card before continuing."
+                }
+            }
+            return .blocked(error.localizedDescription, userMessage: message)
         }
     }
 

@@ -8,6 +8,7 @@ struct FontPickerField: View {
     let onCancel: () -> Void
 
     @State private var anchorHolder = FontMenuAnchorHolder()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button {
@@ -26,13 +27,13 @@ struct FontPickerField: View {
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.xs)
             .frame(maxWidth: AppTheme.ComponentSize.fontPickerMaxWidth, alignment: .trailing)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
-            )
+            .inspectorControlChrome(focused: isFocused)
         }
         .buttonStyle(.plain)
+        .focused($isFocused)
         .fixedSize()
+        .accessibilityLabel("Font")
+        .accessibilityValue(displayName)
         .background(FontMenuAnchorView(holder: anchorHolder))
     }
 

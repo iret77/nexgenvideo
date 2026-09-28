@@ -3,6 +3,12 @@ import SwiftUI
 
 enum AppTheme {
 
+    enum Acceptance {
+        static let inspectorViewport = CGSize(width: 440, height: 650)
+        static let musicvideoViewport = CGSize(width: 1380, height: 950)
+        static let pipelineOverviewWidth: CGFloat = 540
+    }
+
     // MARK: - Backgrounds
 
     enum Background {
@@ -345,8 +351,8 @@ enum AppTheme {
         static let toolImageViewerZoomStep: CGFloat = 1.25
         static let toolImageViewerGestureIdentity: CGFloat = 1
         static let agentChoiceChipMaxWidth: CGFloat = 320
-        static let projectCardWidth: CGFloat = 150
-        static let projectCardHeight: CGFloat = 120
+        static let projectCardWidth: CGFloat = 225
+        static let projectCardHeight: CGFloat = 180
         static let homeNoticeHorizontalMinWidth: CGFloat = 500
         static let homeNoticeMinHeight: CGFloat = 70
         static let updateOverlayWidth: CGFloat = 640
@@ -379,6 +385,7 @@ enum AppTheme {
         static let cockpitLabelWidth: CGFloat = 76
         static let cockpitMessageMaxWidth: CGFloat = 320
         static let packSurfaceRowHeight: CGFloat = 68
+        static let analysisTimelineViewportHeight: CGFloat = 320
         // Badge masters are 728×193 (~3.77) — a wide header band. 224pt keeps them ≤ native @2x.
         static let pluginBadgeWidth: CGFloat = 224
         static let pluginBadgeAspect: CGFloat = 728.0 / 193.0
@@ -394,6 +401,10 @@ enum AppTheme {
         static let reviewSourceLabelWidth: CGFloat = 110
         static let reviewRemixPopoverWidth: CGFloat = 340
         static let inspectorPopoverWidth: CGFloat = 340
+        static let inspectorLabelWidth: CGFloat = 104
+        static let inspectorInlineMinWidth: CGFloat = 220
+        static let inspectorActionInlineMinWidth: CGFloat = 300
+        static let inspectorSliderMinWidth: CGFloat = 44
         static let fontPickerMaxWidth: CGFloat = 160
         static let generationReferenceWidth: CGFloat = 72
         static let generationReferenceHeight: CGFloat = 41
@@ -403,6 +414,7 @@ enum AppTheme {
         static let searchThumbnailWidth: CGFloat = 80
         static let searchThumbnailHeight: CGFloat = 45
         static let previewToolbarHeight: CGFloat = 36
+        static let previewCompactToolbarHeight: CGFloat = 60
         static let previewErrorMaxWidth: CGFloat = 520
         static let previewErrorMaxHeight: CGFloat = 240
         static let previewScrubberHeight: CGFloat = 12
@@ -436,11 +448,14 @@ enum AppTheme {
     }
 
     enum Layout {
+        static let mediaFolderTreeMin: CGFloat = 180
+        static let mediaFolderTreeDefault: CGFloat = 220
         static let safeDimensionCeiling: CGFloat = 10_000
         static let mediaPanelDefault: CGFloat = 500
         static let mediaPanelMin: CGFloat = 280
         static let inspectorDefault: CGFloat = 260
         static let inspectorMin: CGFloat = 150
+        static let inspectorMinHeight: CGFloat = 120
         static let agentPanelMin: CGFloat = 240
         static let agentPanelMax: CGFloat = 640
         static let chatColumnMax: CGFloat = 640
@@ -449,6 +464,8 @@ enum AppTheme {
         static let toolbarHeight: CGFloat = 38
         static let titleBarChromeHeight: CGFloat = 36
         static let trafficLightInset: CGFloat = 70
+        static let titleBarProjectNameMaxWidth: CGFloat = 180
+        static let titleBarFormatStatusMaxWidth: CGFloat = 150
         static let panelGap: CGFloat = 5
         static let timelineMinHeight: CGFloat = 100
         static let timelineMaxHeight: CGFloat = 700
@@ -456,6 +473,7 @@ enum AppTheme {
         static let produceTimelineStripDefault: CGFloat = 280
         static let producePreviewMinHeight: CGFloat = 180
         static let producePreviewDefaultWidth: CGFloat = 360
+        static let produceRightColumnMinWidth: CGFloat = 280
         static let trackHeight: CGFloat = 50
         static let rulerHeight: CGFloat = 24
         static let trackHeaderWidth: CGFloat = 100
@@ -496,6 +514,8 @@ enum AppTheme {
         static let keyframeStripHeight: CGFloat = 14
         static let keyframeHeaderHeight: CGFloat = keyframeRulerHeight + keyframeStripHeight
         static let keyframeRowHeight: CGFloat = 22
+        static let keyframeLaneLabelWidth: CGFloat = 72
+        static let keyframeLaneMinimumTrackWidth: CGFloat = 96
         static let keyframeStampButtonWidth: CGFloat = 22
         static let keyframeNavigationButtonWidth: CGFloat = 6
         static let keyframeControlsColumnWidth: CGFloat =
@@ -570,6 +590,10 @@ enum AppTheme {
     }
 
     enum MediaPanel {
+        static let thumbnailSmall: Double = 80
+        static let thumbnailMedium: Double = 110
+        static let thumbnailLarge: Double = 150
+        static let thumbnailXlarge: Double = 200
         static let contextRowHeight: CGFloat = IconSize.md
     }
 

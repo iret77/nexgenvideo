@@ -91,6 +91,9 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                 for try await event in stream {
                     try Task.checkCancellation()
                     switch event {
+                    case .thinkingComplete(let block):
+                        assistantContent.append(.thinking(block))
+                        relay.yield(.thinking(messageID: nil, block: block))
                     case .textDelta(let value):
                         if case .text(let existing)? = assistantContent.last {
                             assistantContent[assistantContent.count - 1] = .text(existing + value)
@@ -213,6 +216,8 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
 
     private static func anthropicContent(_ content: AgentRuntimeContent) -> [String: Any] {
         switch content {
+        case .thinking(let block):
+            block.json
         case .text(let value):
             ["type": "text", "text": value]
         case .image(let image):

@@ -1,0 +1,2184 @@
+import AppKit
+import AVFoundation
+import NexGenEngine
+import SwiftUI
+
+@MainActor
+enum WorkspaceUIAcceptance {
+    private static var editorSizeProbes: [[String: String]] = []
+
+    static var isRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_ACCEPTANCE"] == "1"
+    }
+
+    private static var inspectorRequested: Bool {
+        ProcessInfo.processInfo.environment["NGV_INSPECTOR_UI_ACCEPTANCE"] == "1"
+    }
+
+    static func runIfRequested() {
+        guard isRequested else { return }
+        guard let evidencePath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_EVIDENCE"],
+              let requestedScale = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_SCALE"],
+              let scale = Double(requestedScale),
+              AppTheme.Typography.validatedScale(scale) == scale else {
+            fail("invalid acceptance configuration")
+        }
+
+        editorSizeProbes = []
+        resetWorkspaceDefaults(scale: scale)
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        let menu = NSMenu()
+        let applicationItem = NSMenuItem()
+        applicationItem.submenu = NSMenu(title: "NexGenVideo")
+        menu.addItem(applicationItem)
+        menu.addItem(MainMenuBuilder.editMenu())
+        app.mainMenu = menu
+        BundledFonts.register()
+        let evidenceURL = URL(fileURLWithPath: evidencePath, isDirectory: true)
+        emit("started", scale: scale)
+        Task { @MainActor in
+            let scenario = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace"
+            if scenario != "workspace" {
+                switch scenario {
+                case "cards": await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
+                case "analysis": await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
+                case "provenance": await captureAssetProvenance(evidenceURL: evidenceURL, scale: scale)
+                case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
+                default: fail("unknown native acceptance case", scale: scale)
+                }
+                emit("completed", scale: scale, fields: ["case": scenario])
+                exit(0)
+            }
+            let document: VideoProject
+            let window: NSWindow
+            let host: NSView
+            let projectURL: URL
+            let originalProject: [String: Data]
+            do {
+                projectURL = try makeProjectFixture(scale: scale)
+                originalProject = try projectSnapshot(at: projectURL)
+                document = try await VideoProject.load(from: projectURL)
+                document.makeWindowControllers()
+                guard let projectWindow = document.windowControllers
+                    .compactMap({ $0 as? EditorWindowController })
+                    .first?.window,
+                      let contentView = projectWindow.contentView else {
+                    fail("the project did not create its production window", scale: scale)
+                }
+                window = projectWindow
+                host = contentView
+                document.showWindows()
+            } catch {
+                fail("could not open the project fixture: \(error.localizedDescription)", scale: scale)
+            }
+            let editor = document.editorViewModel
+            emit(
+                "window-initial",
+                scale: scale,
+                fields: ["window": windowDiagnostics(window, contentView: host)]
+            )
+            window.setContentSize(NSSize(width: 1470, height: 950))
+            if scale == 1.5 {
+                window.appearance = NSAppearance(named: .accessibilityHighContrastDarkAqua)
+            }
+            window.makeKeyAndOrderFront(nil)
+            app.activate(ignoringOtherApps: true)
+            editor.setWorkspaceFocus(.media)
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return abs(host.bounds.width - 1470) <= AppTheme.BorderWidth.thin
+                    && editor.workspaceFocus == .media
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .media)
+                    && defaultPanelWidthsAreValid(workspace: .media, frames: frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+            }) else {
+                fail("could not prepare large media layout", scale: scale)
+            }
+            let preparedMediaFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard visiblePanelFrames(in: host) == preparedMediaFrames else {
+                fail("large media layout did not settle", scale: scale)
+            }
+            resetSplitAutosaveDefaults()
+            editor.setWorkspaceFocus(.production)
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return editor.workspaceFocus == .production
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                    && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+                    && agentControlsAreContained(in: window)
+            }) else {
+                fail("could not prepare large production layout", scale: scale)
+            }
+            let preparedProductionFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard visiblePanelFrames(in: host) == preparedProductionFrames else {
+                fail("large production layout did not settle", scale: scale)
+            }
+            emit(
+                "window-ready",
+                scale: scale,
+                fields: [
+                    "window": windowDiagnostics(window, contentView: host),
+                    "viewChain": editorViewChainDiagnostics(in: host),
+                    "sizeProbes": editorSizeProbes,
+                ]
+            )
+            guard let workingRoot = editor.workingRoot,
+                  let originalWorkingCopy = try? treeSnapshot(at: workingRoot) else {
+                fail("the project working copy was unavailable", scale: scale)
+            }
+            let originalTimeline = editor.timeline
+            let originalManifest = editor.mediaManifest
+            let originalGenerationLog = editor.generationLog
+            let originalPipelineState = editor.projectState
+            let originalDocumentEdited = document.isDocumentEdited
+            let originalCanUndo = document.undoManager?.canUndo ?? false
+            let originalUndoName = document.undoManager?.undoActionName ?? ""
+            var initialEditFrames: [String: NSRect]?
+            for workspace in EditorViewModel.WorkspaceFocus.allCases {
+                let identifier = "editor.workspace.\(workspace.rawValue)"
+                guard click(identifier: identifier, in: window) == nil else {
+                    fail("could not click \(identifier)", scale: scale)
+                }
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    let frames = visiblePanelFrames(in: host)
+                    return editor.workspaceFocus == workspace
+                        && probeState(identifier: identifier, in: window) == true
+                        && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
+                        && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
+                        && previewTimecodeIsSingleLine(in: window, scale: scale)
+                        && (workspace != .production || agentControlsAreContained(in: window))
+                }) else {
+                    let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
+                    _ = snapshot(
+                        host,
+                        at: evidenceURL.appendingPathComponent("\(diagnosticName).png")
+                    )
+                    emit(
+                        "layout-diagnostic",
+                        scale: scale,
+                        fields: [
+                            "workspace": workspace.rawValue,
+                            "screenshot": "\(diagnosticName).png",
+                            "panels": panelDiagnostics(in: host),
+                            "splits": splitDiagnostics(in: host),
+                            "window": windowDiagnostics(window, contentView: host),
+                            "viewChain": editorViewChainDiagnostics(in: host),
+                            "geometry": geometryDiagnostics(in: host),
+                            "sizeProbes": editorSizeProbes,
+                        ]
+                    )
+                    fail(
+                        "workspace did not settle \(workspace.rawValue); focus="
+                            + "\(editor.workspaceFocus.rawValue), panels="
+                            + "\(visiblePanelIDs(in: host).sorted()), sidebar="
+                            + "\(editor.isSidebarPresented), inspector="
+                            + "\(editor.isInspectorPresented)",
+                        scale: scale
+                    )
+                }
+                guard let renderedFrames = await stablePanelFrames(in: host),
+                      editor.workspaceFocus == workspace,
+                      probeState(identifier: identifier, in: window) == true,
+                      visiblePanelIDs(in: host) == expectedPanels(for: workspace),
+                      visiblePanelFrames(in: host) == renderedFrames,
+                      defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
+                      previewTimecodeIsSingleLine(in: window, scale: scale),
+                      workspace != .production || agentControlsAreContained(in: window) else {
+                    fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
+                }
+                let visiblePanels = visiblePanelIDs(in: host)
+                if workspace == .edit { initialEditFrames = renderedFrames }
+                let name = "scale-\(scaleLabel(scale))-\(workspace.rawValue)"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent("\(name).png")) else {
+                    fail("could not capture \(name)", scale: scale)
+                }
+                emit(
+                    "workspace",
+                    scale: scale,
+                    fields: [
+                        "workspace": workspace.rawValue,
+                        "screenshot": "\(name).png",
+                        "panels": visiblePanels.sorted(),
+                        "frames": renderedFrames.mapValues { frameDescription($0) },
+                    ]
+                )
+            }
+
+            await captureMediaLibraryCase(
+                editor: editor, window: window, host: host, evidenceURL: evidenceURL, scale: scale
+            )
+
+            guard click(identifier: "editor.workspace.edit", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.workspaceFocus == .edit
+                          && probeState(identifier: "editor.workspace.edit", in: window) == true
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+                  }) else {
+                fail("could not return to edit", scale: scale)
+            }
+            guard let initialEditFrames,
+                  await stablePanelFrames(in: host, matching: initialEditFrames) != nil,
+                  probeState(identifier: "editor.workspace.edit", in: window) == true,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .edit) else {
+                let name = "scale-\(scaleLabel(scale))-edit-return-failed.png"
+                _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+                emit("layout-diagnostic", scale: scale, fields: [
+                    "expectedFrames": initialEditFrames?.mapValues { frameDescription($0) } ?? [:],
+                    "actualFrames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                    "splits": splitDiagnostics(in: host), "screenshot": name,
+                ])
+                fail("edit workspace did not settle before panel controls", scale: scale)
+            }
+            if inspectorRequested {
+                await captureInspectorCases(
+                    editor: editor,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    scale: scale
+                )
+            }
+            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return !editor.isSidebarPresented
+                          && editor.isInspectorPresented
+                          && visiblePanelIDs(in: host)
+                              == ["previewPanel", "inspectorPanel", "timelinePanel"]
+                  }) else {
+                fail(
+                    "sidebar click did not hide the panel; sidebar="
+                        + "\(editor.isSidebarPresented), inspector=\(editor.isInspectorPresented), "
+                        + "probe=\(String(describing: probeState(identifier: "editor.panel.sidebar", in: window))), "
+                        + "panels=\(visiblePanelIDs(in: host).sorted())",
+                    scale: scale
+                )
+            }
+            guard click(identifier: "editor.panel.inspector", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return !editor.isSidebarPresented
+                          && !editor.isInspectorPresented
+                          && visiblePanelIDs(in: host) == ["previewPanel", "timelinePanel"]
+                  }) else {
+                fail("inspector click did not hide the panel", scale: scale)
+            }
+            let collapsedFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            let collapsedName = "scale-\(scaleLabel(scale))-edit-panels-hidden"
+            guard probeState(identifier: "editor.panel.sidebar", in: window) == false,
+                  probeState(identifier: "editor.panel.inspector", in: window) == false,
+                  visiblePanelIDs(in: host) == ["previewPanel", "timelinePanel"],
+                  visiblePanelFrames(in: host) == collapsedFrames,
+                  snapshot(host, at: evidenceURL.appendingPathComponent("\(collapsedName).png")) else {
+                fail("collapsed panel state was not rendered", scale: scale)
+            }
+            emit(
+                "panels-hidden",
+                scale: scale,
+                fields: ["workspace": "edit", "screenshot": "\(collapsedName).png"]
+            )
+
+            guard click(identifier: "editor.panel.sidebar", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.isSidebarPresented
+                          && !editor.isInspectorPresented
+                          && visiblePanelIDs(in: host)
+                              == ["mediaPanel", "previewPanel", "timelinePanel"]
+                  }),
+                  click(identifier: "editor.panel.inspector", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.isSidebarPresented
+                          && editor.isInspectorPresented
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+                  }) else {
+                fail("panel controls did not restore their panels", scale: scale)
+            }
+            let restoredFrames = visiblePanelFrames(in: host)
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            guard probeState(identifier: "editor.panel.sidebar", in: window) == true,
+                  probeState(identifier: "editor.panel.inspector", in: window) == true,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .edit),
+                  visiblePanelFrames(in: host) == restoredFrames else {
+                fail("restored panel layout did not settle", scale: scale)
+            }
+            guard click(identifier: "editor.workspace.production", in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.workspaceFocus == .production
+                          && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                  }) else {
+                fail("could not prepare narrow production workspace", scale: scale)
+            }
+            window.setContentSize(NSSize(
+                width: AppTheme.Window.projectMin.width,
+                height: window.contentView?.bounds.height ?? AppTheme.Window.projectMin.height
+            ))
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                let frames = visiblePanelFrames(in: host)
+                return abs(host.bounds.width - AppTheme.Window.projectMin.width)
+                        <= AppTheme.BorderWidth.thin
+                    && visiblePanelIDs(in: host) == expectedPanels(for: .production)
+                    && narrowProductionWidthsAreValid(frames)
+                    && previewTimecodeIsSingleLine(in: window, scale: scale)
+                    && agentControlsAreContained(in: window)
+            }) else {
+                fail("narrow production controls did not fit", scale: scale)
+            }
+            let narrowName = "scale-\(scaleLabel(scale))-production-narrow"
+            guard let narrowFrames = await stablePanelFrames(in: host),
+                  visiblePanelFrames(in: host) == narrowFrames,
+                  editor.workspaceFocus == .production,
+                  visiblePanelIDs(in: host) == expectedPanels(for: .production),
+                  abs(host.bounds.width - AppTheme.Window.projectMin.width) <= AppTheme.BorderWidth.thin,
+                  narrowProductionWidthsAreValid(narrowFrames),
+                  previewTimecodeIsSingleLine(in: window, scale: scale),
+                  agentControlsAreContained(in: window),
+                  snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName).png")) else {
+                _ = snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName)-failed.png"))
+                emit("layout-diagnostic", scale: scale, fields: [
+                    "reason": "narrow production layout did not settle",
+                    "frames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                    "window": windowDiagnostics(window, contentView: host),
+                ])
+                fail("narrow production layout did not settle", scale: scale)
+            }
+            emit(
+                "narrow-production",
+                scale: scale,
+                fields: [
+                    "screenshot": "\(narrowName).png",
+                    "taskControls": ["agent.decisions", "agent.diagnostics", "agent.utilities"],
+                    "frames": narrowFrames.mapValues { frameDescription($0) },
+                    "window": windowDiagnostics(window, contentView: host),
+                ]
+            )
+            guard editor.timeline == originalTimeline,
+                  editor.mediaManifest == originalManifest,
+                  editor.generationLog == originalGenerationLog,
+                  editor.projectState == originalPipelineState,
+                  (try? treeSnapshot(at: workingRoot)) == originalWorkingCopy,
+                  document.isDocumentEdited == originalDocumentEdited,
+                  (document.undoManager?.canUndo ?? false) == originalCanUndo,
+                  (document.undoManager?.undoActionName ?? "") == originalUndoName,
+                  (try? projectSnapshot(at: projectURL)) == originalProject else {
+                fail("workspace navigation mutated project or undo state", scale: scale)
+            }
+            emit(
+                "invariants",
+                scale: scale,
+                fields: [
+                    "liveStateUnchanged": true,
+                    "projectBytesUnchanged": true,
+                    "undoUnchanged": true,
+                    "workingCopyUnchanged": true,
+                ]
+            )
+            window.orderOut(nil)
+            emit("completed", scale: scale)
+            exit(0)
+        }
+        app.run()
+        exit(1)
+    }
+
+    private static func captureMediaLibraryCase(
+        editor: EditorViewModel, window: NSWindow, host: NSView, evidenceURL: URL, scale: Double
+    ) async {
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-media-library-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("media-library-diagnostic", scale: scale, fields: ["reason": reason,
+                "folder": editor.mediaPanelCurrentFolderId ?? "root", "selectedFolders": editor.selectedFolderIds.sorted(),
+                "firstResponder": String(describing: window.firstResponder), "keyWindow": window.isKeyWindow,
+                "nestedProbe": findProbe(in: host, identifier: "media.folder-tile.fixture-nested").map { viewLayoutDiagnostics($0, in: host) } ?? ["available": false],
+                "searchProbe": findProbe(in: host, identifier: "media.search").map { viewLayoutDiagnostics($0, in: host) } ?? ["available": false], "screenshot": name])
+            fail(reason, scale: scale)
+        }
+        guard editor.mediaAssets.count == 500,
+              editor.missingMediaRefs.isEmpty,
+              Set(editor.mediaAssets.map(\.type)) == [.image, .audio, .document],
+              editor.mediaAssets.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }),
+              click(identifier: "editor.workspace.media", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.workspaceFocus == .media
+                      && findProbe(in: host, identifier: "media.folder.fixture-root") != nil
+              }),
+              click(identifier: "media.folder.fixture-root", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.mediaPanelCurrentFolderId == "fixture-root"
+                      && findProbe(in: host, identifier: "media.folder-tile.fixture-nested") != nil
+              }), await stablePanelFrames(in: host) != nil else {
+            reject("500-asset library or root folder was unavailable")
+        }
+        if let reason = click(identifier: "media.folder-tile.fixture-nested", in: window, clickCount: 2) {
+            reject("nested folder double-click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return editor.mediaPanelCurrentFolderId == "fixture-nested"
+        }) else { reject("native double-click did not open the nested folder") }
+        guard await stablePanelFrames(in: host) != nil else { reject("nested folder layout did not settle") }
+        if let reason = click(identifier: "media.search", in: window) { reject("search click: \(reason)") }
+        guard await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
+              let fieldEditor = window.firstResponder as? NSTextView else {
+            reject("native search field did not take keyboard focus")
+        }
+        fieldEditor.insertText("Acceptance Source 498", replacementRange: NSRange(location: NSNotFound, length: 0))
+        let state = editor.mediaBrowserState(for: .media)
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return state.searchQuery == "Acceptance Source 498"
+                && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
+        }), click(identifier: "media.search-result.fixture-498", in: window) == nil,
+        await waitUntil(timeout: .seconds(5), { editor.selectedMediaAssetIds == ["fixture-498"] }) else {
+            fail("native search did not find and select the nested source", scale: scale)
+        }
+        await verifySearchKeyboardIsolation(editor: editor, window: window, scale: scale)
+        guard click(identifier: "editor.workspace.edit", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { editor.workspaceFocus == .edit }),
+              editor.mediaBrowserState(for: .edit).searchQuery.isEmpty,
+              click(identifier: "editor.workspace.media", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return editor.workspaceFocus == .media
+                      && state.searchQuery == "Acceptance Source 498"
+                      && state.currentFolderId == "fixture-nested"
+                      && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
+                      && defaultPanelWidthsAreValid(workspace: .media, frames: visiblePanelFrames(in: host))
+                      && editor.activePreviewTab.clipType == .image
+                      && visiblePanelFrames(in: host)["previewPanel"].map {
+                          visibleProbe(identifier: "preview.zoom", in: window, containedBy: $0)
+                      } == true
+              }), let frames = await stablePanelFrames(in: host),
+              defaultPanelWidthsAreValid(workspace: .media, frames: frames),
+              editor.selectedMediaAssetIds == ["fixture-498"] else {
+            let name = "scale-\(scaleLabel(scale))-media-return-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("layout-diagnostic", scale: scale, fields: [
+                "query": state.searchQuery, "folder": state.currentFolderId ?? "",
+                "selection": editor.selectedMediaAssetIds.sorted(),
+                "frames": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                "splits": splitDiagnostics(in: host), "screenshot": name,
+            ])
+            fail("media navigation state leaked or was lost across workspaces", scale: scale)
+        }
+        let name = "scale-\(scaleLabel(scale))-media-library.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+            fail("could not capture the populated media library", scale: scale)
+        }
+        emit("media-library", scale: scale, fields: [
+            "assetCount": editor.mediaAssets.count,
+            "types": Set(editor.mediaAssets.map { $0.type.rawValue }).sorted(),
+            "nestedFolderOpened": true, "searchSelectedAsset": "fixture-498",
+            "workspaceStatePreserved": true, "screenshot": name,
+            "frames": frames.mapValues { frameDescription($0) },
+        ])
+    }
+
+    private static func verifySearchKeyboardIsolation(
+        editor: EditorViewModel, window: NSWindow, scale: Double
+    ) async {
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let selection = editor.selectedMediaAssetIds
+        let clipSelection = editor.selectedClipIds
+        let playing = editor.isPlaying
+        let state = editor.mediaBrowserState(for: .media)
+        let query = state.searchQuery
+        guard !query.isEmpty, !selection.isEmpty,
+              click(identifier: "media.search", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { window.firstResponder is NSTextView }),
+              let field = window.firstResponder as? NSTextView else {
+            fail("keyboard isolation did not focus the native search field", scale: scale)
+        }
+        field.setSelectedRange(NSRange(location: (field.string as NSString).length, length: 0))
+        func postKey(_ code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = []) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero,
+                    modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: characters,
+                    charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else {
+                    fail("could not create native keyboard event", scale: scale)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        postKey(49, characters: " ")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query + " " }),
+              editor.isPlaying == playing else {
+            fail("Space escaped the native text field or changed playback", scale: scale)
+        }
+        postKey(51, characters: "\u{7f}")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query }) else {
+            fail("Delete did not edit the native search text", scale: scale)
+        }
+        postKey(0, characters: "a", modifiers: .command)
+        guard await waitUntil(timeout: .seconds(5), {
+            field.selectedRange() == NSRange(location: 0, length: (query as NSString).length)
+        }) else { fail("Select All escaped the native text field", scale: scale) }
+        postKey(51, characters: "\u{7f}")
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery.isEmpty }),
+              editor.timeline == timeline, editor.mediaManifest == manifest,
+              editor.selectedMediaAssetIds == selection, editor.selectedClipIds == clipSelection,
+              editor.isPlaying == playing else {
+            fail("text deletion mutated media, timeline, selection, or playback", scale: scale)
+        }
+        field.insertText(query, replacementRange: NSRange(location: NSNotFound, length: 0))
+        guard await waitUntil(timeout: .seconds(5), { state.searchQuery == query }) else {
+            fail("native search text could not be restored", scale: scale)
+        }
+        emit("text-keyboard-isolation", scale: scale, fields: [
+            "spaceEditsText": true, "deleteEditsText": true, "selectAllTargetsText": true,
+            "timelineUnchanged": true, "mediaUnchanged": true, "selectionUnchanged": true,
+            "playbackUnchanged": true,
+        ])
+    }
+
+    private static func captureInspectorCases(
+        editor: EditorViewModel,
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        scale: Double
+    ) async {
+        let originalAssets = editor.mediaAssets
+        let originalClipIDs = editor.selectedClipIds
+        let originalObject = editor.inspectedObject
+        let originalMediaTab = editor.mediaPanelTab(for: .edit)
+        let image = MediaAsset(
+            id: "inspector-image",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.png"),
+            type: .image,
+            name: "Inspector reference"
+        )
+        let audio = MediaAsset(
+            id: "inspector-audio",
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("ngv-inspector-fixture.wav"),
+            type: .audio,
+            name: "Inspector audio"
+        )
+        editor.mediaAssets.append(contentsOf: [image, audio])
+
+        let cases: [(family: String, clipIDs: Set<String>, tab: String?)] = [
+            ("text", ["inspector-text"], nil),
+            ("video", ["inspector-image-1"], "Video"),
+            ("effects", ["inspector-image-1"], "Adjust"),
+            ("ai", ["inspector-image-1"], "AI Edit"),
+            ("audio", ["inspector-audio-clip"], nil),
+            ("mixed", ["inspector-image-1", "inspector-image-2"], nil),
+            ("asset", [], nil),
+        ]
+        for item in cases {
+            editor.selectedClipIds = item.clipIDs
+            if item.family == "asset" {
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    return editor.selectedClipIds.isEmpty && editor.inspectedObject == nil
+                }) else {
+                    fail("could not clear the clip inspection before asset inspection", scale: scale)
+                }
+                editor.inspectedObject = .mediaAsset(image.id)
+            } else if item.clipIDs.count == 1, let clipID = item.clipIDs.first {
+                editor.inspectedObject = .clip(clipID)
+            } else {
+                editor.inspectedObject = nil
+            }
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return visiblePanelIDs(in: host) == expectedPanels(for: .edit)
+                    && editor.selectedClipIds == item.clipIDs
+                    && (item.family != "asset" || editor.inspectedObject == .mediaAsset(image.id))
+            }) else {
+                fail("inspector \(item.family) did not settle", scale: scale)
+            }
+            if let tab = item.tab {
+                let identifier = "inspector.tab.\(tab)"
+                if probeState(identifier: identifier, in: window) != true {
+                    guard click(identifier: identifier, in: window) == nil,
+                          await waitUntil(timeout: .seconds(5), {
+                              host.layoutSubtreeIfNeeded()
+                              return probeState(identifier: identifier, in: window) == true
+                          }) else {
+                        fail("inspector tab \(tab) did not activate", scale: scale)
+                    }
+                }
+            }
+            let capturesKeyframes = item.family == "video" || item.family == "audio"
+            if capturesKeyframes, probeState(identifier: "inspector.keyframes", in: window) != false {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close", scale: scale)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            host.layoutSubtreeIfNeeded()
+            let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+                fail("could not capture inspector \(item.family)", scale: scale)
+            }
+            var fields: [String: Any] = ["family": item.family, "screenshot": name]
+            if capturesKeyframes { fields["keyframes"] = "closed" }
+            emit("inspector", scale: scale, fields: fields)
+            if capturesKeyframes {
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == true
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not open", scale: scale)
+                }
+                let expectedLaneProperties: [AnimatableProperty] = item.family == "audio"
+                    ? [.volume]
+                    : [.position, .scale, .rotation, .opacity, .crop]
+                guard let root = window.contentView else {
+                    fail("inspector \(item.family) window content was unavailable", scale: scale)
+                }
+                let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
+                let sideEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: openName,
+                    inspectorWidthTarget: nil,
+                    scale: scale
+                )
+                guard let splitState = inspectorSplitState(in: root),
+                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
+                }
+                splitState.splitView.setPosition(
+                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - AppTheme.Layout.inspectorMin)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) did not reach minimum width", scale: scale)
+                }
+                let stackedName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open-stacked.png"
+                let stackedEvidence = await captureKeyframeLayoutEvidence(
+                    family: item.family,
+                    properties: expectedLaneProperties,
+                    window: window,
+                    host: host,
+                    evidenceURL: evidenceURL,
+                    screenshotName: stackedName,
+                    inspectorWidthTarget: AppTheme.Layout.inspectorMin,
+                    scale: scale
+                )
+                splitState.splitView.setPosition(
+                    splitState.originalPosition,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - originalInspectorFrame.width)
+                        <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) width did not restore", scale: scale)
+                }
+                let layoutEvidence = [sideEvidence, stackedEvidence]
+                guard layoutEvidence.compactMap({ $0["mode"] as? String }) == ["side", "stacked"] else {
+                    fail("inspector \(item.family) did not exercise both keyframe layouts", scale: scale)
+                }
+                emit(
+                    "inspector",
+                    scale: scale,
+                    fields: [
+                        "family": item.family,
+                        "keyframes": "open",
+                        "laneLayoutEvidence": layoutEvidence,
+                        "screenshot": openName,
+                    ]
+                )
+                guard click(identifier: "inspector.keyframes", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          host.layoutSubtreeIfNeeded()
+                          return probeState(identifier: "inspector.keyframes", in: window) == false
+                      }) else {
+                    fail("inspector \(item.family) keyframes did not close again", scale: scale)
+                }
+            }
+        }
+        let captionIdentifier = "media.tab.Captions"
+        if probeState(identifier: captionIdentifier, in: window) != true {
+            guard click(identifier: captionIdentifier, in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      host.layoutSubtreeIfNeeded()
+                      return editor.mediaPanelTab(for: .edit) == .captions
+                          && probeState(identifier: captionIdentifier, in: window) == true
+                  }) else {
+                fail("caption form did not activate", scale: scale)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        host.layoutSubtreeIfNeeded()
+        let captionName = "scale-\(scaleLabel(scale))-inspector-caption.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(captionName)) else {
+            fail("could not capture caption form", scale: scale)
+        }
+        emit("inspector", scale: scale, fields: ["family": "caption", "screenshot": captionName])
+        editor.setMediaPanelTab(originalMediaTab, for: .edit)
+        editor.selectedClipIds = originalClipIDs
+        editor.inspectedObject = originalObject
+        editor.mediaAssets = originalAssets
+    }
+
+    private static func captureMusicvideoStartup(evidenceURL: URL, scale: Double) async {
+        guard let packPath = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
+            fail("native Musicvideo acceptance requires an external pack", scale: scale)
+        }
+        let record = PluginLoader.load(at: URL(fileURLWithPath: packPath))
+        guard record.isLoaded, record.id == "musicvideo",
+              let binding = PluginLoader.liveBinding(id: "musicvideo") else {
+            fail("native Musicvideo pack failed to load: \(record.state)", scale: scale)
+        }
+        let projectURL: URL
+        let document: VideoProject
+        do {
+            projectURL = try makeProjectFixture(scale: scale)
+            try ProjectPluginSettings.setActivePlugin(binding, projectURL: projectURL)
+            _ = try ProjectScaffold.initProject(home: projectURL, name: "Native Musicvideo acceptance",
+                extraDirs: PackCatalog.projectDirs(activePack: "musicvideo"))
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not open pinned Musicvideo fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        editor.setWorkspaceFocus(.production)
+        await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+        let expectedPhases = ["project_init", "analysis", "brief", "production_design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frames", "render"]
+        guard editor.declaredPluginBinding == binding,
+              editor.projectState?.phases.map(\.phase) == expectedPhases,
+              editor.projectState?.nextPhaseName == "project_init",
+              editor.agentService.pendingDialog?.title == "Track",
+              editor.agentService.pendingDialog?.fileIntake?.attachAs == "song",
+              editor.mediaAssets.contains(where: { $0.type == .audio }),
+              editor.mediaAssets.contains(where: { $0.type == .document }),
+              editor.activePackAccentColor != nil else {
+            fail("pinned Musicvideo startup lost its phases, Track intake or pack identity", scale: scale)
+        }
+        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
+            PipelinePanelView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
+            VStack(spacing: AppTheme.Spacing.lg) {
+                PipelinePanelView(presentation: .phaseDock, viewedPhase: "analysis")
+                AgentPanelView()
+            }
+        }.interfaceStyle().environment(editor).frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func text(_ id: String) -> String? {
+            (findProbe(in: host, identifier: id) as? AppRelaunchClickProbeView)?.acceptanceText
+        }
+        func reject(_ reason: String) -> Never {
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-musicvideo-failed.png"))
+            emit("musicvideo-diagnostic", scale: scale, fields: ["reason": reason,
+                "current": editor.projectState?.nextPhaseName ?? "missing",
+                "dialog": editor.agentService.pendingDialog?.title ?? "missing",
+                "renderedDialog": text("agent.dialog.title") ?? "missing",
+                "renderedPhases": expectedPhases.filter { text("pipeline.overview.phase.\($0)") != nil }])
+            fail(reason, scale: scale)
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return window.isKeyWindow && text("agent.dialog.title") == "Track"
+                && text("pipeline.dock.current") == "project_init"
+                && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
+                && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
+        }) else { reject("Musicvideo phase controls or Track card did not render") }
+        guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }
+        guard await waitUntil(timeout: .seconds(5), {
+            guard let owner = editor.agentService.currentSessionId,
+                  let expected = editor.agentService.sessions.first(where: { $0.id == owner })?.decision,
+                  let restored = try? ChatSessionStore.loadThrowing(from: home).first(where: { $0.id == owner }) else {
+                return false
+            }
+            return restored.decision == expected && expected.dialog.title == "Track"
+        }) else { reject("initial Track decision did not finish its durable checkpoint") }
+        guard let workingBytes = try? treeSnapshot(at: home),
+              let savedBytes = try? treeSnapshot(at: projectURL) else { reject("Musicvideo fixture is unreadable") }
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let log = editor.generationLog
+        let canUndo = document.undoManager?.canUndo ?? false
+        let edited = document.isDocumentEdited
+        let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
+        if let reason = click(identifier: "pipeline.dock.approve.project_init", in: window) {
+            reject("disabled approval target: \(reason)")
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let currentWorkingBytes = try? treeSnapshot(at: home)
+        let currentSavedBytes = try? treeSnapshot(at: projectURL)
+        let checks: [String: Bool] = [
+            "currentPhase": editor.projectState?.nextPhaseName == "project_init",
+            "noApprovals": editor.projectState?.phases.allSatisfy({ !$0.approved }) == true,
+            "trackDecision": editor.agentService.pendingDialog?.title == "Track",
+            "timeline": editor.timeline == timeline, "manifest": editor.mediaManifest == manifest,
+            "costs": editor.generationLog == log, "documentEdited": document.isDocumentEdited == edited,
+            "undo": (document.undoManager?.canUndo ?? false) == canUndo,
+            "workingBytes": currentWorkingBytes == workingBytes, "savedBytes": currentSavedBytes == savedBytes,
+        ]
+        guard checks.values.allSatisfy({ $0 }) else {
+            let changed = Set(workingBytes.keys).union(currentWorkingBytes?.keys.map { $0 } ?? [])
+                .filter { workingBytes[$0] != currentWorkingBytes?[$0] }.sorted()
+            emit("musicvideo-invariant-diagnostic", scale: scale,
+                fields: ["checks": checks, "changedWorkingFiles": changed])
+            reject("viewing another phase or clicking disabled approval changed the production")
+        }
+        guard await revealProbe("pipeline.overview.phase.render", in: window) else { reject("final Musicvideo phases are unreachable") }
+        let final = "scale-\(scaleLabel(scale))-musicvideo-phases.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(final)) else { reject("could not capture final phases") }
+        emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
+            "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
+            "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
+            "disabledApprovalDidNotMutate": true, "screenshots": [initial, final]])
+    }
+
+    private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {
+        let projectURL: URL
+        let document: VideoProject
+        do {
+            projectURL = try makeProvenanceFixture(scale: scale)
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not load provenance fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        editor.setWorkspaceFocus(.media)
+        guard let home = editor.workingRoot, let originalBytes = try? treeSnapshot(at: home),
+              let savedBytes = try? treeSnapshot(at: projectURL) else {
+            fail("provenance fixture has no working copy", scale: scale)
+        }
+        let timeline = editor.timeline
+        let manifest = editor.mediaManifest
+        let log = editor.generationLog
+        let canUndo = document.undoManager?.canUndo ?? false
+        let edited = document.isDocumentEdited
+        let host = NSHostingView(rootView: InspectorView().interfaceStyle().environment(editor)
+            .frame(width: AppTheme.Acceptance.inspectorViewport.width, height: AppTheme.Acceptance.inspectorViewport.height))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 650),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func text(_ id: String) -> String? {
+            (findProbe(in: host, identifier: id) as? AppRelaunchClickProbeView)?.acceptanceText
+        }
+        var expectedRows: [String: String] = [:]
+        func reject(_ reason: String) -> Never {
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-provenance-failed.png"))
+            emit("provenance-diagnostic", scale: scale, fields: ["reason": reason,
+                "expected": expectedRows, "actual": expectedRows.keys.sorted().map { key in
+                    ["id": key, "text": text(key) ?? "missing"]
+                }, "selection": editor.selectedMediaAssetIds.sorted(), "keyWindow": window.isKeyWindow])
+            fail(reason, scale: scale)
+        }
+        let cases: [(id: String, family: String)] = [
+            ("fixture-498", "imported"), ("fixture-492", "generated"),
+            ("fixture-495", "enhanced"), ("fixture-489", "offline"),
+        ]
+        var screenshots: [String] = []
+        for item in cases {
+            guard let asset = editor.mediaAssets.first(where: { $0.id == item.id }) else { reject("provenance asset missing") }
+            editor.selectMediaAsset(asset)
+            let prefix = "asset.\(asset.id)."
+            let isGenerated = item.family == "generated" || item.family == "enhanced"
+            let expected: [String: String] = isGenerated ? [
+                "Model ID": "native-image-fixture", "Provider": item.family == "generated" ? "fal.ai" : "Higgsfield",
+                "Route": item.family == "generated" ? "API" : "MCP", "Generation receipt": "Unavailable",
+                "Booked cost": item.family == "generated" ? "0.25 EUR" : "0.50 EUR",
+                "Provider job": "native-job-\(asset.id)",
+            ] : ["Source": "Imported media", "Generation route": "Not applicable"]
+            expectedRows = Dictionary(uniqueKeysWithValues: expected.map { (prefix + "origin." + $0.key, $0.value) })
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return window.isKeyWindow && abs(host.bounds.width - 440) <= 1 && abs(host.bounds.height - 650) <= 1
+                    && text(prefix + "identity") == asset.libraryDisplayName
+                    && probeState(identifier: prefix + "identity", in: window) == (item.family == "offline")
+                    && expected.allSatisfy { text(prefix + "origin." + $0.key) == $0.value }
+            }) else { reject("\(item.family) identity or recorded origin did not render correctly") }
+            if item.family == "imported" {
+                guard asset.name == String(repeating: "a", count: 64),
+                      asset.libraryDisplayName == "Acceptance Source 498.png",
+                      editor.activePreviewTab.displayName == "Acceptance Source 498.png",
+                      text("inspector.breadcrumb") == "Original Media › Acceptance Source 498.png" else {
+                    reject("legacy storage hash escaped into the asset identity or breadcrumb")
+                }
+            }
+            if item.family == "offline" {
+                guard probeState(identifier: prefix + "relink", in: window) == true,
+                      probeState(identifier: prefix + "reveal", in: window) == false else {
+                    reject("offline asset did not enable relink and disable file reveal")
+                }
+            }
+            let anchor = prefix + "origin." + (isGenerated ? "Model ID" : "Source")
+            guard await revealProbe(anchor, in: window) else { reject("\(item.family) origin is unreachable") }
+            let name = "scale-\(scaleLabel(scale))-provenance-\(item.family).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else { reject("could not capture provenance") }
+            screenshots.append(name)
+            if isGenerated {
+                guard await revealProbe(prefix + "origin.Booked cost", in: window) else { reject("recorded cost is unreachable") }
+                let costName = "scale-\(scaleLabel(scale))-provenance-\(item.family)-cost.png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(costName)) else { reject("could not capture recorded cost") }
+                screenshots.append(costName)
+            }
+            if item.family == "generated" {
+                guard text(prefix + "origin.References") == "Not applicable — no reference inputs" else {
+                    reject("generated asset invented reference inputs")
+                }
+            } else if item.family == "enhanced" {
+                guard let receipt = asset.generationInput?.referenceReceipts?.first,
+                      text(prefix + "origin.Source SHA-256") == receipt.sourceSHA256,
+                      await revealProbe(prefix + "original.fixture-498", in: window) else {
+                    reject("enhanced asset lost its exact source revision")
+                }
+                let referenceName = "scale-\(scaleLabel(scale))-provenance-enhanced-reference.png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(referenceName)) else { reject("could not capture source revision") }
+                screenshots.append(referenceName)
+                if let reason = click(identifier: prefix + "original.fixture-498", in: window) {
+                    reject("show original: \(reason)")
+                }
+                guard await waitUntil(timeout: .seconds(5), {
+                    editor.selectedMediaAssetIds == ["fixture-498"]
+                        && text("asset.fixture-498.origin.Source") == "Imported media"
+                }) else { reject("Show Original selected the wrong asset") }
+            }
+        }
+        guard editor.timeline == timeline, editor.mediaManifest == manifest, editor.generationLog == log,
+              document.isDocumentEdited == edited, (document.undoManager?.canUndo ?? false) == canUndo,
+              (try? treeSnapshot(at: home)) == originalBytes,
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("provenance inspection changed project data, costs or undo")
+        }
+        emit("asset-provenance", scale: scale, fields: [
+            "families": cases.map { $0.family }, "syntheticReceipts": true, "exactOriginRendered": true,
+            "originalSelected": true, "offlineActionsCorrect": true, "projectUnchanged": true,
+            "legacyNameReadable": true,
+            "viewportWidth": host.bounds.width, "viewportHeight": host.bounds.height,
+            "screenshots": screenshots,
+        ])
+    }
+
+    private static func makeProvenanceFixture(scale: Double) throws -> URL {
+        let project = try makeProjectFixture(scale: scale)
+        let manifestURL = project.appendingPathComponent(Project.manifestFilename)
+        var manifest = try JSONDecoder().decode(MediaManifest.self, from: Data(contentsOf: manifestURL))
+        var log = GenerationLog()
+        let sourceHash = try FileDigest.sha256(of: project.appendingPathComponent("media/fixture-498.png"))
+        for index in [492, 495] {
+            guard let offset = manifest.entries.firstIndex(where: { $0.id == "fixture-\(index)" }) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            var input = GenerationInput(prompt: "Synthetic historical provenance fixture", model: "native-image-fixture",
+                duration: 0, aspectRatio: "16:9")
+            input.generationPackageID = String(repeating: "0", count: 64)
+            input.spendTransactionId = "native-transaction-\(index)"
+            input.referenceReceipts = index == 492 ? [] : [GenerationReferenceReceipt(
+                assetID: "fixture-498", displayName: "Acceptance Source 498.png", type: "image",
+                sourceSHA256: sourceHash, submittedSHA256: sourceHash)]
+            manifest.entries[offset].generationInput = input
+            manifest.entries[offset].name = index == 492
+                ? "A generated image with a deliberately long original project filename.png"
+                : "An enhanced image with an exact original-source revision and a long name.png"
+            log.spendEvents.append(GenerationSpendEvent(transactionId: "native-transaction-\(index)",
+                kind: .charged, model: input.model, provider: index == 492 ? .fal : .higgsfield,
+                transport: index == 492 ? .api : .mcp, endpoint: "native-fixture",
+                providerRequestId: "native-job-fixture-\(index)",
+                money: GenerationMoney(nativeAmount: index == 492 ? 0.25 : 0.5, nativeCurrency: "EUR",
+                    eurAmount: index == 492 ? 0.25 : 0.5, eurPerNativeUnit: 1,
+                    exchangeRateDate: "2026-01-01", pricingSource: "synthetic acceptance fixture",
+                    exchangeRateSource: "identity")))
+        }
+        try JSONEncoder().encode(manifest).write(to: manifestURL)
+        try JSONEncoder().encode(log).write(to: project.appendingPathComponent(Project.generationLogFilename))
+        try FileManager.default.removeItem(at: project.appendingPathComponent("media/fixture-489.png"))
+        return project
+    }
+
+    private static func captureProjectCards(evidenceURL: URL, scale: Double) async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let available = directory.appendingPathComponent("Claude Mouse.ngv")
+        let unavailable = directory.appendingPathComponent("Unavailable Project.ngv")
+        do { try FileManager.default.createDirectory(at: available, withIntermediateDirectories: true) }
+        catch { fail("could not create project-card fixture", scale: scale) }
+        let now = Date()
+        let entries = [available, unavailable].map {
+            ProjectEntry(id: UUID(), url: $0, createdDate: now, lastOpenedDate: now)
+        }
+        var opened: [URL] = []
+        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.md) {
+            ForEach(entries) { entry in
+                ProjectCard(entry: entry, onOpen: { opened.append($0) }, onRemove: { _ in })
+                    .frame(width: AppTheme.ComponentSize.projectCardWidth)
+            }
+        }.padding(AppTheme.Spacing.xl).interfaceStyle())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 320),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        let firstID = "home.project.\(entries[0].id)"
+        let secondID = "home.project.\(entries[1].id)"
+        var previousFrame: NSRect?
+        let clock = ContinuousClock()
+        var stableSince = clock.now
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            guard window.isKeyWindow, let probe = findProbe(in: host, identifier: firstID) else { return false }
+            let frame = probe.convert(probe.bounds, to: nil)
+            if frame != previousFrame || frame.width <= 0 || frame.height <= 0 {
+                previousFrame = frame
+                stableSince = clock.now
+                return false
+            }
+            return clock.now - stableSince >= .milliseconds(300)
+        }), let first = findProbe(in: host, identifier: firstID),
+        let second = findProbe(in: host, identifier: secondID) else {
+            let name = "scale-\(scaleLabel(scale))-project-cards-not-ready.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("project-card-diagnostic", scale: scale, fields: [
+                "reason": "native project cards did not appear", "keyWindow": window.isKeyWindow,
+                "activeApp": NSApp.isActive, "screenshot": name,
+                "firstFound": findProbe(in: host, identifier: firstID) != nil,
+                "secondFound": findProbe(in: host, identifier: secondID) != nil,
+            ])
+            fail("native project cards did not appear", scale: scale)
+        }
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-project-cards-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            emit("project-card-diagnostic", scale: scale, fields: [
+                "reason": reason, "first": frameDescription(first.bounds), "second": frameDescription(second.bounds),
+                "opened": opened.map(\.lastPathComponent), "keyWindow": window.isKeyWindow,
+                "available": probeState(identifier: firstID, in: window) == true,
+                "unavailable": probeState(identifier: secondID, in: window) == false, "screenshot": name,
+            ])
+            fail(reason, scale: scale)
+        }
+        // The former 150-point grid cell contained a 142 × 113.6-point card inside 4-point padding.
+        guard abs(first.bounds.width - 213) <= 1,
+              abs(first.bounds.height - 170.4) <= 1,
+              first.bounds.size == second.bounds.size,
+              probeState(identifier: firstID, in: window) == true,
+              probeState(identifier: secondID, in: window) == false else {
+            reject("project-card size or enabled state changed")
+        }
+        let unavailableParts = ["unavailable-icon", "name", "unavailable-status"].compactMap { part in
+            findProbe(in: host, identifier: "\(secondID).\(part)")
+        }
+        let unavailableFrames = unavailableParts.map { $0.convert($0.bounds, to: second) }
+        guard unavailableFrames.count == 3,
+              unavailableFrames.allSatisfy({ second.bounds.contains($0) }),
+              !unavailableFrames[0].intersects(unavailableFrames[1]),
+              !unavailableFrames[0].intersects(unavailableFrames[2]),
+              !unavailableFrames[1].intersects(unavailableFrames[2]) else {
+            reject("unavailable project-card icon, name, or status overlap")
+        }
+        if let reason = click(identifier: firstID, in: window) { reject("project-card click: \(reason)") }
+        guard await waitUntil(timeout: .seconds(5), { opened == [available] }) else {
+            reject("accessible project-card click did not open exactly its project")
+        }
+        if let reason = click(identifier: secondID, in: window) { reject("unavailable project-card click: \(reason)") }
+        try? await Task.sleep(for: .milliseconds(300))
+        let name = "scale-\(scaleLabel(scale))-project-cards.png"
+        guard opened == [available], snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+            fail("unavailable project opened or card capture failed", scale: scale)
+        }
+        emit("project-cards", scale: scale, fields: [
+            "width": Double(first.bounds.width), "height": Double(first.bounds.height),
+            "openVerified": true, "unavailableDisabled": true, "unavailableContentSeparated": true,
+            "screenshot": name,
+        ])
+    }
+
+    private static func captureAnalysis(evidenceURL: URL, scale: Double) async {
+        let projectURL: URL
+        let document: VideoProject
+        let savedBytes: [String: Data]
+        do {
+            projectURL = try makeAnalysisFixture()
+            savedBytes = try treeSnapshot(at: projectURL)
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not load analysis fixture: \(error.localizedDescription)", scale: scale) }
+        let surfaceBytes = Data("""
+        {"id":"native-analysis","title":"Audio Analysis","phase":"analysis","data_file":"analysis/Acceptance Track.json","layout":[
+          {"type":"beatTimeline","title":"Song timeline","duration_field":"duration_s","beats_field":"beats","downbeats_field":"downbeats","sections_field":"sections","sections_visibility":"whenCanonicalSections"},
+          {"type":"sectionList","title":"Sections","sections_field":"sections","visibility":"whenCanonicalSections"}
+        ]}
+        """.utf8)
+        guard let surface = try? JSONDecoder().decode(CockpitSurfaceData.self, from: surfaceBytes) else {
+            fail("invalid native analysis surface fixture", scale: scale)
+        }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        var unavailable = false
+        let host = NSHostingView(rootView: DeclarativePackSurfaceView(surface: surface,
+            onUnavailable: { unavailable = true }).interfaceStyle().environment(editor))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 950),
+            styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func value(_ identifier: String) -> Double? {
+            (findProbe(in: host, identifier: identifier) as? AppRelaunchClickProbeView)?.acceptanceValue
+        }
+        func reject(_ reason: String) -> Never {
+            let name = "scale-\(scaleLabel(scale))-analysis-failed.png"
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+            let identifiers = ["analysis.source", "analysis.play", "analysis.zoom", "analysis.selection",
+                               "analysis.section.1", "analysis.waveform", "analysis.energy"]
+            emit("analysis-diagnostic", scale: scale, fields: [
+                "reason": reason, "screenshot": name,
+                "probes": identifiers.map { id -> [String: Any] in
+                    let probe = findProbe(in: host, identifier: id)
+                    return ["id": id, "state": probeState(identifier: id, in: window).map { String(describing: $0) } ?? "missing",
+                            "value": value(id).map { String(describing: $0) } ?? "missing",
+                            "frame": probe.map { frameDescription($0.convert($0.bounds, to: host)) } ?? [:]]
+                },
+            ])
+            fail(reason, scale: scale)
+        }
+        guard await waitUntil(timeout: .seconds(10), {
+            host.layoutSubtreeIfNeeded()
+            return window.isKeyWindow && !unavailable
+                && probeState(identifier: "analysis.source", in: window) == true
+                && findProbe(in: host, identifier: "analysis.waveform") != nil
+                && findProbe(in: host, identifier: "analysis.energy") != nil
+                && findProbe(in: host, identifier: "analysis.section.1") != nil
+        }), let wave = findProbe(in: host, identifier: "analysis.waveform") else {
+            reject("native analysis did not load verified audio and measured layers")
+        }
+        func width(_ identifier: String) -> CGFloat {
+            findProbe(in: host, identifier: identifier)?.bounds.width ?? 0
+        }
+        let initialWidth = wave.bounds.width
+        let initialName = "scale-\(scaleLabel(scale))-analysis.png"
+        guard initialWidth > 0, snapshot(host, at: evidenceURL.appendingPathComponent(initialName)) else {
+            reject("analysis initial waveform could not be captured")
+        }
+        guard await revealProbe("analysis.section.1", in: window) else {
+            reject("analysis section row could not be scrolled into view")
+        }
+        if let reason = click(identifier: "analysis.section.1", in: window) {
+            reject("analysis section click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            probeState(identifier: "analysis.section.1", in: window) == true
+                && value("analysis.selection") == 6 && value("analysis.play") == 6
+        }) else { reject("analysis section click did not select its exact start time") }
+        guard await revealProbe("analysis.play", in: window) else {
+            reject("analysis playback control could not be scrolled into view")
+        }
+        if let reason = click(identifier: "analysis.play", in: window) {
+            reject("analysis play click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(10), {
+            probeState(identifier: "analysis.play", in: window) == true
+                && (value("analysis.play") ?? 0) > 6.1
+        }) else { reject("analysis native playback did not advance from the selected section") }
+        if let reason = click(identifier: "analysis.play", in: window) {
+            reject("analysis pause click: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            probeState(identifier: "analysis.play", in: window) == false
+        }) else { reject("analysis native playback did not pause") }
+        let playbackPosition = value("analysis.play") ?? 0
+        guard let zoom = findProbe(in: host, identifier: "analysis.zoom"), zoom.bounds.width > 16,
+              click(identifier: "analysis.zoom", in: window,
+                    fraction: NSPoint(x: 1 - 8 / zoom.bounds.width, y: 0.75)) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return value("analysis.zoom") == 2
+                      && abs(width("analysis.waveform") - initialWidth * 2) <= 1
+                      && abs(width("analysis.energy") - initialWidth * 2) <= 1
+              }) else { reject("native analysis zoom did not double the time-aligned lanes") }
+        let selectedName = "scale-\(scaleLabel(scale))-analysis-selected.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(selectedName)),
+              click(identifier: "analysis.fit", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  host.layoutSubtreeIfNeeded()
+                  return value("analysis.zoom") == 1 && abs(width("analysis.waveform") - initialWidth) <= 1
+              }), let home = editor.workingRoot else { reject("analysis Fit did not restore lane width") }
+        do {
+            let song = home.appendingPathComponent("pipeline/audio/Acceptance Track.wav")
+            try Data("Changed source bytes".utf8).write(to: song, options: .atomic)
+        } catch { reject("could not replace analysis fixture source") }
+        await editor.refreshEngineState()
+        guard await waitUntil(timeout: .seconds(10), {
+            probeState(identifier: "analysis.source", in: window) == false
+                && findProbe(in: host, identifier: "analysis.waveform") == nil
+        }), click(identifier: "analysis.play", in: window) == nil else {
+            reject("changed analysis source remained executable")
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let changedName = "scale-\(scaleLabel(scale))-analysis-source-unavailable.png"
+        guard probeState(identifier: "analysis.play", in: window) == false,
+              snapshot(host, at: evidenceURL.appendingPathComponent(changedName)),
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("analysis played changed bytes or changed the saved project")
+        }
+        emit("analysis-interaction", scale: scale, fields: [
+            "selectedStart": 6, "playedPosition": playbackPosition, "zoom": 2,
+            "fitRestored": true, "changedSourceDisabled": true, "savedProjectUnchanged": true,
+            "screenshots": [initialName, selectedName, changedName],
+        ])
+    }
+
+    private static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
+        guard let root = window.contentView, let probe = findProbe(in: root, identifier: identifier),
+              let scroll = enclosingScrollView(for: probe), let document = scroll.documentView else { return false }
+        document.scrollToVisible(probe.convert(probe.bounds, to: document))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        return await waitUntil(timeout: .seconds(5), {
+            root.layoutSubtreeIfNeeded()
+            return scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView))
+                && root.bounds.contains(probe.convert(probe.bounds, to: root))
+        })
+    }
+
+    private static func makeAnalysisFixture() throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("Analysis-\(UUID().uuidString).ngv")
+        let root = home.appendingPathComponent("pipeline")
+        for child in ["audio", "analysis"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(child), withIntermediateDirectories: true)
+        }
+        try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
+        try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
+        try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
+        try Data("project: Native analysis acceptance\nmode: generic\n".utf8).write(to: root.appendingPathComponent("project.yaml"))
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 96_000),
+              let samples = buffer.floatChannelData?[0] else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = 96_000
+        for index in 0..<96_000 { samples[index] = Float(sin(Double(index) * 0.1)) * 0.1 }
+        let song = root.appendingPathComponent("audio/Acceptance Track.wav")
+        do {
+            let audio = try AVAudioFile(forWriting: song, settings: format.settings)
+            try audio.write(from: buffer)
+        }
+        let intervals: [[String: Double]] = [["start": 0, "end": 6], ["start": 6, "end": 12]]
+        let sections: [[String: Any]] = [
+            ["index": 0, "start": 0, "end": 6, "label": "Intro", "source": "measured_system_hierarchy"],
+            ["index": 1, "start": 6, "end": 12, "label": "Verse", "source": "measured_system_hierarchy"],
+        ]
+        let hierarchy: [String: Any] = [
+            "source": "apple_music_understanding", "sections": intervals, "segments": intervals,
+            "phrases": [["start": 0, "end": 3], ["start": 3, "end": 6], ["start": 6, "end": 9], ["start": 9, "end": 12]],
+        ]
+        let resolution: [String: Any] = [
+            "status": "resolved", "method": "music_understanding_hierarchy",
+            "candidate_boundary_count": 1, "accepted_boundary_count": 1, "discarded_boundary_count": 0,
+            "hierarchy": hierarchy, "detail": "Synthetic native interaction fixture",
+        ]
+        let artifact: [String: Any] = [
+            "schema": "analysis/v3", "song_path": "audio/Acceptance Track.wav",
+            "song_sha256": try FileDigest.sha256(of: song), "duration_s": 12, "bpm": 120,
+            "beats": (0..<24).map { Double($0) / 2 }, "downbeats": [0, 2, 4, 6, 8, 10],
+            "sections": sections,
+            "energy_curve": (0..<12).map { second -> [String: Double] in
+                let sum = (second * 8_000..<(second + 1) * 8_000).reduce(0.0) { sum, i in
+                    sum + Double(samples[i] * samples[i])
+                }
+                return ["t": Double(second), "rms": sqrt(sum / 8_000)]
+            },
+            "structure_resolution": resolution,
+        ]
+        let artifactBytes = try JSONSerialization.data(withJSONObject: artifact, options: [.sortedKeys])
+        let analysis = try JSONDecoder().decode(AnalysisSurfaceData.self, from: artifactBytes)
+        guard analysis.hasNestedHierarchy, analysis.measuredEnergy != nil,
+              analysis.verifiedSourceURL(dataRoot: root) != nil else {
+            throw NSError(domain: "WorkspaceUIAcceptance", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Analysis fixture lacks hierarchy, energy, or a verified source"])
+        }
+        try artifactBytes.write(to: root.appendingPathComponent("analysis/Acceptance Track.json"))
+        _ = try ProjectIdentity.uuid(for: home)
+        return home
+    }
+
+    private static func makeProjectFixture(scale: Double) throws -> URL {
+        let title = scale == 1.25
+            ? "An exceptionally long project name for the final picture lock"
+            : "Ein außergewöhnlich langes Projekt für den finalen Filmschnitt"
+        let projectURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(title) \(scaleLabel(scale))-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: projectURL,
+            withIntermediateDirectories: true
+        )
+        var timeline = Timeline()
+        if inspectorRequested {
+            var textClip = Clip(mediaRef: "inspector-title", startFrame: 0, durationFrames: 90)
+            textClip.id = "inspector-text"
+            textClip.mediaType = .text
+            textClip.sourceClipType = .text
+            textClip.textContent = "Inspector title"
+
+            var firstImage = Clip(mediaRef: "inspector-image", startFrame: 100, durationFrames: 90)
+            firstImage.id = "inspector-image-1"
+            firstImage.mediaType = .image
+            firstImage.sourceClipType = .image
+
+            var secondImage = Clip(mediaRef: "inspector-image", startFrame: 200, durationFrames: 90)
+            secondImage.id = "inspector-image-2"
+            secondImage.mediaType = .image
+            secondImage.sourceClipType = .image
+            secondImage.speed = 1.5
+            secondImage.transform.centerX = 0.6
+            secondImage.transform.rotation = 30
+            secondImage.opacity = 0.5
+
+            var audioClip = Clip(mediaRef: "inspector-audio", startFrame: 0, durationFrames: 290)
+            audioClip.id = "inspector-audio-clip"
+            audioClip.mediaType = .audio
+            audioClip.sourceClipType = .audio
+
+            timeline.tracks = [
+                Track(type: .text, clips: [textClip]),
+                Track(type: .image, clips: [firstImage, secondImage]),
+                Track(type: .audio, clips: [audioClip]),
+            ]
+        }
+        try JSONEncoder().encode(timeline).write(
+            to: projectURL.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        try JSONEncoder().encode(makeMediaFixture(at: projectURL)).write(
+            to: projectURL.appendingPathComponent(Project.manifestFilename),
+            options: .atomic
+        )
+        try JSONEncoder().encode(GenerationLog()).write(
+            to: projectURL.appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+        _ = try ProjectIdentity.uuid(for: projectURL)
+        return projectURL
+    }
+
+    private static func makeMediaFixture(at projectURL: URL) throws -> MediaManifest {
+        let mediaURL = projectURL.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaURL, withIntermediateDirectories: true)
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 18, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { throw CocoaError(.fileWriteUnknown) }
+        for y in 0..<18 {
+            for x in 0..<32 { bitmap.setColor(.systemBlue, atX: x, y: y) }
+        }
+        guard let image = bitmap.representation(using: .png, properties: [:]),
+              let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 800),
+              let samples = buffer.floatChannelData?[0] else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = 800
+        for index in 0..<800 { samples[index] = Float(sin(Double(index) * 0.1)) * 0.1 }
+        let seedURL = mediaURL.appendingPathComponent("seed.caf")
+        do {
+            let file = try AVAudioFile(forWriting: seedURL, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        let audio = try Data(contentsOf: seedURL)
+        try FileManager.default.removeItem(at: seedURL)
+        var manifest = MediaManifest()
+        manifest.folders = [
+            MediaFolder(id: "fixture-root", name: "Acceptance Library"),
+            MediaFolder(id: "fixture-nested", name: "Nested Sources", parentFolderId: "fixture-root"),
+        ]
+        for index in 0..<500 {
+            let type: ClipType = index % 3 == 0 ? .image : index % 3 == 1 ? .audio : .document
+            let ext = type == .image ? "png" : type == .audio ? "caf" : "txt"
+            let name = String(format: "Acceptance Source %03d.%@", index, ext)
+            let relativePath = "media/fixture-\(index).\(ext)"
+            let bytes = type == .image ? image : type == .audio ? audio
+                : Data("Production notes for source \(index).".utf8)
+            try bytes.write(to: projectURL.appendingPathComponent(relativePath))
+            manifest.entries.append(MediaManifestEntry(
+                id: "fixture-\(index)", name: index == 498 ? String(repeating: "a", count: 64) : name, type: type,
+                source: .project(relativePath: relativePath), duration: type == .audio ? 0.1 : 0,
+                folderId: index < 250 ? "fixture-root" : "fixture-nested",
+                originalFilename: name
+            ))
+        }
+        return manifest
+    }
+
+    private static func projectSnapshot(at projectURL: URL) throws -> [String: Data] {
+        try treeSnapshot(at: projectURL)
+    }
+
+    private static func treeSnapshot(at root: URL) throws -> [String: Data] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        let prefix = root.standardizedFileURL.path + "/"
+        var snapshot: [String: Data] = [:]
+        for case let url as URL in enumerator {
+            guard try url.resourceValues(forKeys: keys).isRegularFile == true else { continue }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(prefix) else { throw CocoaError(.fileReadInvalidFileName) }
+            snapshot[String(path.dropFirst(prefix.count))] = try Data(contentsOf: url)
+        }
+        return snapshot
+    }
+
+    private static func resetWorkspaceDefaults(scale: Double) {
+        let defaults = UserDefaults.standard
+        defaults.set(scale, forKey: AppTheme.Typography.scaleKey)
+        defaults.set(true, forKey: "mediaPanelVisible")
+        defaults.set(true, forKey: "inspectorPanelVisible")
+        defaults.set(false, forKey: "keyframesPanelVisible")
+        resetSplitAutosaveDefaults()
+    }
+
+    private static func resetSplitAutosaveDefaults() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasPrefix("NSSplitView Subview Frames editor.") {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private static func expectedPanels(
+        for workspace: EditorViewModel.WorkspaceFocus
+    ) -> Set<String> {
+        switch workspace {
+        case .media:
+            ["mediaFoldersPanel", "mediaPanel", "previewPanel", "inspectorPanel"]
+        case .production:
+            ["agentPanel", "projectPanel", "timelinePanel", "previewPanel", "inspectorPanel"]
+        case .edit:
+            ["mediaPanel", "previewPanel", "inspectorPanel", "timelinePanel"]
+        case .postproduction:
+            ["projectPanel", "previewPanel", "inspectorPanel", "timelinePanel"]
+        case .export:
+            ["projectPanel", "previewPanel", "inspectorPanel"]
+        }
+    }
+
+    private static func visiblePanelIDs(in root: NSView) -> Set<String> {
+        Set(visiblePanelFrames(in: root).keys)
+    }
+
+    private static func visiblePanelFrames(in root: NSView) -> [String: NSRect] {
+        var result: [String: NSRect] = [:]
+        func visit(_ view: NSView) {
+            let identifier = view.accessibilityIdentifier()
+            if identifier.hasSuffix("Panel"),
+               view.window != nil,
+               !view.isHiddenOrHasHiddenAncestor {
+                let frame = view.convert(view.bounds, to: root)
+                let visibleBounds = root.bounds.insetBy(dx: -1, dy: -1)
+                if frame.width >= AppTheme.Layout.timelineMinHeight,
+                   frame.height >= AppTheme.Layout.timelineMinHeight,
+                   visibleBounds.contains(frame) {
+                    result[identifier] = frame
+                }
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
+    private static func defaultPanelWidthsAreValid(
+        workspace: EditorViewModel.WorkspaceFocus,
+        frames: [String: NSRect]
+    ) -> Bool {
+        let tolerance = AppTheme.Spacing.md
+        func matches(_ panel: String, _ width: CGFloat) -> Bool {
+            guard let frame = frames[panel] else { return false }
+            return abs(frame.width - width) <= tolerance
+        }
+        switch workspace {
+        case .media:
+            guard let library = frames["mediaPanel"], let folders = frames["mediaFoldersPanel"],
+                  let preview = frames["previewPanel"], let inspector = frames["inspectorPanel"] else { return false }
+            return matches("mediaFoldersPanel", AppTheme.Layout.mediaFolderTreeDefault)
+                && library.width >= AppTheme.Layout.previewMinWidth
+                && folders.maxX <= library.minX + tolerance
+                && library.maxX <= preview.minX + tolerance
+                && abs(preview.minX - inspector.minX) <= tolerance
+                && matches("previewPanel", AppTheme.Layout.producePreviewDefaultWidth)
+        case .edit:
+            return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+        case .production:
+            return matches("agentPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("previewPanel", AppTheme.Layout.producePreviewDefaultWidth)
+                && matches("inspectorPanel", AppTheme.Layout.producePreviewDefaultWidth)
+        case .postproduction, .export:
+            return matches("projectPanel", AppTheme.Layout.mediaPanelDefault)
+                && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
+        }
+    }
+
+    private static func narrowProductionWidthsAreValid(_ frames: [String: NSRect]) -> Bool {
+        let tolerance = AppTheme.Spacing.md
+        guard let agent = frames["agentPanel"],
+              let project = frames["projectPanel"],
+              let preview = frames["previewPanel"],
+              let inspector = frames["inspectorPanel"] else { return false }
+        return agent.width >= AppTheme.Layout.agentPanelMin - tolerance
+            && project.width >= AppTheme.Layout.previewMinWidth - tolerance
+            && preview.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+            && inspector.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+    }
+
+    private static func previewTimecodeIsSingleLine(in window: NSWindow, scale: Double) -> Bool {
+        guard let root = window.contentView,
+              let previewFrame = visiblePanelFrames(in: root)["previewPanel"] else { return false }
+        let maximumHeight = AppTheme.Typography.ui * CGFloat(scale) + AppTheme.Spacing.md
+        let previewBounds = previewFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        guard let transportFrame = probes(in: root, identifier: "preview.transportBar")
+            .compactMap({ probe -> NSRect? in
+                let frame = probe.convert(probe.bounds, to: root)
+                guard probe.window === window,
+                      !probe.isHiddenOrHasHiddenAncestor,
+                      frame.width > 0,
+                      frame.height > 0,
+                      previewBounds.contains(frame) else { return nil }
+                return frame
+            })
+            .first else { return false }
+        let transportBounds = transportFrame.insetBy(
+            dx: -AppTheme.BorderWidth.thin,
+            dy: -AppTheme.BorderWidth.thin
+        )
+        let timecodeFits = probes(in: root, identifier: "preview.timecode").contains { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && frame.height <= maximumHeight
+                && transportBounds.contains(frame)
+        }
+        return timecodeFits
+            && visibleProbe(identifier: "preview.zoom", in: window, containedBy: transportBounds)
+    }
+
+    private static func agentControlsAreContained(in window: NSWindow) -> Bool {
+        guard let root = window.contentView,
+              let agentFrame = visiblePanelFrames(in: root)["agentPanel"] else { return false }
+        let bounds = agentFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
+        return ["agent.decisions", "agent.diagnostics", "agent.utilities"].allSatisfy {
+            visibleProbe(identifier: $0, in: window, containedBy: bounds)
+        }
+    }
+
+    private static func visibleProbe(
+        identifier: String,
+        in window: NSWindow,
+        containedBy bounds: NSRect,
+        requiredState: Bool? = nil
+    ) -> Bool {
+        guard let root = window.contentView else { return false }
+        return probes(in: root, identifier: identifier).contains { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && bounds.contains(frame)
+                && (requiredState == nil
+                    || (probe as? AppRelaunchClickProbeView)?.acceptanceState == requiredState)
+        }
+    }
+
+    private static func probes(in view: NSView, identifier: String) -> [NSView] {
+        var result: [NSView] = []
+        if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
+            result.append(view)
+        }
+        for child in view.subviews {
+            result.append(contentsOf: probes(in: child, identifier: identifier))
+        }
+        return result
+    }
+
+    private struct InspectorSplitState {
+        let splitView: NSSplitView
+        let dividerIndex: Int
+        let originalPosition: CGFloat
+    }
+
+    private static func inspectorSplitState(in root: NSView) -> InspectorSplitState? {
+        guard var child = findView(in: root, accessibilityIdentifier: "inspectorPanel") else {
+            return nil
+        }
+        while let parent = child.superview {
+            if let splitView = parent as? NSSplitView,
+               splitView.isVertical,
+               let index = splitView.subviews.firstIndex(where: { $0 === child }),
+               index > 0 {
+                return InspectorSplitState(
+                    splitView: splitView,
+                    dividerIndex: index - 1,
+                    originalPosition: splitView.subviews[index - 1].frame.maxX
+                )
+            }
+            child = parent
+        }
+        return nil
+    }
+
+    private static func findView(
+        in view: NSView,
+        accessibilityIdentifier: String
+    ) -> NSView? {
+        if view.accessibilityIdentifier() == accessibilityIdentifier,
+           view.window != nil,
+           !view.isHiddenOrHasHiddenAncestor {
+            return view
+        }
+        for child in view.subviews {
+            if let match = findView(in: child, accessibilityIdentifier: accessibilityIdentifier) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func visibleGeometryProbe(
+        identifier: String,
+        in window: NSWindow,
+        containedBy bounds: NSRect
+    ) -> NSView? {
+        guard let root = window.contentView else { return nil }
+        return probes(in: root, identifier: identifier).first { probe in
+            let frame = probe.convert(probe.bounds, to: root)
+            return probe.window === window
+                && !probe.isHiddenOrHasHiddenAncestor
+                && frame.width > 0
+                && frame.height > 0
+                && frame.minX >= bounds.minX - AppTheme.BorderWidth.thin
+                && frame.maxX <= bounds.maxX + AppTheme.BorderWidth.thin
+        }
+    }
+
+    private static func captureKeyframeLayoutEvidence(
+        family: String,
+        properties: [AnimatableProperty],
+        window: NSWindow,
+        host: NSView,
+        evidenceURL: URL,
+        screenshotName: String,
+        inspectorWidthTarget: CGFloat?,
+        scale: Double
+    ) async -> [String: Any] {
+        host.layoutSubtreeIfNeeded()
+        guard let root = window.contentView,
+              let inspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"],
+              let panelProbe = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.panel",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let firstProperty = properties.first,
+              let firstLabel = visibleGeometryProbe(
+                  identifier: "inspector.keyframes.lane.\(firstProperty.rawValue).label",
+                  in: window,
+                  containedBy: inspectorFrame
+              ),
+              let scrollView = enclosingScrollView(for: firstLabel),
+              let documentView = scrollView.documentView else {
+            fail("inspector \(family) keyframe layout geometry was unavailable", scale: scale)
+        }
+        let originalScrollOrigin = scrollView.contentView.bounds.origin
+        let rulerProbe = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        let rulerOverlay = visibleGeometryProbe(
+            identifier: "inspector.keyframes.ruler.overlay",
+            in: window,
+            containedBy: inspectorFrame
+        )
+        guard let rulerProbe, let rulerOverlay else {
+            fail("inspector \(family) ruler geometry was unavailable", scale: scale)
+        }
+        documentView.scrollToVisible(rulerProbe.convert(rulerProbe.bounds, to: documentView))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        let rulerFrame = rulerProbe.convert(rulerProbe.bounds, to: root)
+        let rulerOverlayFrame = rulerOverlay.convert(rulerOverlay.bounds, to: root)
+        let rulerClipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+        guard visibleFrame(rulerFrame, inside: rulerClipFrame, and: inspectorFrame),
+              matchingFrame(rulerOverlayFrame, rulerFrame) else {
+            fail("inspector \(family) ruler overlay was outside its drawing area", scale: scale)
+        }
+
+        var laneEvidence: [[String: Any]] = []
+        var detectedModes = Set<String>()
+        for property in properties {
+            let prefix = "inspector.keyframes.lane.\(property.rawValue)"
+            guard let label = visibleGeometryProbe(
+                identifier: "\(prefix).label",
+                in: window,
+                containedBy: inspectorFrame
+            ), let track = visibleGeometryProbe(
+                identifier: "\(prefix).track",
+                in: window,
+                containedBy: inspectorFrame
+            ), let overlay = visibleGeometryProbe(
+                identifier: "\(prefix).overlay",
+                in: window,
+                containedBy: inspectorFrame
+            ), enclosingScrollView(for: label) === scrollView,
+               enclosingScrollView(for: track) === scrollView,
+               enclosingScrollView(for: overlay) === scrollView else {
+                fail("inspector \(family) \(property.rawValue) geometry was unavailable", scale: scale)
+            }
+            let target = label.convert(label.bounds, to: documentView)
+                .union(track.convert(track.bounds, to: documentView))
+                .union(overlay.convert(overlay.bounds, to: documentView))
+            documentView.scrollToVisible(target)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            try? await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+
+            let clipFrame = scrollView.contentView.convert(scrollView.contentView.bounds, to: root)
+            let labelFrame = label.convert(label.bounds, to: root)
+            let trackFrame = track.convert(track.bounds, to: root)
+            let overlayFrame = overlay.convert(overlay.bounds, to: root)
+            let side = labelFrame.maxX + AppTheme.Spacing.sm
+                <= trackFrame.minX + AppTheme.BorderWidth.thin
+            let stacked = labelFrame.maxY + AppTheme.Spacing.xs
+                <= trackFrame.minY + AppTheme.BorderWidth.thin
+            guard side != stacked,
+                  visibleFrame(labelFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(trackFrame, inside: clipFrame, and: inspectorFrame),
+                  visibleFrame(overlayFrame, inside: clipFrame, and: inspectorFrame),
+                  matchingFrame(overlayFrame, trackFrame),
+                  abs(trackFrame.minX - rulerFrame.minX) <= AppTheme.BorderWidth.thin,
+                  abs(trackFrame.maxX - rulerFrame.maxX) <= AppTheme.BorderWidth.thin else {
+                fail("inspector \(family) \(property.rawValue) layout geometry was invalid", scale: scale)
+            }
+            detectedModes.insert(side ? "side" : "stacked")
+            laneEvidence.append([
+                "clipFrame": frameDescription(clipFrame),
+                "labelFrame": frameDescription(labelFrame),
+                "overlayFrame": frameDescription(overlayFrame),
+                "property": property.rawValue,
+                "trackFrame": frameDescription(trackFrame),
+                "visible": true,
+            ])
+        }
+        guard detectedModes.count == 1, let mode = detectedModes.first else {
+            fail("inspector \(family) keyframe lanes disagreed on layout", scale: scale)
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshotName)) else {
+            fail("could not capture inspector \(family) \(mode) keyframes", scale: scale)
+        }
+        let panelFrame = panelProbe.convert(panelProbe.bounds, to: root)
+        scrollView.contentView.scroll(to: originalScrollOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        host.layoutSubtreeIfNeeded()
+        var evidence: [String: Any] = [
+            "inspectorFrame": frameDescription(inspectorFrame),
+            "laneEvidence": laneEvidence,
+            "mode": mode,
+            "panelFrame": frameDescription(panelFrame),
+            "reachableLaneLabels": properties.map(\.rawValue),
+            "rulerFrame": frameDescription(rulerFrame),
+            "rulerOverlayFrame": frameDescription(rulerOverlayFrame),
+            "screenshot": screenshotName,
+        ]
+        if let inspectorWidthTarget {
+            evidence["inspectorWidthTarget"] = Double(inspectorWidthTarget)
+        }
+        return evidence
+    }
+
+    private static func visibleFrame(
+        _ frame: NSRect,
+        inside clipFrame: NSRect,
+        and inspectorFrame: NSRect
+    ) -> Bool {
+        frame.width > 0
+            && frame.height > 0
+            && clipFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+            && inspectorFrame.insetBy(
+                dx: -AppTheme.BorderWidth.thin,
+                dy: -AppTheme.BorderWidth.thin
+            ).contains(frame)
+    }
+
+    private static func matchingFrame(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.minX - rhs.minX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.minY - rhs.minY) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxX - rhs.maxX) <= AppTheme.BorderWidth.thin
+            && abs(lhs.maxY - rhs.maxY) <= AppTheme.BorderWidth.thin
+    }
+
+    private static func enclosingScrollView(for view: NSView) -> NSScrollView? {
+        var ancestor = view.superview
+        while let current = ancestor {
+            if let scrollView = current as? NSScrollView { return scrollView }
+            ancestor = current.superview
+        }
+        return nil
+    }
+
+    private static func panelDiagnostics(in root: NSView) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        func visit(_ view: NSView) {
+            let identifier = view.accessibilityIdentifier()
+            if identifier.hasSuffix("Panel") {
+                let frame = view.convert(view.bounds, to: root)
+                result.append([
+                    "id": identifier,
+                    "frame": frameDescription(frame),
+                    "hidden": view.isHidden,
+                    "hiddenAncestor": view.isHiddenOrHasHiddenAncestor,
+                    "hasWindow": view.window != nil,
+                ])
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
+    private static func splitDiagnostics(in root: NSView) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        func visit(_ view: NSView) {
+            if let split = view as? NSSplitView {
+                var row: [String: Any] = [
+                    "autosave": split.autosaveName ?? "",
+                    "frame": frameDescription(split.convert(split.bounds, to: root)),
+                    "vertical": split.isVertical,
+                    "subviews": split.subviews.map {
+                        frameDescription($0.convert($0.bounds, to: root))
+                    },
+                ]
+                if let controller = split.delegate as? NSSplitViewController {
+                    row["controllerViewIsSplit"] = controller.view === split
+                    row["controllerView"] = viewLayoutDiagnostics(controller.view, in: root)
+                    row["splitView"] = viewLayoutDiagnostics(split, in: root)
+                }
+                result.append(row)
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return result
+    }
+
+    private static func viewLayoutDiagnostics(
+        _ view: NSView,
+        in root: NSView
+    ) -> [String: Any] {
+        [
+            "id": String(describing: ObjectIdentifier(view)),
+            "class": String(describing: type(of: view)),
+            "bounds": frameDescription(view.bounds),
+            "frame": frameDescription(view.frame),
+            "frameInContent": frameDescription(view.convert(view.bounds, to: root)),
+            "superviewID": view.superview.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "autoresizingMask": Int(view.autoresizingMask.rawValue),
+            "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            "horizontalConstraints": view.constraintsAffectingLayout(for: .horizontal).map(\.description),
+            "verticalConstraints": view.constraintsAffectingLayout(for: .vertical).map(\.description),
+            "parentConstraints": view.superview?.constraints.map(\.description) ?? [],
+        ]
+    }
+
+    private static func windowDiagnostics(
+        _ window: NSWindow,
+        contentView: NSView
+    ) -> [String: Any] {
+        let currentContentView = window.contentView
+        let controllerView = window.contentViewController?.view
+        return [
+            "capturedContentID": String(describing: ObjectIdentifier(contentView)),
+            "currentContentID": currentContentView.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "controllerViewID": controllerView.map {
+                String(describing: ObjectIdentifier($0))
+            } ?? "",
+            "capturedIsCurrentContent": currentContentView === contentView,
+            "capturedIsControllerView": controllerView === contentView,
+            "contentBounds": frameDescription(contentView.bounds),
+            "contentFrame": frameDescription(contentView.frame),
+            "contentVisibleRect": frameDescription(contentView.visibleRect),
+            "contentRectForFrame": frameDescription(window.contentRect(forFrameRect: window.frame)),
+            "contentLayoutRect": frameDescription(window.contentLayoutRect),
+            "contentMinSize": sizeDescription(window.contentMinSize),
+            "contentMaxSize": sizeDescription(window.contentMaxSize),
+            "frame": frameDescription(window.frame),
+            "backingScaleFactor": Double(window.backingScaleFactor),
+            "screenVisibleFrame": frameDescription(window.screen?.visibleFrame ?? .zero),
+            "minSize": sizeDescription(window.minSize),
+            "maxSize": sizeDescription(window.maxSize),
+        ]
+    }
+
+    private static func geometryDiagnostics(in root: NSView) -> [String: Any] {
+        guard let probe = findProbe(in: root, identifier: "editor.geometry") else {
+            return ["available": false]
+        }
+        return ["available": true, "view": viewLayoutDiagnostics(probe, in: root)]
+    }
+
+    private static func editorViewChainDiagnostics(in root: NSView) -> [[String: Any]] {
+        func firstSplit(in view: NSView) -> NSSplitView? {
+            if let split = view as? NSSplitView { return split }
+            for child in view.subviews {
+                if let split = firstSplit(in: child) { return split }
+            }
+            return nil
+        }
+        var result: [[String: Any]] = []
+        var current: NSView? = firstSplit(in: root)
+        while let view = current {
+            result.append([
+                "class": String(describing: type(of: view)),
+                "bounds": frameDescription(view.bounds),
+                "frame": frameDescription(view.frame),
+                "frameInContent": frameDescription(view.convert(view.bounds, to: root)),
+            "translatesAutoresizingMask": view.translatesAutoresizingMaskIntoConstraints,
+            "autoresizesSubviews": view.autoresizesSubviews,
+            ])
+            current = view.superview
+        }
+        return result
+    }
+
+    private static func frameDescription(_ frame: NSRect) -> [String: Double] {
+        [
+            "x": Double(frame.minX),
+            "y": Double(frame.minY),
+            "width": Double(frame.width),
+            "height": Double(frame.height),
+        ]
+    }
+
+    private static func sizeDescription(_ size: NSSize) -> [String: Double] {
+        ["width": Double(size.width), "height": Double(size.height)]
+    }
+
+    static func recordEditorSizeProbe(proposal: ProposedViewSize, result: CGSize) {
+        guard isRequested, editorSizeProbes.count < 32 else { return }
+        editorSizeProbes.append([
+            "proposalWidth": String(describing: proposal.width),
+            "proposalHeight": String(describing: proposal.height),
+            "resultWidth": String(describing: result.width),
+            "resultHeight": String(describing: result.height),
+        ])
+    }
+
+    private static func snapshot(_ view: NSView, at url: URL) -> Bool {
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func click(identifier: String, in window: NSWindow, fraction: NSPoint = NSPoint(x: 0.5, y: 0.5), clickCount: Int = 1) -> String? {
+        guard (1...2).contains(clickCount) else { return "unsupported click count" }
+        guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+              let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier),
+              probe.window === window,
+              !probe.isHiddenOrHasHiddenAncestor else {
+            return "control geometry unavailable"
+        }
+        let frame = probe.bounds
+        guard frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+            return "control has no finite frame"
+        }
+        guard fraction.x.isFinite, fraction.y.isFinite,
+              (0...1).contains(fraction.x), (0...1).contains(fraction.y) else { return "invalid click fraction" }
+        let point = NSPoint(x: frame.minX + frame.width * fraction.x, y: frame.minY + frame.height * fraction.y)
+        let location = probe.convert(point, to: nil)
+        guard root.bounds.contains(root.convert(location, from: nil)) else {
+            return "control is outside the window"
+        }
+        let start = ProcessInfo.processInfo.systemUptime
+        for count in 1...clickCount {
+            let timestamp = start + Double(count - 1) * min(0.08, NSEvent.doubleClickInterval / 4)
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: location,
+                modifierFlags: [],
+                timestamp: timestamp,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: count,
+                pressure: 1
+            ), let up = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: location,
+                modifierFlags: [],
+                timestamp: timestamp + 0.001,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: count,
+                pressure: 0
+            ) else {
+                return "AppKit could not create mouse events"
+            }
+            NSApp.postEvent(down, atStart: false)
+            NSApp.postEvent(up, atStart: false)
+        }
+        return nil
+    }
+
+    private static func findProbe(in view: NSView, identifier: String) -> NSView? {
+        if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
+            return view
+        }
+        for child in view.subviews {
+            if let match = findProbe(in: child, identifier: identifier) { return match }
+        }
+        return nil
+    }
+
+    private static func probeState(identifier: String, in window: NSWindow) -> Bool? {
+        guard let root = window.contentView,
+              let probe = findProbe(in: root, identifier: identifier)
+                as? AppRelaunchClickProbeView else { return nil }
+        return probe.acceptanceState
+    }
+
+    private static func stablePanelFrames(
+        in host: NSView, matching expected: [String: NSRect]? = nil
+    ) async -> [String: NSRect]? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        var previous: [String: NSRect] = [:]
+        var stableSince = clock.now
+        while clock.now < deadline {
+            host.layoutSubtreeIfNeeded()
+            let frames = visiblePanelFrames(in: host)
+            if frames.isEmpty || frames != previous || (expected != nil && frames != expected) {
+                previous = frames
+                stableSince = clock.now
+            } else if clock.now - stableSince >= .milliseconds(300) {
+                return frames
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return nil }
+        }
+        return nil
+    }
+
+    private static func waitUntil(
+        timeout: Duration,
+        _ predicate: () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return predicate()
+    }
+
+    private static func scaleLabel(_ scale: Double) -> String {
+        String(Int((scale * 100).rounded()))
+    }
+
+    private static func emit(
+        _ event: String,
+        scale: Double,
+        fields: [String: Any] = [:]
+    ) {
+        var row: [String: Any] = [
+            "event": event,
+            "os": ProcessInfo.processInfo.operatingSystemVersionString,
+            "scale": scale,
+        ]
+        fields.forEach { row[$0.key] = $0.value }
+        guard let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) else {
+            fail("could not encode evidence", scale: scale)
+        }
+        FileHandle.standardOutput.write(data + Data([10]))
+    }
+
+    private static func fail(_ reason: String, scale: Double? = nil) -> Never {
+        if let scale {
+            emit("failed", scale: scale, fields: ["reason": reason])
+        } else {
+            FileHandle.standardError.write(Data("WORKSPACE_UI_ACCEPTANCE_FAIL \(reason)\n".utf8))
+        }
+        exit(2)
+    }
+}

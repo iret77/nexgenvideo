@@ -2,11 +2,20 @@ import Foundation
 
 /// Exact keyword search over cached transcripts
 enum TranscriptSearch {
-    struct Hit: Equatable {
+    struct Hit: Equatable, Sendable {
         let assetID: String
         let start: Double
         let end: Double
         let text: String
+    }
+
+    static func searchAsync(query: String, assets: [(id: String, url: URL)]) async -> [Hit] {
+        let task = Task.detached(priority: .utility) { search(query: query, assets: assets) }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     static func search(query: String, assets: [(id: String, url: URL)], limit: Int = 20) -> [Hit] {
@@ -15,6 +24,7 @@ enum TranscriptSearch {
 
         var hits: [Hit] = []
         for asset in assets {
+            guard !Task.isCancelled else { return [] }
             guard let transcript = TranscriptCache.cachedOnDisk(for: asset.url) else { continue }
             for segment in transcript.segments where matches(segment.text, terms: terms) {
                 hits.append(Hit(assetID: asset.id, start: segment.start, end: segment.end, text: segment.text))

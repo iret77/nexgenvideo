@@ -6,6 +6,54 @@ enum ChatSessionAttention: Equatable {
     case unreadResult
 }
 
+struct AgentTask: Codable, Equatable {
+    let title: String
+    let systemImage: String
+    let prompt: String
+    var requiresDirection: Bool = false
+    var originContext: String? = nil
+    var replyToMessageID: UUID? = nil
+}
+
+struct ChatSessionDraft: Codable, Equatable {
+    var text: String
+    var mentions: [AgentMention]
+    var task: AgentTask?
+
+    var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && mentions.isEmpty && task == nil
+    }
+}
+
+struct WorkflowIntakeDraftKey: Codable, Equatable {
+    let packBinding: ProjectPackBinding?
+    let phase: String
+    let stepID: String
+    let itemNumber: Int?
+    let fingerprint: Int
+    let isRepeat: Bool
+}
+
+struct ChatSessionDecision: Codable, Equatable {
+    let dialog: AgentDialog
+    let origin: ToolCallOrigin
+    var draft: AgentDialogDraft
+    var selections: [String: Set<String>]
+    var intakeKey: WorkflowIntakeDraftKey? = nil
+
+    func belongs(to sessionID: UUID) -> Bool {
+        if dialog.purpose == .workflowIntake {
+            return intakeKey != nil && origin == .direct
+        }
+        guard dialog.purpose == .chatClarification, intakeKey == nil else { return false }
+        switch origin {
+        case .direct: return true
+        case .inAppChat(let id), .embeddedRuntime(let id, _): return id == sessionID
+        case .externalMCP: return false
+        }
+    }
+}
+
 struct ChatSession: Codable, Identifiable {
     let id: UUID
     var title: String
@@ -15,6 +63,10 @@ struct ChatSession: Codable, Identifiable {
     /// `claude`'s own session id for this chat, once known. Persisted so reopening the tab or reloading
     /// the project can `--resume` the exact conversation instead of starting the agent from scratch.
     var claudeSessionId: String?
+    var draft: ChatSessionDraft?
+    var decision: ChatSessionDecision?
+
+    var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false || decision != nil }
 
     init(id: UUID = UUID(), title: String = "New chat", messages: [AgentMessage] = [], isOpen: Bool = true) {
         self.id = id
@@ -23,9 +75,11 @@ struct ChatSession: Codable, Identifiable {
         self.messages = messages
         self.isOpen = isOpen
         self.claudeSessionId = nil
+        self.draft = nil
+        self.decision = nil
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId }
+    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -35,6 +89,8 @@ struct ChatSession: Codable, Identifiable {
         self.messages = try c.decode([AgentMessage].self, forKey: .messages)
         self.isOpen = try c.decodeIfPresent(Bool.self, forKey: .isOpen) ?? true
         self.claudeSessionId = try c.decodeIfPresent(String.self, forKey: .claudeSessionId)
+        self.draft = try c.decodeIfPresent(ChatSessionDraft.self, forKey: .draft)
+        self.decision = try c.decodeIfPresent(ChatSessionDecision.self, forKey: .decision)
     }
 }
 

@@ -59,7 +59,7 @@ struct ProjectCard: View {
         )
         .shadow(showsActiveHover ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
         .scaleEffect(showsActiveHover ? 1.03 : 1.0)
-        .padding(AppTheme.Spacing.xs)
+        .padding(AppTheme.Spacing.sm)
         .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
         .onHover { isHovered = $0 }
         .contextMenu {
@@ -115,6 +115,13 @@ struct ProjectCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!entry.isAccessible)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "home.project.\(entry.id)", acceptanceState: entry.isAccessible)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .accessibilityLabel(entry.isAccessible ? "Open \(entry.name)" : "\(entry.name), unavailable")
     }
 
@@ -127,7 +134,7 @@ struct ProjectCard: View {
                         Image(nsImage: thumbnail)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                    } else {
+                    } else if entry.isAccessible {
                         Image(systemName: "film")
                             .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
                             .foregroundStyle(AppTheme.Text.mutedColor)
@@ -137,16 +144,12 @@ struct ProjectCard: View {
                     if !entry.isAccessible {
                         AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.elevated)
 
-                        VStack(spacing: AppTheme.Spacing.xxs) {
-                            Image(systemName: "questionmark.folder")
-                                .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
-                            Text("Unavailable")
-                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                            Text("Moved or deleted")
-                                .interfaceFont(size: AppTheme.Typography.metadata)
-                                .foregroundStyle(AppTheme.Text.mutedColor)
-                        }
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        Image(systemName: "questionmark.folder")
+                            .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .background { acceptanceProbe("unavailable-icon") }
+                            .frame(maxHeight: .infinity, alignment: .top)
+                            .padding(.top, AppTheme.Spacing.lg)
                     }
                 }
                 .clipped()
@@ -167,7 +170,15 @@ struct ProjectCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.regular)
                     .foregroundStyle(entry.isAccessible ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                     .lineLimit(1)
+                    .background { acceptanceProbe("name") }
 
+                if !entry.isAccessible {
+                    Text("Moved or deleted")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                        .lineLimit(1)
+                        .background { acceptanceProbe("unavailable-status") }
+                }
                 if let packLabel {
                     Label(packLabel, systemImage: "puzzlepiece.extension.fill")
                         .interfaceFont(size: AppTheme.Typography.metadata)
@@ -181,6 +192,15 @@ struct ProjectCard: View {
             }
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.bottom, AppTheme.Spacing.smMd)
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ part: String) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "home.project.\(entry.id).\(part)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
         }
     }
 

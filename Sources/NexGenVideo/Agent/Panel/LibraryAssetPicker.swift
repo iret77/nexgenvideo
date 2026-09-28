@@ -77,20 +77,19 @@ struct LibraryAssetPicker: View {
     /// selection is the obvious first pick (docs/UI_UX_CONCEPT.md §2.2).
     var pinnedId: String? = nil
     var emptyLabel: String = "Nothing in your library yet"
+    var state: MediaPickerState? = nil
+    var onReveal: ((MediaAsset) -> Void)? = nil
     let onPick: (MediaAsset) -> Void
 
-    @State private var query: String = ""
-    @State private var tab: MentionTab = .all
-
+    @State private var localState = MediaPickerState()
+    private var pickerState: MediaPickerState { state ?? localState }
+    private var query: String {
+        get { pickerState.query }
+        nonmutating set { pickerState.query = newValue }
+    }
     private var visible: [MediaAsset] {
-        var out = assets
-        if let clip = tab.clipType { out = out.filter { $0.type == clip } }
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !q.isEmpty {
-            out = out.filter {
-                $0.mentionDisplayName.lowercased().contains(q) || $0.name.lowercased().contains(q)
-            }
-        }
+        let types: Set<ClipType> = showsTypeTabs ? (pickerState.type.map { Set([$0]) } ?? []) : []
+        var out = MediaLibraryQuery(text: query, types: types).apply(to: assets)
         if let pinnedId, let idx = out.firstIndex(where: { $0.id == pinnedId }) {
             out.insert(out.remove(at: idx), at: 0)
         }
@@ -117,11 +116,20 @@ struct LibraryAssetPicker: View {
     private var rows: some View {
         let list = LazyVStack(spacing: AppTheme.Spacing.none) {
             ForEach(visible) { asset in
-                Button { onPick(asset) } label: {
+                Button {
+                    pickerState.selectedAssetID = asset.id
+                    onPick(asset)
+                } label: {
                     AssetRow(asset: asset,
-                             isHighlighted: asset.id == pinnedId,
+                             isHighlighted: asset.id == (pickerState.selectedAssetID ?? pinnedId),
                              trailingSystemImage: "plus.circle")
                         .contentShape(Rectangle())
+                }
+                .id(asset.id)
+                .contextMenu {
+                    if let onReveal {
+                        Button("Show in Media") { onReveal(asset) }
+                    }
                 }
                 .buttonStyle(.plain)
                 .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
@@ -129,7 +137,12 @@ struct LibraryAssetPicker: View {
             }
         }
         if let scrollHeight {
-            ScrollView { list }.frame(maxHeight: scrollHeight)
+            ScrollView { list.scrollTargetLayout() }
+                .scrollPosition(id: Binding(
+                    get: { pickerState.scrollAssetID },
+                    set: { pickerState.scrollAssetID = $0 }
+                ))
+                .frame(maxHeight: scrollHeight)
         } else {
             list
         }
@@ -140,7 +153,7 @@ struct LibraryAssetPicker: View {
             Image(systemName: "magnifyingglass")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-            TextField("Search your library\u{2026}", text: $query)
+            TextField("Search your library\u{2026}", text: Binding(get: { query }, set: { query = $0 }))
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -158,20 +171,15 @@ struct LibraryAssetPicker: View {
     }
 
     private var tabStrip: some View {
-        HStack(spacing: AppTheme.Spacing.none) {
-            ForEach(MentionTab.allCases, id: \.self) { t in
-                Text(t.label)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: t == tab ? .semibold : .regular)
-                    .foregroundStyle(t == tab ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, AppTheme.Spacing.xxs)
-                    .background(
-                        t == tab ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor,
-                        in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture { tab = t }
-            }
-        }
+        NativeChoicePicker(
+            label: "Media Type",
+            options: MentionTab.allCases.map {
+                .init(id: $0.clipType?.rawValue ?? "all", title: $0.label)
+            },
+            selection: Binding(
+                get: { pickerState.type?.rawValue ?? "all" },
+                set: { pickerState.type = ClipType(rawValue: $0) }
+            )
+        )
     }
 }

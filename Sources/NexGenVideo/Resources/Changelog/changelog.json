@@ -27,7 +27,37 @@
             "Generation batches show verified Runway Gemini Image costs and distinguish unsupported options, pricing outages and unavailable exchange rates.",
             "Failed pricing can be retried, or an affected request can be prepared again on an explicitly selected route, without submitting a generation.",
             "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch."
-
+          ]
+        },
+        {
+          "heading": "Projects",
+          "items": [
+            "Project cards on the welcome screen are 50% larger, with unchanged text and icon sizes."
+          ]
+        },
+        {
+          "heading": "Agent",
+          "items": [
+            "Staged tasks preserve their original object and playhead context. Agent results provide an explicit reply action, and available app updates remain visible while a project is open.",
+            "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details.",
+            "The agent surface uses named tasks, a current result, and a separate diagnostic transcript. Media, clip, and range references open task instructions; adding a reference alone does not satisfy required instructions. Caption edits, music revisions, library organization, object revisions, and pack commands can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history. Open decision inputs survive panel reopening and failed intake completion. Session-owned clarification dialogs and their drafts restore after project reload without submitting an answer. Workflow intake restores inputs only after the host offers the matching current step again. Recovery loads saved editing data before refreshing the workflow and discards obsolete intake offers. Malformed dialog schemas are rejected before presentation and can be corrected without leaving a pending approval."
+          ]
+        },
+        {
+          "heading": "Editing",
+          "items": [
+            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector. Track mute, visibility, sync-lock, and height changes support the shared timeline Undo and Redo path. Track headers expose native context commands bound to the clicked track, with removal limited to Edit. Open track menus preserve their requested toggle value and reject removal if the track changed."
+          ]
+        },
+        {
+          "heading": "Media",
+          "items": [
+            "Media folders use native double-click recognition instead of timing event-handler execution.",
+            "Legacy media keep their readable names in Inspector breadcrumbs, rename fields, and accessible task actions.",
+            "Generation review rejects inputs changed before or during pricing, before presenting an approval package.",
+            "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review.",
+            "The analysis timeline aligns verified source waveforms and recorded RMS energy with beats and sections, with shared zoom, horizontal scrolling, hierarchy selection, and verified-source listening. Analysis waveform caches are bound to the verified source digest.",
+            "Artifact workspaces keep the current pipeline phase and guarded approval controls visible in a compact phase dock, with named pending decisions and readable structural blockers."
           ]
         }
       ]
@@ -220,7 +250,7 @@
           "heading": "Generation and pipeline",
           "items": [
             "Format packs can publish format-neutral execution inputs, production routing, source bindings, and exact-byte provenance without moving project truth out of the host.",
-            "Model selection and validation now derive duration, resolution, reference, and provider-route limits from versioned capabilities, including the verified Seedance 2.5 480p/720p and 4\u201330-second contract.",
+            "Model selection and validation now derive duration, resolution, reference, and provider-route limits from versioned capabilities, including the verified Seedance 2.5 480p/720p and 4–30-second contract.",
             "Imported and AI-enhanced shots retain their declared project-local source and deterministic render route through planning, approval, and final provenance checks."
           ]
         },
@@ -436,7 +466,7 @@
         {
           "heading": "Generation",
           "items": [
-            "Seedance 2.5 is integrated through fal.ai and recognized across Higgsfield discovery, with automatic or 4\u201330-second duration, 480p and 720p output, and up to 50 mixed references where supported.",
+            "Seedance 2.5 is integrated through fal.ai and recognized across Higgsfield discovery, with automatic or 4–30-second duration, 480p and 720p output, and up to 50 mixed references where supported.",
             "Music Video duration checks now read versioned pack capability data instead of enforcing a hardcoded 15-second Seedance limit."
           ]
         }
@@ -631,7 +661,7 @@
           "heading": "Agent",
           "items": [
             "Agent transcripts remain responsive when Brief opens after Audio Analysis.",
-            "Main-thread stalls now save recent pipeline state and, when available, a process sample under Help \u2192 Reveal Diagnostics."
+            "Main-thread stalls now save recent pipeline state and, when available, a process sample under Help → Reveal Diagnostics."
           ]
         }
       ]

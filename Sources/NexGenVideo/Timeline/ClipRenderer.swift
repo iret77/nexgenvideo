@@ -58,7 +58,8 @@ enum ClipRenderer {
         fps: Int,
         isMissing: Bool = false,
         isGenerating: Bool = false,
-        allowsEditChrome: Bool = true
+        allowsEditChrome: Bool = true,
+        selectionColor: NSColor = AppTheme.Text.primary
     ) {
         if opacity < 1.0 {
             context.saveGState()
@@ -126,7 +127,7 @@ enum ClipRenderer {
         // Border
         if isSelected {
             context.setStrokeColor(
-                AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.high).cgColor
+                selectionColor.withAlphaComponent(AppTheme.Opacity.high).cgColor
             )
             context.setLineWidth(AppTheme.BorderWidth.medium)
             context.addPath(path)

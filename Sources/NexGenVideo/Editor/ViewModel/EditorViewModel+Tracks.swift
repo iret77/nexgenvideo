@@ -131,8 +131,6 @@ extension EditorViewModel {
         toggleTrackFlag(trackIndex: trackIndex, keyPath: \.syncLocked, onName: "Sync Lock Track", offName: "Unlock Track Sync")
     }
 
-    /// Flip a `Bool` on a track, register a reversing undo, and publish the change.
-    /// `onName` is used when the flag transitions false → true; `offName` for true → false.
     private func toggleTrackFlag(
         trackIndex: Int,
         keyPath: WritableKeyPath<Track, Bool>,
@@ -141,23 +139,18 @@ extension EditorViewModel {
     ) {
         guard timeline.tracks.indices.contains(trackIndex) else { return }
         let was = timeline.tracks[trackIndex][keyPath: keyPath]
-        timeline.tracks[trackIndex][keyPath: keyPath].toggle()
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.timeline.tracks[trackIndex][keyPath: keyPath] = was
+        withTimelineSwap(actionName: was ? offName : onName) {
+            timeline.tracks[trackIndex][keyPath: keyPath].toggle()
         }
-        undoManager?.setActionName(was ? offName : onName)
-        notifyTimelineChanged()
     }
 
     // MARK: - Sizing
 
     func setTrackHeight(trackIndex: Int, height: CGFloat) {
-        guard timeline.tracks.indices.contains(trackIndex) else { return }
-        let prev = timeline.tracks[trackIndex].displayHeight
-        timeline.tracks[trackIndex].displayHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, height))
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.setTrackHeight(trackIndex: trackIndex, height: prev)
+        guard timeline.tracks.indices.contains(trackIndex), height.isFinite else { return }
+        let clamped = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, height))
+        withTimelineSwap(actionName: "Resize Track") {
+            timeline.tracks[trackIndex].displayHeight = clamped
         }
-        undoManager?.setActionName("Resize Track")
     }
 }

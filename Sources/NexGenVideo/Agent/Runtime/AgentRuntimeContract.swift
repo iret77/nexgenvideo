@@ -93,6 +93,7 @@ struct AgentRuntimeImage: Equatable, Sendable {
 
 enum AgentRuntimeContent: Equatable, Sendable {
     case text(String)
+    case thinking(AnthropicThinkingBlock)
     case image(AgentRuntimeImage)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(id: String, content: [ToolResult.Block], isError: Bool)
@@ -261,6 +262,7 @@ enum AgentRuntimeEvent: Equatable, Sendable {
     case providerSessionStarted(String)
     case providerSessionInvalidated
     case text(messageID: String?, value: String, isDelta: Bool)
+    case thinking(messageID: String?, block: AnthropicThinkingBlock)
     case toolCall(messageID: String?, id: String, name: String, inputJSON: String)
     case toolResult(id: String, content: [ToolResult.Block], isError: Bool)
     case usage(AgentRuntimeUsage)

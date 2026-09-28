@@ -13,6 +13,30 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     var sections: [Section]
     var structureResolution: StructureResolution?
     var stageDiagnostics: [StageDiagnostic]
+    var energyCurve: [EnergySample]
+    var songSHA256: String?
+
+    func verifiedSourceURL(dataRoot: URL) -> URL? {
+        let songs = AudioProjectLayout.songFiles(dataRoot: dataRoot)
+        guard songs.count == 1, let song = songs.first,
+              FrameInventory.relativePath(of: song, to: dataRoot) == songPath,
+              let songSHA256, !songSHA256.isEmpty,
+              (try? FileDigest.sha256(of: song)) == songSHA256 else { return nil }
+        return song
+    }
+
+    struct EnergySample: Decodable, Sendable, Equatable {
+        let t: Double
+        let rms: Double
+    }
+
+    var measuredEnergy: [EnergySample]? {
+        guard durationS.isFinite, durationS > 0, energyCurve.count > 1,
+              energyCurve.allSatisfy({ $0.t.isFinite && $0.rms.isFinite
+                  && (0...durationS).contains($0.t) && (0...1).contains($0.rms) }),
+              zip(energyCurve, energyCurve.dropFirst()).allSatisfy({ pair in pair.0.t < pair.1.t }) else { return nil }
+        return energyCurve
+    }
 
     /// Perceived tempo = measured bpm × the A2-confirmed multiplier (the raw value is often half/double
     /// the subjective feel) — the value every downstream consumer uses, so it's what the panel shows.
@@ -180,6 +204,8 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         case sections
         case structureResolution = "structure_resolution"
         case stageDiagnostics = "stage_diagnostics"
+        case energyCurve = "energy_curve"
+        case songSHA256 = "song_sha256"
     }
 
     init(from decoder: Decoder) throws {
@@ -195,6 +221,8 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         sections = try c.decodeIfPresent([Section].self, forKey: .sections) ?? []
         structureResolution = try c.decodeIfPresent(StructureResolution.self, forKey: .structureResolution)
         stageDiagnostics = try c.decodeIfPresent([StageDiagnostic].self, forKey: .stageDiagnostics) ?? []
+        energyCurve = try c.decodeIfPresent([EnergySample].self, forKey: .energyCurve) ?? []
+        songSHA256 = try c.decodeIfPresent(String.self, forKey: .songSHA256)
     }
 
     private func uniqueOwner(

@@ -7,6 +7,8 @@ struct GenerationPackageReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text(package.renderID).fontWeight(AppTheme.FontWeight.semibold).textSelection(.enabled)
+            Text("\(package.payload.target.provider.displayName) · \(package.payload.target.transport.rawValue.uppercased())")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
             Text("Outputs: \(package.payload.outputCount) · \(destinationLabel)")
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             if let estimate = package.payload.estimate {

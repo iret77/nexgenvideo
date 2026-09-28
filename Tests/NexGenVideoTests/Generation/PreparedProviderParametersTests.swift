@@ -104,4 +104,32 @@ struct PreparedProviderParametersTests {
             "image_reference", "image_mask",
         ])
     }
+
+    @Test func audioSettingsAndVideoReferenceAreFrozenTogether() throws {
+        var duration = 8
+        let prepared = try PreparedProviderParameters(referenceCount: 1) { slots in
+            .audio(.init(prompt: "Footsteps", voice: "voice", lyrics: "words", styleInstructions: "quiet",
+                instrumental: true, durationSeconds: duration, videoURL: slots[0]))
+        }
+        duration = 20
+        guard case .audio(let actual) = try prepared.bind(["hosted-source"]) else {
+            Issue.record("Expected prepared audio parameters"); return
+        }
+        #expect(actual.durationSeconds == 8)
+        #expect(actual.prompt == "Footsteps")
+        #expect(actual.voice == "voice")
+        #expect(actual.lyrics == "words")
+        #expect(actual.styleInstructions == "quiet")
+        #expect(actual.instrumental)
+        #expect(actual.videoURL == "hosted-source")
+        #expect(throws: (any Error).self) { try prepared.bind([]) }
+        #expect(throws: (any Error).self) {
+            try PreparedProviderParameters(referenceCount: 1) { _ in
+                .audio(.init(prompt: "Footsteps", voice: nil, lyrics: nil, styleInstructions: nil,
+                    instrumental: false, durationSeconds: 8, videoURL: "https://unreviewed.invalid/video"))
+            }
+        }
+    }
+
+
 }

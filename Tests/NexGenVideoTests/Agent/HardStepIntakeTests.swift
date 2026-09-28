@@ -141,6 +141,38 @@ struct HardStepIntakeTests {
                  symbol: "tray", confirmLabel: "Continue", textField: nil)
     }
 
+    @Test("Reload reoffers an unfinished repeat only while its phase, count, order, and ledger agree")
+    func unfinishedRepeatRequiresCurrentIntakeState() throws {
+        let root = try makeDataRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let characterRoot = root.appendingPathComponent("import/characters/lead")
+        try FileManager.default.createDirectory(at: characterRoot, withIntermediateDirectories: true)
+        try Data([1]).write(to: characterRoot.appendingPathComponent("reference.png"))
+        let characters = step("characters", kind: .character, repeatable: true)
+        let key = WorkflowIntakeDraftKey(packBinding: nil, phase: "p", stepID: characters.id,
+            itemNumber: 2, fingerprint: 1, isRepeat: true)
+        let saved = ChatSessionDecision(
+            dialog: AgentDialog(hardStep: characters, isRepeat: true, itemNumber: 2),
+            origin: .direct, draft: AgentDialogDraft(direction: "Second singer"),
+            selections: [:], intakeKey: key
+        )
+        #expect(IntakePlanner.next([characters], dataRoot: root, ledger: IntakeLedger()) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == characters)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "later",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger(declined: [characters.id])) == nil)
+        #expect(IntakePlanner.restoredRepeat(saved,
+            steps: [step("track", kind: .song, required: true), characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+        let second = root.appendingPathComponent("import/characters/second")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try Data([2]).write(to: second.appendingPathComponent("reference.png"))
+        #expect(IntakePlanner.restoredRepeat(saved, steps: [characters], phase: "p",
+            binding: nil, dataRoot: root, ledger: IntakeLedger()) == nil)
+    }
+
     // MARK: - Manifest decoding
 
     @Test("decodes phases and steps in declared order, tolerating unknown keys")
@@ -595,6 +627,7 @@ struct HardStepIntakeTests {
         GatesOperations.approve(&packageGates, phase: "analysis")
         try packageStore.save(packageGates, to: PipelineLayout.gatesFile)
         editor.projectURL = package
+        editor.agentService.loadSessions(from: editor.workingCopyHome)
 
         await editor.refreshEngineState()
         let dataRoot = try #require(
@@ -632,7 +665,7 @@ struct HardStepIntakeTests {
             titled: "Prepared character 2",
             service: editor.agentService
         )
-        let second = try #require(awaitedSecond)
+        var second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
         let confirmed = try ConfirmedIdentityAssetStoreV1.load(
             dataRoot: dataRoot
@@ -651,6 +684,33 @@ struct HardStepIntakeTests {
         #expect(firstRecord.detail == "Character One")
         #expect(firstRecord.attachmentNames == ["first.png"])
         #expect(firstRecord.outcome == .attached)
+        let sessionID = try #require(editor.agentService.currentSessionId)
+        editor.agentService.dialogDraft.direction = "Unsubmitted second character"
+        let session = try #require(editor.agentService.sessions.first { $0.id == sessionID })
+        let home = try #require(editor.workingCopyHome)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        try #require(ChatSessionStore.encodeSession(session)).write(
+            to: chat.appendingPathComponent("\(sessionID.uuidString).json"))
+        let gatesURL = dataRoot.appendingPathComponent(PipelineLayout.gatesFile)
+        let gatesBeforeReload = try Data(contentsOf: gatesURL)
+        let ledgerBeforeReload = IntakeLedger.load(dataRoot: dataRoot)
+        let oldDialogID = second.id
+        editor.agentService.loadSessions(from: home)
+        #expect(editor.agentService.pendingDialog == nil)
+        await editor.refreshEngineState()
+        second = try #require(editor.agentService.pendingDialog)
+        #expect(second.id != oldDialogID)
+        #expect(second.title == "Prepared character 2")
+        #expect(editor.agentService.currentSessionId == sessionID)
+        #expect(editor.agentService.dialogDraft.direction == "Unsubmitted second character")
+        #expect(editor.agentService.messages == session.messages)
+        #expect(!editor.agentService.isStreaming)
+        #expect(try Data(contentsOf: gatesURL) == gatesBeforeReload)
+        #expect(IntakeLedger.load(dataRoot: dataRoot) == ledgerBeforeReload)
+        await editor.refreshEngineState()
+        #expect(editor.agentService.pendingDialog?.id == second.id)
+        editor.agentService.dialogDraft = AgentDialogDraft()
         try write("fixtures/second.png", in: dataRoot)
         editor.agentService.submitDialog(
             second,

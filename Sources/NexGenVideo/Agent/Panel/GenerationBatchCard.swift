@@ -126,7 +126,7 @@ struct GenerationBatchProgressView: View {
                                     if let detail = execution.detail { Text(detail).foregroundStyle(AppTheme.Text.secondaryColor) }
                                     ForEach(execution.outputAssetIDs, id: \.self) { id in
                                         if let asset = editor.mediaAssets.first(where: { $0.id == id }) {
-                                            Button("Open \(asset.name)") { editor.selectMediaAsset(asset) }
+                                            Button("Open \(asset.libraryDisplayName)") { editor.selectMediaAsset(asset) }
                                                 .buttonStyle(InlineActionButtonStyle())
                                         }
                                     }

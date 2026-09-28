@@ -104,6 +104,10 @@ extension MediaTab {
     }
 
     func handleProviderDrop(_ providers: [NSItemProvider], into destFolderId: String?) {
+        Self.handleProviderDrop(providers, into: destFolderId, editor: editor)
+    }
+
+    static func handleProviderDrop(_ providers: [NSItemProvider], into destFolderId: String?, editor: EditorViewModel) {
         for provider in providers {
             // Finder drops: file URL.
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {

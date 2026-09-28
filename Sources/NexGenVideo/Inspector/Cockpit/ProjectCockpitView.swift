@@ -66,6 +66,11 @@ struct ProjectCockpitView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()  // a panel may never paint over the cockpit tab bar
+            if editor.uiContract != nil, selectedSurface != nil || editor.cockpitTab != .pipeline {
+                AppDivider()
+                PipelinePanelView(presentation: .phaseDock, viewedPhase: selectedSurface?.phase)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .task(id: editor.projectURL) {
             applyPackSurfaces([])
@@ -152,6 +157,7 @@ struct ProjectSettingsView: View {
                     menuRow("Aspect Ratio", formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
                 }
 
+                ProjectBudgetView().id(editor.workingRoot)
                 pluginSection
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
@@ -249,7 +255,7 @@ struct ProjectSettingsView: View {
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
                         editor.cockpitPackSurfaceID = nil
-                        editor.setWorkspaceFocus(.produce)
+                        editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
@@ -268,7 +274,7 @@ struct ProjectSettingsView: View {
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
                         editor.cockpitPackSurfaceID = nil
-                        editor.setWorkspaceFocus(.produce)
+                        editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)

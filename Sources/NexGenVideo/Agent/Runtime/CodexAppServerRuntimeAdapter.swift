@@ -753,7 +753,7 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
                     "type": "image",
                     "url": "data:\(image.mediaType);base64,\(image.base64)",
                 ]
-            case .toolUse, .toolResult:
+            case .thinking, .toolUse, .toolResult:
                 nil
             }
         }
@@ -779,6 +779,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
 
             for block in message.content {
                 switch block {
+                case .thinking:
+                    continue
                 case .text(let value):
                     content.append([
                         "type": message.role == .user ? "input_text" : "output_text",

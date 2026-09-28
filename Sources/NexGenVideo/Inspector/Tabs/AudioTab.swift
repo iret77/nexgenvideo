@@ -8,45 +8,40 @@ extension InspectorView {
         let single = audios.count == 1 ? audios.first : nil
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
-        if let clip = single, kfVisible {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
+        InspectorKeyframesContent(isPresented: kfVisible) {
+            if kfVisible {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                    // Match the kf panel's ruler+strip header height so Volume aligns with its lane.
                     sectionTitleLabel(title: "Levels")
                         .frame(height: AppTheme.Timeline.keyframeHeaderHeight, alignment: .bottomLeading)
                     volumeRow(audios: audios)
                     fadeRow(label: "Fade In", clips: audios, edge: .left)
-                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                     fadeRow(label: "Fade Out", clips: audios, edge: .right)
-                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                     if nonTextVisualClips.isEmpty {
                         speedSection(clips: audios)
-                            .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                             .padding(.top, AppTheme.Spacing.md)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, AppTheme.Spacing.sm)
-                AppDivider()
+            } else {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+                        sectionTitleLabel(title: "Levels")
+                        volumeRow(audios: audios)
+                        fadeRow(label: "Fade In", clips: audios, edge: .left)
+                        fadeRow(label: "Fade Out", clips: audios, edge: .right)
+                    }
+                    if nonTextVisualClips.isEmpty {
+                        speedSection(clips: audios)
+                    }
+                }
+            }
+        } keyframes: {
+            if let clip = single {
                 KeyframesPanel(clip: clip)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, AppTheme.Spacing.sm)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                    sectionTitleLabel(title: "Levels")
-                    volumeRow(audios: audios)
-                    fadeRow(label: "Fade In", clips: audios, edge: .left)
-                    fadeRow(label: "Fade Out", clips: audios, edge: .right)
-                }
-                if nonTextVisualClips.isEmpty {
-                    speedSection(clips: audios)
-                }
             }
         }
-
-        keyframesToggleBar(enabled: single != nil)
+        .inspectorKeyframeAccessoryColumn(single != nil)
     }
 
     @ViewBuilder
@@ -60,6 +55,7 @@ extension InspectorView {
                 range: VolumeScale.floorDb...VolumeScale.ceilingDb,
                 format: "%.1f",
                 valueSuffix: " dB",
+                accessibilityName: "Volume",
                 dragSensitivity: 0.3,
                 fieldWidth: 56,
                 displayTextOverride: { db in db <= VolumeScale.floorDb ? "-∞ dB" : nil },
@@ -88,6 +84,7 @@ extension InspectorView {
                 range: 0...maxSeconds,
                 format: "%.2f",
                 valueSuffix: " s",
+                accessibilityName: label,
                 dragSensitivity: 0.02,
                 fieldWidth: 56,
                 onChanged: { seconds in
@@ -101,6 +98,6 @@ extension InspectorView {
                 }
             }
         }
-        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
 }

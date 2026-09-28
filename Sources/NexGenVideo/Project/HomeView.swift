@@ -168,7 +168,7 @@ private struct NewProjectCard: View {
         )
         .shadow(isHovered ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
         .scaleEffect(isHovered ? 1.03 : 1.0)
-        .padding(AppTheme.Spacing.xs)
+        .padding(AppTheme.Spacing.sm)
         .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
         .onHover { isHovered = $0 }
     }

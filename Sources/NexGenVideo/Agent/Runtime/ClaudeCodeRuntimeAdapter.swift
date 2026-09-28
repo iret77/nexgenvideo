@@ -217,7 +217,7 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
                         "data": image.base64,
                     ],
                 ])
-            case .toolUse, .toolResult:
+            case .thinking, .toolUse, .toolResult:
                 break
             }
         }

@@ -289,9 +289,7 @@ final class AppState {
         }
 
         let editor = project.editorViewModel
-        editor.mediaPanelVisible = true
-        editor.maximizedPanel = nil
-        editor.focusedPanel = .media
+        editor.revealMediaTools()
         editor.selectMediaAsset(asset)
         editor.mediaPanelRevealAssetId = assetId
     }

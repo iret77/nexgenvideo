@@ -1,6 +1,6 @@
 import Foundation
 
-enum ToolCallOrigin: Hashable, Sendable {
+enum ToolCallOrigin: Hashable, Sendable, Codable {
     enum SuspensionKey: Hashable, Sendable {
         case inAppChat(UUID)
         case mcpSession(UUID)

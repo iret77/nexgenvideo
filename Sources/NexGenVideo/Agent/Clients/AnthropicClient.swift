@@ -32,7 +32,7 @@ enum AnthropicKeychain {
 struct AnthropicClient: AgentClient {
     let apiKey: String
     let model: AnthropicModel
-    var maxTokens: Int = 8192
+    var maxTokens: Int? = nil
 
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
@@ -70,7 +70,8 @@ struct AnthropicClient: AgentClient {
         request.setValue("text/event-stream", forHTTPHeaderField: "accept")
         request.httpBody = try JSONSerialization.data(
             withJSONObject: AnthropicRequestBody.build(
-                model: model, maxTokens: maxTokens, system: system, tools: tools, messages: messages
+                model: model, maxTokens: maxTokens,
+                system: system, tools: tools, messages: messages
             ),
             options: [.sortedKeys]
         )

@@ -1,6 +1,6 @@
 import Foundation
 
-enum EditAction {
+enum EditAction: Equatable {
     case upscale
     case edit
     case generateMusic
@@ -76,6 +76,9 @@ enum EditAction {
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
             }
+            guard EditSubmitter.editSeed(for: asset) != nil else {
+                return .disabled(reason: "No enabled editing model accepts this source")
+            }
             return .available
 
         case .generateMusic:
@@ -98,6 +101,10 @@ enum EditAction {
             }
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
+            }
+            guard EditSubmitter.createVideoSeed(for: asset, asReference: false) != nil
+                    || EditSubmitter.createVideoSeed(for: asset, asReference: true) != nil else {
+                return .disabled(reason: "No enabled video model accepts this image")
             }
             return .available
 
