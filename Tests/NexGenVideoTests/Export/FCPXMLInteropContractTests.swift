@@ -95,6 +95,17 @@ struct FCPXMLInteropContractTests {
             .appendingPathComponent("Fixtures/FCPXML/structural-oracle.json")
     }
 
+    @Test func schemaValidationRejectsCallerSuppliedDocumentTypes() {
+        let injected = Data("""
+            <?xml version="1.0"?>
+            <!DOCTYPE fcpxml SYSTEM "file:///tmp/other.dtd">
+            <fcpxml version="1.14"><resources/></fcpxml>
+            """.utf8)
+        #expect(throws: ExportError.self) {
+            _ = try FCPXMLSchemaValidator.validate(injected, version: .v1_14)
+        }
+    }
+
     @Test func everyVersionAndTargetValidatesAgainstItsOfficialAppleDTD() throws {
         let fixture = try makeFixture([
             .init(id: "video", storageName: "Matrix.mov"),

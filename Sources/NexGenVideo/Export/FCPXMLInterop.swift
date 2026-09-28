@@ -139,12 +139,15 @@ enum FCPXMLSchemaValidator {
                 }
                 xml.removeSubrange(declaration.lowerBound..<xml.index(declaration.lowerBound, offsetBy: "<!DOCTYPE fcpxml>".count))
             }
-            let dtd = String(decoding: try schemaData(for: version), as: UTF8.self)
+            let schemaURL = try schemaURL(for: version)
             guard let validatedRoot = xml.range(of: "<fcpxml") else {
                 throw ExportError.xmlValidationFailed(version: version.rawValue, reason: "The fcpxml root is missing.")
             }
-            xml.insert(contentsOf: "<!DOCTYPE fcpxml [\n\(dtd)\n]>\n", at: validatedRoot.lowerBound)
-            document = try XMLDocument(data: Data(xml.utf8), options: [.nodePreserveAll])
+            xml.insert(contentsOf: "<!DOCTYPE fcpxml SYSTEM \"\(schemaURL.absoluteString)\">\n", at: validatedRoot.lowerBound)
+            document = try XMLDocument(
+                data: Data(xml.utf8),
+                options: [.nodePreserveAll, .nodeLoadExternalEntitiesAlways, .documentValidate]
+            )
             try document.validate()
         } catch {
             throw ExportError.xmlValidationFailed(
@@ -283,7 +286,7 @@ enum FCPXMLSchemaValidator {
         .v1_14: "33bb44530790be145d87ed2d5c347166aab945c90f1cfbc03c8be545aaf73cb5",
     ]
 
-    private static func schemaData(for version: FCPXMLVersion) throws -> Data {
+    private static func schemaURL(for version: FCPXMLVersion) throws -> URL {
         let filename = "FCPXMLv" + version.rawValue.replacingOccurrences(of: ".", with: "_")
         guard let url = Bundle.module.url(
             forResource: filename,
@@ -313,6 +316,6 @@ enum FCPXMLSchemaValidator {
                 reason: "The bundled Apple FCPXML DTD failed its integrity check."
             )
         }
-        return data
+        return url
     }
 }
