@@ -29,6 +29,9 @@ final class ClaudeCodeRuntime {
     private let onResumeFailed: (@MainActor () -> Void)?
     private let onAuthenticationRequired: (@MainActor () -> Void)?
     private let onUpdate: @MainActor ([AgentMessage], _ isStreaming: Bool) -> Void
+    private let systemInstructions: String
+    private let onRuntimeEvents: (@MainActor ([ClaudeStreamEvent]) -> Void)?
+    private let onRuntimeFailure: (@MainActor (AgentRuntimeFailure) -> Void)?
 
     private var mapper = ClaudeCodeEventMapper()
     private var process: ClaudeCodeProcess?
@@ -51,6 +54,9 @@ final class ClaudeCodeRuntime {
         onSessionId: (@MainActor (String) -> Void)? = nil,
         onResumeFailed: (@MainActor () -> Void)? = nil,
         onAuthenticationRequired: (@MainActor () -> Void)? = nil,
+        systemInstructions: String = AgentInstructions.serverInstructions,
+        onRuntimeEvents: (@MainActor ([ClaudeStreamEvent]) -> Void)? = nil,
+        onRuntimeFailure: (@MainActor (AgentRuntimeFailure) -> Void)? = nil,
         onUpdate: @MainActor @escaping ([AgentMessage], Bool) -> Void
     ) {
         self.pluginDirectories = pluginDirectories
@@ -62,6 +68,9 @@ final class ClaudeCodeRuntime {
         self.onSessionId = onSessionId
         self.onResumeFailed = onResumeFailed
         self.onAuthenticationRequired = onAuthenticationRequired
+        self.systemInstructions = systemInstructions
+        self.onRuntimeEvents = onRuntimeEvents
+        self.onRuntimeFailure = onRuntimeFailure
         self.onUpdate = onUpdate
         if !seedMessages.isEmpty { mapper.seed(seedMessages) }
     }
@@ -142,7 +151,7 @@ final class ClaudeCodeRuntime {
             // already ends with the presentation contract), at parity with the API-key agent which gets
             // serverInstructions as its `system:` prompt. The MCP-advertised `instructions` field is a
             // soft protocol hint, not guaranteed injection — this closes that backend gap.
-            appendSystemPrompt: AgentInstructions.serverInstructions,
+            appendSystemPrompt: systemInstructions,
             resumeSessionId: resumeSessionId,
             appSessionId: appSessionId,
             agentTurnId: agentTurnId
@@ -193,6 +202,10 @@ final class ClaudeCodeRuntime {
                 case .authenticationRequired:
                     process?.terminate()
                     process = nil
+                    onRuntimeFailure?(AgentRuntimeFailure(
+                        kind: .authenticationRequired,
+                        message: "Claude Code authentication is required."
+                    ))
                     onAuthenticationRequired?()
                     onUpdate(mapper.messages, false)
                     return
@@ -213,6 +226,7 @@ final class ClaudeCodeRuntime {
                     mapper.appendNote("Couldn't resume the previous Claude session (it's no longer available) — your next message will start a fresh one.")
                     onResumeFailed?()
                 }
+                onRuntimeEvents?(events)
                 let finished = events.contains { event in
                     if case .turnFinished = event { return true }
                     return false
@@ -220,26 +234,31 @@ final class ClaudeCodeRuntime {
                 onUpdate(mapper.messages, !finished)
             }
         } catch {
-            mapper.appendNote("Claude Code stream error: \(error.localizedDescription)")
+            let message = "Claude Code stream error: \(error.localizedDescription)"
+            mapper.appendNote(message)
+            onRuntimeFailure?(AgentRuntimeFailure(kind: .transport, message: message))
         }
         guard gen == generation else { return }
-        for event in authenticationEvents.flush() { mapper.ingest(event) }
+        let trailingEvents = authenticationEvents.flush()
+        for event in trailingEvents { mapper.ingest(event) }
+        onRuntimeEvents?(trailingEvents)
         // A session that ends with no parseable output almost always means claude exited early
         // (not logged in, a rejected flag/MCP config, a missing plugin venv, …). Surface its stderr
         // so the failure isn't silent.
         if !sawOutput, !Task.isCancelled {
             let stderr = (process?.drainStderr() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            mapper.appendNote(
-                stderr.isEmpty
-                    ? "Claude Code produced no output. Verify the CLI runs and is logged in — try `claude -p \"hi\"` in Terminal."
-                    : "Claude Code produced no output.\nstderr:\n\(stderr)"
-            )
+            let message = stderr.isEmpty
+                ? "Claude Code produced no output. Verify the CLI runs and is logged in — try `claude -p \"hi\"` in Terminal."
+                : "Claude Code produced no output.\nstderr:\n\(stderr)"
+            mapper.appendNote(message)
+            onRuntimeFailure?(AgentRuntimeFailure(kind: .protocolViolation, message: message))
         }
         onUpdate(mapper.messages, false)
     }
 
     private func fail(_ note: String) {
         mapper.appendNote(note)
+        onRuntimeFailure?(AgentRuntimeFailure(kind: .backendUnavailable, message: note))
         onUpdate(mapper.messages, false)
     }
 
