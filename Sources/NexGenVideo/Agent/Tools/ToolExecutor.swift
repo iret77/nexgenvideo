@@ -584,6 +584,12 @@ private func validateToolInput(
         let properties = objectSchemaProperties(schema["properties"])
         let additional = schema["additionalProperties"]
         let required = Set(schema["required"] as? [String] ?? [])
+        if let minimum = schema["minProperties"] as? Int, object.count < minimum {
+            throw ToolError("\(path): expected at least \(minimum) field(s)")
+        }
+        if let maximum = schema["maxProperties"] as? Int, object.count > maximum {
+            throw ToolError("\(path): expected at most \(maximum) field(s)")
+        }
         let missing = required.subtracting(object.keys)
         if let key = missing.sorted().first {
             throw ToolError("\(path): missing required field '\(key)'")
