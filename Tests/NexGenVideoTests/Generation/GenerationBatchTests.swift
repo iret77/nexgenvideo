@@ -274,37 +274,33 @@ struct GenerationBatchTests {
         ))
         #expect(manifest.totalEUR == nil)
         #expect(throws: (any Error).self) { try GenerationBatchJournal(approving: manifest, authorityID: "test-authority") }
+        let recoveries = Dictionary(uniqueKeysWithValues: manifest.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        #expect(throws: (any Error).self) {
+            try editor.agentService.presentGenerationBatch(
+                manifest,
+                recoveries: recoveries.filter { $0.key == pricedID },
+                origin: .direct,
+                editor: editor
+            )
+        }
+        #expect(editor.generationBatchCoordinator.pending == nil)
         let result = try editor.agentService.presentGenerationBatch(
             manifest,
+            recoveries: recoveries,
             origin: .direct,
             editor: editor
         )
-        #expect(result.isError)
-        #expect(result.turnDisposition == .continueTurn)
-        #expect(editor.generationBatchCoordinator.pending == nil)
-        let payload = try #require(JSONSerialization.jsonObject(
-            with: Data(ToolHarness.textOf(result).utf8)
-        ) as? [String: Any])
-        #expect(payload["status"] as? String == "preparation_incomplete")
-        #expect(payload["reason"] as? String == "missing_cost_estimates")
-        let unpricedItems = try #require(
-            payload["unpriced_items"] as? [[String: Any]]
+        #expect(!result.isError)
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(editor.generationBatchCoordinator.pending?.id == manifest.id)
+        let controls = GenerationBatchReviewControls(
+            hasVerifiedTotal: manifest.totalEUR != nil,
+            hasRetryablePricingFailure: editor.generationBatchCoordinator.canRetryPricing,
+            isBusy: false
         )
-        #expect(unpricedItems.count == 1)
-        let item = try #require(unpricedItems.first)
-        #expect(item["index"] as? Int == 1)
-        #expect(item["reason"] as? String == "no_host_price_for_route")
-        #expect(item["purpose"] as? String == "Unpriced generation")
-        let expectedTool = unpriced.payload.modality == "image"
-            ? ToolName.generateImage.rawValue
-            : ToolName.generateVideo.rawValue
-        #expect(item["tool"] as? String == expectedTool)
-        let route = try #require(item["route"] as? [String: Any])
-        #expect(route["provider"] as? String == unpriced.payload.target.provider.rawValue)
-        #expect(route["transport"] as? String == unpriced.payload.target.transport.rawValue)
-        #expect(route["model"] as? String == unpriced.payload.target.modelId)
-        #expect(route["endpoint"] as? String == unpriced.payload.target.endpoint)
-        #expect(!ToolHarness.textOf(result).contains(unpricedID))
+        #expect(!controls.canApprove)
     }
 
     @Test func thirteenGeminiRequestsHaveOneExactReviewTotalAndApproval() async throws {

@@ -328,7 +328,8 @@ struct PipelineDeliveryStoreTests {
             evidence: .init(
                 sha256: outputHash,
                 byteCount: Int64(outputSize),
-                probeQC: qc
+                probeQC: qc,
+                hdrQC: nil
             ),
             publishedState: try ExportQueue.PathState.capture(output),
             selectIfCurrent: true

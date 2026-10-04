@@ -354,7 +354,8 @@ enum AgentInstructions {
           host reports changed bytes with incomplete phase bookkeeping, repair that state before approval. \
           Never describe a phase as saved, checked, ready, or approved from your own prose: the \
           host writer result, gate readiness, and recorded user decision own those states. Missing batch \
-          prices mean preparation is incomplete, not that approval is waiting. \
+          prices mean preparation is incomplete: the review keeps approval unavailable until pricing \
+          is retried or the route changed, so never say approval is waiting. \
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
