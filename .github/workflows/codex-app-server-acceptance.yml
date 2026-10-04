@@ -21,7 +21,6 @@ on:
         description: "Run the separately approved paid Codex LLM smoke"
         type: boolean
         required: true
-        default: false
       approval:
         description: "Enter APPROVE-CODEX-LLM-SMOKE"
         type: string
@@ -122,10 +121,17 @@ jobs:
     timeout-minutes: 25
     env:
       NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
-      CODEX_HOME: ${{ runner.temp }}/nexgenvideo-codex-home
-      NGV_CODEX_ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/codex-app-server-evidence.json
-      NGV_CODEX_HOSTILE_MCP_MARKER: ${{ runner.temp }}/foreign-mcp-started
     steps:
+      # The runner context is unavailable in job-level env; an invalid file also breaks bundle.yml.
+      - name: Define runner-local acceptance paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'CODEX_HOME=%s\n' "$RUNNER_TEMP/nexgenvideo-codex-home"
+            printf 'NGV_CODEX_ACCEPTANCE_EVIDENCE=%s\n' "$RUNNER_TEMP/codex-app-server-evidence.json"
+            printf 'NGV_CODEX_HOSTILE_MCP_MARKER=%s\n' "$RUNNER_TEMP/foreign-mcp-started"
+          } >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
