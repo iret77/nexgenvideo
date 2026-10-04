@@ -448,9 +448,11 @@ enum LiveGenerationPricing {
                     outputCount: input.outputCount,
                     promptUTF8ByteCount: input.promptUTF8ByteCount
                 ) else {
-                    throw GenerationBudgetError.blocked(
-                        "GPT Image 2.5 pricing is token-dependent for this size, quality, or edit input set. "
-                        + "Use a published fixed matrix combination or continue without a budget stop."
+                    throw GenerationPricingFailure(
+                        reason: .unsupportedCombination,
+                        provider: .fal,
+                        endpoint: target.endpoint,
+                        detail: "GPT Image 2.5 has no published billed price for this size, quality, or edit input set."
                     )
                 }
                 return try await ProviderMoneyClient.shared.normalize(

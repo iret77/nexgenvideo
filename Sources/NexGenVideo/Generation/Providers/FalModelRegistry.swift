@@ -151,14 +151,6 @@ enum FalModelRegistry {
         "3840x2160|low": 0.0112, "3840x2160|medium": 0.0260, "3840x2160|high": 0.1002,
         "3840x2160|xhigh": 0.17790, "3840x2160|max": 0.40026,
     ]
-    private static let gptImage25EditPrices: [String: Double] = [
-        "1024x768|low": 0.0124, "1024x768|medium": 0.0174, "1024x768|high": 0.0445,
-        "1024x1024|low": 0.0142, "1024x1024|medium": 0.0215, "1024x1024|high": 0.0610,
-        "1024x1536|low": 0.0131, "1024x1536|medium": 0.0186, "1024x1536|high": 0.0495,
-        "1920x1080|low": 0.0128, "1920x1080|medium": 0.0179, "1920x1080|high": 0.0478,
-        "2560x1440|low": 0.0145, "2560x1440|medium": 0.0227, "2560x1440|high": 0.0636,
-        "3840x2160|low": 0.0195, "3840x2160|medium": 0.0343, "3840x2160|high": 0.1084,
-    ]
 
     private static let imageModels: [FalModel] = [
         gptImage25(
@@ -280,7 +272,6 @@ enum FalModelRegistry {
                         maxAspectRatio: 3.0
                     )
                 )),
-                creditsPerImage: edit ? gptImage25EditPrices : gptImage25GeneratePrices,
                 qualities: gptImage25Qualities,
                 card: ModelCard(
                     strengths: strengths,

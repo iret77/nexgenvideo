@@ -166,7 +166,10 @@ struct FalImageInputTests {
             #expect(caps.customSize?.maxEdge == 3_840)
             #expect(caps.customSize?.minPixels == 655_360)
             #expect(caps.customSize?.maxPixels == 8_294_400)
-            #expect(model.entry.creditsPerImage?["1920x1080|high"] == (id.hasSuffix("/edit") ? 0.0478 : 0.0395))
+            #expect(model.entry.creditsPerImage == nil)
+            #expect(FalModelRegistry.gptImage25VerifiedGenerationPriceUSD(
+                modelID: id, resolution: "1920x1080", quality: "high", outputCount: 1
+            ) == (id.hasSuffix("/edit") ? nil : 0.0395))
             #expect(model.entry.card?.rank == (id.contains("sunburst") ? 2 : 1))
         }
     }
