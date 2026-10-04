@@ -301,6 +301,65 @@ struct ProjectDocumentIOTests {
         #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
     }
 
+    @Test func sameSizeReplacementWithRestoredDateKeepsTheConflictBaseline() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-restored-date-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let timeline = package.appendingPathComponent(Project.timelineFilename)
+        let original = try Data(contentsOf: timeline)
+        let originalDate = try #require(
+            fm.attributesOfItem(atPath: timeline.path)[.modificationDate] as? Date
+        )
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        let baseline = doc.fileModificationDate
+        try Data(repeating: UInt8(ascii: "x"), count: original.count).write(to: timeline)
+        try fm.setAttributes([.modificationDate: originalDate], ofItemAtPath: timeline.path)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        #expect(!doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+        #expect(doc.fileModificationDate == baseline)
+    }
+
+    @Test func packageSymlinkKeepsItsOwnPathInTheRevision() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-symlink-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createSymbolicLink(
+            atPath: package.appendingPathComponent("timeline-alias.json").path,
+            withDestinationPath: Project.timelineFilename
+        )
+
+        let before = try ProjectPackageRevision.capture(at: package)
+        let paths = before.entries.map(\.path)
+        #expect(Set(paths).count == paths.count)
+        #expect(before.entries.contains { $0.path == "timeline-alias.json" && $0.kind == .symbolicLink })
+
+        try Data("external-change".utf8).write(
+            to: package.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        let after = try ProjectPackageRevision.capture(at: package)
+        #expect(before.changedPaths(comparedTo: after).contains(Project.timelineFilename))
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)

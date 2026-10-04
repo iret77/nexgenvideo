@@ -12,6 +12,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
         let kind: Kind
         let size: UInt64?
         let modificationDate: Date?
+        let statusChangeDate: Date?
         let symbolicLinkDestination: String?
     }
 
@@ -33,6 +34,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
                 .isSymbolicLinkKey,
                 .fileSizeKey,
                 .contentModificationDateKey,
+                .attributeModificationDateKey,
             ],
             options: [],
             errorHandler: { _, error in
@@ -46,7 +48,10 @@ struct ProjectPackageRevision: Equatable, Sendable {
         let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
         var entries: [Entry] = []
         while let item = enumerator.nextObject() as? URL {
-            let canonicalItem = item.standardizedFileURL.resolvingSymlinksInPath()
+            // Resolve only the parent so a symlink keeps its own path instead of its target's.
+            let canonicalParent = item.deletingLastPathComponent()
+                .standardizedFileURL.resolvingSymlinksInPath()
+            let canonicalItem = canonicalParent.appendingPathComponent(item.lastPathComponent)
             guard canonicalItem.path.hasPrefix(rootPath) else {
                 throw CocoaError(.fileReadInvalidFileName)
             }
@@ -62,6 +67,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
                 .isSymbolicLinkKey,
                 .fileSizeKey,
                 .contentModificationDateKey,
+                .attributeModificationDateKey,
             ])
             if values.isSymbolicLink == true {
                 entries.append(Entry(
@@ -69,6 +75,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
                     kind: .symbolicLink,
                     size: nil,
                     modificationDate: nil,
+                    statusChangeDate: values.attributeModificationDate,
                     symbolicLinkDestination: try fileManager.destinationOfSymbolicLink(
                         atPath: item.path
                     )
@@ -80,6 +87,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
                     kind: .directory,
                     size: nil,
                     modificationDate: nil,
+                    statusChangeDate: nil,
                     symbolicLinkDestination: nil
                 ))
             } else if values.isRegularFile == true {
@@ -88,6 +96,7 @@ struct ProjectPackageRevision: Equatable, Sendable {
                     kind: .file,
                     size: values.fileSize.map { UInt64($0) },
                     modificationDate: values.contentModificationDate,
+                    statusChangeDate: values.attributeModificationDate,
                     symbolicLinkDestination: nil
                 ))
             } else {
@@ -107,8 +116,8 @@ struct ProjectPackageRevision: Equatable, Sendable {
     }
 
     func changedPaths(comparedTo other: Self) -> [String] {
-        let lhs = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
-        let rhs = Dictionary(uniqueKeysWithValues: other.entries.map { ($0.path, $0) })
+        let lhs = Dictionary(entries.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let rhs = Dictionary(other.entries.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         return Set(lhs.keys).union(rhs.keys).filter { lhs[$0] != rhs[$0] }.sorted()
     }
 
