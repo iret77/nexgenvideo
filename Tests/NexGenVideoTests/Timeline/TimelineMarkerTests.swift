@@ -52,6 +52,20 @@ struct TimelineMarkerTests {
         #expect(negative.durationFrames == 0)
     }
 
+    @Test("markers past the content widen the editing extent but never the render duration")
+    func markersDoNotExtendContent() {
+        var timeline = Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 90)]),
+        ])
+        timeline.markers = [
+            TimelineMarker(id: "point", startFrame: 300, title: "Late cue"),
+            TimelineMarker(id: "range", startFrame: 120, durationFrames: 240, title: "Outro"),
+        ]
+
+        #expect(timeline.totalFrames == 90)
+        #expect(timeline.editingExtentFrames == 360)
+    }
+
     @Test("upstream marker names and comments migrate without losing identity")
     func legacyMarkerFieldMigration() throws {
         let data = Data(#"{"id":"marker-1","startFrame":9,"durationFrames":0,"name":"Old title","comment":"Old note"}"#.utf8)
@@ -99,6 +113,20 @@ struct TimelineMarkerMutationTests {
         }
         #expect(editor.timeline == before)
         #expect(undo.canUndo == false)
+    }
+
+    @Test("jumping to a marker past the content lands on the marker")
+    func jumpPastContent() {
+        let editor = EditorViewModel()
+        editor.timeline = Fixtures.timeline(tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 90)]),
+        ])
+        editor.timeline.markers = [TimelineMarker(id: "late", startFrame: 300, title: "Late cue")]
+
+        editor.jumpToTimelineMarker(id: "late")
+
+        #expect(editor.currentFrame == 300)
+        #expect(editor.activePreviewDurationFrames == 90)
     }
 
     @Test("marker, clip, gap, and range selections remain exclusive")

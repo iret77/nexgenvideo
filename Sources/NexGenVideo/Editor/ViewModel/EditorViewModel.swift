@@ -978,7 +978,7 @@ final class EditorViewModel {
         activePreviewTabId = previewTabs.contains { $0.id == state.activePreviewTabId }
             ? state.activePreviewTabId
             : PreviewTab.timeline.id
-        currentFrame = max(0, min(state.timelineFrame, timeline.totalFrames))
+        currentFrame = max(0, min(state.timelineFrame, timeline.editingExtentFrames))
         sourcePlayheadFrame = max(0, state.sourceFrame)
         mediaPanelTab = state.mediaPanelTab
         mediaPanelCurrentFolderId = state.mediaFolderId
@@ -1376,7 +1376,7 @@ final class EditorViewModel {
     }
 
     func seekToFrame(_ frame: Int, mode: PreviewSeekMode = .exact) {
-        let clamped = min(max(0, frame), max(0, timeline.totalFrames))
+        let clamped = min(max(0, frame), max(0, timeline.editingExtentFrames))
         if mode == .interactiveScrub {
             playheadState.timelineFrame = clamped
         } else {

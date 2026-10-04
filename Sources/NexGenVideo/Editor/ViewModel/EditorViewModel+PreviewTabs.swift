@@ -10,7 +10,7 @@ extension EditorViewModel {
 
     /// Minimum zoom scale that fits the entire timeline with end padding.
     var minZoomScale: Double {
-        let totalFrames = timeline.totalFrames
+        let totalFrames = timeline.editingExtentFrames
         guard totalFrames > 0, timelineVisibleWidth > 0 else { return Zoom.min }
         let headerWidth = Double(AppTheme.Layout.trackHeaderWidth)
         let availableWidth = timelineVisibleWidth - headerWidth

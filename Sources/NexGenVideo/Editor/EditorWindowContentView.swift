@@ -151,7 +151,7 @@ struct TheaterOverlayView: View {
 
     private func scrubBar(duration: Int) -> some View {
         GeometryReader { geo in
-            let progress = duration > 0 ? CGFloat(editor.playheadState.timelineFrame) / CGFloat(duration) : 0
+            let progress = duration > 0 ? min(1, CGFloat(editor.playheadState.timelineFrame) / CGFloat(duration)) : 0
             ZStack(alignment: .leading) {
                 Capsule().fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.moderate))
                     .frame(height: AppTheme.Slider.trackHeight)

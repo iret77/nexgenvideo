@@ -114,7 +114,7 @@ final class TimelineView: NSView {
                     editor.timelineVisibleWidth = newVisibleWidth
                     let minZoom = editor.minZoomScale
                     if isFirstLayout {
-                        editor.zoomScale = editor.timeline.totalFrames == 0
+                        editor.zoomScale = editor.timeline.editingExtentFrames == 0
                             ? Defaults.pixelsPerFrame
                             : minZoom
                     } else if editor.zoomScale < minZoom {
@@ -124,8 +124,8 @@ final class TimelineView: NSView {
             }
         }
 
-        let totalFrames = editor.timeline.totalFrames
-        let contentWidth = editor.zoomScale * Double(totalFrames) + visibleSize.width * 0.5
+        let extentFrames = editor.timeline.editingExtentFrames
+        let contentWidth = editor.zoomScale * Double(extentFrames) + visibleSize.width * 0.5
         let geo = geometry
         let contentHeight: CGFloat
         if editor.timeline.tracks.isEmpty {

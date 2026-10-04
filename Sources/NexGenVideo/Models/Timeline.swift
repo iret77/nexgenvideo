@@ -19,6 +19,12 @@ struct Timeline: Codable, Sendable, Equatable {
         for track in tracks {
             maxFrame = max(maxFrame, track.endFrame)
         }
+        return maxFrame
+    }
+
+    // Canvas and playhead range only; playback, composition, and export use `totalFrames`.
+    var editingExtentFrames: Int {
+        var maxFrame = totalFrames
         for marker in markers {
             let pointEnd = marker.startFrame.addingReportingOverflow(1)
             maxFrame = max(maxFrame, marker.durationFrames == 0
