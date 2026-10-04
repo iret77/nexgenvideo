@@ -148,6 +148,7 @@ final class ExportService {
                             timeline: timeline,
                             resolver: resolver,
                             outputURL: outputURL,
+                            reportedTarget: referenceOutputURL,
                             preserveOutputIdentity: preserveOutputIdentity,
                             isCancelled: { cancellationFlag.isCancelled }
                         )

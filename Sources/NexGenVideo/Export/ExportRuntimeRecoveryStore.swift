@@ -105,13 +105,23 @@ enum ExportRuntimeRecoveryStore {
                 guard try ExportQueue.PathState.capture(path) == .absent else {
                     throw ToolError("A partial export already exists for this job and destination.")
                 }
+                let targetName = item.targetPath.map {
+                    URL(fileURLWithPath: $0).lastPathComponent
+                } ?? path.lastPathComponent
+                let unwritable = ToolError(
+                    "Couldn’t export to “\(targetName)”. Choose another writable location and try again."
+                )
                 if item.expectsDirectory {
-                    try FileManager.default.createDirectory(
-                        at: path,
-                        withIntermediateDirectories: false
-                    )
+                    do {
+                        try FileManager.default.createDirectory(
+                            at: path,
+                            withIntermediateDirectories: false
+                        )
+                    } catch {
+                        throw unwritable
+                    }
                 } else if !FileManager.default.createFile(atPath: path.path, contents: Data()) {
-                    throw ToolError("The export runtime placeholder could not be created.")
+                    throw unwritable
                 }
                 record.items[index].identity = try ExportFileIdentity.capture(path)
                 try write(record, to: recordURL)

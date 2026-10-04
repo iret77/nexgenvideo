@@ -62,13 +62,15 @@ enum XMLExporter {
         timeline: Timeline,
         resolver: MediaResolver,
         outputURL: URL,
+        reportedTarget: URL? = nil,
         preserveOutputIdentity: Bool = false,
         isCancelled: @Sendable () -> Bool = { false }
     ) throws {
+        let target = reportedTarget ?? outputURL
         if isCancelled() { throw CancellationError() }
         let xml = Builder(timeline: timeline, resolver: resolver).build()
         if isCancelled() { throw CancellationError() }
-        let data = try serializedData(xml, target: outputURL)
+        let data = try serializedData(xml, target: target)
         if isCancelled() { throw CancellationError() }
         do {
             if preserveOutputIdentity {
@@ -82,13 +84,14 @@ enum XMLExporter {
             }
             if isCancelled() { throw CancellationError() }
             guard try Data(contentsOf: outputURL) == data else {
-                throw ExportError.writeFailed(target: outputURL)
+                throw ExportError.writeFailed(target: target)
             }
         } catch let error as ExportError {
             throw error
-
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            throw ExportError.writeFailed(target: outputURL)
+            throw ExportError.writeFailed(target: target)
         }
     }
 

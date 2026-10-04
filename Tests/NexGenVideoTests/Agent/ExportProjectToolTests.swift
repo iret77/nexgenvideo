@@ -130,6 +130,11 @@ struct ExportProjectToolTests {
         let h = ToolHarness(timeline: Fixtures.timeline(tracks: [
             Fixtures.videoTrack(clips: [Fixtures.clip(mediaRef: "missing", start: 0, duration: 30)]),
         ]))
+        let projectRoot = try openProject(h)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectRoot)
+        }
         let result = await h.runRaw("export_project", args: [
             "mode": "xml",
             "outputPath": outputURL.path,
