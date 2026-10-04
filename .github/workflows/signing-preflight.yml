@@ -3,16 +3,10 @@ name: Signing preflight
 # Validates the signing secrets BEFORE a real release: the imported cert is a
 # "Developer ID Application" identity (not Apple Distribution), and the App Store Connect API key
 # authenticates. Fails loudly if not — per the task's "ZUERST PRÜFEN, sonst stoppen" rule.
-# Runs on PRs touching the signing setup, and on demand.
+# Runs from the CI batch and on demand.
 
 on:
-  pull_request:
-    paths:
-      - "scripts/bundle.sh"
-      - "scripts/NexGenVideo.entitlements"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/signing-preflight.yml"
-      - "Sources/NexGenVideo/Resources/Info.plist"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:

@@ -1,0 +1,35 @@
+name: PR Checks
+
+# Light Linux checks for every pull request. No trigger-level paths filter: this is the required check.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light_checks:
+    # Must match the required status check and ci.yml's source_gate job name.
+    name: Light Checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce AppTheme
+        run: python3 scripts/lint_app_theme.py
+
+      - name: Validate pack pipeline contracts
+        run: |
+          for manifest in plugins/*.json; do
+            python3 scripts/validate_pipeline_contract.py "$manifest"
+          done
+
+      - name: Verify CI and fixture tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'

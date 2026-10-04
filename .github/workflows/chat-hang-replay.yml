@@ -1,14 +1,7 @@
 name: Chat Hang Replay
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/chat-hang-replay.yml'
-      - 'scripts/chat_hang_replay.py'
-      - 'Sources/NexGenVideo/App/ChatHangReplay.swift'
-      - 'Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift'
-      - 'Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift'
-      - 'Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift'
+  workflow_call:
 
 concurrency:
   group: chat-hang-replay-${{ github.ref }}

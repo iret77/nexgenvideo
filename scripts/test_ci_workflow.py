@@ -7,8 +7,40 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CI = ROOT / ".github/workflows/ci.yml"
-DIAGNOSTIC_ACCEPTANCE = ROOT / ".github/workflows/diagnostic-acceptance.yml"
+WORKFLOWS = ROOT / ".github/workflows"
+CI = WORKFLOWS / "ci.yml"
+DIAGNOSTIC_ACCEPTANCE = WORKFLOWS / "diagnostic-acceptance.yml"
+PR_CHECKS = WORKFLOWS / "pr-checks.yml"
+CI_BATCH = WORKFLOWS / "ci-batch.yml"
+AUTOMATIC_TRIGGERS = {"push", "pull_request", "pull_request_target", "schedule", "merge_group"}
+
+
+def triggers(path):
+    lines = path.read_text().splitlines()
+    keys = []
+    for line in lines[lines.index("on:") + 1:]:
+        if line and not line.startswith(" "):
+            break
+        stripped = line.strip()
+        if line.startswith("  ") and not line.startswith("   ") and stripped and not stripped.startswith("#"):
+            keys.append(stripped.split(":", 1)[0])
+    return keys
+
+
+def run_commands(text):
+    commands = []
+    for block in text.split("run: ")[1:]:
+        first = block.split("\n", 1)[0]
+        if first.strip() == "|":
+            body = []
+            for line in block.split("\n")[1:]:
+                if line.strip() and not line.startswith("            "):
+                    break
+                body.append(line.strip())
+            commands.append("\n".join(line for line in body if line))
+        else:
+            commands.append(first.strip())
+    return commands
 
 
 class CIWorkflowTests(unittest.TestCase):
@@ -63,6 +95,43 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: macos-26", release)
         self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
         self.assertIn("evidence/export-actions.json", release)
+
+    def test_only_the_light_pull_request_check_starts_automatically(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS
+            with self.subTest(workflow=path.name):
+                if path == PR_CHECKS:
+                    self.assertEqual(automatic, {"pull_request"})
+                else:
+                    self.assertEqual(automatic, set())
+        text = PR_CHECKS.read_text()
+        header = text.split("jobs:", 1)[0].splitlines()
+        self.assertFalse(any(line.strip().startswith(("paths:", "paths-ignore:")) for line in header))
+        self.assertNotIn("runs-on: macos", text)
+        self.assertNotIn("runs-on: xcode", text)
+        self.assertNotIn("uses: ./.github/workflows/", text)
+
+    def test_pull_request_check_mirrors_the_ci_light_job(self):
+        light = CI.read_text().split("  source_gate:\n", 1)[1].split("\n  ui_render:\n", 1)[0]
+        pr = PR_CHECKS.read_text().split("jobs:", 1)[1]
+        self.assertIn("    name: Light Checks\n", light)
+        self.assertIn("    name: Light Checks\n", pr)
+        commands = run_commands(pr)
+        self.assertTrue(commands)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn(command, run_commands(light))
+
+    def test_ci_batch_is_the_manual_heavy_entry_point(self):
+        text = CI_BATCH.read_text()
+        self.assertEqual(triggers(CI_BATCH), ["workflow_dispatch"])
+        self.assertIn("cancel-in-progress: true", text)
+        called = [line.split("./.github/workflows/", 1)[1].strip()
+                  for line in text.splitlines() if "uses: ./.github/workflows/" in line]
+        self.assertIn("ci.yml", called)
+        for name in called:
+            with self.subTest(workflow=name):
+                self.assertIn("workflow_call", triggers(WORKFLOWS / name))
 
 
 if __name__ == "__main__":
