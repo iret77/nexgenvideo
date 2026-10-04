@@ -167,7 +167,7 @@ extension EditorViewModel {
         return AudioExtractionSource(
             assetID: asset.id,
             url: asset.url.standardizedFileURL.resolvingSymlinksInPath(),
-            name: asset.name,
+            name: asset.libraryDisplayName,
             filename: asset.userFacingFilename,
             workingRoot: workingRoot.standardizedFileURL.resolvingSymlinksInPath(),
             workingCopyKey: workingCopyKey

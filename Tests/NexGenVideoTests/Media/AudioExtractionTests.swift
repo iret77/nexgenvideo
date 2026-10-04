@@ -77,6 +77,26 @@ struct AudioExtractionTests {
         #expect(extracted.origin?.audioTrackLabel == "Track 2 (Stereo)")
     }
 
+    @Test("track selection names the asset by its library name, never its storage hash")
+    func trackSelectionUsesLibraryName() async throws {
+        let setup = try makeSavedEditor()
+        let editor = setup.editor
+        defer { cleanup(editor: editor, directory: setup.cleanup) }
+        let source = try makeSourceAsset(editor: editor, in: setup.cleanup)
+        source.name = String(repeating: "a", count: 64)
+        editor.audioTrackExtractionClient = stubClient(tracks: [
+            AudioTrackDescriptor(id: 0, number: 1, channelCount: 1),
+            AudioTrackDescriptor(id: 1, number: 2, channelCount: 2),
+        ])
+
+        editor.beginAudioExtraction(from: source.id)
+        await editor.audioExtractionTask?.value
+
+        let request = try #require(editor.pendingAudioTrackSelection)
+        #expect(request.sourceName == source.libraryDisplayName)
+        #expect(!MediaFilename.isContentAddressed(request.sourceName))
+    }
+
     @Test("export failure is visible and does not register a partial asset")
     func exportFailure() async throws {
         let setup = try makeSavedEditor()
