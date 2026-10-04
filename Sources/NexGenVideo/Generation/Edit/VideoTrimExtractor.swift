@@ -12,6 +12,27 @@ struct TrimmedSource: Sendable {
 
     var hasTrim: Bool { trimStartFrame > 0 || trimEndFrame > 0 }
     var durationSeconds: Double { Double(sourceFramesConsumed) / Double(max(1, fps)) }
+
+    var record: GenerationSourceTrim {
+        GenerationSourceTrim(
+            trimStartFrame: trimStartFrame,
+            trimEndFrame: trimEndFrame,
+            sourceFramesConsumed: sourceFramesConsumed,
+            fps: fps
+        )
+    }
+}
+
+extension TrimmedSource {
+    init(sourceURL: URL, record: GenerationSourceTrim) {
+        self.init(
+            sourceURL: sourceURL,
+            trimStartFrame: record.trimStartFrame,
+            trimEndFrame: record.trimEndFrame,
+            sourceFramesConsumed: record.sourceFramesConsumed,
+            fps: record.fps
+        )
+    }
 }
 
 /// Exports the visible range of a video clip to a temp mp4 file.

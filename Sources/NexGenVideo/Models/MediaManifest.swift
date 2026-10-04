@@ -131,6 +131,17 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var imageOutputFormat: String? = nil
     var imageOutputCompression: Int? = nil
     var imageMaskURL: String? = nil
+    /// Source frame range a trimmed edit consumed; a rerun must upload the same range.
+    var sourceTrim: GenerationSourceTrim? = nil
+}
+
+struct GenerationSourceTrim: Codable, Sendable, Equatable {
+    let trimStartFrame: Int
+    let trimEndFrame: Int
+    let sourceFramesConsumed: Int
+    let fps: Int
+
+    var durationSeconds: Double { Double(sourceFramesConsumed) / Double(max(1, fps)) }
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

@@ -371,6 +371,115 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
+    @Test("a trimmed upscale rerun prices and replays the recorded source range")
+    func trimmedUpscaleRerunUsesRecordedRange() async throws {
+        let package = try project(stop: 5)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        let source = MediaAsset(
+            id: "project-video",
+            url: package.appendingPathComponent("source.mp4"),
+            type: .video,
+            name: "Source",
+            duration: 60
+        )
+        editor.mediaAssets.append(source)
+        var input = GenerationInput(
+            prompt: "",
+            model: "fal-ai/topaz/upscale/video",
+            duration: 10,
+            aspectRatio: "",
+            resolution: nil
+        )
+        input.sourceVideoAssetId = source.id
+        input.sourceTrim = GenerationSourceTrim(
+            trimStartFrame: 240,
+            trimEndFrame: 960,
+            sourceFramesConsumed: 240,
+            fps: 24
+        )
+        let upscaled = MediaAsset(
+            url: package.appendingPathComponent("upscaled.mp4"),
+            type: .video,
+            name: "Upscaled",
+            duration: 10,
+            generationInput: input
+        )
+        var pricedDuration: Double?
+
+        do {
+            _ = try await EditSubmitter.rerun(
+                asset: upscaled,
+                editor: editor,
+                quoteLoader: { _, pricing in
+                    pricedDuration = pricing.durationSeconds
+                    return money(6)
+                }
+            )
+            Issue.record("expected the rerun budget guard to block")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .budget = error else {
+                Issue.record("expected budget failure, got \(error)")
+                return
+            }
+        }
+
+        #expect(pricedDuration == 10)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test("an older trimmed upscale without a recorded range never uploads the full source")
+    func unrecordedTrimmedUpscaleRerunIsRefused() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        let source = MediaAsset(
+            id: "project-video",
+            url: package.appendingPathComponent("source.mp4"),
+            type: .video,
+            name: "Source",
+            duration: 60
+        )
+        editor.mediaAssets.append(source)
+        var input = GenerationInput(
+            prompt: "",
+            model: "fal-ai/topaz/upscale/video",
+            duration: 10,
+            aspectRatio: "",
+            resolution: nil
+        )
+        input.sourceVideoAssetId = source.id
+        let upscaled = MediaAsset(
+            url: package.appendingPathComponent("upscaled.mp4"),
+            type: .video,
+            name: "Upscaled",
+            duration: 10,
+            generationInput: input
+        )
+        var quoted = false
+
+        do {
+            _ = try await EditSubmitter.rerun(
+                asset: upscaled,
+                editor: editor,
+                quoteLoader: { _, _ in
+                    quoted = true
+                    return money(1)
+                }
+            )
+            Issue.record("expected the unrecorded trim to be refused")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .invalid(let message) = error else {
+                Issue.record("expected an invalid rerun, got \(error)")
+                return
+            }
+            #expect(message.contains("trim range was not recorded"))
+        }
+
+        #expect(quoted == false)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
     @Test("an unpriced provider workflow is blocked by an explicit stop")
     func providerWorkflowFailsClosed() throws {
         let package = try project(stop: 100)

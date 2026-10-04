@@ -43,13 +43,16 @@ enum EditSubmitter {
             onFailure?()
             return nil
         }
-        let genInput = GenerationInput(
+        var genInput = GenerationInput(
             prompt: "",
             model: model.id,
             duration: recordedDuration,
             aspectRatio: "",
             resolution: selection.targetResolution
         )
+        if asset.type == .video, let trimmedSource, trimmedSource.hasTrim {
+            genInput.sourceTrim = trimmedSource.record
+        }
 
         let isImage = asset.type == .image
         let placeholderDuration: Double
@@ -456,12 +459,22 @@ enum EditSubmitter {
             guard durableSource != nil || preUploaded?.first != nil else {
                 throw RerunError.missingSource
             }
-            let rerunDuration = asset.duration > 0
-                ? asset.duration
-                : Double(max(1, gen.duration))
+            let recordedTrim = isImage ? nil : gen.sourceTrim
+            // Without a recorded range the project source cannot reproduce an older trimmed upload.
+            let unrecordedTrim = !isImage && recordedTrim == nil
+                && (durableSource.map { $0.duration > Double(max(1, gen.duration)) } ?? false)
+            let replaysUpload = durableSource == nil || unrecordedTrim
+            let unrecordedTrimError = RerunError.invalid(
+                "The original trim range was not recorded. Upscale the clip again from the timeline."
+            )
+            if unrecordedTrim, preUploaded?.first == nil { throw unrecordedTrimError }
+            let rerunDuration = recordedTrim?.durationSeconds
+                ?? (asset.duration > 0 ? asset.duration : Double(max(1, gen.duration)))
             let selection: UpscaleSelection
             if let targetResolution = gen.resolution {
-                guard let durableSource else { throw RerunError.missingSource }
+                guard let durableSource, !replaysUpload else {
+                    throw unrecordedTrim ? unrecordedTrimError : RerunError.missingSource
+                }
                 guard let validated = upscaleModel.selection(
                     sourceType: durableSource.type,
                     sourceWidth: durableSource.sourceWidth,
@@ -484,8 +497,12 @@ enum EditSubmitter {
                     scaleFactor: nil
                 )
             }
-            let replayURLs = durableSource == nil ? preUploaded : nil
-            let references = durableSource.map { [$0] } ?? []
+            let replayURLs = replaysUpload ? preUploaded : nil
+            let references = replaysUpload ? [] : (durableSource.map { [$0] } ?? [])
+            let trimOverride: TrimmedSource? = {
+                guard !replaysUpload, let recordedTrim, let durableSource else { return nil }
+                return TrimmedSource(sourceURL: durableSource.url, record: recordedTrim)
+            }()
             let authorization = try await authorizeRerun(
                 gen: gen,
                 modality: .upscale,
@@ -500,6 +517,7 @@ enum EditSubmitter {
                     ? Defaults.imageDurationSeconds
                     : (asset.duration > 0 ? asset.duration : Double(gen.duration)),
                 references: references,
+                trimmedSourceOverride: trimOverride,
                 preUploadedURLs: replayURLs,
                 name: rerunName(for: asset),
                 folderId: asset.folderId,
