@@ -1,7 +1,25 @@
 # CI execution and measurement
 
-CI classifies the complete PR diff, runs inexpensive source checks on Linux, then
-compiles debug products and tests once on `xcode-27`. When bundle paths change,
+## Triggers
+
+A pull request starts only `pr-checks.yml`: one Linux job, `Light Checks`
+(AppTheme lint, pack pipeline contracts, script tests), without a paths filter.
+It is the required status check for `main`, without an up-to-date requirement.
+No push, pull request or schedule starts a macOS or `xcode-27` runner.
+
+Heavy verification runs only through `ci-batch.yml`, a manual dispatch the owner
+approves per run. It calls `ci.yml` and, selectable per run, the hang replays and
+the signing preflight, covering every merge since the previous batch. A red batch
+is fixed or reverted before further merges; a release starts only from a `main`
+commit with a green batch run. `ci.yml`'s first job carries the same name,
+`Light Checks`, so a dispatched run (for example the release metadata flow) also
+satisfies the required check.
+
+## CI pipeline
+
+CI classifies the diff (a run without a pull-request base verifies everything),
+runs inexpensive source checks on Linux, then compiles debug products and tests
+once on `xcode-27`. When bundle paths change,
 the same job assembles the app from that build directory through SwiftPM's
 incremental build. Real external pack loads, historical compatibility checks and
 relaunch checks still run. Normal-startup acceptance consumes the zipped app on
@@ -35,7 +53,7 @@ therefore retains both release compilations and all signed-artifact checks.
 
 ## Monitoring
 
-Collect edits before one PR push. Monitor an exact run and commit with
+Collect merges before one approved batch run. Monitor an exact run and commit with
 `scripts/ci_watch.py`; it polls once per minute, remains quiet while unchanged,
 reports API failures and timeouts explicitly, and prints one JSON result plus
 bounded excerpts for failed jobs. It does not dispatch or retry workflows.

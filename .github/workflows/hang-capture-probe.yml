@@ -2,11 +2,6 @@ name: Signed hang capture feasibility
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - scripts/hang_capture_probe.swift
-      - Sources/HangStackSampler/**
-      - .github/workflows/hang-capture-probe.yml
 
 permissions:
   contents: read

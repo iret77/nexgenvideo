@@ -33,8 +33,8 @@ on:
   # `workflow_dispatch` is the ONLY trigger. Nothing a commit, a merge, or a PR touches may start a
   # signed build — not the bundling scripts, not the pack manifests, not this file. A build happens
   # when a human asks for one, never as a side effect of changing code. Do not add `push:` or
-  # `pull_request:` here: correctness of the app is verified by ci.yml (build + test) on every PR;
-  # this workflow only produces and publishes artifacts, and that is a deliberate act.
+  # `pull_request:` here: correctness of the app is verified by ci.yml (build + test) in the approved
+  # ci-batch.yml run; this workflow only produces and publishes artifacts, and that is a deliberate act.
 
 permissions: {}
 
