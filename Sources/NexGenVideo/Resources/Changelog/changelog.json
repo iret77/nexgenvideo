@@ -17,7 +17,12 @@
           "heading": "Workflow",
           "items": [
             "Image generation preserves compiled prompts, exact request options, reference roles, masks and output provenance across approval, rerun and batch restore.",
-            "Music Video 0.5.10 combines the new image routes, production knowledge and confirmed identity recovery. Ordinary sketches, Bible sheets and Frames use Flare; Sunburst remains available for precision work."
+            "Music Video 0.5.10 combines the new image routes, production knowledge and confirmed identity recovery. Ordinary sketches, Bible sheets and Frames use Flare; Sunburst remains available for precision work.",
+            "Matching Media Library items appear before new-file controls in intake cards, with search shown only when multiple items need filtering.",
+            "Confirmed character and location references cannot be reassigned as Production Design style.",
+            "Image decisions show selectable thumbnails with descriptive labels and persistent Media Library filenames, and preserve the exact chosen asset for the Agent.",
+            "Storyboard setup distinguishes sequences NexGenVideo creates from sequences the user provides.",
+            "Storyboard derives shot and sheet scope without repeated questions, resumes existing work at review, and prevents earlier phases from staging assets into future phase folders."
           ]
         },
         {
@@ -27,7 +32,9 @@
             "Affected older projects show outdated approvals and offer an explicit audited provenance recovery without changing gate decisions.",
             "Generation batches show verified Runway Gemini Image costs and distinguish unsupported options, pricing outages and unavailable exchange rates.",
             "Failed pricing can be retried, or an affected request can be prepared again on an explicitly selected route, without submitting a generation.",
-            "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch."
+            "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch.",
+            "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error.",
+            "Saving verifies the project package contents before treating a changed filesystem timestamp as an external edit, while preserving the conflict warning for real file changes."
           ]
         },
         {

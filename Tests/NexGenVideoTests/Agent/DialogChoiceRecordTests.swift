@@ -71,6 +71,59 @@ struct DialogChoiceRecordTests {
         #expect(explicit.shortLabel.hasSuffix("…"))
     }
 
+    @Test("image choices preserve the filename for the user and mediaRef for the agent")
+    func imageChoiceIdentityIsDurable() {
+        let dialog = AgentDialog(
+            id: "anchor",
+            title: "Choose the anchor",
+            symbol: "photo",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Set anchor",
+            textField: nil,
+            sections: [
+                AgentDialog.Section(
+                    id: "anchor",
+                    label: "Which image becomes the anchor?",
+                    shortLabel: "Anchor",
+                    kind: .choices(options: [
+                        .init(
+                            id: "dusk",
+                            label: "Dusk street",
+                            shortLabel: "Dusk street",
+                            mediaRef: "asset-dusk"
+                        ),
+                        .init(
+                            id: "studio",
+                            label: "Warm studio",
+                            shortLabel: "Warm studio",
+                            mediaRef: "asset-studio"
+                        ),
+                    ], multiSelect: false)
+                ),
+            ]
+        )
+        let response = AgentService.dialogResponse(
+            from: dialog,
+            result: AgentDialogResult(
+                selectedLabels: ["anchor": ["Dusk street"]],
+                toggles: [:],
+                direction: "",
+                selectedOptionIDs: ["anchor": ["dusk"]],
+                selectedMediaFilenames: [
+                    "anchor": ["dusk": "lighting-anchor-dusk.png"],
+                ]
+            )
+        )
+
+        #expect(
+            response.presentation.choiceRecord?.summary
+                == "Anchor: Dusk street · lighting-anchor-dusk.png"
+        )
+        #expect(response.agentText.contains("mediaRef: asset-dusk"))
+        #expect(response.agentText.contains("lighting-anchor-dusk.png"))
+    }
+
     @Test("Typed direction remains separate user prose")
     func typedDirectionIsSeparate() {
         let response = AgentService.dialogResponse(

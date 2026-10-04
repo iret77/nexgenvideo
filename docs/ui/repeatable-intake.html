@@ -156,6 +156,8 @@
       It ends the repeatable step without creating an empty item.</li>
     <li>Once the current item contains a name or reference image, completion and close stay disabled.
       A visible <code>Clear item</code> action resets that unsubmitted draft.</li>
+    <li>Matching library assets precede the new-file drop target. A single match appears directly;
+      search is reserved for multiple matches.</li>
     <li>Disabled controls use the shared app-wide button treatment: muted text, non-accented
       background, reduced opacity, and no hover response.</li>
   </ul>
@@ -166,6 +168,7 @@
     <li>Clicking every visible control in every state cannot submit an unnamed or imageless item.</li>
     <li>A user with zero prepared items and a user who has finished after N items both have an
       explicit labeled completion action.</li>
+    <li>The first matching library asset is visible without discovering the card's internal scroll.</li>
   </ul>
 </section>
 
@@ -177,12 +180,12 @@
         <div class="header"><span class="symbol">▣</span>Prepared character 1<span class="close">×</span></div>
         <div class="intro">Reference images become the bible anchor for this character.</div>
         <div class="field" style="color:var(--muted)">Character name</div>
-        <div class="drop">↓ &nbsp; Drop the reference images &nbsp; · &nbsp; Choose…</div>
         <div class="library-title">From your library</div>
         <div class="library">
           <div class="asset"><span class="thumb"></span><span>AI Cat<br><small>image</small></span></div>
           <div class="asset"><span class="thumb"></span><span>Claude Mouse<br><small>image</small></span></div>
         </div>
+        <div class="drop">↓ &nbsp; Drop the reference images &nbsp; · &nbsp; Choose…</div>
         <div class="footer"><button>Skip</button><button class="primary" disabled>Attach</button></div>
       </div>
     </div>

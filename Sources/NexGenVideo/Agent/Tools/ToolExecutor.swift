@@ -467,6 +467,7 @@ final class ToolExecutor {
                 tool,
                 editor,
                 resolved,
+                guardedPhase: guardedPhase,
                 origin: origin,
                 toolUseID: hostToolUseID,
                 hostStateID: hostStateID,
@@ -834,6 +835,7 @@ final class ToolExecutor {
         _ tool: ToolName,
         _ editor: EditorViewModel,
         _ args: [String: Any],
+        guardedPhase: String?,
         origin: ToolCallOrigin,
         toolUseID: String?,
         hostStateID: UUID,
@@ -930,7 +932,12 @@ final class ToolExecutor {
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
         case .listProjectFiles:     return try listProjectFilesTool(editor, args)
-        case .copyProjectFile:      return try copyProjectFileTool(editor, args)
+        case .copyProjectFile:
+            return try copyProjectFileTool(
+                editor,
+                args,
+                currentPhase: guardedPhase
+            )
         case .recoverConfirmedIdentityProvenance:
             return try recoverConfirmedIdentityProvenanceTool(editor, args)
         case .runPhase:             return try await runPhaseTool(editor, args)

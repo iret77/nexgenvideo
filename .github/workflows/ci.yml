@@ -348,7 +348,8 @@ jobs:
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
-
+      - name: Verify helper recovery during active work
+        run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:

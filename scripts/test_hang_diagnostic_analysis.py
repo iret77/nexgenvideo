@@ -29,3 +29,16 @@ class DiagnosticAnalysisTests(unittest.TestCase):
             (folder / "checksums.json").write_text(json.dumps({"../outside": "unused"}))
             with self.assertRaisesRegex(ValueError, "escapes export"):
                 analyze(folder)
+
+    def test_preserves_each_structured_capture_issue(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            issues = [
+                {"uptime": 12.5, "code": "helper-exited", "detail": "signal-9; restarted=1"},
+                {"uptime": 18.0, "code": "snapshot-failed", "detail": "NSCocoaErrorDomain-4"},
+            ]
+            data = json.dumps(issues).encode()
+            name = "capture-error.json"
+            (folder / name).write_bytes(data)
+            (folder / "checksums.json").write_text(json.dumps({name: hashlib.sha256(data).hexdigest()}))
+            self.assertEqual(analyze(folder)["gaps"], issues)

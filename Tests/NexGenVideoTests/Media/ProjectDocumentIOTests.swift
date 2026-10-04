@@ -129,11 +129,7 @@ struct ProjectDocumentIOTests {
         }
 
         let doc = try await VideoProject.load(from: package)
-        let packageDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let packageDate = try packageModificationDate(at: package)
 
         #expect(doc.fileModificationDate == packageDate)
     }
@@ -157,11 +153,7 @@ struct ProjectDocumentIOTests {
             ofItemAtPath: package.path
         )
         try ProjectIdentity.regenerate(at: package)
-        let hostMutationDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let hostMutationDate = try packageModificationDate(at: package)
 
         try doc.recordKnownPackageState(at: package)
 
@@ -193,14 +185,120 @@ struct ProjectDocumentIOTests {
                 continuation.resume(returning: $0)
             }
         }
-        let savedPackageDate = try #require(
-            package.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        )
+        let savedPackageDate = try packageModificationDate(at: package)
 
         #expect(saveError == nil)
         #expect(doc.fileModificationDate == savedPackageDate)
+    }
+
+    @Test func metadataOnlyPackageDateDriftRefreshesTheKnownState() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-metadata-drift-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        let driftedDate = Date(timeIntervalSinceNow: 30)
+        try fm.setAttributes(
+            [.modificationDate: driftedDate],
+            ofItemAtPath: package.path
+        )
+        let actualDate = try packageModificationDate(at: package)
+
+        #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+        #expect(doc.fileModificationDate == actualDate)
+    }
+
+    @Test func saveProceedsAfterMetadataOnlyPackageDateDrift() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-save-metadata-drift-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        try makePackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        let saveError: Error? = await withCheckedContinuation { continuation in
+            doc.save(
+                to: package,
+                ofType: VideoProject.typeIdentifier,
+                for: .saveOperation
+            ) {
+                continuation.resume(returning: $0)
+            }
+        }
+        let savedPackageDate = try packageModificationDate(at: package)
+
+        #expect(saveError == nil)
+        #expect(doc.fileModificationDate == savedPackageDate)
+    }
+
+    @Test func changedPackageContentKeepsTheConflictBaseline() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-content-change-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        let baseline = doc.fileModificationDate
+        try Data("external-change".utf8).write(
+            to: package.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        #expect(!doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
+        #expect(doc.fileModificationDate == baseline)
+    }
+
+    @Test func finderMetadataDoesNotCreateAProjectContentConflict() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-finder-metadata-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+        try Data("finder".utf8).write(
+            to: package.appendingPathComponent(".DS_Store"),
+            options: .atomic
+        )
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 30)],
+            ofItemAtPath: package.path
+        )
+
+        #expect(doc.refreshKnownPackageStateIfContentsUnchanged(at: package))
     }
 
     private func makePackage(at url: URL) throws {
@@ -208,6 +306,12 @@ struct ProjectDocumentIOTests {
         try fm.createDirectory(at: media, withIntermediateDirectories: true)
         try Data("MEDIA".utf8).write(to: media.appendingPathComponent("clip.mp4"))
         try Data("THUMB".utf8).write(to: url.appendingPathComponent(Project.thumbnailFilename))
+    }
+
+    private func packageModificationDate(at url: URL) throws -> Date {
+        try #require(
+            fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        )
     }
 
     private func unavailableBinding() throws -> ProjectPackBinding {

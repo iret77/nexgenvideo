@@ -5,6 +5,12 @@ import HangDiagnostics
 import HangStackSampler
 import Synchronization
 
+private struct DiagnosticCaptureIssue: Codable {
+    let uptime: Double
+    let code: String
+    let detail: String?
+}
+
 final class HangDiagnosticRecorder: @unchecked Sendable {
     static let shared = HangDiagnosticRecorder()
     static let root = MainThreadHangWatchdog.diagnosticsDirectory
@@ -36,11 +42,11 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private var snapshotOrdinal: UInt64 = 0
     private var replayEpochs: [(began: Double, files: [(URL, Int)])] = []
     private let contentEnabled = Atomic<Bool>(false)
-    private var failure: String?
-    private var notifiedFailure = false
     private var notifiedIncidents: Set<String> = []
     @MainActor private var observer: CFRunLoopObserver?
     @MainActor private var mainTimer: Timer?
+    private var captureIssues: [DiagnosticCaptureIssue] = []
+    private var helperRecovery = DiagnosticHelperRecovery()
 
     init() {}
 
@@ -94,6 +100,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             let encoded = contentKey.withUnsafeBytes { Data($0) }.base64EncodedString()
             KeychainStore.save(encoded, account: "hang-diagnostic-\(id.uuidString)")
             guard KeychainStore.load(account: "hang-diagnostic-\(id.uuidString)") == encoded else {
+                KeychainStore.delete(account: "hang-diagnostic-\(id.uuidString)")
+                startRequested.store(false, ordering: .relaxed)
                 Self.showFailure("Cannot protect replay content in Keychain. Recording was not started.")
                 return
             }
@@ -112,13 +120,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "mode": includeContent ? "encrypted-replay" : "structure",
         ]
-        let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/NexGenVideoDiagnostics")
-        let process = Process()
-        process.executableURL = executable
         let folder = Self.root.appendingPathComponent(id.uuidString, isDirectory: true)
-        process.arguments = [String(getpid()), id.uuidString, folder.path]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
         let now = DispatchTime.now().uptimeNanoseconds
         mainPulse.store(now, ordering: .relaxed)
         loopPulse.store(now, ordering: .relaxed)
@@ -155,9 +157,10 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 startupID = id
                 session = folder
                 key = contentKey
+                captureIssues.removeAll()
+                helperRecovery = DiagnosticHelperRecovery()
                 contentEnabled.store(includeContent, ordering: .relaxed)
-                helper = process
-                try process.run()
+                try launchHelper(folder: folder, id: id)
                 enabled.store(true, ordering: .relaxed)
                 let timer = DispatchSource.makeTimerSource(queue: writer)
                 timer.schedule(deadline: .now(), repeating: .milliseconds(500))
@@ -167,13 +170,29 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 startHeartbeat(folder: folder, id: id)
                 startSampler(folder: folder)
             } catch {
-                failure = "setup-failed"
+                recordIssue("setup-failed", detail: Self.errorCode(error))
+                if let session {
+                    try? DiagnosticFiles.replace(captureIssues, at: session.appendingPathComponent("capture-error.json"))
+                }
+                enabled.store(false, ordering: .relaxed)
+                contentEnabled.store(false, ordering: .relaxed)
+                stopping.store(true, ordering: .relaxed)
+                startRequested.store(false, ordering: .relaxed)
                 let message = (error as? CocoaError)?.code == .fileWriteOutOfSpace
                     ? "Stored diagnostics reached 1 GB. Existing recordings and keys are preserved. Export and delete recordings from Help before starting a new recording."
                     : "Diagnostic recording could not start. Existing recordings and keys are preserved."
-                DispatchQueue.main.async { Self.showFailure(message) }
+                DispatchQueue.main.async { [self] in finishFailedStart(message) }
             }
         }
+    }
+
+    @MainActor
+    private func finishFailedStart(_ message: String) {
+        if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        observer = nil
+        mainTimer?.invalidate()
+        mainTimer = nil
+        if !HangDiagnosticSelfTest.requested { Self.showFailure(message) }
     }
 
     @MainActor
@@ -198,6 +217,13 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
     }
 
+    func terminateHelperForSelfTest() {
+        guard ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "helper-restart" else { return }
+        writer.async { [self] in
+            if helper?.isRunning == true { helper?.terminate() }
+        }
+    }
+
     private func flush() {
         guard let session else { return }
         let now = ProcessInfo.processInfo.systemUptime
@@ -211,7 +237,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     try DiagnosticFiles.write(bytes, to: file)
                     files.append((file, bytes.count, now))
                     journalBytes += bytes.count
-                } else { failure = "journal-limit" }
+                } else { recordIssue("journal-limit") }
             }
             if !FileManager.default.fileExists(atPath: session.appendingPathComponent("pinned.json").path) {
                 while let first = files.first, now - first.2 > 120 {
@@ -220,11 +246,11 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     files.removeFirst()
                 }
             }
-            if let failure {
-                try DiagnosticFiles.replace(failure, at: session.appendingPathComponent("capture-error.json"))
-            }
             if helper?.isRunning != true && !stopping.load(ordering: .relaxed) {
-                failure = "helper-exited"
+                recoverHelper(now: now, folder: session)
+            }
+            if !captureIssues.isEmpty {
+                try DiagnosticFiles.replace(captureIssues, at: session.appendingPathComponent("capture-error.json"))
             }
             if let folders = try? FileManager.default.contentsOfDirectory(at: session, includingPropertiesForKeys: nil) {
                 for folder in folders where folder.lastPathComponent.hasPrefix("incident-") {
@@ -237,15 +263,83 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     }
                 }
             }
-        } catch { failure = "write-failed" }
-        if failure != nil && !notifiedFailure {
-            notifiedFailure = true
-            DispatchQueue.main.async {
-                if !HangDiagnosticSelfTest.requested {
-                    Self.showFailure("The diagnostic recording is incomplete. Check the exported capture-error report before relying on it.")
-                }
+        } catch {
+            if recordIssue("write-failed", detail: Self.errorCode(error)) {
+                Log.hang.error("Diagnostic recording write failed", telemetry: "hang_diagnostic_write_failed")
             }
         }
+    }
+
+    private func launchHelper(folder: URL, id: UUID) throws {
+        let process = Process()
+        process.executableURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/NexGenVideoDiagnostics")
+        process.arguments = [String(getpid()), id.uuidString, folder.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        helper = process
+    }
+
+    private func recoverHelper(now: Double, folder: URL) {
+        guard let action = helperRecovery.helperExited(
+            now: now,
+            stopping: stopping.load(ordering: .relaxed)
+        ) else { return }
+        let exit = Self.helperExitDescription(helper)
+        switch action {
+        case .restart(let attempt):
+            do {
+                try launchHelper(folder: folder, id: startupID)
+                recordIssue("helper-exited", detail: "\(exit); restarted=\(attempt)", uptime: now)
+                Log.hang.warning(
+                    "Diagnostic helper exited (\(exit)); restarted",
+                    telemetry: "hang_diagnostic_helper_restarted",
+                    data: ["attempt": attempt, "exit": exit]
+                )
+            } catch {
+                recordIssue(
+                    "helper-restart-failed",
+                    detail: "\(exit); attempt=\(attempt); error=\(Self.errorCode(error))",
+                    uptime: now
+                )
+                Log.hang.error(
+                    "Diagnostic helper restart failed",
+                    telemetry: "hang_diagnostic_helper_restart_failed",
+                    data: ["attempt": attempt, "exit": exit]
+                )
+            }
+        case .backoff(let retryAfter):
+            recordIssue("helper-restart-backoff", detail: "\(exit); retry-after=\(retryAfter)", uptime: now)
+            Log.hang.error(
+                "Diagnostic helper entered restart backoff",
+                telemetry: "hang_diagnostic_helper_backoff",
+                data: ["exit": exit]
+            )
+        }
+    }
+
+    @discardableResult
+    private func recordIssue(_ code: String, detail: String? = nil,
+                             uptime: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard captureIssues.last?.code != code || captureIssues.last?.detail != detail else { return false }
+        captureIssues.append(DiagnosticCaptureIssue(uptime: uptime, code: code, detail: detail))
+        if captureIssues.count > 32 { captureIssues.removeFirst(captureIssues.count - 32) }
+        return true
+    }
+
+    private static func helperExitDescription(_ process: Process?) -> String {
+        guard let process else { return "missing-process" }
+        switch process.terminationReason {
+        case .exit: return "exit-status-\(process.terminationStatus)"
+        case .uncaughtSignal: return "signal-\(process.terminationStatus)"
+        @unknown default: return "unknown-\(process.terminationStatus)"
+        }
+    }
+
+    private static func errorCode(_ error: Error) -> String {
+        let value = error as NSError
+        return "\(value.domain)-\(value.code)"
     }
 
     private func startHeartbeat(folder: URL, id: UUID) {
@@ -322,7 +416,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 }
                 snapshotOrdinal &+= 1
                 guard Set(value.messages.map(\.id)).count == value.messages.count else {
-                    failure = "duplicate-message-identity"
+                    recordIssue("duplicate-message-identity")
                     return
                 }
                 let frame = HangDiagnosticReplayFrame(sequence: snapshotOrdinal, uptime: capturedUptime, predecessor: previousFrameDigest,
@@ -332,13 +426,14 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 let encoded = DiagnosticPrivacy.scrubJSON(try encoder.encode(frame))
                 guard encoded.count <= 32 * 1024 * 1024,
                       (try? JSONDecoder().decode(HangDiagnosticReplayFrame.self, from: encoded)) != nil else {
-                    failure = "snapshot-size-or-privacy-limit"
+                    recordIssue("snapshot-size-or-privacy-limit")
                     return
                 }
                 let encrypted = try AES.GCM.seal(encoded, using: key,
                     authenticating: Data(startupID.uuidString.utf8)).combined!
                 guard contentBytes + encrypted.count <= 256 * 1024 * 1024 else {
-                    failure = "content-limit"
+                    recordIssue("content-limit")
+                    contentEnabled.store(false, ordering: .relaxed)
                     return
                 }
                 let name = String(format: "replay-%012llu.enc", snapshotOrdinal)
@@ -348,7 +443,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 previousSnapshot = value
                 previousFrameDigest = DiagnosticFiles.digest(encoded)
                 record(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
-            } catch { failure = "snapshot-failed" }
+            } catch { recordIssue("snapshot-failed", detail: Self.errorCode(error)) }
         }
     }
 

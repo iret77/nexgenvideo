@@ -292,7 +292,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the current task interaction dock for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
+            description: "Present a native structured dialog in the current task interaction dock for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Write every option from the user's point of view: first person always means the user, different actors must be named, and each outcome must be clear without its icon (for example, 'Create sequences for me' versus 'I'll provide sequences'). Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. When the decision is between concrete image assets, call get_media and give every option its exact mediaRef plus a descriptive shortLabel; the card shows clickable thumbnails and the library filename, so never use bare labels such as v1/v2. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -307,8 +307,10 @@ enum ToolDefinitions {
                             "analysis_interpretation_review",
                             "analysis_track_replacement",
                             "treatment_path",
+                            "storyboard_mode",
+                            "storyboard_input",
                         ],
-                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions and for the initial Treatment path choice.",
+                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions, the initial Treatment path choice, the initial Storyboard creation-mode choice, and the single Storyboard text intake after user_supplied.",
                     ],
                     "textField": [
                         "type": "object",
@@ -354,13 +356,18 @@ enum ToolDefinitions {
                                         "additionalProperties": false,
                                         "properties": [
                                             "id": ["type": "string"],
-                                            "label": ["type": "string", "description": "Full option meaning. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
+                                            "label": ["type": "string", "description": "Full option meaning, written from the user's point of view. First person always means the user; name any other actor. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
                                             "shortLabel": [
                                                 "type": "string",
                                                 "maxLength": AgentDialog.maxChoiceDisplayLength,
                                                 "description": "Concise chip title without explanatory copy, e.g. 'Phrase'. Maximum \(AgentDialog.maxChoiceDisplayLength) characters.",
                                             ],
-                                            "symbol": ["type": "string", "description": "SF Symbol per option"],
+                                            "symbol": ["type": "string", "description": "SF Symbol for a non-media option."],
+                                            "mediaRef": [
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "description": "Exact image asset ID from get_media. If one option has mediaRef, every option in the section must have a distinct image mediaRef; the card renders selectable thumbnails with persistent filenames.",
+                                            ],
                                             "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
                                         "required": ["label"],
@@ -1432,7 +1439,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .rewind,
-            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nResets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1470,7 +1477,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. A current confirmed identity copied into Bible retains its original confirmation and records a separate exact source/target hash proof. Returns `{from, media, to, generated_provenance, confirmed_identity_provenance}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Production Design accepts loose style images from `import/` or unassigned/generated media; prepared character and location assets remain Bible identity inputs. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. A current confirmed identity copied into Bible retains its original confirmation and records a separate exact source/target hash proof. Returns `{from, media, to, generated_provenance, confirmed_identity_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
