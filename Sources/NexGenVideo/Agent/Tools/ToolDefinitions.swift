@@ -255,40 +255,7 @@ enum ToolDefinitions {
         AgentTool(
             name: .manageMarkers,
             description: "Create, update, or delete one persistent timeline marker as one atomic undoable edit. Times are project frames; durationFrames=0 is a point and positive duration is [startFrame,endFrame). Use type=none or color=automatic to clear optional metadata. Markers annotate review, shot, chapter, cue, or general notes; they never replace canonical pipeline artifacts or approvals.",
-            inputSchema: ["anyOf": [
-                objectSchema(
-                    properties: [
-                        "action": ["type": "string", "enum": ["create"]],
-                        "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
-                        "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
-                        "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
-                        "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
-                        "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue)],
-                        "color": ["type": "string", "pattern": "^#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$", "description": "#RGB, #RRGGBB, or #RRGGBBAA."],
-                    ],
-                    required: ["action", "startFrame", "title"]
-                ),
-                objectSchema(
-                    properties: [
-                        "action": ["type": "string", "enum": ["update"]],
-                        "markerId": ["type": "string", "minLength": 1],
-                        "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
-                        "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
-                        "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
-                        "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
-                        "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
-                        "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic."],
-                    ],
-                    required: ["action", "markerId"]
-                ),
-                objectSchema(
-                    properties: [
-                        "action": ["type": "string", "enum": ["delete"]],
-                        "markerId": ["type": "string", "minLength": 1],
-                    ],
-                    required: ["action", "markerId"]
-                ),
-            ]]
+            inputSchema: markerSchema
         ),
         AgentTool(
             name: .showDialog,
@@ -1917,6 +1884,58 @@ enum ToolDefinitions {
         }
         properties["project_dir"] = projectDirProperty
         return objectSchema(properties: properties, required: BriefWriteContract.requiredKeys)
+    }
+
+    // Messages API and MCP require an object at the top level; the per-action rules stay in anyOf.
+    private static var markerSchema: [String: Any] {
+        var schema = objectSchema(
+            properties: [
+                "action": ["type": "string", "enum": ["create", "update", "delete"]],
+                "markerId": ["type": "string", "minLength": 1],
+                "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
+                "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic (update only)."],
+            ],
+            required: ["action"]
+        )
+        schema["anyOf"] = [
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["create"]],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                    "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                    "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue)],
+                    "color": ["type": "string", "pattern": "^#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$", "description": "#RGB, #RRGGBB, or #RRGGBBAA."],
+                ],
+                required: ["action", "startFrame", "title"]
+            ),
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["update"]],
+                    "markerId": ["type": "string", "minLength": 1],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                    "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                    "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
+                    "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic."],
+                ],
+                required: ["action", "markerId"]
+            ),
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["delete"]],
+                    "markerId": ["type": "string", "minLength": 1],
+                ],
+                required: ["action", "markerId"]
+            ),
+        ]
+        return schema
     }
 
     private static func objectSchema(

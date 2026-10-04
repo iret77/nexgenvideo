@@ -207,6 +207,13 @@ struct ToolDefinitionContractTests {
         )
     }
 
+    @Test("every tool schema is a top-level object, as the Messages API and MCP require")
+    func toolSchemasAreTopLevelObjects() {
+        for tool in ToolDefinitions.all {
+            #expect(tool.inputSchema["type"] as? String == "object", "\(tool.name.rawValue)")
+        }
+    }
+
     @Test("every integer argument declares semantic bounds")
     func integerSchemasAreBounded() {
         var failures: [String] = []
