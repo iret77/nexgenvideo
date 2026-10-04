@@ -259,8 +259,8 @@ enum ToolDefinitions {
                 objectSchema(
                     properties: [
                         "action": ["type": "string", "enum": ["create"]],
-                        "startFrame": ["type": "integer", "minimum": 0],
-                        "durationFrames": ["type": "integer", "minimum": 0],
+                        "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                        "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
                         "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
                         "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
                         "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue)],
@@ -272,8 +272,8 @@ enum ToolDefinitions {
                     properties: [
                         "action": ["type": "string", "enum": ["update"]],
                         "markerId": ["type": "string", "minLength": 1],
-                        "startFrame": ["type": "integer", "minimum": 0],
-                        "durationFrames": ["type": "integer", "minimum": 0],
+                        "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                        "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
                         "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
                         "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
                         "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
@@ -582,7 +582,7 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "trackId": ["type": "string", "description": "Stable track ID from get_timeline"],
-                    "toIndex": ["type": "integer", "minimum": 0, "description": "Requested destination index"],
+                    "toIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Requested destination index"],
                 ],
                 required: ["trackId", "toIndex"]
             )
@@ -712,7 +712,7 @@ enum ToolDefinitions {
                 properties: [
                     "clipId": ["type": "string", "description": "The clip whose edge anchors the trim"],
                     "edge": ["type": "string", "enum": ["left", "right"]],
-                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame movement of the chosen edge; must not be zero"],
+                    "deltaFrames": ["type": "integer", "minimum": -ToolIntegerArgument.maximumFrame, "maximum": ToolIntegerArgument.maximumFrame, "description": "Signed timeline-frame movement of the chosen edge; must not be zero"],
                     "includeLinked": ["type": "boolean", "description": "Trim linked partners together (default true)"],
                 ],
                 required: ["clipId", "edge", "deltaFrames"]
@@ -724,7 +724,7 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "clipId": ["type": "string", "description": "The clip whose source range should shift"],
-                    "deltaFrames": ["type": "integer", "description": "Signed timeline-frame source shift; must not be zero"],
+                    "deltaFrames": ["type": "integer", "minimum": -ToolIntegerArgument.maximumFrame, "maximum": ToolIntegerArgument.maximumFrame, "description": "Signed timeline-frame source shift; must not be zero"],
                     "includeLinked": ["type": "boolean", "description": "Slip eligible linked partners together (default true)"],
                 ],
                 required: ["clipId", "deltaFrames"]

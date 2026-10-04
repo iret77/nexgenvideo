@@ -150,7 +150,8 @@ extension EditorViewModel {
             guard ids.insert(marker.id).inserted else { throw TimelineMarkerMutationError.duplicateID(marker.id) }
             guard marker.startFrame >= 0,
                   marker.durationFrames >= 0,
-                  marker.startFrame.addingReportingOverflow(marker.durationFrames).overflow == false else {
+                  marker.startFrame <= TimelineMarker.maxFrame,
+                  marker.durationFrames <= TimelineMarker.maxFrame - marker.startFrame else {
                 throw TimelineMarkerMutationError.invalidTime
             }
             marker.title = marker.title.trimmingCharacters(in: .whitespacesAndNewlines)

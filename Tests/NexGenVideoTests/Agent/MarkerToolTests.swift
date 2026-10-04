@@ -94,6 +94,40 @@ struct MarkerToolTests {
         #expect(undo.canUndo == false)
     }
 
+    @Test("frame arguments beyond the supported range are rejected before any edit")
+    func frameArgumentsAreBounded() async throws {
+        let (harness, undo) = harness()
+        let farMarker = await harness.runRaw("manage_markers", args: [
+            "action": "create",
+            "startFrame": Int.max,
+            "title": "Far",
+        ])
+        let longMarker = await harness.runRaw("manage_markers", args: [
+            "action": "create",
+            "startFrame": 0,
+            "durationFrames": TimelineMarker.maxFrame + 1,
+            "title": "Long",
+        ])
+        let rippleTrim = await harness.runRaw("ripple_trim", args: [
+            "clipId": "missing",
+            "edge": "left",
+            "deltaFrames": Int.min,
+        ])
+        let slipEdit = await harness.runRaw("slip_clip", args: [
+            "clipId": "missing",
+            "deltaFrames": Int.min,
+        ])
+
+        #expect(farMarker.isError)
+        #expect(longMarker.isError)
+        #expect(rippleTrim.isError)
+        #expect(ToolHarness.textOf(rippleTrim).contains("expected at least"))
+        #expect(slipEdit.isError)
+        #expect(ToolHarness.textOf(slipEdit).contains("expected at least"))
+        #expect(harness.editor.timeline.markers.isEmpty)
+        #expect(undo.canUndo == false)
+    }
+
     @Test("windowed timeline reads use marker range intersection")
     func windowedRead() async throws {
         let timeline = Timeline(fps: 24, markers: [

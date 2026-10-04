@@ -31,6 +31,27 @@ struct TimelineMarkerTests {
         #expect(decoded.markers.first?.id == "stable-marker-id")
     }
 
+    @Test("persisted marker frames are clamped to the supported range")
+    func outOfRangeFramesClampOnDecode() throws {
+        let far = try JSONDecoder().decode(TimelineMarker.self, from: Data(
+            #"{"id":"far","startFrame":9223372036854775807,"durationFrames":9223372036854775807,"title":"Far"}"#.utf8
+        ))
+        #expect(far.startFrame == TimelineMarker.maxFrame)
+        #expect(far.durationFrames == 0)
+
+        let long = try JSONDecoder().decode(TimelineMarker.self, from: Data(
+            #"{"id":"long","startFrame":10,"durationFrames":9223372036854775807,"title":"Long"}"#.utf8
+        ))
+        #expect(long.startFrame == 10)
+        #expect(long.endFrame == TimelineMarker.maxFrame)
+
+        let negative = try JSONDecoder().decode(TimelineMarker.self, from: Data(
+            #"{"id":"negative","startFrame":-5,"durationFrames":-3,"title":"Negative"}"#.utf8
+        ))
+        #expect(negative.startFrame == 0)
+        #expect(negative.durationFrames == 0)
+    }
+
     @Test("upstream marker names and comments migrate without losing identity")
     func legacyMarkerFieldMigration() throws {
         let data = Data(#"{"id":"marker-1","startFrame":9,"durationFrames":0,"name":"Old title","comment":"Old note"}"#.utf8)

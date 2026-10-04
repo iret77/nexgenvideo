@@ -60,6 +60,7 @@ extension Timeline {
 struct TimelineMarker: Codable, Sendable, Equatable, Identifiable {
     static let maxTitleLength = 120
     static let maxNoteLength = 4_000
+    static let maxFrame = Int(Int32.max)
 
     enum Kind: String, Codable, Sendable, CaseIterable {
         case note
@@ -124,10 +125,15 @@ struct TimelineMarker: Codable, Sendable, Equatable, Identifiable {
         let title = (try? c.decode(String.self, forKey: .title))
             ?? (try? c.decode(String.self, forKey: .legacyName))
             ?? "Marker"
+        let startFrame = min(max((try? c.decode(Int.self, forKey: .startFrame)) ?? 0, 0), Self.maxFrame)
+        let durationFrames = min(
+            max((try? c.decode(Int.self, forKey: .durationFrames)) ?? 0, 0),
+            Self.maxFrame - startFrame
+        )
         self.init(
             id: (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString,
-            startFrame: (try? c.decode(Int.self, forKey: .startFrame)) ?? 0,
-            durationFrames: (try? c.decode(Int.self, forKey: .durationFrames)) ?? 0,
+            startFrame: startFrame,
+            durationFrames: durationFrames,
             title: title,
             note: (try? c.decode(String.self, forKey: .note))
                 ?? (try? c.decode(String.self, forKey: .legacyComment))
