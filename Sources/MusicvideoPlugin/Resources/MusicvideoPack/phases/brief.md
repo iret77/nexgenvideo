@@ -119,11 +119,8 @@ For any section whose options aren't exhaustive, set `allowsCustom: true` so the
    - `beat` — many short shots (1.5-15 s), on downbeats, maximum
      editing freedom
    - `multicam` — n cameras across the whole song, cut in the timeline
-   - `phrase` — **not yet available**: analysis now produces per-line lyric
-     alignment, but the downstream phrase-mode artifact and gate contract is not implemented. Don't
-     offer it as a choice; if the user asks, explain it's coming and
-     use `section` or `beat` for now. `write_brief` rejects it outright,
-     so this is enforced, not just advised.
+   - `phrase` is not a selectable mode (`write_brief` rejects it). If the user
+     asks for lyric-phrase cutting, say it is planned and use `section` or `beat`.
 4. **Concept type** — narrative | performance | abstract | hybrid
    (allowsCustom for documentary etc.)
 

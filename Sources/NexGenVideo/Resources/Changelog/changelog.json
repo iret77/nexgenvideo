@@ -49,7 +49,8 @@
             "Staged tasks preserve their original object and playhead context. Agent results provide an explicit reply action, and available app updates remain visible while a project is open.",
             "The Anthropic API backend preserves signed thinking across tool calls and saved sessions, with thinking summaries available in activity details.",
             "The agent surface uses named tasks, a current result, and a separate diagnostic transcript. Media, clip, and range references open task instructions; adding a reference alone does not satisfy required instructions. Caption edits, music revisions, library organization, object revisions, and pack commands can be reviewed before running. Unsent task instructions and references survive project save and reload. Recorded workflow decisions are available in a read-only history. Open decision inputs survive panel reopening and failed intake completion. Session-owned clarification dialogs and their drafts restore after project reload without submitting an answer. Workflow intake restores inputs only after the host offers the matching current step again. Recovery loads saved editing data before refreshing the workflow and discards obsolete intake offers. Malformed dialog schemas are rejected before presentation and can be corrected without leaving a pending approval.",
-            "Refused provider generation tools point the agent only to paths that can perform the operation, so inpainting and outpainting requests no longer dead-end on unrelated tools."
+            "Refused provider generation tools point the agent only to paths that can perform the operation, so inpainting and outpainting requests no longer dead-end on unrelated tools.",
+            "Before a long multi-step job the agent states in one line what it is about to do, and at the end it names what changed and what needs your decision."
           ]
         },
         {
