@@ -415,7 +415,7 @@ enum PipelineDeliveryStore {
             height: timeline.height
         ))
         guard spec.videoCodec == codecID(format),
-              spec.container == (format == .prores ? "mov" : "mp4"),
+              spec.container == containerID(format),
               spec.width == Int(outputSize.width),
               spec.height == Int(outputSize.height),
               spec.fpsNumerator == timeline.fps,
@@ -1126,7 +1126,7 @@ enum PipelineDeliveryStore {
         switch format {
         case .h264, .h265: "mp4"
         case .prores, .hevcMain10HLG: "mov"
-        case .xml: ""
+        case .xml, .fcpxml: ""
         }
     }
 

@@ -387,8 +387,7 @@ struct ExportView: View {
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(preparingDelivery || (codec == .hdr && hdrCapability?.isSupported != true))
-
+                .disabled(preparingDelivery || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, AppTheme.Spacing.xl)

@@ -58,7 +58,7 @@ enum FCPXMLExporter {
                 return clip.textContent?.isEmpty == false
             case .audio, .video, .image:
                 return resolver.resolveURL(for: clip.mediaRef) != nil
-            case .lottie, .document:
+            case .lottie, .subtitle, .document:
                 return false
             }
         }

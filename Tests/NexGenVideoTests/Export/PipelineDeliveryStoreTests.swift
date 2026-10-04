@@ -205,6 +205,65 @@ struct PipelineDeliveryStoreTests {
         #expect(currentAfterRejectedTransition == recovered)
     }
 
+    @Test("an HDR delivery binds to its MOV container at enqueue")
+    func hdrDeliveryEnqueuesWithItsContainer() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("delivery-hdr-\(UUID().uuidString).ngv")
+        let dataRoot = home.appendingPathComponent("pipeline")
+        let output = home.appendingPathComponent("master.mov")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(
+            at: dataRoot.appendingPathComponent("delivery/timelines"),
+            withIntermediateDirectories: true
+        )
+        let timeline = Timeline()
+        let timelineData = try PipelineAssemblyStore.canonical(timeline)
+        let timelineHash = FileDigest.sha256(of: timelineData)
+        let timelinePath = "delivery/timelines/\(timelineHash).json"
+        try timelineData.write(to: dataRoot.appendingPathComponent(timelinePath))
+        let plan = FinishPlanV1(projectID: "hdr-project", sourceTimelineSHA256: timelineHash)
+        let planData = try PipelineAssemblyStore.canonical(plan)
+        let manifest = FinishedTimelineManifestV1(
+            projectID: plan.projectID,
+            finishPlanSHA256: FileDigest.sha256(of: planData),
+            timelinePath: timelinePath,
+            timelineSHA256: timelineHash,
+            media: [],
+            operationProofs: [],
+            adoptedManualTimeline: true
+        )
+        let manifestData = try PipelineAssemblyStore.canonical(manifest)
+        try planData.write(to: dataRoot.appendingPathComponent(FinishPlanV1.relativePath))
+        try manifestData.write(to: dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath))
+        let finished = PipelineDeliveryStore.FinishedState(
+            plan: plan,
+            planData: planData,
+            manifest: manifest,
+            manifestData: manifestData
+        )
+        let spec = try PipelineDeliveryStore.defaultSpec(
+            id: "master.hdr",
+            targetKind: .master,
+            timeline: timeline,
+            format: .hevcMain10HLG,
+            resolution: .matchTimeline,
+            requireSequenceReview: false
+        )
+        let queued = try PipelineDeliveryStore.enqueueAttempt(
+            id: "hdr-attempt",
+            dataRoot: dataRoot,
+            finished: finished,
+            spec: spec,
+            format: .hevcMain10HLG,
+            resolution: .matchTimeline,
+            outputURL: output,
+            timeline: timeline,
+            resolver: MediaResolver(manifest: { MediaManifest() }, projectURL: { home })
+        )
+        #expect(queued.status == .queued)
+        #expect(queued.spec.container == "mov")
+    }
+
     @Test("a bound success receipt stays historical when the current finish changes")
     func exactReceiptDoesNotReplaceNewerSelection() throws {
         let home = FileManager.default.temporaryDirectory

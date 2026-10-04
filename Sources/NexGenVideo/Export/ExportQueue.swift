@@ -1079,6 +1079,13 @@ final class ExportQueue {
                 }
                 throw ToolError(error)
             }
+            if case .delivery = request.payload {
+                guard let report = service.lastReport,
+                      report.offlineMediaRefs.isEmpty,
+                      report.unprocessableMediaRefs.isEmpty else {
+                    throw ToolError("Delivery export did not consume every required media source.")
+                }
+            }
             if fcpxmlReport?.stagedProjectMediaCount == 0,
                request.companionDestination != nil {
                 let runtimeRoot = runtimeRecoveryRoot
