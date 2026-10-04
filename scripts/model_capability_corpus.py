@@ -501,6 +501,20 @@ fal_offer(
     None,
     notes="An unversioned video transformation endpoint; represented defensively until the capability schema has an upscale field.",
 )
+fal_offer(
+    "bria/video/increase-resolution",
+    "video",
+    None,
+    origins=["offline_registry", "free_provider_schema"],
+    notes="The active endpoint exposes 2x and 4x video upscaling up to 8K; represented defensively until the capability schema has an upscale field.",
+)
+SOURCES[fal_source("bria/video/increase-resolution")].update(
+    title="fal Bria video upscale endpoint schema",
+    url="https://fal.ai/models/bria/video/increase-resolution/api",
+    observed_at=CORPUS_OBSERVED_AT,
+    confidence=0.99,
+    scope="Free live catalog, endpoint schema and published pricing lookups; no generation call.",
+)
 
 
 # Runway offline registry plus its complete free public model inventory.

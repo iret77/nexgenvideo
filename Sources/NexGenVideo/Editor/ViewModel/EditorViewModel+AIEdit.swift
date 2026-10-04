@@ -11,9 +11,19 @@ extension EditorViewModel {
         )
     }
 
-    func aiEditUpscaleModels(clipId: String) -> [UpscaleModelConfig] {
-        guard let (_, asset) = aiEditClipAsset(clipId) else { return [] }
-        return UpscaleModelConfig.models(for: asset.type)
+    func aiEditUpscaleSelections(clipId: String) -> [UpscaleSelection] {
+        guard let (clip, asset) = aiEditClipAsset(clipId) else { return [] }
+        let duration = aiEditTrimmedSource(clip: clip, asset: asset)?.durationSeconds
+        return UpscaleModelConfig.selections(for: asset, effectiveDuration: duration)
+    }
+
+    func aiEditUpscaleLabel(clipId: String, selection: UpscaleSelection) -> String {
+        guard let (clip, asset) = aiEditClipAsset(clipId) else {
+            return selection.displayName
+        }
+        let duration = aiEditTrimmedSource(clip: clip, asset: asset)?.durationSeconds
+            ?? asset.duration
+        return selection.label(durationSeconds: duration)
     }
 
     // MARK: - Clip-aware actions (trim + replace-on-complete where applicable)
@@ -30,13 +40,16 @@ extension EditorViewModel {
         )
     }
 
-    func runAIUpscale(clipId: String, model: UpscaleModelConfig) {
+    func runAIUpscale(clipId: String, selection: UpscaleSelection) {
         guard let (clip, asset) = aiEditClipAsset(clipId) else { return }
         let trim = aiEditTrimmedSource(clip: clip, asset: asset)
         let handlers = clipReplacementHandlers(clipId: clipId, resetTrim: trim != nil)
         Task { @MainActor in
             _ = await EditSubmitter.submitUpscale(
-                asset: asset, model: model, editor: self,
+                asset: asset,
+                model: selection.model,
+                targetResolution: selection.targetResolution,
+                editor: self,
                 trimmedSource: trim,
                 onComplete: handlers.onComplete,
                 onFailure: handlers.onFailure

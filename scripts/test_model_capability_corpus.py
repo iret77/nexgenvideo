@@ -107,10 +107,10 @@ class ModelCapabilityCorpusTests(unittest.TestCase):
             )
             for resolution in ("exact", "inherited", "defensive")
         }
-        self.assertEqual(len(self.rows), 89)
+        self.assertEqual(len(self.rows), 90)
         self.assertEqual(
             counts,
-            {"exact": 77, "inherited": 1, "defensive": 11},
+            {"exact": 77, "inherited": 1, "defensive": 12},
         )
         self.assertTrue(
             all(row["actual_resolution"] == row["expected_resolution"] for row in self.rows)
@@ -214,7 +214,7 @@ class ModelCapabilityCorpusTests(unittest.TestCase):
         self.assertTrue(all(row["research_needed"] for row in self.rows if row["stale"] or row["conflicting"]))
         report = generator.REPORT_PATH.read_text(encoding="utf-8")
         self.assertIn("| Stale | Conflicting | Research-needed | Unclassified |", report)
-        self.assertIn("| 89 | 87 | 77 | 1 | 11 | 3 | 4 |", report)
+        self.assertIn("| 90 | 88 | 77 | 1 | 12 | 3 | 4 |", report)
 
     def test_field_evidence_is_primary_dated_and_confident(self):
         primary_titles = {

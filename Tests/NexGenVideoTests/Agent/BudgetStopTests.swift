@@ -129,6 +129,40 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
+    @Test("upscale pricing receives the exact duration and target resolution")
+    func upscalePricingReceivesTarget() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        var pricedInput: GenerationPricingInput?
+        let request = GenerationRequest(
+            modality: .upscale,
+            modelId: "bria/video/increase-resolution",
+            intent: "",
+            durationSeconds: 7.25,
+            outputResolution: "8K",
+            placement: .mediaLibrary(folderId: nil),
+            origin: .panel,
+            submission: .upscale(run: { _, _, _, _, _, _ in "upscale-placeholder" })
+        )
+
+        let result = await GenerationController.submit(
+            request,
+            editor: editor,
+            quoteLoader: { _, input in
+                pricedInput = input
+                return money(1)
+            }
+        )
+
+        guard case .success = result else {
+            Issue.record("expected priced upscale submission, got \(result)")
+            return
+        }
+        #expect(pricedInput?.durationSeconds == 7.25)
+        #expect(pricedInput?.resolution == "8K")
+    }
+
     @Test("no explicit stop allows an unpriced request and records the uncertainty")
     func noStopAllowsUnknownPrice() async throws {
         let package = try project(stop: nil)

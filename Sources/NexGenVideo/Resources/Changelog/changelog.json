@@ -9,7 +9,8 @@
           "heading": "Models",
           "items": [
             "GPT Image 2.5 Flare replaces GPT Image 2 as the default fal image route, with Sunburst available for precision-critical keyframes and edits.",
-            "GPT Image 2.5 generation and edit routes expose current output counts, quality levels, resolutions, transparency, formats, reference limits and mask support from the live provider schema."
+            "GPT Image 2.5 generation and edit routes expose current output counts, quality levels, resolutions, transparency, formats, reference limits and mask support from the live provider schema.",
+            "AI Upscale offers 8K output for compatible video sources, shows the current cost before submission and preserves the project source and target for reruns."
           ]
         },
         {

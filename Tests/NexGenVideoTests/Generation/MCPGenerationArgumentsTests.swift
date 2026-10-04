@@ -6,6 +6,37 @@ import MCP
 
 @Suite("MCP generation argument mapping")
 struct MCPGenerationArgumentsTests {
+    @Test func upscaleTargetAndFactorMapThroughProviderSchema() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "source_url": .object(["type": .string("string")]),
+                "resolution": .object(["type": .string("string")]),
+                "scale_factor": .object(["type": .string("integer")]),
+            ]),
+            "required": .array([
+                .string("source_url"),
+                .string("resolution"),
+                .string("scale_factor"),
+            ]),
+        ])
+        let params = BackendGenerationParams.upscale(UpscaleGenerationParams(
+            sourceURL: "media-1",
+            durationSeconds: 12,
+            targetResolution: "8K",
+            scaleFactor: 4
+        ))
+
+        let arguments = try MCPGenerationArguments.make(
+            for: params,
+            model: nil,
+            schema: schema
+        )
+
+        #expect(arguments["source_url"] == .string("media-1"))
+        #expect(arguments["resolution"] == .string("8K"))
+        #expect(arguments["scale_factor"] == .int(4))
+    }
+
     @Test func higgsfieldNestedParamsReceiveCompiledRequest() throws {
         let schema: Value = .object([
             "type": .string("object"),
