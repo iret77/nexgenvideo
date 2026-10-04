@@ -129,6 +129,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         case 46: // M key
             guard !cmd else { return false }
             if shift {
+                guard editorViewModel.canPresentMarkerPanel else { return false }
                 editorViewModel.markerPanelPresented = true
             } else if editorViewModel.allowsTimelineEditChrome {
                 editorViewModel.addTimelineMarkerAtSelection()
@@ -301,7 +302,10 @@ extension EditorWindowController: EditorActions {
         guard canHandleTimelineEditShortcut() else { return }
         editorViewModel.addTimelineMarkerAtSelection()
     }
-    @objc func showTimelineMarkers(_ sender: Any?) { editorViewModel.markerPanelPresented = true }
+    @objc func showTimelineMarkers(_ sender: Any?) {
+        guard editorViewModel.canPresentMarkerPanel else { return }
+        editorViewModel.markerPanelPresented = true
+    }
 
 
     @objc func importMedia(_ sender: Any?) {
@@ -486,7 +490,7 @@ extension EditorWindowController: EditorActions {
         case #selector(addTimelineMarker(_:)):
             return canHandleTimelineEditShortcut()
         case #selector(showTimelineMarkers(_:)):
-            return editorViewModel.allowsTimelineEditChrome
+            return editorViewModel.canPresentMarkerPanel
         case #selector(deleteSelectedClips(_:)):
             if canHandleMediaShortcut() {
                 return !editorViewModel.selectedFolderIds.isEmpty

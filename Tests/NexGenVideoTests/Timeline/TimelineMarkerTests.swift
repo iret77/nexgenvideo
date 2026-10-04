@@ -129,6 +129,35 @@ struct TimelineMarkerMutationTests {
         #expect(editor.activePreviewDurationFrames == 90)
     }
 
+    @Test("the marker panel opens only while the timeline toolbar is on screen")
+    func markerPanelNeedsItsPresenter() {
+        let editor = EditorViewModel()
+        for focus in [EditorViewModel.WorkspaceFocus.production, .edit, .postproduction] {
+            editor.setWorkspaceFocus(focus)
+            #expect(editor.canPresentMarkerPanel, "\(focus)")
+        }
+        for focus in [EditorViewModel.WorkspaceFocus.media, .export] {
+            editor.setWorkspaceFocus(focus)
+            #expect(!editor.canPresentMarkerPanel, "\(focus)")
+        }
+
+        editor.setWorkspaceFocus(.edit)
+        editor.markerPanelPresented = true
+        editor.maximizedPanel = .preview
+        #expect(!editor.canPresentMarkerPanel)
+        #expect(!editor.markerPanelPresented)
+
+        editor.maximizedPanel = nil
+        editor.markerPanelPresented = true
+        editor.toggleTheater()
+        #expect(!editor.markerPanelPresented)
+
+        editor.toggleTheater()
+        editor.markerPanelPresented = true
+        editor.setWorkspaceFocus(.media)
+        #expect(!editor.markerPanelPresented)
+    }
+
     @Test("marker, clip, gap, and range selections remain exclusive")
     func selectionIsExclusive() {
         let editor = EditorViewModel()

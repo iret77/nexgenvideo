@@ -116,12 +116,16 @@ final class EditorViewModel {
     }
 
     var focusedPanel: FocusedPanel?
-    var maximizedPanel: FocusedPanel?
+    var maximizedPanel: FocusedPanel? {
+        didSet { if !canPresentMarkerPanel { markerPanelPresented = false } }
+    }
 
     /// Theater is a VIEW toggle orthogonal to the stage (docs/UI_UX_CONCEPT.md §3): the player fills
     /// the window with floating transport, panels hidden; you stay in your current stage. Transient,
     /// never persisted. Esc exits.
-    var theaterActive: Bool = false
+    var theaterActive: Bool = false {
+        didSet { if !canPresentMarkerPanel { markerPanelPresented = false } }
+    }
 
     func toggleTheater() { theaterActive.toggle() }
 
@@ -903,6 +907,12 @@ final class EditorViewModel {
     /// Single gate for timeline editing: only Edit exposes mutation chrome and shortcuts.
     var allowsTimelineEditChrome: Bool { workspaceFocus == .edit }
 
+    // The marker panel is a popover on the timeline toolbar, so it opens only while that toolbar is on screen.
+    var canPresentMarkerPanel: Bool {
+        workspaceFocus != .media && workspaceFocus != .export && !theaterActive
+            && (maximizedPanel == nil || maximizedPanel == .timeline)
+    }
+
     var leftSidebarTab: LeftSidebarTab = {
         if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
            let tab = LeftSidebarTab(rawValue: raw) { return tab }
@@ -952,6 +962,7 @@ final class EditorViewModel {
             mediaFolderId: mediaPanelCurrentFolderId
         )
         workspaceFocus = focus
+        markerPanelPresented = false
         if focus != .edit {
             selectedTimelineMarkerIds.removeAll()
             timelineMarkerPreview = nil

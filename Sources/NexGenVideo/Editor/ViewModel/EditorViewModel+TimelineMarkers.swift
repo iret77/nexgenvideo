@@ -113,7 +113,7 @@ extension EditorViewModel {
         ) {
             selectedTimelineMarkerIds = [marker.id]
             selectedTimelineRange = nil
-            markerPanelPresented = true
+            markerPanelPresented = canPresentMarkerPanel
         }
     }
 
