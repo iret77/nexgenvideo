@@ -1,0 +1,40 @@
+name: CI Batch
+
+# The only entry point for heavy verification: one owner-approved manual run covering several merges.
+on:
+  workflow_dispatch:
+    inputs:
+      hang_replays:
+        description: Run the chat and recorded hang replays
+        type: boolean
+        default: true
+      signing_preflight:
+        description: Run the Developer ID signing preflight
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ci-batch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  chat-hang-replay:
+    if: inputs.hang_replays
+    uses: ./.github/workflows/chat-hang-replay.yml
+
+  recorded-hang-replay:
+    if: inputs.hang_replays
+    uses: ./.github/workflows/recorded-hang-replay.yml
+    secrets: inherit
+
+  signing-preflight:
+    if: inputs.signing_preflight
+    uses: ./.github/workflows/signing-preflight.yml
+    secrets: inherit

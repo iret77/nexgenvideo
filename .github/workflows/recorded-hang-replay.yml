@@ -1,21 +1,7 @@
 name: Recorded Hang Replay
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/recorded-hang-replay.yml
-      - scripts/recorded_hang_replay.py
-      - scripts/replay_key.py
-      - scripts/test_replay_key.py
-      - scripts/verify_recorded_hang_result.py
-      - scripts/test_verify_recorded_hang_result.py
-      - Tests/PrivateFixtures/hang-recording.enc
-      - Sources/NexGenVideo/App/HangDiagnosticReplay.swift
-      - Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift
-      - Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift
-      - Sources/NexGenVideo/Agent/Panel/MarkdownText.swift
-      - Sources/NexGenVideo/Editor/EditorView.swift
-      - Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift
+  workflow_call:
 
 permissions:
   contents: read

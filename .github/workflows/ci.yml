@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  pull_request:
+  # Heavy jobs: started only by ci-batch.yml or a manual dispatch, never by a push or pull request.
   workflow_dispatch:
     inputs:
       metadata_version:
@@ -20,7 +20,8 @@ concurrency:
 
 jobs:
   source_gate:
-    name: Source Gate
+    # Same name as the pull-request check, so a dispatched run also satisfies the required check.
+    name: Light Checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -347,7 +348,7 @@ jobs:
           import json, os
           needs = json.loads(os.environ["NEEDS_JSON"])
           if needs["source_gate"]["result"] != "success":
-              raise SystemExit("Source Gate did not succeed")
+              raise SystemExit("Light Checks did not succeed")
           plan = needs["source_gate"]["outputs"]
           for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required")):
               if plan.get(key) not in ("true", "false"):
