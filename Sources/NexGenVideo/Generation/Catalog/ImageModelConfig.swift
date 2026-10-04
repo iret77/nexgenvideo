@@ -196,14 +196,19 @@ struct ImageModelConfig: Identifiable, Sendable {
     }
 
     func defaultResolution(for aspectRatio: String) -> String? {
+        matchingResolution(for: aspectRatio) ?? resolutions?.first
+    }
+
+    // Only a resolution that encodes this aspect ratio; tier labels like "4K" never match.
+    func matchingResolution(for aspectRatio: String) -> String? {
         guard let resolutions else { return nil }
         guard let requestedRatio = Self.parseAspectRatio(aspectRatio) else {
-            return resolutions.first
+            return resolutions.contains(aspectRatio) ? aspectRatio : nil
         }
         return resolutions.first { resolution in
             guard let dimensions = Self.parseWxH(resolution) else { return false }
             return abs(Double(dimensions.0) / Double(dimensions.1) - requestedRatio) <= 0.02
-        } ?? resolutions.first
+        }
     }
 
     /// Parse a "WxH" resolution label (e.g. "1920x1080") into pixel dims.

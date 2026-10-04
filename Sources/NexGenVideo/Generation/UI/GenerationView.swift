@@ -725,7 +725,7 @@ struct GenerationView: View {
         }
         .onChange(of: selectedAspectRatio) { _, _ in
             guard !isPopulatingPanel, selectedType == .image else { return }
-            if let resolution = imageModel.defaultResolution(for: selectedAspectRatio) {
+            if let resolution = imageModel.matchingResolution(for: selectedAspectRatio) {
                 selectedResolution = resolution
             }
         }

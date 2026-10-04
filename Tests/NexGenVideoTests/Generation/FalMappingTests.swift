@@ -174,6 +174,24 @@ struct FalImageInputTests {
         }
     }
 
+    @Test func aspectChangesKeepTierResolutions() throws {
+        func config(_ id: String) throws -> ImageModelConfig {
+            let entry = try #require(FalModelRegistry.model(for: id)?.entry)
+            guard case .image(let caps) = entry.uiCapabilities else { throw ModelCapabilityError.notImage }
+            return ImageModelConfig(entry: entry, caps: caps)
+        }
+        let nano = try config("fal-ai/nano-banana-2")
+        #expect(nano.matchingResolution(for: "9:16") == nil)
+        #expect(nano.defaultResolution(for: "9:16") == "1K")
+
+        let gpt = try config("fal-ai/gpt-image-2.5/flare/text-to-image")
+        #expect(gpt.matchingResolution(for: "9:16") == "1080x1920")
+        #expect(gpt.matchingResolution(for: "auto") == "auto")
+        #expect(gpt.matchingResolution(for: "21:9") == nil)
+    }
+
+    private enum ModelCapabilityError: Error { case notImage }
+
     @Test func gptImage25ValidationRejectsImpossibleOutputCombinations() throws {
         let entry = try #require(
             FalModelRegistry.model(for: "fal-ai/gpt-image-2.5/flare/text-to-image")?.entry
