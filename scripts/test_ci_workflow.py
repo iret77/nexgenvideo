@@ -128,7 +128,11 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: true", text)
         called = [line.split("./.github/workflows/", 1)[1].strip()
                   for line in text.splitlines() if "uses: ./.github/workflows/" in line]
-        self.assertIn("ci.yml", called)
+        self.assertEqual(
+            set(called),
+            {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
+             "signing-preflight.yml", "workspace-ui-acceptance.yml"},
+        )
         for name in called:
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))
