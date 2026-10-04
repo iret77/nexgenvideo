@@ -392,12 +392,12 @@ struct BudgetStopTests {
             resolution: nil
         )
         input.sourceVideoAssetId = source.id
-        input.sourceTrim = GenerationSourceTrim(
+        input.sourceRange = GenerationSourceRange(trim: GenerationSourceTrim(
             trimStartFrame: 240,
             trimEndFrame: 960,
             sourceFramesConsumed: 240,
             fps: 24
-        )
+        ))
         let upscaled = MediaAsset(
             url: package.appendingPathComponent("upscaled.mp4"),
             type: .video,
@@ -428,7 +428,7 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
-    @Test("an older trimmed upscale without a recorded range never uploads the full source")
+    @Test("an upscale without a recorded source range never substitutes the project source")
     func unrecordedTrimmedUpscaleRerunIsRefused() async throws {
         let package = try project(stop: nil)
         defer { cleanup(package) }
@@ -467,13 +467,12 @@ struct BudgetStopTests {
                     return money(1)
                 }
             )
-            Issue.record("expected the unrecorded trim to be refused")
+            Issue.record("expected the rerun without a recorded range or upload to be refused")
         } catch let error as EditSubmitter.RerunError {
-            guard case .invalid(let message) = error else {
-                Issue.record("expected an invalid rerun, got \(error)")
+            guard case .missingSource = error else {
+                Issue.record("expected a missing source, got \(error)")
                 return
             }
-            #expect(message.contains("trim range was not recorded"))
         }
 
         #expect(quoted == false)

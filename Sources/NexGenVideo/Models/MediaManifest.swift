@@ -131,8 +131,13 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var imageOutputFormat: String? = nil
     var imageOutputCompression: Int? = nil
     var imageMaskURL: String? = nil
-    /// Source frame range a trimmed edit consumed; a rerun must upload the same range.
-    var sourceTrim: GenerationSourceTrim? = nil
+    /// Source range an edit consumed. Nil on records written before ranges were recorded.
+    var sourceRange: GenerationSourceRange? = nil
+}
+
+struct GenerationSourceRange: Codable, Sendable, Equatable {
+    /// Nil when the whole source was used.
+    let trim: GenerationSourceTrim?
 }
 
 struct GenerationSourceTrim: Codable, Sendable, Equatable {
