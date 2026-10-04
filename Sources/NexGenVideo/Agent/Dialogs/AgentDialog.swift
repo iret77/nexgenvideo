@@ -788,12 +788,6 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         }
     }
 
-    private static func intValue(_ any: Any?) -> Int? {
-        guard let number = any as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        if let integer = Int(number.stringValue) { return integer }
-        return Int(exactly: number.doubleValue)
-    }
-
 }
 
 extension AgentDialog.FileIntake {
