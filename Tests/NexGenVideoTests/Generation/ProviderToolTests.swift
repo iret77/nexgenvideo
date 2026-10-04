@@ -15,6 +15,29 @@ struct ProviderToolTests {
         }
     }
 
+    @Test func refusalsNameOnlyPathsThatPerformTheOperation() {
+        let inpaint = ToolExecutor.generationRefusal(for: "inpaint")
+        #expect(inpaint.contains("generate_image"))
+        #expect(inpaint.contains("supportsMask=true"))
+        #expect(inpaint.contains("maskMediaRef"))
+        #expect(inpaint.contains("Video inpainting has no gated NexGenVideo path"))
+        #expect(!inpaint.contains("generate_video"))
+        #expect(!inpaint.contains("upscale_media"))
+
+        let outpaint = ToolExecutor.generationRefusal(for: "outpaint_image")
+        #expect(outpaint.contains("Outpainting has no gated NexGenVideo path"))
+        #expect(!outpaint.contains("generate_"))
+        #expect(!outpaint.contains("upscale_media"))
+
+        let upscale = ToolExecutor.generationRefusal(for: "video_upscale")
+        #expect(upscale.contains("upscale_media"))
+        #expect(!upscale.contains("generate_"))
+
+        let generation = ToolExecutor.generationRefusal(for: "text_to_speech")
+        #expect(generation.contains("generate_audio"))
+        #expect(!generation.contains("upscale_media"))
+    }
+
     @Test func workflowToolsPass() {
         for name in ["reframe", "remove_background", "roto", "reference_upload",
                      "lookup_character", "get_project", "extend_clip"] {
