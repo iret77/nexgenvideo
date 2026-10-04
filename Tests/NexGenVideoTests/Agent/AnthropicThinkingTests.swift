@@ -38,6 +38,7 @@ struct AnthropicThinkingTests {
                 case .toolUseComplete(let id, let name, let input):
                     blocks.append(.toolUse(id: id, name: name, inputJSON: input))
                 case .messageStop(let reason): stopReason = reason
+                case .usage: break
                 }
             }
         }
@@ -83,6 +84,35 @@ struct AnthropicThinkingTests {
             let content = try #require(messages.first?["content"] as? [[String: Any]])
             #expect(NSDictionary(dictionary: content[0]).isEqual(to: block))
         }
+    }
+
+    @Test("usage records are returned as stream events without losing the stop reason")
+    func usageEvents() throws {
+        var decoder = AnthropicSSE.Decoder()
+        let start = try decoder.consume(Data(
+            #"{"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":3}}}"#.utf8
+        ))
+        guard start.count == 1, case .usage(let startUsage) = start[0] else {
+            Issue.record("message_start usage was not returned")
+            return
+        }
+        #expect(startUsage.inputTokens == 12)
+        #expect(startUsage.cacheReadInputTokens == 3)
+        let delta = try decoder.consume(Data(
+            #"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}"#.utf8
+        ))
+        guard delta.count == 1, case .usage(let deltaUsage) = delta[0] else {
+            Issue.record("message_delta usage was not returned")
+            return
+        }
+        #expect(deltaUsage.outputTokens == 7)
+        let stop = try decoder.consume(Data(#"{"type":"message_stop"}"#.utf8))
+        guard stop.count == 1, case .messageStop(let reason) = stop[0] else {
+            Issue.record("message_stop lost the stop reason")
+            return
+        }
+        #expect(reason == .endTurn)
+        try decoder.finish()
     }
 
     @Test("incomplete signatures and truncated responses fail instead of authorizing a tool loop")

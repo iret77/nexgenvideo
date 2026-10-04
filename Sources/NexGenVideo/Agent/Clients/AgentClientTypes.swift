@@ -120,7 +120,7 @@ enum AnthropicSSE {
                 if let message = event["message"] as? [String: Any],
                    let usage = message["usage"] as? [String: Any] {
                     AgentUsageLog.record(usage)
-                    continuation.yield(.usage(runtimeUsage(usage)))
+                    return [.usage(AnthropicSSE.runtimeUsage(usage))]
                 }
             case "content_block_start":
                 guard let index = event["index"] as? Int,
@@ -166,13 +166,13 @@ enum AnthropicSSE {
                     return [.toolUseComplete(id: acc.id, name: acc.name, inputJSON: json)]
                 }
             case "message_delta":
-                if let usage = event["usage"] as? [String: Any] {
-                    AgentUsageLog.record(usage)
-                    continuation.yield(.usage(runtimeUsage(usage)))
-                }
                 if let delta = event["delta"] as? [String: Any],
                    let raw = delta["stop_reason"] as? String {
                     stopReason = AnthropicStopReason(rawValue: raw) ?? .other
+                }
+                if let usage = event["usage"] as? [String: Any] {
+                    AgentUsageLog.record(usage)
+                    return [.usage(AnthropicSSE.runtimeUsage(usage))]
                 }
             case "message_stop":
                 guard let stopReason, pendingThinking.isEmpty, pendingTools.isEmpty else {
