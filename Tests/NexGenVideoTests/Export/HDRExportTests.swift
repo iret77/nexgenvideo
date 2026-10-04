@@ -162,6 +162,9 @@ struct HDRExportTests {
         #expect((380...420).contains(Int(hdrQC.referenceFrames[2].chromaCbMeanCode.rounded())))
         #expect((710...750).contains(Int(hdrQC.referenceFrames[2].chromaCrMeanCode.rounded())))
         #expect((700...740).contains(hdrQC.referenceFrames[3].lumaMaximumCode))
+        await #expect(throws: CancellationError.self) {
+            _ = try await HDRDeliveryQC.probe(outputURL: output, spec: spec, isCancelled: { true })
+        }
         try publishEvidence(hdrQC, movie: output)
     }
 

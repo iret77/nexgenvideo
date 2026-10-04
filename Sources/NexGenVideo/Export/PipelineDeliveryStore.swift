@@ -544,7 +544,11 @@ enum PipelineDeliveryStore {
             throw ToolError("The exported delivery is missing or empty.")
         }
         let hdrQC = spec.hdr
-            ? try await HDRDeliveryQC.probe(outputURL: outputURL, spec: spec)
+            ? try await HDRDeliveryQC.probe(
+                outputURL: outputURL,
+                spec: spec,
+                isCancelled: isCancelled
+            )
             : nil
         if isCancelled() { throw CancellationError() }
         return OutputEvidence(
@@ -1136,7 +1140,7 @@ enum PipelineDeliveryStore {
         return String(bytes: bytes, encoding: .ascii) ?? String(value)
     }
 
-    private static func cancellableSHA256(
+    static func cancellableSHA256(
         of url: URL,
         isCancelled: @Sendable () -> Bool
     ) throws -> String {

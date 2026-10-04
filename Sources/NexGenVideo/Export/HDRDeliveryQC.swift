@@ -5,9 +5,13 @@ import NexGenEngine
 enum HDRDeliveryQC {
     static func probe(
         outputURL: URL,
-        spec: DeliverySpecV1
+        spec: DeliverySpecV1,
+        isCancelled: @Sendable () -> Bool = { false }
     ) async throws -> DeliveryHDRQCV1 {
-        let outputSHA256 = try FileDigest.sha256(of: outputURL)
+        let outputSHA256 = try PipelineDeliveryStore.cancellableSHA256(
+            of: outputURL,
+            isCancelled: isCancelled
+        )
         let data = try Data(contentsOf: outputURL, options: .mappedIfSafe)
         let parsed = try ISOBMFFHDRInspector.inspect(data)
         let container = DeliveryHDRContainerQCV1(
@@ -63,7 +67,13 @@ enum HDRDeliveryQC {
             CMTimeMultiplyByRatio(duration, multiplier: 5, divisor: 8),
             lastTime,
         ]
-        let frames = try referenceFrames(asset: asset, track: videoTrack, times: times)
+        if isCancelled() { throw CancellationError() }
+        let frames = try referenceFrames(
+            asset: asset,
+            track: videoTrack,
+            times: times,
+            isCancelled: isCancelled
+        )
 
         let result = DeliveryHDRQCV1(
             outputSHA256: outputSHA256,
@@ -99,7 +109,8 @@ enum HDRDeliveryQC {
     private static func referenceFrames(
         asset: AVAsset,
         track: AVAssetTrack,
-        times: [CMTime]
+        times: [CMTime],
+        isCancelled: @Sendable () -> Bool
     ) throws -> [DeliveryHDRReferenceFrameQCV1] {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
@@ -122,6 +133,7 @@ enum HDRDeliveryQC {
         var frames: [DeliveryHDRReferenceFrameQCV1] = []
         var targetIndex = 0
         while targetIndex < times.count, let sample = output.copyNextSampleBuffer() {
+            if isCancelled() { throw CancellationError() }
             let pts = CMSampleBufferGetPresentationTimeStamp(sample)
             guard CMTimeCompare(pts, times[targetIndex]) >= 0,
                   let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
