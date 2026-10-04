@@ -49,6 +49,7 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
                 "chat-hang-replay.yml",
                 "recorded-hang-replay.yml",
                 "workspace-ui-acceptance.yml",
+                "codex-app-server-acceptance.yml",
             },
         )
 
