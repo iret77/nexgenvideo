@@ -206,6 +206,7 @@ struct PipelineDeliveryStoreTests {
     }
 
     @Test("an HDR delivery binds to its MOV container at enqueue")
+    @MainActor
     func hdrDeliveryEnqueuesWithItsContainer() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("delivery-hdr-\(UUID().uuidString).ngv")
