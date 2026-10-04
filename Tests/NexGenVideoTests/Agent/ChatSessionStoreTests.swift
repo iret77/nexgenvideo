@@ -44,7 +44,7 @@ struct ChatSessionStoreTests {
             service.loadSessions(from: nil)
             let id = try #require(service.currentSessionId)
             let origin: ToolCallOrigin = embedded
-                ? .embeddedRuntime(chatSessionID: id, mcpSessionID: UUID())
+                ? .embeddedRuntime(chatSessionID: id, runtimeGenerationID: UUID())
                 : .inAppChat(sessionID: id)
             let dialog = try AgentDialog.parse([
                 "title": "Revise the chorus", "textField": ["placeholder": "Direction"],
@@ -150,7 +150,7 @@ struct ChatSessionStoreTests {
         let owner = UUID()
         let dialog = try AgentDialog.parse(["title": "Direction", "textField": [:]])
         for origin in [ToolCallOrigin.inAppChat(sessionID: UUID()),
-                       .embeddedRuntime(chatSessionID: UUID(), mcpSessionID: UUID()),
+                       .embeddedRuntime(chatSessionID: UUID(), runtimeGenerationID: UUID()),
                        .externalMCP(sessionID: owner)] {
             let saved = ChatSessionDecision(dialog: dialog, origin: origin,
                 draft: AgentDialogDraft(), selections: [:])

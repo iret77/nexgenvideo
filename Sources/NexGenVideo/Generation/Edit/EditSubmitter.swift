@@ -467,7 +467,7 @@ enum EditSubmitter {
                 ?? (asset.duration > 0 ? asset.duration : Double(max(1, gen.duration)))
             let selection: UpscaleSelection
             if let targetResolution = gen.resolution {
-                guard let durableSource, usesProjectSource else { throw RerunError.missingSource }
+                guard let durableSource else { throw RerunError.missingSource }
                 guard let validated = upscaleModel.selection(
                     sourceType: durableSource.type,
                     sourceWidth: durableSource.sourceWidth,
