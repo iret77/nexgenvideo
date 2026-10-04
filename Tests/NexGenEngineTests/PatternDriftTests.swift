@@ -83,6 +83,22 @@ struct PatternDriftTests {
         #expect(findings.contains { $0.code == "PATTERN_DRIFT" && $0.message.contains("average shot length") })
     }
 
+    @Test("shots without framing do not count toward the framing sample")
+    func unframedShotsDoNotCreateFramingDrift() throws {
+        let pattern = try #require(try Patterns.loadAllPatterns().first)
+        let duration = (pattern.aslRange.minS + pattern.aslRange.maxS) / 2
+        var shots = try (2...6).map { i -> Shot in
+            let start = Double(i) * 20
+            return try Shot(
+                id: String(format: "s%03d", i), section: "verse", timeStart: start, timeEnd: start + duration,
+                durationS: duration, type: .performance, description: "d", visualPrompt: "v", mood: "m"
+            )
+        }
+        shots.insert(try Self.shot(1, framing: Self.rarestFraming(pattern), duration: duration), at: 0)
+        let ctx = AuditContext(shotlist: try Self.shotlist(shots), brief: try Self.brief(pattern: pattern.id))
+        #expect(try MusicvideoChecks.patternDriftCheck(ctx).allSatisfy { $0.code != "PATTERN_DRIFT" })
+    }
+
     @Test("below the minimum shot count → no drift (quantization-noise guard)")
     func tooFewShots() throws {
         let pattern = try #require(try Patterns.loadAllPatterns().first)

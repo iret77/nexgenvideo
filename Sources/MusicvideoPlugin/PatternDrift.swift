@@ -85,13 +85,16 @@ extension MusicvideoChecks {
     /// Compare the plan with the pattern's framing and pacing targets.
     /// Port of `_drift_finding`.
     private static func driftFinding(_ pattern: Pattern, shots: [Shot], scope: String) -> Finding? {
-        let real = realDistribution(shots.compactMap(\.framing))
+        let framings = shots.compactMap(\.framing)
         var drifts: [(framing: Framing, target: Int, real: Int, delta: Int)] = []
-        for (framing, targetPct) in pattern.framingMix.byFraming() {
-            let realPct = real[framing] ?? 0
-            let delta = realPct - targetPct
-            if abs(delta) > patternDriftTolerancePP {
-                drifts.append((framing, targetPct, realPct, delta))
+        if framings.count >= minShotsForDrift {
+            let real = realDistribution(framings)
+            for (framing, targetPct) in pattern.framingMix.byFraming() {
+                let realPct = real[framing] ?? 0
+                let delta = realPct - targetPct
+                if abs(delta) > patternDriftTolerancePP {
+                    drifts.append((framing, targetPct, realPct, delta))
+                }
             }
         }
         drifts.sort { abs($0.delta) > abs($1.delta) }
