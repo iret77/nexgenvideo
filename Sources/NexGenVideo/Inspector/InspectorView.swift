@@ -1330,7 +1330,7 @@ struct InspectorView: View {
     private func fileSection(_ asset: MediaAsset) -> some View {
         metadataSection(title: "File") {
             plainMetadataRow(label: "Type", value: asset.type.trackLabel)
-            plainMetadataRow(label: "Filename", value: asset.userFacingFilename, truncate: .middle)
+            plainMetadataRow(label: "Filename", value: asset.userFacingFilename, stacked: true)
             if asset.type != .audio, let width = asset.sourceWidth, let height = asset.sourceHeight {
                 plainMetadataRow(label: "Dimensions", value: "\(width) × \(height)")
             }
