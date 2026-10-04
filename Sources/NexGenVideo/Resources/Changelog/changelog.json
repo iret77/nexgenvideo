@@ -22,7 +22,8 @@
             "Confirmed character and location references cannot be reassigned as Production Design style.",
             "Image decisions show selectable thumbnails with descriptive labels and persistent Media Library filenames, and preserve the exact chosen asset for the Agent.",
             "Storyboard setup distinguishes sequences NexGenVideo creates from sequences the user provides.",
-            "Storyboard derives shot and sheet scope without repeated questions, resumes existing work at review, and prevents earlier phases from staging assets into future phase folders."
+            "Storyboard derives shot and sheet scope without repeated questions, resumes existing work at review, and prevents earlier phases from staging assets into future phase folders.",
+            "Music Video pattern values carry per-value provenance (measured, documented or inferred) and citable craft signatures."
           ]
         },
         {
@@ -34,7 +35,12 @@
             "Failed pricing can be retried, or an affected request can be prepared again on an explicitly selected route, without submitting a generation.",
             "Every pricing or route change creates a new review binding, and the current price and project budget are checked again before dispatch.",
             "UI hang recording now restarts its helper after an unexpected exit, records the exit status for analysis, and no longer interrupts active work with a modal diagnostic error.",
-            "Saving verifies the project package contents before treating a changed filesystem timestamp as an external edit, while preserving the conflict warning for real file changes."
+            "Saving verifies the project package contents before treating a changed filesystem timestamp as an external edit, while preserving the conflict warning for real file changes.",
+            "Home stays visible until the project window is ready.",
+            "Transcription accepts language tags that carry Unicode locale extensions.",
+            "Waveforms use the decoded sample rate and handle audio without a known duration.",
+            "Agent and MCP numeric arguments are checked for type and range before any edit is applied.",
+            "Timelines that reuse the same source file build faster because each source loads once per build."
           ]
         },
         {
@@ -56,7 +62,24 @@
         {
           "heading": "Editing",
           "items": [
-            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector. Track mute, visibility, sync-lock, and height changes support the shared timeline Undo and Redo path. Track headers expose native context commands bound to the clicked track, with removal limited to Edit. Open track menus preserve their requested toggle value and reject removal if the track changed."
+            "Direct media and timeline selection controls the preview. Source positions and In/Out ranges stay with each medium, with frame-accurate Insert and Overwrite actions in the inspector. Track mute, visibility, sync-lock, and height changes support the shared timeline Undo and Redo path. Track headers expose native context commands bound to the clicked track, with removal limited to Edit. Open track menus preserve their requested toggle value and reject removal if the track changed.",
+            "The editor has five workspaces: Media, Production, Edit, Postproduction and Export. Each keeps its own selection, playhead and panel layout.",
+            "Inspector sections share one form layout, and multiple selections show mixed values instead of an arbitrary default.",
+            "Timeline markers persist with the project, with title, note, optional type and color, snapping, navigation and ripple-aware editing. The agent can create, update and delete markers.",
+            "Ripple trim, slip edit and track reordering each apply as one undoable edit that respects linked clips and sync-lock.",
+            "Clips support 16 blend modes across the inspector, preview, frame capture and export.",
+            "Clips support a static crop, and frame inspection can overlay a labeled 0–1 coordinate grid.",
+            "Audio sync prefers compatible embedded source timecode, uses capture dates only to narrow an audio-confirmed search, and reports method, offset, confidence and drift."
+          ]
+        },
+        {
+          "heading": "Export",
+          "items": [
+            "FCPXML 1.10–1.14 export for Final Cut Pro and DaVinci Resolve, validated against Apple's DTD, with staged project media and source timecode.",
+            "HEVC Main10 HDR export (HLG, BT.2020) with delivery quality checks. Timeline and preview stay SDR.",
+            "Exports run in a cancellable queue with real progress states and Cancel, Retry and Reveal actions. Cancelled or failed exports leave no file that appears finished.",
+            "XML and FCPXML write failures are reported in Export and to the agent, and a failed replacement keeps the previous file.",
+            "Muted audio tracks no longer enter or block exports."
           ]
         },
         {
@@ -67,7 +90,10 @@
             "Generation review rejects inputs changed before or during pricing, before presenting an approval package.",
             "The Media workspace adds a folder tree and list view, document content search, and remembered browser state. Shared library pickers serve references, intake, generation slots, and original-media review.",
             "The analysis timeline aligns verified source waveforms and recorded RMS energy with beats and sections, with shared zoom, horizontal scrolling, hierarchy selection, and verified-source listening. Analysis waveform caches are bound to the verified source digest.",
-            "Artifact workspaces keep the current pipeline phase and guarded approval controls visible in a compact phase dock, with named pending decisions and readable structural blockers."
+            "Artifact workspaces keep the current pipeline phase and guarded approval controls visible in a compact phase dock, with named pending decisions and readable structural blockers.",
+            "Extract Audio creates a project-local M4A asset from a video, with its source and track recorded.",
+            "SRT and WebVTT files import as editable caption clips with their original timing and language.",
+            "65-point CUBE LUTs load correctly."
           ]
         }
       ]
