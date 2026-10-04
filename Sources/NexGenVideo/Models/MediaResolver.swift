@@ -100,7 +100,14 @@ final class MediaResolver: @unchecked Sendable {
     }
 
     func displayName(for assetId: String) -> String {
-        entry(for: assetId)?.name ?? "Offline"
+        guard let entry = entry(for: assetId) else { return "Offline" }
+        let title = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title.isEmpty || MediaFilename.isContentAddressed(title) else { return title }
+        return MediaFilename.display(
+            originalFilename: entry.originalFilename,
+            name: entry.name,
+            storageURL: interchangeURL(for: assetId) ?? URL(fileURLWithPath: entry.name)
+        )
     }
 
     func interchangeFilename(for assetId: String) -> String {

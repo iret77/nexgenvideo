@@ -45,6 +45,19 @@ struct MediaResolverTests {
         #expect(resolver.displayName(for: "a") == "Hello")
     }
 
+    @Test func displayNameNeverShowsContentAddressedStorageNames() {
+        let hash = String(repeating: "a1", count: 32)
+        var named = entry(id: "named", name: hash, source: .external(absolutePath: "/tmp/\(hash).mov"))
+        named.originalFilename = "Interview.mov"
+        let unnamed = entry(id: "unnamed", name: "\(hash).mp4", source: .external(absolutePath: "/tmp/\(hash).mp4"))
+        var manifest = MediaManifest()
+        manifest.entries = [named, unnamed]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { nil })
+
+        #expect(resolver.displayName(for: "named") == "Interview.mov")
+        #expect(resolver.displayName(for: "unnamed") == "Media file.mp4")
+    }
+
     @Test func displayNameFallsBackToOfflineWhenMissing() {
         let resolver = MediaResolver(manifest: { MediaManifest() }, projectURL: { nil })
         #expect(resolver.displayName(for: "ghost") == "Offline")
