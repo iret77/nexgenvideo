@@ -200,6 +200,7 @@ struct GenerationPackageTests {
             )
         )
         let pricing = try unpriced.pricingInput()
+        #expect(pricing.promptUTF8ByteCount == unpriced.payload.prompt.utf8.count)
         var quoteCount = 0
         await #expect(throws: (any Error).self) {
             try await GenerationBudgetGuard.authorize(

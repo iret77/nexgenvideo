@@ -29,6 +29,7 @@ extension GenerationPackageV1 {
             resolution: resolution,
             quality: quality,
             promptCharacterCount: payload.prompt.count,
+            promptUTF8ByteCount: payload.prompt.utf8.count,
             generateAudio: generateAudio,
             referenceCount: parameters.referenceSlots.count
         )
