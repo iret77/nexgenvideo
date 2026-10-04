@@ -293,4 +293,19 @@ struct BriefWriteContractTests {
         #expect(raw.isError)
         #expect(ToolHarness.textOf(raw).contains("generator"))
     }
+
+    @Test("new image models are refused for packs built before engine contract 10")
+    func newImageModelsRequireTheirEngineContract() {
+        let flare = FrameImageModel.falGptImage25Flare.rawValue
+        for key in ["frame_image_model", "bible_image_model", "composite_image_model"] {
+            #expect(ToolExecutor.briefModelContractViolation(key: key, value: flare, packContract: 9) != nil)
+            #expect(ToolExecutor.briefModelContractViolation(key: key, value: flare, packContract: 10) == nil)
+        }
+        #expect(ToolExecutor.briefModelContractViolation(
+            key: "frame_image_model",
+            value: FrameImageModel.falFluxPro11.rawValue,
+            packContract: 9
+        ) == nil)
+        #expect(EngineContract.current >= FrameImageModel.falGptImage25SunburstEdit.minimumEngineContract)
+    }
 }

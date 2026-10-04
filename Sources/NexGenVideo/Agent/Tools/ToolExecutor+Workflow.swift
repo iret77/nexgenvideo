@@ -336,6 +336,34 @@ extension ToolExecutor {
         ])
     }
 
+    /// Engine contract of the pack code that will read this project's brief. A pack compiled into
+    /// the host (tests, development) is built from this tree; a loaded bundle declares its own.
+    func residentPackEngineContract(_ editor: EditorViewModel, dataRoot: URL) throws -> Int {
+        guard let binding = try mutationPackDeclaration(editor, dataRoot: dataRoot).binding else {
+            return EngineContract.current
+        }
+        guard PluginLoader.isResident(binding.id) else { return EngineContract.current }
+        guard let record = PluginLoader.residentRecordsForInventory().first(where: { $0.id == binding.id }),
+              let info = PluginBundleInfo(bundleURL: record.bundleURL) else {
+            return 0
+        }
+        return info.engineContract
+    }
+
+    nonisolated static func briefModelContractViolation(
+        key: String,
+        value: Any,
+        packContract: Int
+    ) -> String? {
+        guard ["frame_image_model", "bible_image_model", "composite_image_model"].contains(key),
+              let raw = value as? String,
+              let model = FrameImageModel(rawValue: raw),
+              model.minimumEngineContract > packContract else { return nil }
+        return "brief rejected — field `\(key)`: `\(raw)` needs a format pack built for engine contract "
+            + "\(model.minimumEngineContract); this project's pack was built for contract \(packContract). "
+            + "Choose another model. Nothing was written; fix and re-call."
+    }
+
     /// #247 — write `brief.yaml` through the real engine `Brief` decoder + `validate()`, not freeform
     /// YAML. The agent supplies the brief fields (validated against `BriefWriteContract`); the host
     /// injects the server-owned fields, decodes `Brief.self` (which enforces every enum + validation
@@ -347,8 +375,16 @@ extension ToolExecutor {
         try validateUnknownKeys(args, allowed: BriefWriteContract.allowedKeys.union(["project_dir"]), path: "write_brief")
 
         var payload: [String: Any] = [:]
+        let packContract = try residentPackEngineContract(editor, dataRoot: root)
         for field in BriefWriteContract.fields where args[field.key] != nil {
             if let violation = briefEnumViolation(field, value: args[field.key]!) { throw ToolError(violation) }
+            if let violation = Self.briefModelContractViolation(
+                key: field.key,
+                value: args[field.key]!,
+                packContract: packContract
+            ) {
+                throw ToolError(violation)
+            }
             payload[field.key] = args[field.key]
         }
         payload["schema"] = briefSchemaVersion

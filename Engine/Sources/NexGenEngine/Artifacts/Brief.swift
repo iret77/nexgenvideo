@@ -82,12 +82,23 @@ public enum FrameImageModel: String, Codable, Sendable, CaseIterable {
     case falNanoBanana = "fal:fal-ai/nano-banana"
     case falImagen4Ultra = "fal:fal-ai/imagen4/preview/ultra"
     case falGptImage1 = "fal:fal-ai/gpt-image-1"
+    case falFluxPro11 = "fal:fal-ai/flux-pro/v1.1"
+    case other
+    // ABI: separately compiled packs switch over this enum, so new cases are only ever appended.
     case falGptImage25Flare = "fal:fal-ai/gpt-image-2.5/flare/text-to-image"
     case falGptImage25FlareEdit = "fal:fal-ai/gpt-image-2.5/flare/edit"
     case falGptImage25Sunburst = "fal:fal-ai/gpt-image-2.5/sunburst/text-to-image"
     case falGptImage25SunburstEdit = "fal:fal-ai/gpt-image-2.5/sunburst/edit"
-    case falFluxPro11 = "fal:fal-ai/flux-pro/v1.1"
-    case other
+
+    /// Engine contract a pack must be built against before it may receive this value.
+    public var minimumEngineContract: Int {
+        switch self {
+        case .falGptImage25Flare, .falGptImage25FlareEdit, .falGptImage25Sunburst, .falGptImage25SunburstEdit:
+            return 10
+        default:
+            return 0
+        }
+    }
 }
 
 /// Who performs stem separation. Port of `brief/schema.py::StemsProvider`.

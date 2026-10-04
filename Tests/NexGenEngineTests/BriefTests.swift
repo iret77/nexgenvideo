@@ -198,4 +198,26 @@ struct BriefTests {
         #expect(brief.bibleImageModel == nil)
         #expect(brief.compositeImageModel == nil)
     }
+
+    @Test("FrameImageModel keeps the case order shipped packs were compiled against")
+    func frameImageModelCasesAreAppendOnly() {
+        let shipped = [
+            "google:gemini-3-pro-image-preview",
+            "google:gemini-3.1-flash-image-preview",
+            "google:imagen-4.0-ultra-generate-001",
+            "openai:gpt-image-2",
+            "openai:gpt-image-1",
+            "runway:gemini_image3_pro",
+            "runway:gemini_image3.1_flash",
+            "runway:gemini_2.5_flash",
+            "runway:gen4_image",
+            "runway:gen4_image_turbo",
+            "fal:fal-ai/nano-banana",
+            "fal:fal-ai/imagen4/preview/ultra",
+            "fal:fal-ai/gpt-image-1",
+            "fal:fal-ai/flux-pro/v1.1",
+            "other",
+        ]
+        #expect(Array(FrameImageModel.allCases.prefix(shipped.count).map(\.rawValue)) == shipped)
+    }
 }
