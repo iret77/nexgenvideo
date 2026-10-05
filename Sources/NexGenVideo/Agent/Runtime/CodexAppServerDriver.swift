@@ -315,7 +315,8 @@ enum CodexAppServerError: LocalizedError, Equatable {
     }
 }
 
-enum CodexAppServerInbound {
+// Payloads are freshly parsed JSON containers that nothing mutates after parsing.
+enum CodexAppServerInbound: @unchecked Sendable {
     case notification(method: String, params: [String: Any])
     case request(id: Any, method: String, params: [String: Any])
     case closed(CodexAppServerError)
