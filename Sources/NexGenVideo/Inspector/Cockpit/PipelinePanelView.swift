@@ -406,6 +406,7 @@ struct PipelinePanelView: View {
                     ),
                     lineWidth: AppTheme.BorderWidth.hairline
                 )
+        )
     }
 
     private func nextActionDescription(for phase: String) -> String {
