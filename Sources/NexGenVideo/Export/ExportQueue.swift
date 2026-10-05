@@ -1172,9 +1172,10 @@ final class ExportQueue {
             let recoveryRoot = publishRecoveryRoot
             let cleanupFailureIndex = committedCleanupFailureIndexForTesting
             let journalFailure = committedJournalFailureForTesting
+            let pendingPublications = publications
             let publicationResult = try await Task.detached(priority: .userInitiated) {
                 try DestinationBinding.publish(
-                    publications,
+                    pendingPublications,
                     root: recoveryRoot,
                     isCancelled: { cancellationFlag.isCancelled },
                     failCommittedCleanupAfterBackupRemovalForTesting:
