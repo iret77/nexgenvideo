@@ -1394,7 +1394,7 @@ final class ExportQueue {
             dataRoot: dataRoot,
             excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
             willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
-            didRecover: { cleanupTemporaryState(for: $0) }
+            didRecover: { self.cleanupTemporaryState(for: $0) }
         )
     }
 
@@ -1971,7 +1971,7 @@ extension ExportQueue {
                     root: root,
                     files: frozenFiles,
                     projectRoot: frozenProjectRoot,
-                    projectState: frozenProjectRoot.map {
+                    projectState: try frozenProjectRoot.map {
                         try PathState.capture($0, isCancelled: isCancelled)
                     }
                 )

@@ -412,7 +412,8 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
             scratch: scratch
         )
         process.terminationHandler = { [weak self] process in
-            Task { @MainActor in self?.processDidTerminate(process) }
+            let terminatedID = ObjectIdentifier(process)
+            Task { @MainActor in self?.processDidTerminate(terminatedID) }
         }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -617,7 +618,7 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         }
     }
 
-    private func route(_ object: [String: Any]) throws {
+    private func route(_ object: sending [String: Any]) throws {
         if let id = object["id"], object["method"] == nil {
             guard let numericID = (id as? NSNumber)?.intValue,
                   let pending = pending.removeValue(forKey: numericID) else { return }
@@ -693,8 +694,8 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         }
     }
 
-    private func processDidTerminate(_ terminatedProcess: Process) {
-        if process === terminatedProcess {
+    private func processDidTerminate(_ terminatedID: ObjectIdentifier) {
+        if let current = process, ObjectIdentifier(current) == terminatedID {
             process = nil
         }
         if !didClose {
