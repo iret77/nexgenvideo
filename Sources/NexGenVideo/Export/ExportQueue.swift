@@ -1839,7 +1839,7 @@ extension ExportQueue {
             isCancelled: @Sendable () -> Bool
         ) throws -> SourceBinding {
             let timelineData = try PipelineAssemblyStore.canonical(timeline)
-            var media = try refs.sorted().compactMap { ref in
+            var media = try refs.sorted().compactMap { ref -> Media? in
                 if isCancelled() { throw CancellationError() }
                 guard let url = resolver.expectedURL(for: ref) else {
                     if !requiredRefs.contains(ref) { return nil }
@@ -1860,7 +1860,7 @@ extension ExportQueue {
                     entry: resolver.entry(for: ref)
                 )
             }
-            media += try additionalFiles.map { item in
+            media += try additionalFiles.map { item -> Media in
                 if isCancelled() { throw CancellationError() }
                 let resolved = item.url.standardizedFileURL.resolvingSymlinksInPath()
                 let state = try PathState.capture(resolved, isCancelled: isCancelled)
@@ -2274,7 +2274,7 @@ extension ExportQueue {
         }
 
         func manifest(basedOn original: MediaManifest) -> MediaManifest {
-            let urls = Dictionary(uniqueKeysWithValues: files.compactMap { file in
+            let urls = Dictionary(uniqueKeysWithValues: files.compactMap { file -> (String, URL)? in
                 guard case .file = file.state else { return nil }
                 return file.entry.map { ($0.id, file.url) }
             })
