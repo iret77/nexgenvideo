@@ -1428,6 +1428,7 @@ struct ExportQueueTests {
         let timeline: Timeline
         let spec: DeliverySpecV1
 
+        @MainActor
         func remove() {
             editor.releaseWorkingCopy()
             try? FileManager.default.removeItem(at: root)
