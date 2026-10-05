@@ -504,8 +504,8 @@ final class CodexAppServerRuntimeAdapter: AgentRuntimeAdapter {
             relay.yield(.usage(.init(
                 inputTokens: Self.int(last["inputTokens"]),
                 outputTokens: Self.int(last["outputTokens"]),
-                cacheReadInputTokens: Self.int(last["cachedInputTokens"]),
-                cacheCreationInputTokens: Self.int(last["cacheWriteInputTokens"])
+                cacheCreationInputTokens: Self.int(last["cacheWriteInputTokens"]),
+                cacheReadInputTokens: Self.int(last["cachedInputTokens"])
             )))
         case "item/started", "item/completed":
             guard matchesActiveProviderTurn(params),
