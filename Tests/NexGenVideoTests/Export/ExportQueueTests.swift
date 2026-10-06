@@ -1277,7 +1277,7 @@ struct ExportQueueTests {
             root: recovery
         )
         let offlineIdentity = try #require(
-            ExportFileIdentity.capture(offlineBinding.temporaryURL)
+            try ExportFileIdentity.capture(offlineBinding.temporaryURL)
         )
         let foreign = offlineParent.appendingPathComponent("keep.txt")
         try Data("keep".utf8).write(to: foreign)
