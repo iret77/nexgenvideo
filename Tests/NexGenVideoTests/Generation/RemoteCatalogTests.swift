@@ -16,12 +16,25 @@ struct RemoteCatalogTests {
     @Test func checkedInCatalogCarriesAllSeedance25Endpoints() throws {
         let data = try Data(contentsOf: repositoryRoot.appendingPathComponent("catalog/models.json"))
         let entries = try JSONDecoder().decode([CatalogEntry].self, from: data)
-        #expect(Set(entries.map(\.id)) == [
+        let seedance: Set<String> = [
             "bytedance/seedance-2.5/text-to-video",
             "bytedance/seedance-2.5/image-to-video",
             "bytedance/seedance-2.5/reference-to-video",
-        ])
-        for entry in entries {
+        ]
+        let gptImage25: Set<String> = [
+            "fal-ai/gpt-image-2.5/flare/text-to-image",
+            "fal-ai/gpt-image-2.5/flare/edit",
+            "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "fal-ai/gpt-image-2.5/sunburst/edit",
+        ]
+        #expect(Set(entries.map(\.id)) == seedance.union(gptImage25))
+        for entry in entries where gptImage25.contains(entry.id) {
+            guard case .image = entry.uiCapabilities else {
+                Issue.record("expected image entry for \(entry.id)")
+                continue
+            }
+        }
+        for entry in entries where seedance.contains(entry.id) {
             guard case .video(let caps) = entry.uiCapabilities else {
                 Issue.record("expected video entry for \(entry.id)")
                 continue

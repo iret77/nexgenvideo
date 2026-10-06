@@ -1218,6 +1218,12 @@ extension ToolExecutor {
                 kind: .reopenProject
             )
         }
+        guard FileManager.default.fileExists(atPath: root.path) else {
+            throw ToolError(
+                "The project is no longer available. Reopen it, then approve again.",
+                kind: .reopenProject
+            )
+        }
         let mutationID = try reservePipelineMutation(
             label: "Approve \(approval.phase)",
             dataRoot: root,

@@ -478,7 +478,7 @@ struct AgentServiceRuntimeContractTests {
                 value: "The brief keeps the performance central.",
                 isDelta: false
             ), for: turn)
-            let richJSON = #"{"blocks":[{"type":"text","body":"Review the performance direction."}]}"#
+            let richJSON = #"{"version":"1","blocks":[{"type":"text","body":"Review the performance direction."}]}"#
             adapter.emit(.toolCall(
                 messageID: "final-message",
                 id: "rich",

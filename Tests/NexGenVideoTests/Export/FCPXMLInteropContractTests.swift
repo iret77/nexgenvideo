@@ -694,7 +694,7 @@ struct FCPXMLInteropContractTests {
         #expect(report.mediaBindings.count == 1)
         #expect(binding.mediaRefs == ["valid"])
         #expect(report.stagedProjectMediaCount == 1)
-        #expect(sidecarFiles == [bindingURL])
+        #expect(sidecarFiles.map { $0.resolvingSymlinksInPath() } == [bindingURL.resolvingSymlinksInPath()])
         #expect(binding.mediaSHA256 == (try FileDigest.sha256(of: bindingURL)))
         #expect(binding.mediaByteCount == Int64((try Data(contentsOf: bindingURL)).count))
         #expect(report.mediaByteCount == binding.mediaByteCount)

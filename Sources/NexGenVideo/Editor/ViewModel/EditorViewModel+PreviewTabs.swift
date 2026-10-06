@@ -127,10 +127,7 @@ extension EditorViewModel {
         case .timeline:
             break
         case .mediaAsset(let id, _, _):
-            selectedClipIds.removeAll()
-            selectedTimelineMarkerIds.removeAll()
             timelineMarkerPreview = nil
-
             selectedFolderIds.removeAll()
             selectedMediaAssetIds = [id]
         }
