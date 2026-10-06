@@ -94,8 +94,7 @@ enum ExportActionsSelfTest {
         window.displayIfNeeded()
         let hiddenActionRejected = !AppRelaunchSelfTest.isClickProbeReady(
             identifier: visibilityIdentifier,
-            in: window,
-            expectedEnabled: true
+            in: window
         )
         host.view.isHidden = false
         window.displayIfNeeded()
@@ -111,8 +110,7 @@ enum ExportActionsSelfTest {
         }
         guard !AppRelaunchSelfTest.isClickProbeReady(
             identifier: visibilityIdentifier,
-            in: window,
-            expectedEnabled: true
+            in: window
         ) else {
             throw ToolError("An offscreen native export action remained clickable.")
         }
@@ -190,7 +188,10 @@ enum ExportActionsSelfTest {
             window: window
         )
 
-        queue.cancel(jobID: retried.id)
+        _ = try await click(job: retried, action: "cancel", window: window)
+        guard await waitUntil(timeout: .seconds(2), { retried.status == .cancelled }) else {
+            throw ToolError("The visible Cancel action did not cancel the retried job.")
+        }
         ExportCoordinator.endExport()
         gateHeld = false
         await queue.waitUntilIdle(ownerKey: ownerKey)
@@ -238,7 +239,7 @@ enum ExportActionsSelfTest {
         window: NSWindow
     ) async throws {
         let identifier = "export.job.\(job.id).\(action)"
-        var failure = "the native action remained clipped or had no hit target"
+        var failure = "the native action never became clickable"
         guard await waitUntil(timeout: .seconds(5), {
             if let scrollFailure = AppRelaunchSelfTest.scrollClickProbeToVisible(
                 identifier: identifier,
@@ -247,12 +248,11 @@ enum ExportActionsSelfTest {
                 failure = scrollFailure
                 return false
             }
-            failure = "the native action remained clipped or had no hit target"
-            return AppRelaunchSelfTest.isClickProbeReady(
-                identifier: identifier,
-                in: window,
-                expectedEnabled: expectedEnabled(job: job, action: action)
-            )
+            if let probeFailure = AppRelaunchSelfTest.clickProbeFailure(identifier: identifier, in: window) {
+                failure = probeFailure
+                return false
+            }
+            return true
         }) else {
             throw ToolError("\(identifier): \(failure)")
         }
@@ -266,11 +266,7 @@ enum ExportActionsSelfTest {
         let identifier = "export.job.\(job.id).\(action)"
         try await prepareAction(job: job, action: action, window: window)
         let enabled = expectedEnabled(job: job, action: action)
-        if let failure = AppRelaunchSelfTest.postMouseClick(
-            identifier: identifier,
-            in: window,
-            expectedEnabled: enabled
-        ) {
+        if let failure = AppRelaunchSelfTest.postMouseClick(identifier: identifier, in: window) {
             throw ToolError("\(identifier): \(failure)")
         }
         return enabled

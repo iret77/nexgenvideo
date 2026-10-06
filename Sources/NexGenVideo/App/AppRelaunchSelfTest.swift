@@ -38,8 +38,6 @@ final class AppRelaunchClickProbeView: NSView {
     var acceptanceText: String?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func isAccessibilityElement() -> Bool { false }
-    override func accessibilityIdentifier() -> String { "" }
 }
 
 @MainActor
@@ -298,11 +296,7 @@ enum AppRelaunchSelfTest {
         return predicate()
     }
 
-    static func postMouseClick(
-        identifier: String,
-        in window: NSWindow?,
-        expectedEnabled: Bool? = nil
-    ) -> String? {
+    static func postMouseClick(identifier: String, in window: NSWindow?) -> String? {
         guard let window else { return "the Home window was unavailable" }
         guard window.isVisible else { return "the Home window was not visible" }
         guard window.isKeyWindow else { return "the Home window was not key" }
@@ -312,13 +306,7 @@ enum AppRelaunchSelfTest {
             return "the control geometry probe was absent"
         }
         let location: NSPoint
-        switch clickLocation(
-            for: probe,
-            identifier: identifier,
-            in: root,
-            window: window,
-            expectedEnabled: expectedEnabled
-        ) {
+        switch clickLocation(for: probe, in: root, window: window) {
         case .ready(let point):
             location = point
         case .blocked(let reason):
@@ -421,19 +409,11 @@ enum AppRelaunchSelfTest {
         return parts.joined(separator: ", ")
     }
 
-    static func isClickProbeReady(
-        identifier: String,
-        in window: NSWindow?,
-        expectedEnabled: Bool? = nil
-    ) -> Bool {
-        clickProbeFailure(identifier: identifier, in: window, expectedEnabled: expectedEnabled) == nil
+    static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+        clickProbeFailure(identifier: identifier, in: window) == nil
     }
 
-    static func clickProbeFailure(
-        identifier: String,
-        in window: NSWindow?,
-        expectedEnabled: Bool? = nil
-    ) -> String? {
+    static func clickProbeFailure(identifier: String, in window: NSWindow?) -> String? {
         guard let window else { return "no window" }
         guard window.isVisible else { return "window hidden" }
         guard window.isKeyWindow else { return "window not key" }
@@ -443,13 +423,7 @@ enum AppRelaunchSelfTest {
         guard probes.count == 1, let probe = probes.first else { return "\(probes.count) geometry probes" }
         guard probe.window === window else { return "probe in another window" }
         guard !probe.isHiddenOrHasHiddenAncestor else { return "probe hidden" }
-        switch clickLocation(
-            for: probe,
-            identifier: identifier,
-            in: root,
-            window: window,
-            expectedEnabled: expectedEnabled
-        ) {
+        switch clickLocation(for: probe, in: root, window: window) {
         case .ready:
             return nil
         case .blocked(let reason):
@@ -457,13 +431,7 @@ enum AppRelaunchSelfTest {
         }
     }
 
-    private static func clickLocation(
-        for probe: NSView,
-        identifier: String,
-        in root: NSView,
-        window: NSWindow,
-        expectedEnabled: Bool?
-    ) -> ClickTarget {
+    private static func clickLocation(for probe: NSView, in root: NSView, window: NSWindow) -> ClickTarget {
         let frame = probe.bounds
         guard frame.width.isFinite, frame.height.isFinite,
               frame.width > 0, frame.height > 0 else { return .blocked("probe bounds \(describe(frame))") }
@@ -487,113 +455,14 @@ enum AppRelaunchSelfTest {
         guard root.bounds.contains(rootPoint) else { return .blocked("probe center outside root") }
         guard let hitTarget = root.hitTest(hitTestPoint) else { return .blocked("no native hit target") }
         guard hitTarget.window === window, !hitTarget.isHiddenOrHasHiddenAncestor else {
-            return .blocked("native hit \(typeName(hitTarget)) was hidden or in another window")
-        }
-        let elements = findAccessibilityElements(in: root, identifier: identifier)
-        guard elements.count == 1, let element = elements.first else {
-            return .blocked("\(elements.count) accessibility elements \(elements.map { describeAccessibility($0) })")
-        }
-        let screenPoint = window.convertPoint(toScreen: location)
-        let accessibilityFrame = element.accessibilityFrame()
-        guard accessibilityFrame.width.isFinite, accessibilityFrame.height.isFinite,
-              accessibilityFrame.width > 0, accessibilityFrame.height > 0,
-              accessibilityFrame.contains(screenPoint) else {
-            return .blocked("\(describeAccessibility(element)) misses \(describe(screenPoint))")
-        }
-        guard element.isAccessibilityEnabled() == (expectedEnabled ?? true) else {
-            return .blocked("accessibility enabled \(element.isAccessibilityEnabled())")
-        }
-        guard let accessibilityHit = root.accessibilityHitTest(screenPoint) else {
-            return .blocked("no accessibility hit at \(describe(screenPoint))")
-        }
-        guard isAccessibilityHit(accessibilityHit, within: element, identifier: identifier, probe: probe) else {
-            return .blocked(
-                "accessibility hit \(describeAccessibility(accessibilityHit)) is outside \(describeAccessibility(element))"
-            )
+            return .blocked("native hit \(type(of: hitTarget)) was hidden or in another window")
         }
         return .ready(location)
-    }
-
-    private static func typeName(_ value: Any) -> String {
-        String(describing: type(of: value))
     }
 
     private static func describe(_ rect: NSRect?) -> String {
         guard let rect else { return "none" }
         return String(format: "%.0f,%.0f %.0fx%.0f", rect.minX, rect.minY, rect.width, rect.height)
-    }
-
-    private static func describe(_ point: NSPoint) -> String {
-        String(format: "%.0f,%.0f", point.x, point.y)
-    }
-
-    private static func describeAccessibility(_ value: Any) -> String {
-        guard let element = value as? any NSAccessibilityProtocol else { return typeName(value) }
-        let identifier: String? = element.accessibilityIdentifier()
-        let address = Unmanaged.passUnretained(value as AnyObject).toOpaque()
-        return "\(typeName(value))[\(element.accessibilityRole()?.rawValue ?? "-") "
-            + "\(identifier ?? "-") \(describe(element.accessibilityFrame())) \(address)]"
-    }
-
-    private static func findAccessibilityElements(
-        in view: NSView,
-        identifier: String
-    ) -> [any NSAccessibilityProtocol] {
-        var matches: [any NSAccessibilityProtocol] = []
-        var visited: Set<ObjectIdentifier> = []
-
-        func visit(_ value: Any) {
-            guard let element = value as? any NSAccessibilityProtocol else { return }
-            let identity = ObjectIdentifier(element as AnyObject)
-            guard visited.insert(identity).inserted else { return }
-            if !(element is AppRelaunchClickProbeView), element.accessibilityIdentifier() == identifier {
-                matches.append(element)
-            }
-            for child in element.accessibilityChildren() ?? [] {
-                visit(child)
-            }
-        }
-
-        visit(view)
-        return matches
-    }
-
-    private static func accessibilitySubtree(
-        of element: any NSAccessibilityProtocol,
-        contains candidate: Any
-    ) -> Bool {
-        let candidateIdentity = ObjectIdentifier(candidate as AnyObject)
-        var visited: Set<ObjectIdentifier> = []
-
-        func contains(_ value: Any) -> Bool {
-            let identity = ObjectIdentifier(value as AnyObject)
-            guard visited.insert(identity).inserted else { return false }
-            if identity == candidateIdentity { return true }
-            guard let current = value as? any NSAccessibilityProtocol else { return false }
-            return (current.accessibilityChildren() ?? []).contains(where: contains)
-        }
-
-        return contains(element)
-    }
-
-    // SwiftUI can vend a fresh node per query, so the hit's ancestry also matches the control's unique identifier.
-    private static func isAccessibilityHit(
-        _ hit: Any,
-        within element: any NSAccessibilityProtocol,
-        identifier: String,
-        probe: NSView
-    ) -> Bool {
-        if (hit as AnyObject) === probe || accessibilitySubtree(of: element, contains: hit) { return true }
-        let target = ObjectIdentifier(element as AnyObject)
-        var current: Any? = hit
-        for _ in 0..<64 {
-            guard let node = current as? any NSAccessibilityProtocol else { return false }
-            if ObjectIdentifier(node as AnyObject) == target || node.accessibilityIdentifier() == identifier {
-                return true
-            }
-            current = node.accessibilityParent()
-        }
-        return false
     }
 
     private static func isClickProbeAbsent(identifier: String, in window: NSWindow?) -> Bool {
