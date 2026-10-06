@@ -136,7 +136,7 @@ enum AppRelaunchSelfTest {
                 )
         }
         guard whatsNewReady else {
-            fail("What's New never became actionable", stateURL: config.stateURL)
+            fail("What's New never became actionable (\(whatsNewDiagnostics()))", stateURL: config.stateURL)
         }
         if let failure = postMouseClick(
             identifier: "home.whats-new.continue",
@@ -379,6 +379,20 @@ enum AppRelaunchSelfTest {
             ancestor = current.superview
         }
         return "the control probe could not be moved outside its clip views"
+    }
+
+    private static func whatsNewDiagnostics() -> String {
+        let home = HomeWindowController.shared.window
+        let windows = NSApp.windows.filter(\.isVisible).map { "\(type(of: $0)):\($0.title)" }
+        return [
+            "home visible \(home?.isVisible == true)",
+            "home key \(home?.isKeyWindow == true)",
+            "key window \(NSApp.keyWindow.map { "\(type(of: $0)):\($0.title)" } ?? "none")",
+            "modal \(NSApp.modalWindow.map { "\(type(of: $0)):\($0.title)" } ?? "none")",
+            "pending \(ChangelogStore.shared.pending?.version ?? "none")",
+            "probe \(isClickProbeReady(identifier: "home.whats-new.continue", in: home))",
+            "visible windows \(windows)",
+        ].joined(separator: ", ")
     }
 
     static func isClickProbeReady(
