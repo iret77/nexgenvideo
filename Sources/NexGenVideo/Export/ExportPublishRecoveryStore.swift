@@ -293,7 +293,12 @@ enum ExportPublishRecoveryStore {
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ).filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        let requested = requestedURLs.map { $0.standardizedFileURL.path }
+        // Normalized like DestinationBinding, whose resolved paths the journals record.
+        let requested = requestedURLs.map { url -> String in
+            let standardized = url.standardizedFileURL
+            return standardized.deletingLastPathComponent().resolvingSymlinksInPath()
+                .appendingPathComponent(standardized.lastPathComponent).path
+        }
         var blockingFailures: [String] = []
         for url in files {
             let journal: Journal

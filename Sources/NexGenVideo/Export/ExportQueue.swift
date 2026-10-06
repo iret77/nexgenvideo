@@ -2315,7 +2315,8 @@ extension ExportQueue {
             if isCancelled() { throw CancellationError() }
             let fm = FileManager.default
             guard fm.fileExists(atPath: url.path) else { return .absent }
-            let values = try url.resourceValues(
+            // A fresh URL: resource values are cached per URL object and go stale when the file changes.
+            let values = try URL(fileURLWithPath: url.path).resourceValues(
                 forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
             )
             guard values.isSymbolicLink != true else {
