@@ -926,7 +926,8 @@ struct ExportQueueTests {
             #expect(job.outputSHA256 == (try FileDigest.sha256(of: output)))
             #expect(job.outputByteCount == Int64(try Data(contentsOf: output).count))
             #expect(job.warnings.contains { $0.contains("cleanup is pending") })
-            #expect(FileManager.default.fileExists(atPath: media.appendingPathComponent("source.mov").path))
+            let sidecarNames = (try? FileManager.default.contentsOfDirectory(atPath: media.path)) ?? []
+            #expect(sidecarNames.contains { $0.lowercased().hasPrefix("source--") && $0.hasSuffix(".mov") })
 
             try Data("user-edited-after-commit".utf8).write(to: output, options: .atomic)
             try ExportPublishRecoveryStore.recoverAll(root: recovery)

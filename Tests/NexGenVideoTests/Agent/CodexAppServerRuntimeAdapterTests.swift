@@ -549,6 +549,9 @@ struct CodexAppServerRuntimeAdapterTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
 
+        if service.isStreaming {
+            Issue.record("Codex turn did not settle. Adapters requested: \(adapterIndex). First driver: \(firstDriver.operations), responses: \(firstDriver.responses). Follow-up driver: \(followUpDriver.operations).")
+        }
         #expect(!service.isStreaming)
         let dialog = try #require(service.pendingDialog)
         #expect(dialog.title == "Choose")
