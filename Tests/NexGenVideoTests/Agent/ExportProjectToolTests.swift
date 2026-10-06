@@ -200,9 +200,9 @@ struct ExportProjectToolTests {
             source: .external(absolutePath: source.path),
             duration: 1
         )]
-        let dataRoot = try #require(h.editor.workingRoot.flatMap {
-            DataRootResolver.dataRoot(of: $0)
-        })
+        let dataRoot = try #require(h.editor.workingRoot)
+            .appendingPathComponent(DataRootResolver.pipelineDirname)
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             ProjectMeta(project: "video-status", mode: .generic),
             to: PipelineLayout.projectFile

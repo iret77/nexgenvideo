@@ -139,24 +139,19 @@ enum ProjectPackageExporter {
     ) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-        guard let enumerator = fm.enumerator(
-            at: source,
-            includingPropertiesForKeys: [
-                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
-            ],
-            options: []
-        ) else {
+        // Path-relative enumeration: URL enumeration may report /private/var for a /var root.
+        guard let enumerator = fm.enumerator(atPath: source.path) else {
             throw ToolError("The project source couldn't be enumerated for export.")
         }
-        for case let item as URL in enumerator {
+        for case let relative as String in enumerator {
             if isCancelled?() == true { throw CancellationError() }
-            let relative = String(item.path.dropFirst(source.path.count + 1))
+            let item = source.appendingPathComponent(relative)
             let target = destination.appendingPathComponent(relative)
             let values = try item.resourceValues(
                 forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
             )
             guard values.isSymbolicLink != true else {
-                throw ToolError("The project source contains a symbolic link.")
+                throw ProjectWorkingCopy.PersistError.symbolicLink(path: relative)
             }
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)

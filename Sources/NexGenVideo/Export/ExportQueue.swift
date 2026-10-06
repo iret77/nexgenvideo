@@ -2019,18 +2019,13 @@ extension ExportQueue {
         ) throws {
             let fm = FileManager.default
             try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-            guard let enumerator = fm.enumerator(
-                at: source,
-                includingPropertiesForKeys: [
-                    .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
-                ],
-                options: []
-            ) else {
+            // Path-relative enumeration: URL enumeration may report /private/var for a /var root.
+            guard let enumerator = fm.enumerator(atPath: source.path) else {
                 throw ToolError("The project source snapshot could not be created.")
             }
-            for case let item as URL in enumerator {
+            for case let relative as String in enumerator {
                 if isCancelled() { throw CancellationError() }
-                let relative = String(item.path.dropFirst(source.path.count + 1))
+                let item = source.appendingPathComponent(relative)
                 if isExcluded(relative, exclusions: exclusions)
                     || (excludingWorkingCopyRuntime
                         && ProjectWorkingCopy.isPackageRuntimePath(relative)) {
@@ -2335,19 +2330,13 @@ extension ExportQueue {
             guard values.isDirectory == true else {
                 throw ToolError("The export path is not a regular file or directory.")
             }
-            guard let enumerator = fm.enumerator(
-                at: url,
-                includingPropertiesForKeys: [
-                    .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey,
-                ],
-                options: []
-            ) else {
+            guard let enumerator = fm.enumerator(atPath: url.path) else {
                 throw ToolError("The export directory cannot be inspected.")
             }
             var entries: [String] = []
-            for case let child as URL in enumerator {
+            for case let relative as String in enumerator {
                 if isCancelled() { throw CancellationError() }
-                let relative = String(child.path.dropFirst(url.path.count + 1))
+                let child = url.appendingPathComponent(relative)
                 if exclusions.contains(where: {
                     relative == $0 || relative.hasPrefix($0 + "/")
                 }) || (excludingWorkingCopyRuntime

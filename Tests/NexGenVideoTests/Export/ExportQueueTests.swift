@@ -1481,7 +1481,8 @@ struct ExportQueueTests {
             source: mediaSource,
             duration: 5
         )]
-        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        let dataRoot = workingRoot.appendingPathComponent(DataRootResolver.pipelineDirname)
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             ProjectMeta(project: name.lowercased(), mode: .generic),
             to: PipelineLayout.projectFile
