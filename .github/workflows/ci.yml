@@ -99,7 +99,7 @@ jobs:
     if: needs.source_gate.outputs.build_required == 'true'
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
