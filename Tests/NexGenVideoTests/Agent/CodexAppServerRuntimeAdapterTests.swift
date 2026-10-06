@@ -589,6 +589,7 @@ struct CodexAppServerRuntimeAdapterTests {
             }
         })
         service.cancel()
+        withExtendedLifetime(editor) {}
     }
 
     @Test("Codex suspension reaches the real spend approval consumer")

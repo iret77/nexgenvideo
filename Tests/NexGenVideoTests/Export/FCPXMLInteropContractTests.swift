@@ -467,25 +467,29 @@ struct FCPXMLInteropContractTests {
         let xml = try document(rendered.data)
 
         #expect(try values("//asset-clip[@name='Direct.mov']/@start", in: xml) == ["18023/15s"])
-        #expect(try values(
+        let directKeyframes = try values(
             "//asset-clip[@name='Direct.mov']/adjust-transform/param[@name='position']//keyframe/@time",
             in: xml
-        ) == ["18023/15s", "36061/30s"])
+        )
+        #expect(directKeyframes == ["18023/15s", "36061/30s"])
         #expect(try values("//video[@name='Still.png']/@start", in: xml) == ["61/6s"])
-        #expect(try values(
+        let stillKeyframes = try values(
             "//video[@name='Still.png']/adjust-transform/param[@name='position']//keyframe/@time",
             in: xml
-        ) == ["61/6s", "32/3s"])
+        )
+        #expect(stillKeyframes == ["61/6s", "32/3s"])
         #expect(try values("//ref-clip[@name='Compound.mov']/@start", in: xml) == ["2/5s"])
-        #expect(try values(
+        let compoundKeyframes = try values(
             "//ref-clip[@name='Compound.mov']/adjust-transform/param[@name='position']//keyframe/@time",
             in: xml
-        ) == ["2/5s", "9/10s"])
+        )
+        #expect(compoundKeyframes == ["2/5s", "9/10s"])
         #expect(try values("//asset-clip[@name='Retimed.mov']/@start", in: xml) == ["1/3s"])
-        #expect(try values(
+        let retimedKeyframes = try values(
             "//asset-clip[@name='Retimed.mov']/adjust-transform/param[@name='position']//keyframe/@time",
             in: xml
-        ) == ["1/3s", "5/6s"])
+        )
+        #expect(retimedKeyframes == ["1/3s", "5/6s"])
         #expect(try values("//title[@name='Local title']/@start", in: xml) == ["0s"])
         #expect(try values(
             "//title[@name='Local title']/adjust-blend/param[@name='amount']//keyframe/@time",
