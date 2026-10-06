@@ -23,6 +23,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
     private var enteredContinuation: CheckedContinuation<Void, Never>?
     private var didPause = false
     private(set) var isolationChecks = 0
+    private(set) var startCount = 0
     private(set) var calls: [Call] = []
     private(set) var responses: [[String: Any]] = []
     private(set) var stopCount = 0
@@ -35,6 +36,7 @@ private final class FakeCodexAppServerDriver: CodexAppServerDriving {
     }
 
     func start(home: URL, scratch: URL) async throws {
+        startCount += 1
         await pauseIfRequested("start")
         if let startError { throw startError }
     }
@@ -544,13 +546,10 @@ struct CodexAppServerRuntimeAdapterTests {
         service.loadSessions(from: nil)
 
         #expect(service.send(text: "Ask for the choice.", mentions: []))
-        var deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while service.isStreaming, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil(timeout: .seconds(60)) { !service.isStreaming }
 
         if service.isStreaming {
-            Issue.record("Codex turn did not settle. Adapters requested: \(adapterIndex). First driver: \(firstDriver.operations), responses: \(firstDriver.responses). Follow-up driver: \(followUpDriver.operations).")
+            Issue.record("Codex turn did not settle. Adapters requested: \(adapterIndex). Adapter state: \(adapters[0].state), provider turn: \(String(describing: adapters[0].activeProviderTurnIdentifier)). First driver starts: \(firstDriver.startCount), isolation checks: \(firstDriver.isolationChecks), operations: \(firstDriver.operations), responses: \(firstDriver.responses). Follow-up driver: \(followUpDriver.operations). Stream error: \(String(describing: service.streamError)).")
         }
         #expect(!service.isStreaming)
         let dialog = try #require(service.pendingDialog)
@@ -565,10 +564,7 @@ struct CodexAppServerRuntimeAdapterTests {
                 direction: ""
             )
         )
-        deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while service.isStreaming, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil(timeout: .seconds(60)) { !service.isStreaming }
         #expect(!service.isStreaming)
 
         let injection = try #require(followUpDriver.calls.first { $0.method == "thread/injectItems" })
@@ -672,10 +668,7 @@ struct CodexAppServerRuntimeAdapterTests {
         #expect(driver.operations.contains("request:turn/interrupt"))
         #expect(codexTerminals(events) == [.completed(.toolUse)])
         service.declineSpend(reason: "Acceptance fixture declined before provider execution.")
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while followUps.isEmpty, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        _ = await waitUntil(timeout: .seconds(60)) { !followUps.isEmpty }
         let declinedWithoutGeneration = providerGenerationCalls == 0
             && service.pendingSpendApproval == nil
             && followUps.count == 1
@@ -1119,6 +1112,17 @@ struct CodexAppServerRuntimeAdapterTests {
         #expect(interrupt.params["turnId"] as? String == "provider-turn-1")
         #expect(driver.stopCount == 1)
         #expect(codexTerminals(events) == [.cancelled])
+    }
+
+    // The parallel test run saturates the main actor, so service turns get a wall-clock budget.
+    private func waitUntil(timeout: Duration, _ predicate: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return predicate()
     }
 
     private func makeAdapter(_ driver: FakeCodexAppServerDriver) -> CodexAppServerRuntimeAdapter {
