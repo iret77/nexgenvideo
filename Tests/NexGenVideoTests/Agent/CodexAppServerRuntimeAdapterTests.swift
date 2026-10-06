@@ -546,7 +546,9 @@ struct CodexAppServerRuntimeAdapterTests {
         service.loadSessions(from: nil)
 
         #expect(service.send(text: "Ask for the choice.", mentions: []))
-        _ = await waitUntil(timeout: .seconds(60)) { !service.isStreaming }
+        _ = await waitUntil(timeout: .seconds(180)) {
+            !service.isStreaming && service.pendingDialog != nil
+        }
 
         if service.isStreaming {
             Issue.record("Codex turn did not settle. Adapters requested: \(adapterIndex). Adapter state: \(adapters[0].state), provider turn: \(String(describing: adapters[0].activeProviderTurnIdentifier)). First driver starts: \(firstDriver.startCount), isolation checks: \(firstDriver.isolationChecks), operations: \(firstDriver.operations), responses: \(firstDriver.responses). Follow-up driver: \(followUpDriver.operations). Stream error: \(String(describing: service.streamError)).")
@@ -564,7 +566,15 @@ struct CodexAppServerRuntimeAdapterTests {
                 direction: ""
             )
         )
-        _ = await waitUntil(timeout: .seconds(60)) { !service.isStreaming }
+        // The follow-up turn starts asynchronously, so wait for its answer rather than idle state.
+        _ = await waitUntil(timeout: .seconds(180)) {
+            !service.isStreaming && service.messages.contains { message in
+                message.blocks.contains {
+                    guard case .text(let value) = $0 else { return false }
+                    return value.contains("host recorded Continue")
+                }
+            }
+        }
         #expect(!service.isStreaming)
 
         let injection = try #require(followUpDriver.calls.first { $0.method == "thread/injectItems" })
