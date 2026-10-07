@@ -87,12 +87,7 @@ RULES = [
     ),
 ]
 
-RULE_EXEMPTIONS = {
-    # These values render the user's authored text shadow into video content; they are not app chrome.
-    "numeric layer opacity": {
-        SOURCE_ROOT / "Preview" / "TextLayerController.swift",
-    },
-}
+RULE_EXEMPTIONS = {}
 
 INLINE_RULE_EXEMPTIONS = {
     "unstyled Divider": "app-theme: native-menu-divider",

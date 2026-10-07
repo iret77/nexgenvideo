@@ -16,9 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let isRelaunchSelfTest = AppRelaunchSelfTest.isRequested
         let relaunchIntent = AppRelaunchIntentStore.consumeForLaunch(
-            isSelfTest: isRelaunchSelfTest
+            isSelfTest: isRelaunchSelfTest || ExportActionsSelfTest.isRequested
         )
-        if isRelaunchSelfTest {
+        if ExportActionsSelfTest.isRequested {
+            ExportActionsSelfTest.armWatchdog()
+            Task { @MainActor in
+                await Task.yield()
+                await ExportActionsSelfTest.runIfRequested()
+            }
+        } else if isRelaunchSelfTest {
             AppRelaunchSelfTest.checkpoint("home-controller-requested")
             let home = HomeWindowController.shared
             AppRelaunchSelfTest.checkpoint("home-controller-ready")
@@ -39,12 +45,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
             // (e.g. a document launch), in which case the editor owns the screen.
             SplashScreenController.shared.showAtLaunch {
-                if AppState.shared.activeProject == nil {
+                if !AppState.shared.hasVisibleKeyProjectWindow {
                     HomeWindowController.shared.showWindow(nil)
                 }
             }
         }
         Task.detached(priority: .utility) {
+            do {
+                try ExportPublishRecoveryStore.recoverAll()
+            } catch {
+                Log.export.error("publish recovery failed: \(error.localizedDescription)")
+            }
+            do {
+                try ExportRuntimeRecoveryStore.recoverAll()
+            } catch {
+                Log.export.error("render recovery failed: \(error.localizedDescription)")
+            }
             Project.ensureStorageDirectory()
             ProjectStorageMigration.cleanUpProjectsFolder()
             // Retire idle working copies + caches (frees both stores). Open docs and still-present

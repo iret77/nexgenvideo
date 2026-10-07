@@ -67,28 +67,49 @@ framing_mix:
   pov_pct: 5
   insert_pct: 10
   aerial_pct: 5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"
 
 asl_range:
   min_s: 2.0
   max_s: 8.0
   typical_s: 4.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"
 
-camera_vocabulary:
-  - "VHS-distorted static hold"
-  - "synthwave grid push-forward"
-  - "glitch-cut on beat"
-  - "slow tilt across neon sunset"
-  - "scan-line overlay"
+camera:
+  vocabulary:
+    - "VHS-distorted static hold"
+    - "synthwave grid push-forward"
+    - "glitch-cut on beat"
+    - "slow tilt across neon sunset"
+    - "scan-line overlay"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"
 
-lighting_signature: |
-  saturated magenta-cyan-purple palette with neon glow, scan-line
-  overlay, deliberate chromatic aberration, VHS tracking noise,
-  Synthwave skewt high-saturation-high-key (sunset/grid),
-  Vaporwave skewt washed-pastel-low-contrast (vapor/dream).
+lighting:
+  description: |
+    saturated magenta-cyan-purple palette with neon glow, scan-line
+    overlay, deliberate chromatic aberration, VHS tracking noise,
+    Synthwave skewt high-saturation-high-key (sunset/grid),
+    Vaporwave skewt washed-pastel-low-contrast (vapor/dream).
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, Aesthetics Wiki,
-  Voltage Control, PremiumBeat, UC Press JPMS and Adobe articles
-  describing Synthwave's "earnest 80s-retro-futurism" and
-  Vaporwave's "slowed-down nostalgic glitch" aesthetics. Not tied
-  to a single auteur — the pattern represents the visual genre.
+color:
+  description: "Magenta-cyan-purple neon or washed pastel colour, depending on the selected branch."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"
+
+craft_signature:
+  - technique: "Degraded neon image"
+    directive: "Use magenta-cyan-purple neon, scan lines, chromatic aberration, and visible VHS tracking noise."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Synthwave"

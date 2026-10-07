@@ -3,14 +3,37 @@ import SwiftUI
 struct AssetThumbnailView: View {
     let asset: MediaAsset
     var onMoveToFolderMenu: AnyView? = nil
+    var isListRow = false
 
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.projectPalette) private var palette
     @State private var isRenaming = false
     @FocusState private var isRenameFieldFocused: Bool
     @State private var renameDraft = ""
     @State private var isHovering = false
 
     var body: some View {
+        Group {
+            if isListRow { listContent }
+            else { gridContent }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 1) {
+            handleTap()
+        }
+        .background {
+            ContextClickActivation {
+                guard !isSwapDimmed else { return }
+                editor.activateMediaContext(asset)
+            }
+        }
+        .contextMenu { contextMenuItems }
+        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
+        .allowsHitTesting(!isSwapDimmed)
+    }
+
+    private var gridContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
                 Rectangle().fill(AppTheme.Background.overlayColor)
@@ -35,42 +58,77 @@ struct AssetThumbnailView: View {
                     .frame(height: AppTheme.BorderWidth.thick)
             }
 
-            ZStack(alignment: .leading) {
-                if isRenaming {
-                    TextField("Name", text: $renameDraft)
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1)
-                        .focused($isRenameFieldFocused)
-                        .onSubmit { commitRename() }
-                        .onChange(of: isRenameFieldFocused) { _, focused in
-                            if !focused { commitRename() }
-                        }
-                        .onExitCommand { isRenaming = false }
-                } else {
-                    Text(asset.name)
-                        .interfaceFont(size: AppTheme.Typography.ui)
+            assetName
+        }
+    }
+
+    private var assetName: some View {
+        ZStack(alignment: .leading) {
+            if isRenaming {
+                TextField("Name", text: $renameDraft)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1)
+                    .focused($isRenameFieldFocused)
+                    .onSubmit { commitRename() }
+                    .onChange(of: isRenameFieldFocused) { _, focused in
+                        if !focused { commitRename() }
+                    }
+                    .onExitCommand { isRenaming = false }
+            } else {
+                Text(asset.libraryDisplayName)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                    .onTapGesture(count: 2) { beginRename() }
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.xs)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
+        )
+    }
+
+    private var listContent: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            thumbnailContent
+                .frame(width: AppTheme.IconSize.xl, height: AppTheme.IconSize.xl)
+                .clipped()
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                assetName
+                if asset.libraryDisplayName != asset.userFacingFilename {
+                    Text(asset.userFacingFilename)
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.mutedColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                        .onTapGesture(count: 2) { beginRename() }
                 }
             }
-            .padding(.horizontal, AppTheme.Spacing.xs)
-            .padding(.vertical, AppTheme.Spacing.xxs)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
-            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if isMissing {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .accessibilityLabel("Offline")
+            }
+            if asset.isGenerated {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .accessibilityLabel("AI Generated")
+            }
+            Text(asset.type.trackLabel)
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.mutedColor)
         }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 1) {
-            handleTap()
+        .padding(AppTheme.Spacing.sm)
+        .background(isSelected ? borderColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle().fill(borderColor).frame(width: AppTheme.BorderWidth.thick)
+            }
         }
-        .contextMenu { contextMenuItems }
-        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
-        .allowsHitTesting(!isSwapDimmed)
     }
 
     @ViewBuilder
@@ -82,17 +140,30 @@ struct AssetThumbnailView: View {
         }
         if ids.count == 1, ids.first == asset.id {
             if isMissing {
-                Button("Relink…") { relinkFile() }
+                Button("Relink…") { editor.presentRelinkPanel(for: asset) }
                 Divider() // app-theme: native-menu-divider
             }
             Button("Rename") { beginRename() }
             AIEditMenu(asset: asset)
+            if asset.type == .video, asset.hasAudio {
+                Button("Extract Audio…") {
+                    editor.beginAudioExtraction(from: asset.id)
+                }
+                .disabled(!editor.canExtractAudio(from: asset))
+            }
             Divider() // app-theme: native-menu-divider
         }
+        Button(ids.count > 1 ? "Add Selected Media to Task" : "Add to Task") {
+            for target in editor.mediaAssets where ids.contains(target.id) {
+                editor.agentService.attachMention(for: target)
+            }
+        }
+        .disabled(!editor.agentService.canAttachTaskReference
+            || editor.mediaAssets.contains { ids.contains($0.id) && $0.isGenerating })
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
         Divider() // app-theme: native-menu-divider
-        Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
+        Button(editor.selectedFolderIds.count + ids.count > 1 ? "Delete Selected Items" : "Delete", role: .destructive) { deleteAssets(ids: ids) }
     }
 
     private var contextTargetIds: [String] {
@@ -102,18 +173,6 @@ struct AssetThumbnailView: View {
                 .map(\.id)
         }
         return [asset.id]
-    }
-
-    private func relinkFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose the source file for \"\(asset.name)\""
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { await editor.relinkAsset(id: asset.id, to: url) }
-        }
     }
 
     private func revealInFinder(ids: [String]) {
@@ -136,7 +195,7 @@ struct AssetThumbnailView: View {
 
     private func deleteAssets(ids: [String]) {
         editor.selectedMediaAssetIds = Set(ids)
-        editor.deleteSelectedMediaAssets()
+        editor.deleteMediaSelection()
     }
 
     private var thumbnailContent: some View {
@@ -211,7 +270,9 @@ struct AssetThumbnailView: View {
             .overlay(Circle().strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline))
             .padding(AppTheme.Spacing.xs)
             .transition(.opacity)
-            .help("Add to chat")
+            .help("Add to task")
+            .accessibilityLabel("Add \(asset.libraryDisplayName) to task")
+            .disabled(!editor.agentService.canAttachTaskReference)
         }
     }
 
@@ -301,7 +362,8 @@ struct AssetThumbnailView: View {
     private var borderColor: Color {
         if isMissing { return AppTheme.Status.errorColor }
         if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.Accent.primary : AppTheme.Background.clearColor }
-        return isSelected ? AppTheme.Accent.primary : AppTheme.Background.clearColor
+        guard isSelected else { return AppTheme.Background.clearColor }
+        return editor.activePreviewTab == .timeline ? AppTheme.Text.mutedColor : palette.accent
     }
 
     private var borderWidth: CGFloat {
@@ -320,7 +382,7 @@ struct AssetThumbnailView: View {
     }
 
     private func beginRename() {
-        renameDraft = asset.name
+        renameDraft = asset.libraryDisplayName
         isRenaming = true
         isRenameFieldFocused = true
     }
@@ -328,7 +390,7 @@ struct AssetThumbnailView: View {
     private func commitRename() {
         guard isRenaming else { return }
         let trimmed = renameDraft.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty && trimmed != asset.name {
+        if !trimmed.isEmpty && trimmed != asset.libraryDisplayName {
             editor.renameMediaAsset(id: asset.id, name: trimmed)
         }
         isRenaming = false

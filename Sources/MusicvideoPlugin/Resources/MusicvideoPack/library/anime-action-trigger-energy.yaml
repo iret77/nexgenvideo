@@ -55,27 +55,48 @@ framing_mix:
   pov_pct: 5
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"
 
 asl_range:
   min_s: 0.5
   max_s: 3.5
   typical_s: 1.5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"
 
-camera_vocabulary:
-  - "rapid push-in on impact"
-  - "smash zoom"
-  - "whip pan into next shot"
-  - "lateral track following the action"
-  - "vertical tilt up for power moments"
+camera:
+  vocabulary:
+    - "rapid push-in on impact"
+    - "smash zoom"
+    - "whip pan into next shot"
+    - "lateral track following the action"
+    - "vertical tilt up for power moments"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"
 
-lighting_signature: |
-  cel-shaded with bold flat colours, saturated accent palette (often
-  one bold colour per scene — Promare's pink/cyan, Kill la Kill's
-  red), strong rim lighting on subjects, simplified background gradients.
+lighting:
+  description: |
+    cel-shaded with bold flat colours, saturated accent palette (often
+    one bold colour per scene — Promare's pink/cyan, Kill la Kill's
+    red), strong rim lighting on subjects, simplified background gradients.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, All the Anime, GKIDS,
-  TV Tropes and Slant Magazine pages describing Imaishi's
-  "fast and frantic, elaborate storyboarding, punchy direction"
-  approach. Pace values approximate the genre's typical Animation-
-  Music-Video range, not per-scene Cinemetrics.
+color:
+  description: "Bold flat colour with a saturated single-scene accent such as pink/cyan or red."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"
+
+craft_signature:
+  - technique: "Cel-shaded accent lighting"
+    directive: "Use bold flat colour, a single saturated scene accent, and strong rim light on the subject."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Studio_Trigger"

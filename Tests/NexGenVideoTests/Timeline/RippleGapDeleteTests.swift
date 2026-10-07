@@ -22,9 +22,11 @@ struct RippleGapDeleteTests {
         let c1 = Fixtures.clip(id: "c1", start: 0, duration: 50)
         let c2 = Fixtures.clip(id: "c2", start: 100, duration: 50)
         let e = editor([Fixtures.videoTrack(clips: [c1, c2])])
+        e.timeline.markers = [TimelineMarker(id: "marker", startFrame: 120, title: "After gap")]
         e.selectedGap = GapSelection(trackIndex: 0, range: FrameRange(start: 50, end: 100))
         e.rippleDeleteSelectedGap()
         #expect(starts(e.timeline.tracks[0]) == [0, 50])
+        #expect(e.timeline.markers.first?.startFrame == 70)
         #expect(e.selectedGap == nil)
     }
 

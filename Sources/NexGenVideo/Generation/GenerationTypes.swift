@@ -39,7 +39,89 @@ struct GenerationPricingInput: Sendable, Equatable {
     let resolution: String?
     let quality: String?
     let promptCharacterCount: Int
+    let promptUTF8ByteCount: Int
     let generateAudio: Bool?
+    let referenceCount: Int
+
+    init(
+        modelId: String,
+        modality: GenerationRequest.Modality,
+        durationSeconds: Double?,
+        outputCount: Int,
+        resolution: String?,
+        quality: String?,
+        promptCharacterCount: Int,
+        promptUTF8ByteCount: Int? = nil,
+        generateAudio: Bool?,
+        referenceCount: Int = 0
+    ) {
+        self.modelId = modelId
+        self.modality = modality
+        self.durationSeconds = durationSeconds
+        self.outputCount = outputCount
+        self.resolution = resolution
+        self.quality = quality
+        self.promptCharacterCount = promptCharacterCount
+        self.promptUTF8ByteCount = max(promptCharacterCount, promptUTF8ByteCount ?? promptCharacterCount)
+        self.generateAudio = generateAudio
+        self.referenceCount = referenceCount
+    }
+}
+
+struct GenerationPricingFailure: Error, Codable, Sendable, Equatable, LocalizedError {
+    enum Reason: String, Codable, Sendable, Hashable {
+        case unsupportedCombination
+        case priceQueryUnavailable
+        case exchangeRateUnavailable
+    }
+
+    let reason: Reason
+    let provider: GenerationProvider?
+    let endpoint: String
+    let detail: String
+
+    var isRetryable: Bool { reason != .unsupportedCombination }
+
+    var errorDescription: String? {
+        switch reason {
+        case .unsupportedCombination:
+            return "No verified price covers this provider, model, and option combination."
+        case .priceQueryUnavailable:
+            return "Provider pricing is temporarily unavailable. Retry pricing."
+        case .exchangeRateUnavailable:
+            return "EUR conversion is temporarily unavailable. Retry pricing."
+        }
+    }
+
+    static func classified(
+        _ error: Error,
+        provider: GenerationProvider,
+        endpoint: String
+    ) -> Self {
+        if let failure = error as? Self {
+            if failure.reason == .exchangeRateUnavailable {
+                return Self(
+                    reason: failure.reason,
+                    provider: nil,
+                    endpoint: failure.endpoint,
+                    detail: failure.detail
+                )
+            }
+            return Self(
+                reason: failure.reason,
+                provider: provider,
+                endpoint: endpoint,
+                detail: failure.detail
+            )
+        }
+        return Self(
+            reason: .priceQueryUnavailable,
+            provider: provider,
+            endpoint: endpoint,
+            detail: error.localizedDescription
+        )
+
+    }
 }
 
 struct GenerationMoney: Codable, Sendable, Equatable {

@@ -24,9 +24,10 @@
 <main>
   <h1>Finish and delivery</h1>
   <p>Adopt the current cut as the exact finish source, then export and probe the written bytes.</p>
+  <section id="spec"><b>HDR export contract</b><p>HEVC Main10 HDR (HLG) is an explicit codec choice, never an automatic upgrade. The timeline and export preview remain identified as Rec. 709 SDR. The export maps SDR white to 75% HLG reference white in BT.2020 without synthesizing highlight detail. Unsupported Main10, 10-bit-buffer, HLG-conversion, or container combinations disable Export and state the failed capability. Success requires immutable track, container, legal-range, luma/chroma, and four-reference-frame QC evidence beside the delivery attempt.</p></section>
   <section><b>Finish source</b><dl><dt>Timeline</dt><dd>current · changed</dd><dt>Assembly</dt><dd>manual edits detected</dd><dt>Sequence review</dt><dd>current</dd><dt>Media</dt><dd>12 of 12 online</dd></dl></section>
   <button class="secondary">Adopt current timeline</button>
-  <section><b>Delivery spec</b><dl><dt>Target</dt><dd>Master</dd><dt>Codec</dt><dd>ProRes 422</dd><dt>Raster</dt><dd>3840×2160</dd><dt>Frame rate</dt><dd>30 fps</dd><dt>Audio</dt><dd>Present</dd><dt>Captions</dt><dd>Burned in</dd></dl><label><input type="checkbox" checked> Require current sequence review</label></section>
+  <section><b>Delivery spec</b><dl><dt>Target</dt><dd>Master</dd><dt>Codec</dt><dd>HEVC Main10 HDR (HLG)</dd><dt>Color</dt><dd>BT.2020 · HLG · 10-bit</dd><dt>Source mapping</dt><dd>Rec. 709 white → 75% HLG</dd><dt>Raster</dt><dd>3840×2160</dd><dt>Frame rate</dt><dd>30 fps</dd><dt>Audio</dt><dd>Present</dd><dt>Captions</dt><dd>Burned in</dd></dl><label><input type="checkbox" checked> Require current sequence review</label></section>
   <section><b>Last QC</b><dl><dt>Status</dt><dd>Passed</dd><dt>Output hash</dt><dd>1e87…3b42</dd><dt>Duration</dt><dd>00:03:19:08</dd></dl></section>
   <footer><button class="secondary">Save derivative</button><button>Export master</button></footer>
 </main>

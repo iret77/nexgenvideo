@@ -12,8 +12,10 @@ struct AIEditMenu: View {
             Menu("AI Edit") {
                 if availableActions.contains(.upscale) {
                     Menu("Upscale") {
-                        ForEach(UpscaleModelConfig.models(for: asset.type)) { model in
-                            Button(model.displayName) { runUpscale(model) }
+                        ForEach(UpscaleModelConfig.selections(for: asset)) { selection in
+                            Button(selection.label(durationSeconds: asset.duration)) {
+                                runUpscale(selection)
+                            }
                         }
                     }
                 }
@@ -43,9 +45,14 @@ struct AIEditMenu: View {
         EditAction.available(for: asset)
     }
 
-    private func runUpscale(_ model: UpscaleModelConfig) {
+    private func runUpscale(_ selection: UpscaleSelection) {
         Task { @MainActor in
-            _ = await EditSubmitter.submitUpscale(asset: asset, model: model, editor: editor)
+            _ = await EditSubmitter.submitUpscale(
+                asset: asset,
+                model: selection.model,
+                targetResolution: selection.targetResolution,
+                editor: editor
+            )
         }
     }
 

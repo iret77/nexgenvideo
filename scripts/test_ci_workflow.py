@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 CI = WORKFLOWS / "ci.yml"
+DIAGNOSTIC_ACCEPTANCE = WORKFLOWS / "diagnostic-acceptance.yml"
 PR_CHECKS = WORKFLOWS / "pr-checks.yml"
 CI_BATCH = WORKFLOWS / "ci-batch.yml"
 AUTOMATIC_TRIGGERS = {"push", "pull_request", "pull_request_target", "schedule", "merge_group"}
@@ -81,6 +82,20 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertNotIn("render_agent_chat_spec.py", build)
         self.assertNotIn("pull_request:", (ROOT / ".github/workflows/bundle.yml").read_text())
 
+    def test_native_export_actions_run_for_pr_bundle_and_signed_release(self):
+        ci = CI.read_text()
+        startup = ci.split("  diagnostic-startup:\n", 1)[1].split("  merge_gate:\n", 1)[0]
+        self.assertIn("runs-on: macos-26", startup)
+        self.assertIn("name: NexGenVideo-app", startup)
+        self.assertIn("scripts/export_actions_acceptance.py candidate/NexGenVideo.app", startup)
+        self.assertIn("evidence/export-actions.json", startup)
+        self.assertIn("if: always()", startup)
+
+        release = DIAGNOSTIC_ACCEPTANCE.read_text()
+        self.assertIn("runs-on: macos-26", release)
+        self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
+        self.assertIn("evidence/export-actions.json", release)
+
     def test_only_the_light_pull_request_check_starts_automatically(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
             automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS
@@ -113,7 +128,11 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: true", text)
         called = [line.split("./.github/workflows/", 1)[1].strip()
                   for line in text.splitlines() if "uses: ./.github/workflows/" in line]
-        self.assertIn("ci.yml", called)
+        self.assertEqual(
+            set(called),
+            {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
+             "signing-preflight.yml", "workspace-ui-acceptance.yml"},
+        )
         for name in called:
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))

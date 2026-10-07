@@ -1,16 +1,19 @@
 import SwiftUI
 
 struct AdjustSlider: View {
-    let value: Double
+    let value: Double?
     let range: ClosedRange<Double>
     var gradient: [Color]? = nil
     var defaultValue: Double = 0
+    var accessibilityName: String? = nil
     let onChanged: (Double) -> Void
     let onCommit: (Double) -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
-    private var fraction: Double {
+    private var fraction: Double? {
+        guard let value else { return nil }
         let span = range.upperBound - range.lowerBound
-        guard span > 0 else { return 0 }
+        guard span > 0 else { return nil }
         return min(1, max(0, (value - range.lowerBound) / span))
     }
 
@@ -22,18 +25,20 @@ struct AdjustSlider: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let thumbX = CGFloat(fraction) * w
+            let thumbX = CGFloat(fraction ?? 0) * w
             ZStack(alignment: .leading) {
                 track(width: w)
-                Circle()
-                    .fill(AppTheme.Accent.primary)
-                    .frame(width: AppTheme.Slider.thumbSize, height: AppTheme.Slider.thumbSize)
-                    .overlay(Circle().strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.thin))
-                    .shadow(AppTheme.Shadow.sm)
-                    .position(x: thumbX, y: geo.size.height / 2)
+                if fraction != nil {
+                    Circle()
+                        .fill(AppTheme.Accent.primary)
+                        .frame(width: AppTheme.Slider.thumbSize, height: AppTheme.Slider.thumbSize)
+                        .overlay(Circle().strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.thin))
+                        .shadow(AppTheme.Shadow.sm)
+                        .position(x: thumbX, y: geo.size.height / 2)
+                }
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { _ in onCommit(defaultValue) }
+            .onTapGesture(count: 2) { _ in if isEnabled { onCommit(defaultValue) } }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { onChanged(value(atX: $0.location.x, width: w)) }
@@ -41,6 +46,10 @@ struct AdjustSlider: View {
             )
         }
         .frame(height: AppTheme.Slider.thumbSize)
+        .allowsHitTesting(isEnabled)
+        .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
+        .accessibilityLabel(accessibilityName ?? "Adjustment")
+        .accessibilityValue(value.map { String($0) } ?? "Mixed values")
     }
 
     @ViewBuilder
@@ -56,7 +65,7 @@ struct AdjustSlider: View {
                     .frame(height: AppTheme.Slider.trackHeight)
                 Capsule()
                     .fill(AppTheme.Text.tertiaryColor)
-                    .frame(width: max(0, CGFloat(fraction) * width), height: AppTheme.Slider.trackHeight)
+                    .frame(width: max(0, CGFloat(fraction ?? 0) * width), height: AppTheme.Slider.trackHeight)
             }
         }
     }

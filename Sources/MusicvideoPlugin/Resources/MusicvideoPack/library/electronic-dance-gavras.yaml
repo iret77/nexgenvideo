@@ -54,25 +54,47 @@ framing_mix:
   pov_pct: 5
   insert_pct: 5
   aerial_pct: 5
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"
 
 asl_range:
   min_s: 0.5
   max_s: 5.0
   typical_s: 2.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"
 
-camera_vocabulary:
-  - "steady-cam follow"
-  - "drone aerial"
-  - "lateral crowd track"
-  - "slow motion drop"
-  - "handheld immersion"
+camera:
+  vocabulary:
+    - "steady-cam follow"
+    - "drone aerial"
+    - "lateral crowd track"
+    - "slow motion drop"
+    - "handheld immersion"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"
 
-lighting_signature: |
-  natural sodium/urban practicals, hard direct sun at golden-hour,
-  high contrast, sometimes monochromatic colour grade.
+lighting:
+  description: |
+    natural sodium/urban practicals, hard direct sun at golden-hour,
+    high contrast, sometimes monochromatic colour grade.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, IMVDb, Creative Review,
-  Diggit Magazine and Guestlist sources describing Gavras' realist-
-  spectacle approach. Pace varies per video — values are
-  approximations.
+color:
+  description: "Sodium and golden-hour hues with an optional monochromatic grade."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"
+
+craft_signature:
+  - technique: "Urban practical contrast"
+    directive: "Use sodium urban practicals or hard golden-hour sun with high contrast and restrained grading."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Romain_Gavras"

@@ -1,20 +1,63 @@
 import Foundation
 import NexGenEngine
 
-/// Director-Pattern schema (v0.12.0+). Port of
-/// `nexgen_pack_musicvideo/patterns_schema.py`.
-///
-/// Shot-/cut-/tempo planning takes cues from known references (films, music
-/// videos, directors, DOPs) where they fit the project type. Patterns are
-/// suggested in the brief, used in the storyboard as a compose backbone, and
-/// mirrored against the real plan in the sanity phase via a PATTERN_DRIFT
-/// check.
-///
-/// Every pattern entry MUST carry `references[].sources[]` with verifiable
-/// URLs — no invented data without a source. Pattern values (`aslRange`,
-/// `framingMix`) are approximations, not Cinemetrics-grade precision. A
-/// pattern describes a LANGUAGE, not a straitjacket — escape via
+/// Director-pattern schema. Every operative value states whether it is measured,
+/// documented, or inferred and cites the material behind that classification.
+/// A pattern describes a language, not a straitjacket — escape via
 /// `pattern_override:` in the brief or a shot's notes.
+
+struct PatternCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+
+func rejectUnknownPatternKeys(
+    _ decoder: Decoder,
+    allowed: Set<String>,
+    context: String
+) throws {
+    let container = try decoder.container(keyedBy: PatternCodingKey.self)
+    let unknown = container.allKeys.map(\.stringValue).filter { !allowed.contains($0) }.sorted()
+    guard unknown.isEmpty else {
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: decoder.codingPath,
+                debugDescription: "\(context) has unknown fields: \(unknown.joined(separator: ", "))"
+            )
+        )
+    }
+}
+
+public enum PatternEvidenceBasis: String, Codable, Sendable, CaseIterable {
+    case measured
+    case documented
+    case inferred
+}
+
+public struct PatternReferenceVideo: Codable, Sendable, Equatable {
+    public var title: String
+    public var url: String
+
+    public init(title: String, url: String) {
+        self.title = title
+        self.url = url
+    }
+}
+
+public protocol PatternProvenancedValue {
+    var basis: PatternEvidenceBasis { get }
+    var sources: [String] { get }
+    var referenceVideo: PatternReferenceVideo? { get }
+}
+
+public enum PatternPipelineLever: String, Codable, Sendable, CaseIterable {
+    case visualPrompt = "visual_prompt"
+    case bibleLook = "bible_look"
+    case bibleLighting = "bible_lighting"
+}
 
 /// Coarse BPM bands (parallel to the pack's tempo classification). Port of
 /// `patterns_schema.py::TempoBand`.
@@ -126,8 +169,11 @@ public struct FramingMix: Codable, Sendable, Equatable {
     public var povPct: Int
     public var insertPct: Int
     public var aerialPct: Int
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case widePct = "wide_pct"
         case fullPct = "full_pct"
         case msPct = "ms_pct"
@@ -138,11 +184,15 @@ public struct FramingMix: Codable, Sendable, Equatable {
         case povPct = "pov_pct"
         case insertPct = "insert_pct"
         case aerialPct = "aerial_pct"
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
     }
 
     public init(
         widePct: Int = 0, fullPct: Int = 0, msPct: Int = 0, mcuPct: Int = 0, cuPct: Int = 0, ecuPct: Int = 0,
-        otsPct: Int = 0, povPct: Int = 0, insertPct: Int = 0, aerialPct: Int = 0
+        otsPct: Int = 0, povPct: Int = 0, insertPct: Int = 0, aerialPct: Int = 0,
+        basis: PatternEvidenceBasis, sources: [String], referenceVideo: PatternReferenceVideo? = nil
     ) {
         self.widePct = widePct
         self.fullPct = fullPct
@@ -154,9 +204,17 @@ public struct FramingMix: Codable, Sendable, Equatable {
         self.povPct = povPct
         self.insertPct = insertPct
         self.aerialPct = aerialPct
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
     }
 
     public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder,
+            allowed: Set(CodingKeys.allCases.map(\.rawValue)),
+            context: "framing_mix"
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         widePct = try container.decodeIfPresent(Int.self, forKey: .widePct) ?? 0
         fullPct = try container.decodeIfPresent(Int.self, forKey: .fullPct) ?? 0
@@ -168,6 +226,9 @@ public struct FramingMix: Codable, Sendable, Equatable {
         povPct = try container.decodeIfPresent(Int.self, forKey: .povPct) ?? 0
         insertPct = try container.decodeIfPresent(Int.self, forKey: .insertPct) ?? 0
         aerialPct = try container.decodeIfPresent(Int.self, forKey: .aerialPct) ?? 0
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
     }
 
     /// Port of `FramingMix.by_framing`.
@@ -179,22 +240,203 @@ public struct FramingMix: Codable, Sendable, Equatable {
     }
 }
 
+extension FramingMix: PatternProvenancedValue {}
+
 /// Average Shot Length: range in seconds. Port of `patterns_schema.py::AslRange`.
 public struct AslRange: Codable, Sendable, Equatable {
     public var minS: Double
     public var maxS: Double
     public var typicalS: Double
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case minS = "min_s"
         case maxS = "max_s"
         case typicalS = "typical_s"
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
     }
 
-    public init(minS: Double, maxS: Double, typicalS: Double) {
+    public init(
+        minS: Double, maxS: Double, typicalS: Double,
+        basis: PatternEvidenceBasis, sources: [String], referenceVideo: PatternReferenceVideo? = nil
+    ) {
         self.minS = minS
         self.maxS = maxS
         self.typicalS = typicalS
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder,
+            allowed: Set(CodingKeys.allCases.map(\.rawValue)),
+            context: "asl_range"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        minS = try container.decode(Double.self, forKey: .minS)
+        maxS = try container.decode(Double.self, forKey: .maxS)
+        typicalS = try container.decode(Double.self, forKey: .typicalS)
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
+    }
+}
+
+extension AslRange: PatternProvenancedValue {}
+
+public struct PatternCamera: Codable, Sendable, Equatable, PatternProvenancedValue {
+    public var vocabulary: [String]
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case vocabulary
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
+    }
+
+    public init(
+        vocabulary: [String], basis: PatternEvidenceBasis, sources: [String],
+        referenceVideo: PatternReferenceVideo? = nil
+    ) {
+        self.vocabulary = vocabulary
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)), context: "camera"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        vocabulary = try container.decode([String].self, forKey: .vocabulary)
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
+    }
+}
+
+public struct PatternLighting: Codable, Sendable, Equatable, PatternProvenancedValue {
+    public var description: String
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case description
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
+    }
+
+    public init(
+        description: String, basis: PatternEvidenceBasis, sources: [String],
+        referenceVideo: PatternReferenceVideo? = nil
+    ) {
+        self.description = description
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)), context: "lighting"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        description = try container.decode(String.self, forKey: .description)
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
+    }
+}
+
+public struct PatternColor: Codable, Sendable, Equatable, PatternProvenancedValue {
+    public var description: String
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case description
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
+    }
+
+    public init(
+        description: String, basis: PatternEvidenceBasis, sources: [String],
+        referenceVideo: PatternReferenceVideo? = nil
+    ) {
+        self.description = description
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)), context: "color"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        description = try container.decode(String.self, forKey: .description)
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
+    }
+}
+
+public struct PatternCraftTechnique: Codable, Sendable, Equatable, PatternProvenancedValue {
+    public var technique: String
+    public var directive: String
+    public var pipelineLevers: [PatternPipelineLever]
+    public var basis: PatternEvidenceBasis
+    public var sources: [String]
+    public var referenceVideo: PatternReferenceVideo?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case technique
+        case directive
+        case pipelineLevers = "pipeline_levers"
+        case basis
+        case sources
+        case referenceVideo = "reference_video"
+    }
+
+    public init(
+        technique: String, directive: String, pipelineLevers: [PatternPipelineLever],
+        basis: PatternEvidenceBasis, sources: [String], referenceVideo: PatternReferenceVideo? = nil
+    ) {
+        self.technique = technique
+        self.directive = directive
+        self.pipelineLevers = pipelineLevers
+        self.basis = basis
+        self.sources = sources
+        self.referenceVideo = referenceVideo
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder,
+            allowed: Set(CodingKeys.allCases.map(\.rawValue)),
+            context: "craft_signature entry"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        technique = try container.decode(String.self, forKey: .technique)
+        directive = try container.decode(String.self, forKey: .directive)
+        pipelineLevers = try container.decode([PatternPipelineLever].self, forKey: .pipelineLevers)
+        basis = try container.decode(PatternEvidenceBasis.self, forKey: .basis)
+        sources = try container.decode([String].self, forKey: .sources)
+        referenceVideo = try container.decodeIfPresent(PatternReferenceVideo.self, forKey: .referenceVideo)
     }
 }
 
@@ -215,16 +457,12 @@ public struct Pattern: Codable, Sendable, Equatable {
     /// Target distribution of framings across the whole shotlist.
     public var framingMix: FramingMix
     public var aslRange: AslRange
-    /// Preferred movement vocabulary, e.g. ["static hold", "slow push-in", "lateral track"].
-    public var cameraVocabulary: [String]
-    /// Short lighting-style summary, e.g. "warm natural daylight, soft shadows, golden-hour bias".
-    public var lightingSignature: String
-    /// Source discipline: where do the framing_mix / asl_range values come
-    /// from? E.g. "qualitative aggregation from cited videography pages, not
-    /// Cinemetrics-grade; refine via real shot counts."
-    public var approximationBasis: String
+    public var camera: PatternCamera
+    public var lighting: PatternLighting
+    public var color: PatternColor
+    public var craftSignature: [PatternCraftTechnique]
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case id
         case name
         case description
@@ -233,15 +471,17 @@ public struct Pattern: Codable, Sendable, Equatable {
         case sectionArc = "section_arc"
         case framingMix = "framing_mix"
         case aslRange = "asl_range"
-        case cameraVocabulary = "camera_vocabulary"
-        case lightingSignature = "lighting_signature"
-        case approximationBasis = "approximation_basis"
+        case camera
+        case lighting
+        case color
+        case craftSignature = "craft_signature"
     }
 
     public init(
         id: String, name: String, description: String, references: [PatternReference],
-        sectionArc: [SectionArcStep], framingMix: FramingMix, aslRange: AslRange, cameraVocabulary: [String],
-        lightingSignature: String, approximationBasis: String, fitProfile: PatternFitProfile? = nil
+        sectionArc: [SectionArcStep], framingMix: FramingMix, aslRange: AslRange, camera: PatternCamera,
+        lighting: PatternLighting, color: PatternColor, craftSignature: [PatternCraftTechnique],
+        fitProfile: PatternFitProfile? = nil
     ) {
         self.id = id
         self.name = name
@@ -251,9 +491,126 @@ public struct Pattern: Codable, Sendable, Equatable {
         self.sectionArc = sectionArc
         self.framingMix = framingMix
         self.aslRange = aslRange
-        self.cameraVocabulary = cameraVocabulary
-        self.lightingSignature = lightingSignature
-        self.approximationBasis = approximationBasis
+        self.camera = camera
+        self.lighting = lighting
+        self.color = color
+        self.craftSignature = craftSignature
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownPatternKeys(
+            decoder,
+            allowed: Set(CodingKeys.allCases.map(\.rawValue)),
+            context: "pattern"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        description = try container.decode(String.self, forKey: .description)
+        fitProfile = try container.decodeIfPresent(PatternFitProfile.self, forKey: .fitProfile)
+        references = try container.decode([PatternReference].self, forKey: .references)
+        sectionArc = try container.decode([SectionArcStep].self, forKey: .sectionArc)
+        framingMix = try container.decode(FramingMix.self, forKey: .framingMix)
+        aslRange = try container.decode(AslRange.self, forKey: .aslRange)
+        camera = try container.decode(PatternCamera.self, forKey: .camera)
+        lighting = try container.decode(PatternLighting.self, forKey: .lighting)
+        color = try container.decode(PatternColor.self, forKey: .color)
+        craftSignature = try container.decode([PatternCraftTechnique].self, forKey: .craftSignature)
+    }
+}
+
+public enum PatternSchemaValidator {
+    public static func validate(_ pattern: Pattern) -> [String] {
+        var issues: [String] = []
+        if pattern.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { issues.append("id is empty") }
+        if pattern.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { issues.append("name is empty") }
+        if pattern.references.isEmpty { issues.append("references is empty") }
+        for reference in pattern.references {
+            if reference.sources.isEmpty { issues.append("reference '\(reference.name)' has no sources") }
+            for source in reference.sources {
+                if source.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    issues.append("reference '\(reference.name)' has an unlabeled source")
+                }
+                if !isWebURL(source.url) {
+                    issues.append("reference '\(reference.name)' has a non-web source URL")
+                }
+            }
+        }
+        if pattern.sectionArc.isEmpty { issues.append("section_arc is empty") }
+
+        let framingTotal = pattern.framingMix.byFraming().values.reduce(0, +)
+        if framingTotal != 100 { issues.append("framing_mix totals \(framingTotal), expected 100") }
+        if pattern.framingMix.byFraming().values.contains(where: { $0 < 0 || $0 > 100 }) {
+            issues.append("framing_mix percentages must be between 0 and 100")
+        }
+        if pattern.aslRange.minS <= 0 { issues.append("asl_range.min_s must be positive") }
+        if pattern.aslRange.maxS < pattern.aslRange.minS { issues.append("asl_range.max_s is below min_s") }
+        if pattern.aslRange.typicalS < pattern.aslRange.minS || pattern.aslRange.typicalS > pattern.aslRange.maxS {
+            issues.append("asl_range.typical_s is outside min_s...max_s")
+        }
+        if pattern.camera.vocabulary.isEmpty { issues.append("camera.vocabulary is empty") }
+        if pattern.lighting.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("lighting.description is empty")
+        }
+        if pattern.color.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("color.description is empty")
+        }
+
+        let values: [(String, any PatternProvenancedValue)] = [
+            ("framing_mix", pattern.framingMix),
+            ("asl_range", pattern.aslRange),
+            ("camera", pattern.camera),
+            ("lighting", pattern.lighting),
+            ("color", pattern.color),
+        ]
+        for (path, value) in values {
+            issues.append(contentsOf: provenanceIssues(value, path: path))
+        }
+
+        if pattern.craftSignature.isEmpty { issues.append("craft_signature is empty") }
+        for (index, technique) in pattern.craftSignature.enumerated() {
+            let path = "craft_signature[\(index)]"
+            if technique.technique.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("\(path).technique is empty")
+            }
+            if technique.directive.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("\(path).directive is empty")
+            }
+            if technique.pipelineLevers.isEmpty { issues.append("\(path).pipeline_levers is empty") }
+            if Set(technique.pipelineLevers).count != technique.pipelineLevers.count {
+                issues.append("\(path).pipeline_levers contains duplicates")
+            }
+            issues.append(contentsOf: provenanceIssues(technique, path: path))
+        }
+        return issues
+    }
+
+    private static func provenanceIssues(_ value: any PatternProvenancedValue, path: String) -> [String] {
+        var issues: [String] = []
+        if value.sources.isEmpty { issues.append("\(path).sources is empty") }
+        for source in value.sources where !isWebURL(source) {
+            issues.append("\(path).sources contains a non-web URL")
+        }
+        if value.basis == .measured {
+            guard let video = value.referenceVideo else {
+                issues.append("\(path).reference_video is required for measured evidence")
+                return issues
+            }
+            if video.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("\(path).reference_video.title is empty")
+            }
+            if !isWebURL(video.url) { issues.append("\(path).reference_video.url is not a web URL") }
+        } else if value.referenceVideo != nil {
+            issues.append("\(path).reference_video is only valid for measured evidence")
+        }
+        return issues
+    }
+
+    private static func isWebURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value),
+              components.scheme == "https" || components.scheme == "http",
+              components.host?.isEmpty == false else { return false }
+        return true
     }
 }
 
@@ -271,7 +628,14 @@ public enum Patterns {
     /// loading is `Bundle.module`-based rather than filesystem `Path`-based).
     public static func loadPattern(yaml: String, fileName: String) throws -> Pattern {
         do {
-            return try YAMLCoding.decode(Pattern.self, from: yaml)
+            let pattern = try YAMLCoding.decode(Pattern.self, from: yaml)
+            let issues = PatternSchemaValidator.validate(pattern)
+            guard issues.isEmpty else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: issues.joined(separator: "; "))
+                )
+            }
+            return pattern
         } catch {
             throw PatternLibraryError.decodingFailed(file: fileName, underlying: String(describing: error))
         }

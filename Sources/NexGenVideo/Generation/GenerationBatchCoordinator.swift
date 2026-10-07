@@ -3,9 +3,44 @@ import Observation
 import NexGenEngine
 
 @MainActor
+final class GenerationBatchRecovery {
+    let options: [SpendOption]
+    private let pipelineScope: SpendPipelineScope?
+    private let prepareOperation: @MainActor (EditorViewModel, SpendOption) async throws -> GenerationPackageV1
+
+    init(
+        options: [SpendOption],
+        pipelineScope: SpendPipelineScope? = nil,
+        prepare: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> GenerationPackageV1
+    ) {
+        self.options = options
+        self.pipelineScope = pipelineScope
+        prepareOperation = prepare
+    }
+
+    func prepare(editor: EditorViewModel, option: SpendOption) async throws -> GenerationPackageV1 {
+        guard let selected = options.first(where: { $0.id == option.id }),
+              selected.target == option.target,
+              selected.isCurrentlyAvailable else {
+            throw GenerationRequestError.gate("The selected generation route is no longer available.")
+        }
+        let lease = try pipelineScope?.acquireMutation(
+            editor: editor,
+            label: "Prepare generation batch route"
+        )
+        defer {
+            if let lease {
+                lease.coordinator.endMutation(projectRoot: lease.dataRoot, id: lease.id)
+            }
+        }
+        return try await prepareOperation(editor, selected)
+    }
+}
+
+@MainActor
 final class GenerationBatchPreparation {
     @TaskLocal static var current: GenerationBatchPreparation?
-    var packages: [GenerationPackageV1] = []
+    var entries: [(package: GenerationPackageV1, recovery: GenerationBatchRecovery)] = []
 }
 
 @MainActor
@@ -17,6 +52,27 @@ final class GenerationBatchCoordinator {
     private(set) var approving = false
     @ObservationIgnored private var jobs: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var readID = UUID()
+    @ObservationIgnored private var recoveries: [String: GenerationBatchRecovery] = [:]
+    private(set) var recoveringItemIDs: Set<String> = []
+
+    var isRecovering: Bool { !recoveringItemIDs.isEmpty }
+    var canRetryPricing: Bool {
+        pending?.payload.items.contains {
+            $0.package.payload.estimate == nil
+                && ($0.package.payload.pricingFailure?.isRetryable ?? true)
+        } == true
+    }
+
+    func present(_ batch: GenerationBatch, recoveries: [String: GenerationBatchRecovery]) throws {
+        try batch.validate()
+        guard pending == nil,
+              Set(recoveries.keys) == Set(batch.payload.items.map(\.id)) else {
+            throw GenerationRequestError.gate("Every batch item needs an explicit pricing and route recovery path.")
+        }
+        self.recoveries = recoveries
+        pending = batch
+        error = nil
+    }
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
         readID = UUID()
@@ -25,31 +81,108 @@ final class GenerationBatchCoordinator {
     }
 
     func remove(itemID: String, editor: EditorViewModel) {
-        guard let pending, !approving else { return }
+        guard let pending, !approving, !isRecovering else { return }
         if pending.payload.items.count == 1 { decline(editor: editor); return }
         do {
             let updated = try pending.removing(itemIDs: [itemID])
             editor.agentService.replaceGenerationBatchPresentation(oldID: pending.id, newID: updated.id)
             self.pending = updated
+            recoveries.removeValue(forKey: itemID)
         }
         catch { self.error = error.localizedDescription }
     }
 
     func decline(editor: EditorViewModel) {
-        guard !approving, let pending else { return }
-        self.pending = nil; error = nil
+        guard !approving, !isRecovering, let pending else { return }
+        self.pending = nil; error = nil; recoveries = [:]
         editor.agentService.completeGenerationBatch(pending.id, message: "The user declined the generation batch. No batch item was submitted.")
     }
 
     func approve(editor: EditorViewModel) async {
-        guard let manifest = pending, !approving else { return }
+        guard let manifest = pending, !approving, !isRecovering, manifest.totalEUR != nil else { return }
         approving = true
         defer { approving = false }
         do {
             _ = try await GenerationBatchStore.approve(manifest, editor: editor)
             pending = nil
+            recoveries = [:]
             error = nil
             start(batchID: manifest.id, editor: editor)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func routeOptions(itemID: String) -> [SpendOption] {
+        guard let item = pending?.payload.items.first(where: { $0.id == itemID }) else { return [] }
+        return recoveries[itemID]?.options.filter {
+            $0.target != item.package.payload.target && $0.isCurrentlyAvailable
+        } ?? []
+    }
+
+    func retryPricing(
+        editor: EditorViewModel,
+        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
+    ) async {
+        guard let original = pending, !approving, !isRecovering else { return }
+        let items = original.payload.items.filter {
+            $0.package.payload.estimate == nil
+                && ($0.package.payload.pricingFailure?.isRetryable ?? true)
+        }
+        guard !items.isEmpty else { return }
+        recoveringItemIDs = Set(items.map(\.id))
+        error = nil
+        defer { recoveringItemIDs = [] }
+        do {
+            var updated = original
+            for item in items {
+                try await item.package.requireCurrentContext(editor: editor)
+                let snapshot = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+                let pricingInput = try item.package.pricingInput()
+                let estimate: GenerationMoney?
+                let failure: GenerationPricingFailure?
+                do {
+                    estimate = try await quoteLoader(item.package.payload.target, pricingInput)
+                    failure = nil
+                } catch {
+                    try Task.checkCancellation()
+                    estimate = nil
+                    failure = .classified(
+                        error,
+                        provider: item.package.payload.target.provider,
+                        endpoint: item.package.payload.target.endpoint
+                    )
+                }
+                let package = try item.package.replacingPricing(estimate: estimate, failure: failure)
+                try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor)
+                updated = try updated.replacingPackage(itemID: item.id, with: package)
+            }
+            guard pending?.id == original.id else {
+                throw GenerationRequestError.gate("The batch changed while pricing was refreshed.")
+            }
+            editor.agentService.replaceGenerationBatchPresentation(oldID: original.id, newID: updated.id)
+            pending = updated
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func changeRoute(itemID: String, option: SpendOption, editor: EditorViewModel) async {
+        guard let original = pending, !approving, !isRecovering,
+              let recovery = recoveries[itemID],
+              let item = original.payload.items.first(where: { $0.id == itemID }),
+              option.target != item.package.payload.target else { return }
+        recoveringItemIDs = [itemID]
+        error = nil
+        defer { recoveringItemIDs = [] }
+        do {
+            let package = try await recovery.prepare(editor: editor, option: option)
+            guard package.payload.target == option.target else {
+                throw GenerationRequestError.gate("The prepared request did not use the selected route.")
+            }
+            try await package.requireCurrentContext(editor: editor)
+            guard pending?.id == original.id else {
+                throw GenerationRequestError.gate("The batch changed while its route was prepared.")
+            }
+            let updated = try original.replacingPackage(itemID: itemID, with: package)
+            editor.agentService.replaceGenerationBatchPresentation(oldID: original.id, newID: updated.id)
+            pending = updated
         } catch { self.error = error.localizedDescription }
     }
 

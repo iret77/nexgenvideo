@@ -61,6 +61,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         let routing: ProductionGenerationRoutingProofV1?
         let routeReceipt: GenerationRouteReceipt
         let estimate: GenerationMoney?
+        let pricingFailure: GenerationPricingFailure?
     }
     let schema: String
     let id: String
@@ -81,7 +82,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     }
 
     init(payload: Payload) throws {
-        guard payload.outputCount > 0, payload.outputCount <= 4,
+        guard payload.outputCount > 0, payload.outputCount <= 10,
               !payload.target.modelId.isEmpty, !payload.target.endpoint.isEmpty,
               payload.generationInput.model == payload.target.modelId, payload.generationInput.prompt == payload.prompt,
               payload.generationInput.referenceReceipts == payload.references,
@@ -91,6 +92,26 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
                 capabilitySnapshot: payload.routing?.route.capabilitySnapshot),
               JSONSerialization.isValidJSONObject(try JSONSerialization.jsonObject(with: Data(payload.requestParametersJSON.utf8))) else {
             throw GenerationRequestError.optionsInvalid("The generation package has no executable request.")
+        }
+        guard payload.estimate == nil || payload.pricingFailure == nil else {
+            throw GenerationRequestError.optionsInvalid("The package has conflicting pricing results.")
+        }
+        if let failure = payload.pricingFailure {
+            guard !failure.endpoint.isEmpty,
+                  !failure.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw GenerationRequestError.optionsInvalid("The package has no valid pricing failure.")
+            }
+            switch failure.reason {
+            case .exchangeRateUnavailable:
+                guard failure.provider == nil else {
+                    throw GenerationRequestError.optionsInvalid("The package has an invalid exchange-rate failure.")
+                }
+            case .unsupportedCombination, .priceQueryUnavailable:
+                guard failure.provider == payload.target.provider,
+                      failure.endpoint == payload.target.endpoint else {
+                    throw GenerationRequestError.optionsInvalid("The pricing failure does not match the package route.")
+                }
+            }
         }
         if let estimate = payload.estimate {
             guard estimate.eurAmount.isFinite, estimate.eurAmount >= 0, estimate.nativeAmount.isFinite,
@@ -112,6 +133,35 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         guard self == rebuilt else { throw GenerationRequestError.gate("The generation package changed after review.") }
     }
 
+    func replacingPricing(
+        estimate: GenerationMoney?,
+        failure: GenerationPricingFailure?
+    ) throws -> Self {
+        try validate()
+        return try Self(payload: .init(
+            target: payload.target,
+            modality: payload.modality,
+            operation: payload.operation,
+            intent: payload.intent,
+            prompt: payload.prompt,
+            promptRevisionID: payload.promptRevisionID,
+            generationInput: payload.generationInput,
+            binding: payload.binding,
+            compilerInputsSHA256: payload.compilerInputsSHA256,
+            recipe: payload.recipe,
+            repairPlanID: payload.repairPlanID,
+            destination: payload.destination,
+            outputCount: payload.outputCount,
+            references: payload.references,
+            referenceRoles: payload.referenceRoles,
+            requestParametersJSON: payload.requestParametersJSON,
+            routing: payload.routing,
+            routeReceipt: payload.routeReceipt,
+            estimate: estimate,
+            pricingFailure: failure
+        ))
+    }
+
     static func canonicalData<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -128,7 +178,9 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     static func referenceRoles(parameters: PreparedProviderParameters) -> [String] {
         parameters.referenceSlots.map { slot in
             switch parameters.parameters {
-            case .image: return "image_reference"
+            case .image(let image): return image.maskURL == slot ? "image_mask" : "image_reference"
+            case .audio: return "source_video"
+
             case .video(let video):
                 if video.sourceVideoURL == slot { return "source_video" }
                 if video.startFrameURL == slot { return "start_frame" }
@@ -145,6 +197,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         var value = input
         value.createdAt = nil; value.spendTransactionId = nil; value.generationPackageID = nil
         value.imageURLs = nil; value.referenceImageURLs = nil; value.referenceVideoURLs = nil; value.referenceAudioURLs = nil
+        value.imageMaskURL = nil
         return value
     }
 
@@ -160,7 +213,13 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
 
     @MainActor
     func requireCurrentContext(editor: EditorViewModel) async throws {
-        let modality: PromptComposer.Modality = payload.modality == "image" ? .image : .video
+        let modality: PromptComposer.Modality
+        switch payload.modality {
+        case "image": modality = .image
+        case "video": modality = .video
+        case "audio": modality = .audio
+        default: throw GenerationRequestError.gate("The generation package has an unsupported modality.")
+        }
         let home = editor.workingRoot
         guard try await PromptCompiler.currentBinding(
             editor: editor,

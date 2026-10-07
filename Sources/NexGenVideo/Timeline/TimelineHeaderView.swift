@@ -1,8 +1,13 @@
 import AppKit
 
+extension Notification.Name {
+    static let cancelTimelineInteraction = Notification.Name("NexGenVideo.cancelTimelineInteraction")
+}
+
 /// Fixed track header column drawn to the left of the scrollable timeline.
 final class TimelineHeaderView: NSView {
     unowned var editor: EditorViewModel
+    var requestCanvasRedraw: (() -> Void)?
 
     private static let headerBg = AppTheme.Background.surface.cgColor
     private static let labelAttrs: [NSAttributedString.Key: Any] = [
@@ -14,13 +19,22 @@ final class TimelineHeaderView: NSView {
     var muteButtonRects: [Int: NSRect] = [:]
     var hideButtonRects: [Int: NSRect] = [:]
     var syncLockButtonRects: [Int: NSRect] = [:]
+    var dragHandleRects: [Int: NSRect] = [:]
 
     init(editor: EditorViewModel) {
         self.editor = editor
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Self.headerBg
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(cancelTimelineInteraction(_:)),
+            name: .cancelTimelineInteraction,
+            object: editor
+        )
     }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
@@ -53,6 +67,7 @@ final class TimelineHeaderView: NSView {
         muteButtonRects.removeAll()
         hideButtonRects.removeAll()
         syncLockButtonRects.removeAll()
+        dragHandleRects.removeAll()
         let stripWidth = AppTheme.Timeline.headerTypeStripWidth
         let iconSize = AppTheme.Timeline.headerIconSize
         let iconConfig = NSImage.SymbolConfiguration(
@@ -67,15 +82,44 @@ final class TimelineHeaderView: NSView {
             let y = geo.trackY(at: i)
             let h = geo.trackHeight(at: i)
 
+            if reorderDrag?.id == track.id {
+                ctx.setFillColor(AppTheme.Background.prominent.cgColor)
+                ctx.fill(NSRect(x: AppTheme.Spacing.none, y: y, width: headerWidth, height: h))
+            }
+
             // Color-coded left border strip
             ctx.setFillColor(track.type.themeColor.cgColor)
             ctx.fill(NSRect(x: AppTheme.Spacing.none, y: y, width: stripWidth, height: h))
+
+            let gripX = stripWidth + AppTheme.Spacing.sm
+            if editor.allowsTimelineEditChrome {
+                let gripRect = NSRect(
+                    x: gripX,
+                    y: y + (h - iconSize) / 2,
+                    width: iconSize,
+                    height: iconSize
+                )
+                drawSymbol(
+                    "line.3.horizontal",
+                    in: gripRect,
+                    tint: AppTheme.Text.secondary.withAlphaComponent(AppTheme.Opacity.dim),
+                    config: iconConfig,
+                    context: ctx
+                )
+                dragHandleRects[i] = gripRect.insetBy(
+                    dx: -AppTheme.Spacing.xs,
+                    dy: -AppTheme.Spacing.xs
+                )
+            }
 
             // Track label
             let str = NSAttributedString(string: editor.timelineTrackDisplayLabel(at: i), attributes: Self.labelAttrs)
             let labelSize = str.size()
             let labelY = y + (h - labelSize.height) / 2
-            str.draw(at: NSPoint(x: stripWidth + AppTheme.Spacing.sm, y: labelY))
+            let labelX = editor.allowsTimelineEditChrome
+                ? gripX + iconSize + AppTheme.Spacing.sm
+                : stripWidth + AppTheme.Spacing.sm
+            str.draw(at: NSPoint(x: labelX, y: labelY))
 
 
             let iconY = y + (h - iconSize) / 2
@@ -166,9 +210,10 @@ final class TimelineHeaderView: NSView {
         tinted.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1.0)
     }
 
-    // MARK: - Input handling (mute/hide/resize)
+    // MARK: - Input handling
 
     private var resizeDrag: (trackIndex: Int, originalHeight: CGFloat)?
+    private var reorderDrag: (id: String, before: Timeline)?
 
     private func hitTestResizeHandle(at point: NSPoint) -> Int? {
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
@@ -179,6 +224,79 @@ final class TimelineHeaderView: NSView {
             }
         }
         return nil
+    }
+
+    private enum TrackCommand {
+        case mute(Bool), visibility(Bool), syncLock(Bool), remove(Track)
+    }
+
+    private struct TrackCommandTarget {
+        let id: String
+        let command: TrackCommand
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let geometry = TimelineGeometry(editor: editor, bounds: bounds)
+        guard point.y >= bounds.minY + geometry.rulerHeight,
+              let index = editor.timeline.tracks.indices.first(where: {
+                point.y >= geometry.trackY(at: $0)
+                    && point.y < geometry.trackY(at: $0) + geometry.trackHeight(at: $0)
+              }) else { return nil }
+        editor.focusedPanel = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
+        return trackContextMenu(id: editor.timeline.tracks[index].id)
+    }
+
+    func trackContextMenu(id: String) -> NSMenu? {
+        guard let index = editor.timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let track = editor.timeline.tracks[index]
+        let label = editor.timelineTrackDisplayLabel(at: index)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, _ command: TrackCommand, enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: #selector(performTrackCommand(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = TrackCommandTarget(id: id, command: command)
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        if track.type == .audio {
+            add("\(track.muted ? "Unmute" : "Mute") Track \(label)", .mute(!track.muted))
+        } else {
+            add("\(track.hidden ? "Show" : "Hide") Track \(label)", .visibility(!track.hidden))
+        }
+        add("\(track.syncLocked ? "Unlock Sync for" : "Sync Lock") Track \(label)", .syncLock(!track.syncLocked))
+        menu.addItem(.separator())
+        let contents = track.clips.count == 1 ? "1 Clip" : "\(track.clips.count) Clips"
+        let removal = track.clips.isEmpty ? "Remove Empty Track \(label)"
+            : "Remove Track \(label) and \(contents)"
+        add(removal, .remove(track), enabled: editor.allowsTimelineEditChrome)
+        return menu
+    }
+
+    @objc private func performTrackCommand(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? TrackCommandTarget,
+              let index = editor.timeline.tracks.firstIndex(where: { $0.id == target.id }) else { return }
+        switch target.command {
+        case .mute(let value):
+            guard editor.timeline.tracks[index].muted != value else { return }
+            editor.toggleTrackMute(trackIndex: index)
+        case .visibility(let value):
+            guard editor.timeline.tracks[index].hidden != value else { return }
+            editor.toggleTrackHidden(trackIndex: index)
+        case .syncLock(let value):
+            guard editor.timeline.tracks[index].syncLocked != value else { return }
+            editor.toggleTrackSyncLock(trackIndex: index)
+        case .remove(let expected):
+            guard editor.allowsTimelineEditChrome else { return }
+            guard editor.timeline.tracks[index] == expected else {
+                editor.mediaPanelToast = MediaPanelToast(message: "Track changed. Open its menu again before removing it.")
+                return
+            }
+            editor.removeTrack(id: target.id)
+        }
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -206,14 +324,32 @@ final class TimelineHeaderView: NSView {
             }
         }
 
+        if editor.allowsTimelineEditChrome {
+            for (trackIndex, rect) in dragHandleRects where rect.contains(point) {
+                reorderDrag = (editor.timeline.tracks[trackIndex].id, editor.timeline)
+                NSCursor.closedHand.set()
+                return
+            }
+        }
+
         if let ti = hitTestResizeHandle(at: point) {
             resizeDrag = (ti, editor.timeline.tracks[ti].displayHeight)
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let drag = resizeDrag else { return }
         let point = convert(event.locationInWindow, from: nil)
+
+        if let drag = reorderDrag {
+            let geo = TimelineGeometry(editor: editor, bounds: bounds)
+            editor.reorderTrackLive(id: drag.id, to: geo.trackAt(y: Double(point.y)))
+            NSCursor.closedHand.set()
+            needsDisplay = true
+            requestCanvasRedraw?()
+            return
+        }
+
+        guard let drag = resizeDrag else { return }
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
         let trackTop = geo.trackY(at: drag.trackIndex)
         let newHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, point.y - trackTop))
@@ -224,6 +360,15 @@ final class TimelineHeaderView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let drag = reorderDrag {
+            reorderDrag = nil
+            _ = editor.commitTrackReorder(id: drag.id, before: drag.before)
+            NSCursor.arrow.set()
+            needsDisplay = true
+            requestCanvasRedraw?()
+            return
+        }
+
         guard let drag = resizeDrag else { return }
         let finalHeight = editor.timeline.tracks[drag.trackIndex].displayHeight
         if finalHeight != drag.originalHeight {
@@ -236,7 +381,10 @@ final class TimelineHeaderView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if hitTestResizeHandle(at: point) != nil {
+        if editor.allowsTimelineEditChrome,
+           dragHandleRects.values.contains(where: { $0.contains(point) }) {
+            NSCursor.openHand.set()
+        } else if hitTestResizeHandle(at: point) != nil {
             NSCursor.resizeUpDown.set()
         } else {
             NSCursor.arrow.set()
@@ -251,5 +399,14 @@ final class TimelineHeaderView: NSView {
             options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
             owner: self
         ))
+    }
+
+    @objc private func cancelTimelineInteraction(_ notification: Notification) {
+        guard let drag = reorderDrag else { return }
+        reorderDrag = nil
+        editor.timeline = drag.before
+        NSCursor.arrow.set()
+        needsDisplay = true
+        requestCanvasRedraw?()
     }
 }

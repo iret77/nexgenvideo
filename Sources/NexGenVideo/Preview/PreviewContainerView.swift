@@ -6,14 +6,13 @@ struct PreviewContainerView: View {
 
     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
-
-    @State private var hoveredTabId: String?
+    private var isSubtitle: Bool { editor.activePreviewTab.clipType == .subtitle }
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             // Theater hides the panel's own chrome — the floating theater transport takes over.
             if !editor.theaterActive {
-                tabBar
+                previewHeader
                     .padding(.horizontal, AppTheme.Spacing.sm)
                     .panelHeaderBar()
             }
@@ -28,6 +27,12 @@ struct PreviewContainerView: View {
                     if isImage {
                         imagePreview
                     }
+                    if isSubtitle {
+                        SubtitlePreviewView(url: activeMediaAsset?.url)
+                    }
+                    if let asset = activeMediaAsset, asset.type == .document {
+                        DocumentSourcePreview(url: asset.url)
+                    }
                     if let error = activeFailedError {
                         failedPreview(error: error)
                     }
@@ -37,10 +42,15 @@ struct PreviewContainerView: View {
                     if let overlay = offlineOverlay {
                         offlinePreview(assetId: overlay.assetId, path: overlay.path, isUnprocessable: overlay.isUnprocessable)
                     }
-                    if editor.cropEditingActive {
-                        CropOverlayView()
-                    } else {
-                        TransformOverlayView()
+                    if isTimeline {
+                        if editor.cropEditingActive {
+                            CropOverlayView()
+                        } else {
+                            TransformOverlayView()
+                        }
+                    }
+                    if isTimeline, let slipPreview = editor.slipPreview {
+                        SlipTwoUpView(state: slipPreview)
                     }
                 }
                 .frame(width: scaledWidth, height: scaledHeight)
@@ -60,7 +70,8 @@ struct PreviewContainerView: View {
             }
             .clipped()
             if !editor.theaterActive {
-                if !isImage {
+                if !isImage && !isSubtitle && editor.activePreviewTab.clipType != .document {
+
                     scrubBar
                     transportBar
                 } else {
@@ -78,28 +89,47 @@ struct PreviewContainerView: View {
         let fps = editor.timeline.fps
         let durationTimecode = formatTimecode(frame: duration, fps: fps)
 
-        return HStack(spacing: AppTheme.Spacing.sm) {
+        return ViewThatFits(in: .horizontal) {
+            transportRow(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode,
+                compact: false
+            )
+            .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+            transportRow(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode,
+                compact: true
+            )
+            .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+            narrowTransport(
+                duration: duration,
+                fps: fps,
+                durationTimecode: durationTimecode
+            )
+            .frame(height: AppTheme.ComponentSize.previewCompactToolbarHeight)
+        }
+    }
+
+    private func transportRow(
+        duration: Int,
+        fps: Int,
+        durationTimecode: String,
+        compact: Bool
+    ) -> some View {
+        HStack(spacing: compact ? AppTheme.Spacing.xs : AppTheme.Spacing.sm) {
             PreviewTimecodeText(
                 isTimeline: isTimeline,
                 fps: fps,
-                durationTimecode: durationTimecode
+                durationTimecode: durationTimecode,
+                showsDuration: !compact
             )
 
             Spacer()
 
-            HStack(spacing: AppTheme.Spacing.md) {
-                transportButton("backward.end.fill") { seekTo(0) }
-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
-                transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
-                    if isTimeline {
-                        editor.togglePlayback()
-                    } else {
-                        editor.toggleSourcePlayback()
-                    }
-                }
-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
-                transportButton("forward.end.fill") { seekTo(duration) }
-            }
+            transportControls(duration: duration, compact: compact)
 
             Spacer()
 
@@ -108,8 +138,66 @@ struct PreviewContainerView: View {
             }
             settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
         }
-        .padding(.horizontal, AppTheme.Spacing.lg)
-        .frame(height: AppTheme.ComponentSize.previewToolbarHeight)
+        .padding(.horizontal, compact ? AppTheme.Spacing.sm : AppTheme.Spacing.lg)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.transportBar")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func narrowTransport(
+        duration: Int,
+        fps: Int,
+        durationTimecode: String
+    ) -> some View {
+        VStack(spacing: AppTheme.Spacing.xxs) {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                PreviewTimecodeText(
+                    isTimeline: isTimeline,
+                    fps: fps,
+                    durationTimecode: durationTimecode,
+                    showsDuration: false
+                )
+                Spacer(minLength: AppTheme.Spacing.xs)
+                if isTimeline || editor.activePreviewTab.clipType == .video {
+                    captureFrameButton
+                }
+                settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
+            }
+            transportControls(duration: duration, compact: false)
+        }
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.transportBar")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func transportControls(duration: Int, compact: Bool) -> some View {
+        HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
+            transportButton("backward.end.fill") { seekTo(0) }
+            if !compact {
+                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+            }
+            transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
+                if isTimeline {
+                    editor.togglePlayback()
+                } else {
+                    editor.toggleSourcePlayback()
+                }
+            }
+            if !compact {
+                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+            }
+            transportButton("forward.end.fill") { seekTo(duration) }
+        }
     }
 
     // MARK: - Image settings bar
@@ -183,6 +271,13 @@ struct PreviewContainerView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.zoom")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
         .hoverHighlight()
         .help(help)
     }
@@ -448,127 +543,54 @@ struct PreviewContainerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Tab bar
-
-    private var tabBar: some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            HStack(spacing: AppTheme.Spacing.none) {
-                navButton("chevron.left", enabled: editor.canGoBackPreviewTab, help: "Back") {
-                    editor.goBackPreviewTab()
-                }
-                navButton("chevron.right", enabled: editor.canGoForwardPreviewTab, help: "Forward") {
-                    editor.goForwardPreviewTab()
-                }
-            }
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: AppTheme.Spacing.md) {
-                        ForEach(editor.previewTabs) { tab in
-                            tabItem(for: tab).id(tab.id)
-                        }
-                    }
-                    .padding(.horizontal, AppTheme.Spacing.sm)
-                }
-                .mouseWheelScrollsHorizontally()
-                .onChange(of: editor.activePreviewTabId) { _, newId in
-                    withAnimation(.easeOut(duration: AppTheme.Anim.transition)) {
-                        proxy.scrollTo(newId, anchor: .center)
-                    }
-                }
-            }
-
-            overflowMenu
-
-            UpdateBadgeView()
-
-            ExportButton()
-        }
-    }
-
-    private func tabItem(for tab: PreviewTab) -> some View {
-        let isActive = tab.id == editor.activePreviewTabId
-        let isHovered = hoveredTabId == tab.id
-        return HStack(spacing: AppTheme.Spacing.xs) {
-            Text(tab.displayName)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .semibold : .medium)
-                .foregroundStyle(isActive || isHovered ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                .lineLimit(1)
-
-            if tab.isCloseable {
-                closeButton(tabId: tab.id)
-            }
-        }
-        .padding(.horizontal, AppTheme.Spacing.xs)
-        .workspaceHeaderContent()
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(isActive ? tab.underlineColor : AppTheme.Background.clearColor)
-                .frame(height: AppTheme.BorderWidth.medium)
-                .padding(.bottom, AppTheme.Spacing.xs)
-        }
-        .fixedSize()
-        .contentShape(Rectangle())
-        .onTapGesture {
-            editor.selectPreviewTab(id: tab.id)
-        }
-        .onHover { hovering in
-            if hovering {
-                hoveredTabId = tab.id
-            } else if hoveredTabId == tab.id {
-                hoveredTabId = nil
-            }
-        }
-        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isActive)
-    }
-
-    private func navButton(_ systemName: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
+    private var previewHeader: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(isTimeline ? "Film Preview" : "Media Preview")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(enabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
-                .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.md)
-                .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
+            if let asset = activeMediaAsset {
+                Text(asset.userFacingFilename)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .lineLimit(1)
+                    .help(asset.userFacingFilename)
+            }
+            if isTimeline, editor.selectedClipIds.count == 1,
+               let id = editor.selectedClipIds.first, let clip = editor.clipFor(id: id) {
+                Text(editor.clipDisplayLabel(for: clip))
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Text(isTimeline ? "Timeline Clip" : "Original Media")
+                .interfaceFont(size: AppTheme.Typography.metadata)
+                .foregroundStyle(AppTheme.Text.mutedColor)
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .help(help)
+        .contextMenu {
+            Button("Previous Preview") { editor.goBackPreviewTab() }
+                .disabled(!editor.canGoBackPreviewTab)
+            Button("Next Preview") { editor.goForwardPreviewTab() }
+                .disabled(!editor.canGoForwardPreviewTab)
+            Divider() // app-theme: native-menu-divider
+            ForEach(editor.previewTabs.filter(\.isCloseable)) { tab in
+                Button(sourceHistoryName(tab)) { editor.selectPreviewTab(id: tab.id) }
+            }
+            if !isTimeline {
+                Divider() // app-theme: native-menu-divider
+                Button("Close Source") { editor.closePreviewTab(id: editor.activePreviewTabId) }
+            }
+            if editor.previewTabs.contains(where: \.isCloseable) {
+                Button("Clear Source History") { editor.closeAllPreviewTabs() }
+            }
+        }
     }
 
-    private var overflowMenu: some View {
-        Menu {
-            Button("Close All Tabs") {
-                withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
-                    editor.closeAllPreviewTabs()
-                }
-            }
-            .disabled(editor.previewTabs.count <= 1)
-        } label: {
-            Image(systemName: "ellipsis")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+    private func sourceHistoryName(_ tab: PreviewTab) -> String {
+        if case .mediaAsset(let id, _, _) = tab,
+           let asset = editor.mediaAssets.first(where: { $0.id == id }) {
+            return asset.userFacingFilename
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-        .help("More")
-    }
-
-    private func closeButton(tabId: String) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
-                editor.closePreviewTab(id: tabId)
-            }
-        } label: {
-            Image(systemName: "xmark")
-                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.bold)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
-                .hoverHighlight(cornerRadius: AppTheme.Radius.smMd)
-        }
-        .buttonStyle(.plain)
+        return tab.displayName
     }
 
     // MARK: - Scrub bar
@@ -736,19 +758,31 @@ private struct PreviewTimecodeText: View {
     let isTimeline: Bool
     let fps: Int
     let durationTimecode: String
+    let showsDuration: Bool
 
     var body: some View {
         let frame = isTimeline ? editor.playheadState.timelineFrame : editor.playheadState.sourceFrame
         HStack(spacing: AppTheme.Spacing.none) {
             Text(formatTimecode(frame: frame, fps: fps))
                 .foregroundStyle(AppTheme.Accent.timecodeColor)
-            Text(" / ")
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Text(durationTimecode)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
+            if showsDuration {
+                Text(" / ")
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                Text(durationTimecode)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
         }
         .monospacedDigit()
         .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "preview.timecode")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 

@@ -73,6 +73,7 @@ final class MediaAsset: Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String?
+    var origin: MediaAssetOrigin?
 
     /// Returns the cached URL if it's set AND not expired; else nil.
     var freshRemoteURL: String? {
@@ -101,6 +102,11 @@ final class MediaAsset: Identifiable {
         case .rendering: "Rendering..."
         default: "Generating..."
         }
+    }
+
+    var libraryDisplayName: String {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty || MediaFilename.isContentAddressed(title) ? userFacingFilename : title
     }
 
     var userFacingFilename: String {
@@ -141,6 +147,7 @@ final class MediaAsset: Identifiable {
         self.generationInput = generationInput
         self.hasAudio = (type == .video)
         self.originalFilename = MediaFilename.normalized(originalFilename)
+        self.origin = nil
     }
 
     /// Reconstruct from a manifest entry + resolved URL.
@@ -161,6 +168,7 @@ final class MediaAsset: Identifiable {
         self.folderId = entry.folderId
         self.cachedRemoteURL = entry.cachedRemoteURL
         self.cachedRemoteURLExpiresAt = entry.cachedRemoteURLExpiresAt
+        self.origin = entry.origin
     }
 
     /// Produce a serializable manifest entry from this asset.
@@ -187,6 +195,7 @@ final class MediaAsset: Identifiable {
             cachedRemoteURL: fresh,
             cachedRemoteURLExpiresAt: fresh == nil ? nil : cachedRemoteURLExpiresAt,
             originalFilename: originalFilename,
+            origin: origin,
         )
     }
 
@@ -214,6 +223,10 @@ final class MediaAsset: Identifiable {
             if let cg = info.thumbnail {
                 thumbnail = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
             }
+            return
+        }
+
+        if type == .subtitle {
             return
         }
 

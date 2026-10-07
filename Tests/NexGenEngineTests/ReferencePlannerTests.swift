@@ -27,6 +27,9 @@ struct ReferencePlannerTests {
         #expect(ImageModelCaps.maxReferenceImages(.openaiGptImage2) == 10)
         #expect(ImageModelCaps.maxReferenceImages(.runwayGen4Image) == 3)
         #expect(ImageModelCaps.maxReferenceImages(.falGptImage1) == 4)
+        #expect(ImageModelCaps.maxReferenceImages(.falGptImage25FlareEdit) == 16)
+        #expect(ImageModelCaps.maxReferenceImages(.falGptImage25SunburstEdit) == 16)
+        #expect(ImageModelCaps.maxReferenceImages(.falGptImage25Flare) == nil)
         #expect(ImageModelCaps.maxReferenceImages(.googleImagen4Ultra) == nil)   // supports_refs == false → fallback
         #expect(ImageModelCaps.maxReferenceImages(.other) == nil)
     }

@@ -6,6 +6,37 @@ import MCP
 
 @Suite("MCP generation argument mapping")
 struct MCPGenerationArgumentsTests {
+    @Test func upscaleTargetAndFactorMapThroughProviderSchema() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "source_url": .object(["type": .string("string")]),
+                "resolution": .object(["type": .string("string")]),
+                "scale_factor": .object(["type": .string("integer")]),
+            ]),
+            "required": .array([
+                .string("source_url"),
+                .string("resolution"),
+                .string("scale_factor"),
+            ]),
+        ])
+        let params = BackendGenerationParams.upscale(UpscaleGenerationParams(
+            sourceURL: "media-1",
+            durationSeconds: 12,
+            targetResolution: "8K",
+            scaleFactor: 4
+        ))
+
+        let arguments = try MCPGenerationArguments.make(
+            for: params,
+            model: nil,
+            schema: schema
+        )
+
+        #expect(arguments["source_url"] == .string("media-1"))
+        #expect(arguments["resolution"] == .string("8K"))
+        #expect(arguments["scale_factor"] == .int(4))
+    }
+
     @Test func higgsfieldNestedParamsReceiveCompiledRequest() throws {
         let schema: Value = .object([
             "type": .string("object"),
@@ -620,5 +651,38 @@ struct MCPGenerationArgumentsTests {
     @Test func providerToolErrorPreservesItsMessage() {
         let error = MCPProviderClient.ClientError.toolFailed("Invalid params: prompt is required")
         #expect(error.localizedDescription == "Invalid params: prompt is required")
+    }
+
+    @Test func malformedProviderArrayBoundsAreRejectedWithoutConversion() {
+        let schema: Value = .object([
+            "properties": .object([
+                "model": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "image_urls": .object([
+                    "type": .string("array"),
+                    "maxItems": .double(.infinity),
+                    "items": .object(["type": .string("string")]),
+                ]),
+            ]),
+            "required": .array([
+                .string("model"), .string("prompt"), .string("image_urls"),
+            ]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: ["media-1"],
+            numImages: 1
+        ))
+
+        #expect(throws: MCPGenerationArguments.MappingError.self) {
+            try MCPGenerationArguments.make(
+                for: params,
+                model: "image-model",
+                schema: schema
+            )
+        }
     }
 }

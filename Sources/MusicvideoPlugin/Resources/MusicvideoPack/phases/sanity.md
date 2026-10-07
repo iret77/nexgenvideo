@@ -136,9 +136,8 @@ loaded, or the model missing): tell the user — the keys are bound in
 the host (Keychain / Settings), never via a shell command — and do not
 let the frame phase start until generation is available.
 
-This availability check is the seam where the old reference-planner
-pre-flight lived: ref budgeting itself is now folded into the engine
-`run_sanity`. Optional alternate views may be omitted to fit the selected
+Reference budgeting runs inside `run_sanity`. Optional alternate views may
+be omitted to fit the selected
 offering. If `REF_BUDGET_EXCEEDED` fires, at least one required identity,
 location, prop, explicit-reference, or lighting job cannot fit; select a
 capable offering or revise the owning artifact before attempting a render.

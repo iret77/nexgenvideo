@@ -2,6 +2,28 @@ import Foundation
 
 extension EditorViewModel {
 
+    func activateFolderContext(_ id: String) {
+        guard folder(id: id) != nil else { return }
+        focusedPanel = .media
+        if !selectedFolderIds.contains(id) {
+            selectedFolderIds = [id]
+            selectedMediaAssetIds.removeAll()
+        }
+    }
+
+    @discardableResult
+    func deleteMediaSelection() -> Bool {
+        let folderIDs = selectedFolderIds.intersection(Set(folders.map(\.id)))
+        let assetIDs = selectedMediaAssetIds.intersection(Set(mediaAssets.map(\.id)))
+        guard !folderIDs.isEmpty || !assetIDs.isEmpty else { return false }
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+        if !folderIDs.isEmpty { deleteFolders(ids: folderIDs) }
+        if !assetIDs.isEmpty { deleteMediaAssets(ids: assetIDs) }
+        undoManager?.setActionName("Delete Media")
+        return true
+    }
+
     private typealias ParentChange = (id: String, newValue: String?)
 
     // MARK: - Reads
@@ -184,7 +206,10 @@ extension EditorViewModel {
             availableMediaPaths: Set(mediaAssets.compactMap { asset in
                 let path = asset.url.standardizedFileURL.path
                 return FileManager.default.fileExists(atPath: path) ? path : nil
-            })
+            }),
+            previewTabHistory: previewTabHistory,
+            previewTabHistoryIndex: previewTabHistoryIndex,
+            sourcePreviewStates: sourcePreviewStates
         )
     }
 
@@ -207,6 +232,10 @@ extension EditorViewModel {
         previewTabs = snapshot.previewTabs
         activePreviewTabId = snapshot.activePreviewTabId
         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
+        previewTabHistory = snapshot.previewTabHistory
+        previewTabHistoryIndex = snapshot.previewTabHistoryIndex
+        sourcePreviewStates = snapshot.sourcePreviewStates
+        inspectedObject = selectionInspectedObject
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()
@@ -224,6 +253,9 @@ struct MediaLibraryUndoSnapshot {
     let activePreviewTabId: String
     let sourcePlayheadFrame: Int
     let availableMediaPaths: Set<String>
+    let previewTabHistory: [String]
+    let previewTabHistoryIndex: Int
+    let sourcePreviewStates: [String: SourcePreviewState]
 }
 
 // Cached lookup tables for folder path and descendant traversal.

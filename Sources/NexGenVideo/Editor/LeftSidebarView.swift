@@ -6,10 +6,10 @@ import SwiftUI
 struct LeftSidebarView: View {
     @Environment(EditorViewModel.self) private var editor
 
-    /// In Produce the cockpit is the center work surface, so the Project tab disappears here — a focus
+    /// In Production the cockpit is the center work surface, so the Project tab disappears here — a focus
     /// may hide a canonical element, never duplicate it (docs/UI_UX_CONCEPT.md §2.1).
     private var visibleTabs: [EditorViewModel.LeftSidebarTab] {
-        editor.workspaceFocus == .produce ? [.media, .agent] : EditorViewModel.LeftSidebarTab.allCases
+        editor.workspaceFocus == .production ? [.media, .agent] : EditorViewModel.LeftSidebarTab.allCases
     }
 
     /// Defensive: if the stored tab is hidden in this focus, fall back to Media.
@@ -23,9 +23,12 @@ struct LeftSidebarView: View {
             if let progress = editor.mediaImportProgress {
                 MediaImportProgressBanner(progress: progress)
             }
+            if let progress = editor.audioExtractionProgress {
+                AudioExtractionProgressBanner(progress: progress)
+            }
             Group {
                 switch effectiveTab {
-                case .media: MediaPanelView()
+                case .media: MediaPanelView(workspace: editor.workspaceFocus)
                 case .project: ProjectCockpitView()
                 case .agent: AgentPanelView()
                 }

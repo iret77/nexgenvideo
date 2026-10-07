@@ -41,6 +41,11 @@ enum FalUpscaleKind: Sendable {
     case video           // `video_url` in → `video.url` out
 }
 
+enum FalUpscaleScaleField: Sendable {
+    case upscaleFactor
+    case desiredIncrease
+}
+
 struct FalModel: Sendable {
     var entry: CatalogEntry
     var imageSize: FalImageSizeMode = .imageSizeEnum
@@ -57,6 +62,10 @@ struct FalModel: Sendable {
     var upscaleKind: FalUpscaleKind? = nil
     var videoFirstLastFrames: Bool = false
     var productionQualityTargetIDs: [String] = []
+    var imageUsesCustomSize = false
+    var imageSendsOutputOptions = false
+    var imageSendsMask = false
+    var upscaleScaleField: FalUpscaleScaleField = .upscaleFactor
 }
 
 enum FalModelRegistry {
@@ -89,6 +98,23 @@ enum FalModelRegistry {
 
     static func model(for id: String) -> FalModel? { byId[id] }
 
+    static func gptImage25VerifiedGenerationPriceUSD(
+        modelID: String,
+        resolution: String?,
+        quality: String?,
+        outputCount: Int,
+        promptUTF8ByteCount: Int = 0
+    ) -> Double? {
+        guard modelID.contains("gpt-image-2.5"),
+              modelID.hasSuffix("/text-to-image"),
+              let resolution, let quality,
+              let price = gptImage25GeneratePrices["\(resolution)|\(quality)"] else {
+            return nil
+        }
+        let textInputCeiling = Double(max(0, promptUTF8ByteCount)) * 5.0 / 1_000_000.0
+        return price * Double(max(1, outputCount)) + textInputCeiling
+    }
+
     // MARK: - Image (text-to-image)
 
     private static let imageAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
@@ -103,8 +129,48 @@ enum FalModelRegistry {
     private static let nanoBananaTextAspects = [
         "1:1", "21:9", "16:9", "3:2", "4:3", "5:4", "4:5", "3:4", "2:3", "9:16",
     ]
+    private static let gptImage25Aspects = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "auto"]
+    private static let gptImage25Resolutions = [
+        "auto", "1024x768", "768x1024", "1024x1024", "1024x1536", "1536x1024",
+        "1920x1080", "1080x1920", "2560x1440", "1440x2560", "3840x2160", "2160x3840",
+    ]
+    private static let gptImage25Qualities = ["auto", "low", "medium", "high", "xhigh", "max"]
+    private static let gptImage25Backgrounds = ["auto", "transparent", "opaque"]
+    private static let gptImage25OutputFormats = ["png", "jpeg", "webp"]
+    private static let gptImage25GeneratePrices: [String: Double] = [
+        "1024x768|low": 0.0041, "1024x768|medium": 0.0091, "1024x768|high": 0.0362,
+        "1024x768|xhigh": 0.06420, "1024x768|max": 0.14445,
+        "1024x1024|low": 0.0060, "1024x1024|medium": 0.0133, "1024x1024|high": 0.0528,
+        "1024x1024|xhigh": 0.09366, "1024x1024|max": 0.21072,
+        "1024x1536|low": 0.0048, "1024x1536|medium": 0.0104, "1024x1536|high": 0.0413,
+        "1024x1536|xhigh": 0.07377, "1024x1536|max": 0.16464,
+        "1920x1080|low": 0.0045, "1920x1080|medium": 0.0096, "1920x1080|high": 0.0395,
+        "1920x1080|xhigh": 0.07041, "1920x1080|max": 0.15840,
+        "2560x1440|low": 0.0062, "2560x1440|medium": 0.0144, "2560x1440|high": 0.0554,
+        "2560x1440|xhigh": 0.09828, "2560x1440|max": 0.22110,
+        "3840x2160|low": 0.0112, "3840x2160|medium": 0.0260, "3840x2160|high": 0.1002,
+        "3840x2160|xhigh": 0.17790, "3840x2160|max": 0.40026,
+    ]
 
     private static let imageModels: [FalModel] = [
+        gptImage25(
+            "fal-ai/gpt-image-2.5/flare/text-to-image",
+            "GPT Image 2.5 Flare"
+        ),
+        gptImage25(
+            "fal-ai/gpt-image-2.5/flare/edit",
+            "GPT Image 2.5 Flare (edit)",
+            edit: true
+        ),
+        gptImage25(
+            "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "GPT Image 2.5 Sunburst"
+        ),
+        gptImage25(
+            "fal-ai/gpt-image-2.5/sunburst/edit",
+            "GPT Image 2.5 Sunburst (edit)",
+            edit: true
+        ),
         image("fal-ai/flux/schnell", "FLUX.1 [schnell]"),
         image("fal-ai/flux/dev", "FLUX.1 [dev]"),
         image("fal-ai/flux-pro/v1.1", "FLUX1.1 [pro]"),
@@ -127,10 +193,6 @@ enum FalModelRegistry {
             "fal-ai/nano-banana-pro", "Nano Banana Pro",
             size: .aspectRatio, aspectRatios: nanoBananaProAspects,
             resolutions: ["1K", "2K", "4K"]
-        ),
-        image(
-            "fal-ai/gpt-image-2", "GPT Image 2",
-            qualities: ["auto", "low", "medium", "high"]
         ),
         // Image-to-image / edit (needs a reference image — uses the fal storage upload).
         imageEdit(
@@ -157,12 +219,77 @@ enum FalModelRegistry {
             aspectRatios: nanoBananaProAspects,
             resolutions: ["1K", "2K", "4K"]
         ),
-        imageEdit(
-            "fal-ai/gpt-image-2/edit", "GPT Image 2 (edit)",
-            size: .imageSizeEnum, ref: .array, maxReferences: 16,
-            qualities: ["auto", "low", "medium", "high"]
-        ),
     ]
+
+    private static func gptImage25(
+        _ id: String,
+        _ name: String,
+        edit: Bool = false
+    ) -> FalModel {
+        let sunburst = id.contains("sunburst")
+        let strengths: [String]
+        let bestFor: String
+        switch (sunburst, edit) {
+        case (false, false):
+            strengths = ["Fast image generation", "High-resolution output", "Transparent output"]
+            bestFor = "Default sketches, storyboards, Bible sheets, and frames"
+        case (false, true):
+            strengths = ["Up to 16 references", "Mask-guided edits", "Transparent output"]
+            bestFor = "Default reference-guided Bible sheets and frame edits"
+        case (true, false):
+            strengths = ["Precise instruction following", "Identity preservation", "High-resolution output"]
+            bestFor = "Precision-critical keyframes and identity-sensitive images"
+        case (true, true):
+            strengths = ["Precise masked edits", "Up to 16 references", "Identity preservation"]
+            bestFor = "Precision-critical reference edits and hero keyframes"
+        }
+        return FalModel(
+            entry: CatalogEntry(
+                id: id,
+                kind: .image,
+                displayName: name,
+                allowedEndpoints: [id],
+                responseShape: .images,
+                uiCapabilities: .image(ImageCaps(
+                    resolutions: gptImage25Resolutions,
+                    aspectRatios: gptImage25Aspects,
+                    qualities: gptImage25Qualities,
+                    supportsImageReference: edit,
+                    requiresImageReference: edit,
+                    maxReferenceImages: edit ? 16 : 0,
+                    maxImages: 10,
+                    backgrounds: gptImage25Backgrounds,
+                    outputFormats: gptImage25OutputFormats,
+                    defaultOutputFormat: "png",
+                    supportsOutputCompression: true,
+                    supportsMask: edit,
+                    customSize: ImageCustomSizeCaps(
+                        dimensionMultiple: 16,
+                        maxEdge: 3_840,
+                        minPixels: 655_360,
+                        maxPixels: 8_294_400,
+                        minAspectRatio: 1.0 / 3.0,
+                        maxAspectRatio: 3.0
+                    )
+                )),
+                qualities: gptImage25Qualities,
+                card: ModelCard(
+                    strengths: strengths,
+                    weaknesses: nil,
+                    bestFor: bestFor,
+                    rank: sunburst ? 2 : 1,
+                    tags: ["GPT Image 2.5", edit ? "edit" : "text-to-image"]
+                )
+            ),
+            imageSize: .imageSizeEnum,
+            imageRef: edit ? .array : .none,
+            imageSendsQuality: true,
+            productionQualityTargetIDs: gptImage25Qualities,
+            imageUsesCustomSize: true,
+            imageSendsOutputOptions: true,
+            imageSendsMask: edit
+        )
+    }
 
     private static func image(
         _ id: String, _ name: String,
@@ -475,19 +602,68 @@ enum FalModelRegistry {
 
     private static let upscaleModels: [FalModel] = [
         upscale("fal-ai/clarity-upscaler", "Clarity Upscaler", kind: .image, speed: "Medium", p75: 30),
-        upscale("fal-ai/topaz/upscale/video", "Topaz Video Upscale", kind: .video, speed: "Slow", p75: 120),
+        upscale(
+            "fal-ai/topaz/upscale/video",
+            "Topaz Video Upscale",
+            kind: .video,
+            speed: "Slow",
+            p75: 120,
+            maxInputShortEdgeExclusive: 2_160
+        ),
+        upscale(
+            "bria/video/increase-resolution",
+            "Bria Video Upscale",
+            kind: .video,
+            speed: "Medium",
+            p75: 120,
+            creditsPerSecond: 14,
+            targets: [
+                UpscaleTargetCaps(
+                    resolution: "8K",
+                    longEdge: 7_680,
+                    shortEdge: 4_320,
+                    scaleFactors: [2, 4]
+                )
+            ],
+            maxDurationSecondsExclusive: 30,
+            maxInputLongEdgeExclusive: 7_680,
+            maxInputShortEdgeExclusive: 4_320,
+            scaleField: .desiredIncrease
+        ),
     ]
 
-    private static func upscale(_ id: String, _ name: String, kind: FalUpscaleKind, speed: String, p75: Int) -> FalModel {
+    private static func upscale(
+        _ id: String,
+        _ name: String,
+        kind: FalUpscaleKind,
+        speed: String,
+        p75: Int,
+        creditsPerSecond: Double? = nil,
+        targets: [UpscaleTargetCaps] = [],
+        maxDurationSecondsExclusive: Int? = nil,
+        maxInputLongEdgeExclusive: Int? = nil,
+        maxInputShortEdgeExclusive: Int? = nil,
+        scaleField: FalUpscaleScaleField = .upscaleFactor
+    ) -> FalModel {
         let shape: CatalogEntry.ResponseShape = (kind == .video) ? .video : .upscaledImage
         let types = (kind == .video) ? ["video"] : ["image"]
         return FalModel(
             entry: CatalogEntry(
                 id: id, kind: .upscale, displayName: name,
                 allowedEndpoints: [id], responseShape: shape,
-                uiCapabilities: .upscale(UpscaleCaps(speed: speed, p75DurationSeconds: p75, supportedTypes: types))
+                uiCapabilities: .upscale(UpscaleCaps(
+                    speed: speed,
+                    p75DurationSeconds: p75,
+                    supportedTypes: types,
+                    targets: targets,
+                    maxDurationSecondsExclusive: maxDurationSecondsExclusive,
+                    maxInputLongEdgeExclusive: maxInputLongEdgeExclusive,
+                    maxInputShortEdgeExclusive: maxInputShortEdgeExclusive
+                )),
+                creditsPerSecondUpscale: creditsPerSecond
             ),
-            upscaleKind: kind
+            upscaleKind: kind,
+            upscaleScaleField: scaleField
         )
     }
 }

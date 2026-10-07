@@ -204,8 +204,8 @@
   }
   .project-card {
     position: relative;
-    width: 150px;
-    height: 120px;
+    width: 225px;
+    height: 180px;
     overflow: hidden;
     border: var(--hairline) solid rgba(255, 255, 255, .08);
     border-radius: var(--radius-md-lg);
@@ -214,7 +214,7 @@
   .project-plus {
     display: grid;
     place-items: center;
-    height: 86px;
+    height: 146px;
     color: var(--text-muted);
     font-size: 36px;
     font-weight: 200;
@@ -303,6 +303,9 @@
       duplicate pack lifecycle logic.</li>
     <li>Settings’ right-aligned Format Packs attention icon remains a compact secondary route, not
       a substitute for this launch-critical action.</li>
+    <li>Home project cards are 225 × 180 points, 50 percent larger in both dimensions than the
+      previous 150 × 120 point cards. Existing title, metadata, format-label, and symbol type sizes
+      remain unchanged.</li>
   </ul>
 
   <h2>Acceptance criteria</h2>
@@ -313,6 +316,8 @@
     <li>Pack update available renders below the title with a visible “Open Format Packs…” button.</li>
     <li>No-update Home matches the existing hierarchy without a blank notice slot.</li>
     <li>Normal and minimum Home widths preserve title, copy, and action without collision.</li>
+    <li>The larger project cards preserve the 5:4 aspect ratio and existing content alignment while
+      giving the thumbnail more visual weight; card contents are not scaled with the container.</li>
   </ul>
 </section>
 

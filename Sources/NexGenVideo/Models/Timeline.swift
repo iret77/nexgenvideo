@@ -12,6 +12,7 @@ struct Timeline: Codable, Sendable, Equatable {
     var height: Int = 1080
     var settingsConfigured: Bool = false
     var tracks: [Track] = []
+    var markers: [TimelineMarker] = []
 
     var totalFrames: Int {
         var maxFrame = 0
@@ -20,6 +21,151 @@ struct Timeline: Codable, Sendable, Equatable {
         }
         return maxFrame
     }
+
+    // Canvas and playhead range only; playback, composition, and export use `totalFrames`.
+    var editingExtentFrames: Int {
+        var maxFrame = totalFrames
+        for marker in markers {
+            let pointEnd = marker.startFrame.addingReportingOverflow(1)
+            maxFrame = max(maxFrame, marker.durationFrames == 0
+                ? (pointEnd.overflow ? Int.max : pointEnd.partialValue)
+                : marker.endFrame)
+        }
+        return maxFrame
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fps, width, height, settingsConfigured, tracks, markers
+    }
+}
+
+extension Timeline {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            fps: try c.decode(Int.self, forKey: .fps),
+            width: try c.decode(Int.self, forKey: .width),
+            height: try c.decode(Int.self, forKey: .height),
+            settingsConfigured: try c.decode(Bool.self, forKey: .settingsConfigured),
+            tracks: try c.decode([Track].self, forKey: .tracks),
+            markers: try c.decodeIfPresent([TimelineMarker].self, forKey: .markers) ?? []
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(fps, forKey: .fps)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        try c.encode(settingsConfigured, forKey: .settingsConfigured)
+        try c.encode(tracks, forKey: .tracks)
+        try c.encode(markers, forKey: .markers)
+    }
+}
+
+struct TimelineMarker: Codable, Sendable, Equatable, Identifiable {
+    static let maxTitleLength = 120
+    static let maxNoteLength = 4_000
+    static let maxFrame = Int(Int32.max)
+
+    enum Kind: String, Codable, Sendable, CaseIterable {
+        case note
+        case review
+        case shot
+        case chapter
+        case cue
+    }
+
+    var id: String = UUID().uuidString
+    var startFrame: Int
+    var durationFrames: Int = 0
+    var title: String
+    var note: String = ""
+    var type: Kind?
+    var color: TextStyle.RGBA?
+
+    var endFrame: Int {
+        let result = startFrame.addingReportingOverflow(durationFrames)
+        return result.overflow ? Int.max : result.partialValue
+    }
+
+    func intersects(_ range: Range<Int>) -> Bool {
+        durationFrames == 0
+            ? range.contains(startFrame)
+            : startFrame < range.upperBound && endFrame > range.lowerBound
+    }
+
+    mutating func rescaleFrames(by scale: Double) {
+        let scaledStart = Int((Double(startFrame) * scale).rounded())
+        let scaledEnd = Int((Double(endFrame) * scale).rounded())
+        startFrame = max(0, scaledStart)
+        durationFrames = durationFrames == 0 ? 0 : max(1, scaledEnd - startFrame)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, startFrame, durationFrames, title, note, type, color
+        case legacyName = "name"
+        case legacyComment = "comment"
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        startFrame: Int,
+        durationFrames: Int = 0,
+        title: String,
+        note: String = "",
+        type: Kind? = nil,
+        color: TextStyle.RGBA? = nil
+    ) {
+        self.id = id
+        self.startFrame = startFrame
+        self.durationFrames = durationFrames
+        self.title = title
+        self.note = note
+        self.type = type
+        self.color = color
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let title = (try? c.decode(String.self, forKey: .title))
+            ?? (try? c.decode(String.self, forKey: .legacyName))
+            ?? "Marker"
+        let startFrame = min(max((try? c.decode(Int.self, forKey: .startFrame)) ?? 0, 0), Self.maxFrame)
+        let durationFrames = min(
+            max((try? c.decode(Int.self, forKey: .durationFrames)) ?? 0, 0),
+            Self.maxFrame - startFrame
+        )
+        self.init(
+            id: (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString,
+            startFrame: startFrame,
+            durationFrames: durationFrames,
+            title: title,
+            note: (try? c.decode(String.self, forKey: .note))
+                ?? (try? c.decode(String.self, forKey: .legacyComment))
+                ?? "",
+            type: try? c.decode(Kind.self, forKey: .type),
+            color: try? c.decode(TextStyle.RGBA.self, forKey: .color)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(startFrame, forKey: .startFrame)
+        try c.encode(durationFrames, forKey: .durationFrames)
+        try c.encode(title, forKey: .title)
+        try c.encode(note, forKey: .note)
+        try c.encodeIfPresent(type, forKey: .type)
+        try c.encodeIfPresent(color, forKey: .color)
+    }
+}
+
+struct CaptionProvenance: Codable, Sendable, Equatable {
+    let sourceFilename: String
+    let sourceFormat: String
+    let languageIdentifier: String?
+    let sourceAssetID: String?
 }
 
 struct Track: Codable, Sendable, Equatable, Identifiable {
@@ -93,6 +239,7 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
     var crop: Crop = Crop()
     var linkGroupId: String?
     var captionGroupId: String?
+    var captionProvenance: CaptionProvenance?
 
     // Text clips only.
     var textContent: String?
@@ -107,15 +254,16 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
     var volumeTrack: KeyframeTrack<Double>?
 
     var effects: [Effect]?
+    var compositing: ClipCompositingV1?
 
     private enum CodingKeys: String, CodingKey {
         case id, mediaRef, mediaType, sourceClipType, startFrame, durationFrames
         case trimStartFrame, trimEndFrame, speed, volume
         case fadeInFrames, fadeOutFrames, fadeInInterpolation, fadeOutInterpolation
         case opacity, transform, crop
-        case linkGroupId, captionGroupId, textContent, textStyle
+        case linkGroupId, captionGroupId, captionProvenance, textContent, textStyle
         case opacityTrack, positionTrack, scaleTrack, rotationTrack, cropTrack, volumeTrack
-        case effects
+        case effects, compositing
     }
 
     /// Frame where this clip ends on the timeline
@@ -352,6 +500,7 @@ extension Clip {
             crop: (try? c.decode(Crop.self, forKey: .crop)) ?? Crop(),
             linkGroupId: try? c.decode(String.self, forKey: .linkGroupId),
             captionGroupId: try? c.decode(String.self, forKey: .captionGroupId),
+            captionProvenance: try? c.decode(CaptionProvenance.self, forKey: .captionProvenance),
             textContent: try? c.decode(String.self, forKey: .textContent),
             textStyle: try? c.decode(TextStyle.self, forKey: .textStyle),
             opacityTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .opacityTrack),
@@ -360,7 +509,8 @@ extension Clip {
             rotationTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .rotationTrack),
             cropTrack: try? c.decode(KeyframeTrack<Crop>.self, forKey: .cropTrack),
             volumeTrack: try? c.decode(KeyframeTrack<Double>.self, forKey: .volumeTrack),
-            effects: try? c.decode([Effect].self, forKey: .effects)
+            effects: try? c.decode([Effect].self, forKey: .effects),
+            compositing: try c.decodeIfPresent(ClipCompositingV1.self, forKey: .compositing)
         )
     }
 }
@@ -503,6 +653,9 @@ struct Transform: Codable, Sendable, Equatable {
 
 /// Per-clip crop as edge insets in normalized (0–1) source coordinates.
 struct Crop: Codable, Sendable, Equatable {
+    static let minimumVisibleFraction = 0.05
+    static let coordinateSpace = "displayOrientedSource"
+
     var left: Double = 0
     var top: Double = 0
     var right: Double = 0
@@ -511,6 +664,12 @@ struct Crop: Codable, Sendable, Equatable {
     var isIdentity: Bool { left == 0 && top == 0 && right == 0 && bottom == 0 }
     var visibleWidthFraction: Double { max(0, 1 - left - right) }
     var visibleHeightFraction: Double { max(0, 1 - top - bottom) }
+
+    var isValid: Bool {
+        [left, top, right, bottom].allSatisfy { $0.isFinite && (0...1).contains($0) }
+            && visibleWidthFraction + .ulpOfOne >= Self.minimumVisibleFraction
+            && visibleHeightFraction + .ulpOfOne >= Self.minimumVisibleFraction
+    }
 }
 
 /// Aspect-ratio constraint for the Crop overlay.

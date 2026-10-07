@@ -21,7 +21,7 @@ enum ImageVideoGenerator {
         let duration = generatedDuration
         let size = clampedForEncoder(size)
         let hasAlpha = imageHasAlpha(url: imageURL)
-        let suffix = hasAlpha ? "_a" : "_o"
+        let suffix = hasAlpha ? "_ap2" : "_o"
         let filename = "\(mediaRef)_\(Int(size.width))x\(Int(size.height))\(suffix).mov"
         let outputURL = cacheDirectory.appendingPathComponent(filename)
 
@@ -142,6 +142,14 @@ enum ImageVideoGenerator {
                 throw ImageVideoError.imageLoadFailed
             }
             context.draw(cgImage, in: fullRect)
+        }
+        if hasAlpha {
+            CVBufferSetAttachment(
+                buffer,
+                kCVImageBufferAlphaChannelModeKey,
+                kCVImageBufferAlphaChannelMode_PremultipliedAlpha,
+                .shouldPropagate
+            )
         }
         return buffer
     }

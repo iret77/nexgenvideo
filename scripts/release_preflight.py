@@ -39,7 +39,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "productionKnowledgeConsumers",
     "frameReferencePlanProvider",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 9
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 10
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_AUDIO_BOUNDARY_FILES = [
     "Engine/Sources/NexGenEngine/Audio/PCM.swift",
@@ -562,6 +562,32 @@ ENGINE_BOUNDARY_ENUM_LAYOUTS = {
         "start": "public enum Level: String, Codable, Sendable, Equatable {",
         "end": "/// One sanity-check result.",
         "cases": ["info", "warn", "error"],
+    },
+    "FrameImageModel": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Brief.swift",
+        "start": "public enum FrameImageModel: String, Codable, Sendable, CaseIterable {",
+        "end": "    /// Engine contract a pack must be built against before it may receive this value.",
+        "cases": [
+            "googleGemini3Pro = \"google:gemini-3-pro-image-preview\"",
+            "googleGemini31Flash = \"google:gemini-3.1-flash-image-preview\"",
+            "googleImagen4Ultra = \"google:imagen-4.0-ultra-generate-001\"",
+            "openaiGptImage2 = \"openai:gpt-image-2\"",
+            "openaiGptImage1 = \"openai:gpt-image-1\"",
+            "runwayGemini3Pro = \"runway:gemini_image3_pro\"",
+            "runwayGemini31Flash = \"runway:gemini_image3.1_flash\"",
+            "runwayGemini25Flash = \"runway:gemini_2.5_flash\"",
+            "runwayGen4Image = \"runway:gen4_image\"",
+            "runwayGen4ImageTurbo = \"runway:gen4_image_turbo\"",
+            "falNanoBanana = \"fal:fal-ai/nano-banana\"",
+            "falImagen4Ultra = \"fal:fal-ai/imagen4/preview/ultra\"",
+            "falGptImage1 = \"fal:fal-ai/gpt-image-1\"",
+            "falFluxPro11 = \"fal:fal-ai/flux-pro/v1.1\"",
+            "other",
+            "falGptImage25Flare = \"fal:fal-ai/gpt-image-2.5/flare/text-to-image\"",
+            "falGptImage25FlareEdit = \"fal:fal-ai/gpt-image-2.5/flare/edit\"",
+            "falGptImage25Sunburst = \"fal:fal-ai/gpt-image-2.5/sunburst/text-to-image\"",
+            "falGptImage25SunburstEdit = \"fal:fal-ai/gpt-image-2.5/sunburst/edit\"",
+        ],
     },
 }
 ENGINE_BOUNDARY_PROTOCOL_LAYOUTS = {

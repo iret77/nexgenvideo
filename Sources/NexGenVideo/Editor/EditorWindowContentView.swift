@@ -16,8 +16,18 @@ struct EditorWindowContentView: View {
             if let broken = editor.packWiringBroken {
                 PackWiringBanner(result: broken)
             }
-            EditorView()
-                .focusEffectDisabled()
+            GeometryReader { geometry in
+                EditorView()
+                    .focusEffectDisabled()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "editor.geometry")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)
@@ -141,7 +151,7 @@ struct TheaterOverlayView: View {
 
     private func scrubBar(duration: Int) -> some View {
         GeometryReader { geo in
-            let progress = duration > 0 ? CGFloat(editor.playheadState.timelineFrame) / CGFloat(duration) : 0
+            let progress = duration > 0 ? min(1, CGFloat(editor.playheadState.timelineFrame) / CGFloat(duration)) : 0
             ZStack(alignment: .leading) {
                 Capsule().fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.moderate))
                     .frame(height: AppTheme.Slider.trackHeight)

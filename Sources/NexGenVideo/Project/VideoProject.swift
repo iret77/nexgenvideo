@@ -65,6 +65,7 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var snapshotPreparedForWrite = false
     private nonisolated(unsafe) var snapshotCaptureError: Error?
     private var checkpointFailurePresented = false
+    private var knownPackageRevision: ProjectPackageRevision?
 
     // MARK: - Persistence
 
@@ -238,6 +239,9 @@ final class VideoProject: NSDocument {
         let savedWorkingCopyKey = snapshotWorkingCopyKey
         let migrationSourceURL = fileURL
         let clearsWorkingCopy = saveOperation != .saveToOperation
+        if saveOperation == .saveOperation, Self.sameFile(fileURL, url) {
+            refreshKnownPackageStateIfContentsUnchanged(at: url)
+        }
         super.save(to: url, ofType: typeName, for: saveOperation) { error in
             if error == nil, clearsWorkingCopy {
                 if let savedWorkingCopyKey {
@@ -264,13 +268,43 @@ final class VideoProject: NSDocument {
     }
 
     func recordKnownPackageState(at url: URL) throws {
-        let values = try url.resourceValues(
-            forKeys: [.contentModificationDateKey]
-        )
-        guard let date = values.contentModificationDate else {
-            throw CocoaError(.fileReadUnknown)
+        let revision = try ProjectPackageRevision.capture(at: url)
+        knownPackageRevision = revision
+        fileModificationDate = revision.packageModificationDate
+    }
+
+    @discardableResult
+    func refreshKnownPackageStateIfContentsUnchanged(at url: URL) -> Bool {
+        guard let knownPackageRevision else { return false }
+        do {
+            let currentDate = try FileManager.default.attributesOfItem(atPath: url.path)[
+                .modificationDate
+            ] as? Date
+            guard currentDate != fileModificationDate else { return false }
+            let current = try ProjectPackageRevision.capture(at: url)
+            guard current.entries == knownPackageRevision.entries else {
+                let changes = knownPackageRevision.changedPaths(comparedTo: current)
+                Log.project.notice(
+                    "save found changed package content: \(changes.prefix(8).joined(separator: ", "))"
+                )
+                return false
+            }
+            self.knownPackageRevision = current
+            fileModificationDate = current.packageModificationDate
+            Log.project.notice("save accepted package timestamp drift after content verification")
+            return true
+        } catch {
+            Log.project.notice(
+                "save couldn't verify package timestamp drift: \(error.localizedDescription)"
+            )
+            return false
         }
-        fileModificationDate = date
+    }
+
+    private nonisolated static func sameFile(_ lhs: URL?, _ rhs: URL) -> Bool {
+        guard let lhs else { return false }
+        return lhs.standardizedFileURL.resolvingSymlinksInPath()
+            == rhs.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     nonisolated static func saveContextError(
@@ -389,7 +423,7 @@ final class VideoProject: NSDocument {
             snapshotManifest = try JSONEncoder().encode(editorViewModel.mediaManifest)
             snapshotGenerationLog = try JSONEncoder().encode(editorViewModel.generationLog)
             var chatFiles: [(name: String, data: Data)] = []
-            for session in editorViewModel.agentService.sessions where !session.messages.isEmpty {
+            for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
                 guard let data = ChatSessionStore.encodeSession(session) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -429,7 +463,7 @@ final class VideoProject: NSDocument {
         guard let key = editorViewModel.openWorkingCopyKey else { return }
         do {
             var chatFiles: [(name: String, data: Data)] = []
-            for session in editorViewModel.agentService.sessions where !session.messages.isEmpty {
+            for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
                 guard let data = ChatSessionStore.encodeSession(session) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -616,6 +650,8 @@ final class VideoProject: NSDocument {
     // MARK: - Close
 
     override func close() {
+        draftCheckpointTask?.cancel()
+        draftCheckpointTask = nil
         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
         // launch doesn't mistake it for crash-surviving unsaved work.
         if let fileURL,
@@ -626,11 +662,7 @@ final class VideoProject: NSDocument {
         super.close()
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .projectDocumentSetChanged, object: self)
-            if AppState.shared.activeProject === self {
-                // The review already resolved save/don't-save — navigate Home WITHOUT re-saving (a save
-                // here fails on the released working copy and its alert would block app termination).
-                AppState.shared.showHome(persist: false)
-            }
+            AppState.shared.projectDidClose(self)
         }
     }
 
@@ -676,10 +708,13 @@ final class VideoProject: NSDocument {
         }
         editorViewModel.agentService.loadSessions(from: editorViewModel.workingCopyHome)
         editorViewModel.onWorkingCopyReset = { [weak self] home in
-            self?.reloadEditableContents(from: home)
+            await self?.reloadEditableContents(from: home) ?? false
         }
         editorViewModel.agentService.onSessionsChanged = { [weak self] in
             self?.updateChangeCount(.changeDone)
+        }
+        editorViewModel.agentService.onDraftChanged = { [weak self] in
+            self?.noteAgentDraftChange()
         }
         // A pipeline change lives only in the working copy until saved — mark the document edited so
         // ⌘S persists it into the package and the user is warned before closing without saving.
@@ -690,6 +725,7 @@ final class VideoProject: NSDocument {
         let editorView = EditorWindowContentView()
             .environment(editorViewModel)
         let hostingController = NSHostingController(rootView: editorView.tint(AppTheme.Accent.primary))
+        hostingController.sizingOptions = []
         // fullSizeContentView adds a titlebar-height safe-area inset; without dropping it the layout
         // slides down a full row (an empty strip above TitleBarView, panel headers hidden behind it).
         // TitleBarView must occupy the real titlebar row — traffic lights overlay its leading inset.
@@ -727,13 +763,16 @@ final class VideoProject: NSDocument {
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
 
         let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
+        controller.onBecameKey = { [weak self] window in
+            guard let self else { return }
+            AppState.shared.projectWindowDidBecomeKey(self, window: window)
+        }
+        window.delegate = controller
         controller.shouldCascadeWindows = true
         controller.installKeyMonitor()
         addWindowController(controller)
 
         window.standardWindowButton(.documentIconButton)?.isHidden = true
-
-        AppState.shared.showEditor(for: self)
 
         if let manifest = loadedManifest {
             editorViewModel.mediaManifest = manifest
@@ -761,27 +800,29 @@ final class VideoProject: NSDocument {
         }
     }
 
-    private func reloadEditableContents(from home: URL) {
-        Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try Self.readEditableContents(at: home) }
-            }.value
-            guard let self, self.editorViewModel.workingCopyHome == home else { return }
-            switch result {
-            case .success(let contents):
-                self.editorViewModel.timeline = contents.timeline
-                self.editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
-                self.editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
-                self.cachedThumbnail = contents.thumbnail
-                self.editorViewModel.agentService.loadSessions(from: home)
-                self.editorViewModel.mediaAssets.removeAll()
-                self.restoreAssetsFromManifest()
-            case .failure(let error):
-                Log.project.error(
-                    "discard recovery reload failed: \(error.localizedDescription)"
-                )
-                self.presentError(error)
-            }
+    private func reloadEditableContents(from home: URL) async -> Bool {
+        draftCheckpointTask?.cancel()
+        draftCheckpointTask = nil
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try Self.readEditableContents(at: home) }
+        }.value
+        guard editorViewModel.workingCopyHome == home else { return false }
+        switch result {
+        case .success(let contents):
+            editorViewModel.timeline = contents.timeline
+            editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
+            editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
+            cachedThumbnail = contents.thumbnail
+            editorViewModel.agentService.loadSessions(from: home)
+            editorViewModel.mediaAssets.removeAll()
+            restoreAssetsFromManifest()
+            return true
+        case .failure(let error):
+            Log.project.error(
+                "discard recovery reload failed: \(error.localizedDescription)"
+            )
+            presentError(error)
+            return false
         }
     }
 
@@ -897,4 +938,19 @@ final class VideoProject: NSDocument {
             data: ["restored": restored, "missing": missing, "manifestEntries": editorViewModel.mediaManifest.entries.count]
         )
     }
+
+    private func noteAgentDraftChange() {
+        super.updateChangeCount(.changeDone)
+        editorViewModel.isDocumentEdited = isDocumentEdited
+        draftCheckpointTask?.cancel()
+        draftCheckpointTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.draftCheckpointTask = nil
+            self.checkpointWorkingCopy()
+        }
+    }
+
+    private var draftCheckpointTask: Task<Void, Never>?
+
 }

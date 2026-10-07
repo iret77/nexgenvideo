@@ -5,6 +5,172 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned() throws {
+        let service = AgentService()
+        let dialog = AgentDialog(
+            id: "identity-intake", title: "Character 1", symbol: "person",
+            intro: nil, costHint: nil, confirmLabel: "Attach", textField: nil,
+            sections: [], fileIntake: AgentDialog.FileIntake(
+                accept: ["image"], prompt: nil, allowsMultiple: true,
+                attachAs: "character", namePrompt: "Character name",
+                required: false, completionLabel: "Done"
+            ), purpose: .workflowIntake
+        )
+        try service.presentDialog(dialog)
+        let draft = AgentDialogDraft(
+            toggles: ["reference": false], direction: "Lead singer",
+            customValues: ["style": "Hand drawn"],
+            fileURLs: [URL(fileURLWithPath: "/tmp/lead-singer.png")]
+        )
+        service.dialogDraft = draft
+        service.dialogChoiceSelections = ["style": ["custom"]]
+
+        service.completeDialog(dialog)
+
+        #expect(service.pendingDialog?.id == dialog.id)
+        #expect(service.dialogSubmissionError != nil)
+        #expect(service.dialogDraft == draft)
+        #expect(service.dialogChoiceSelections == ["style": ["custom"]])
+        #expect(service.submittingDialogID == nil)
+        #expect(service.messages.isEmpty)
+        service.abandonDialog()
+        #expect(service.dialogDraft == AgentDialogDraft())
+        #expect(service.dialogChoiceSelections.isEmpty)
+    }
+
+    @Test func malformedDecisionFieldsNeverBecomeAConfirmablePartialDialog() {
+        let invalid: [[String: Any]] = [
+            ["title": "Choose", "textField": [:], "sections": "unsupported"],
+            ["title": "Choose", "textField": "unsupported", "sections": []],
+            ["title": "Choose", "textField": [:], "workflowDecision": "future_decision"],
+            ["title": "Choose", "textField": [:], "projection": ["timelineRanges": "unsupported"]],
+            ["title": "Choose", "textField": [:], "unknownControl": true],
+            ["title": "Choose", "fileIntake": ["accept": [3]]],
+            ["title": "Choose", "textField": ["multiline": 1]],
+            ["title": "Choose", "sections": [
+                ["id": "same", "type": "toggle"], ["id": "same", "type": "toggle"],
+            ]],
+            ["title": "Choose", "sections": [["type": "choices", "options": [
+                ["id": "same", "label": "One"], ["id": "same", "label": "Two"],
+            ]]]],
+            ["title": "Choose", "sections": [["type": "choices", "options": [
+                ["label": "One", "rangeRef": "missing"], ["label": "Two"],
+            ]]]],
+        ]
+        for args in invalid {
+            #expect(throws: ToolError.self) { try AgentDialog.parse(args) }
+        }
+    }
+
+    @Test func timelineRangesRequireExactNonnegativeRepresentableFrames() throws {
+        for start in [true, 0.5, -1, Double.infinity, Double.nan, 1e100] as [Any] {
+            #expect(throws: ToolError.self) {
+                try AgentDialog.parse(["title": "Range", "textField": [:],
+                    "projection": ["timelineRanges": [["startFrame": start, "endFrame": 20]]]])
+            }
+        }
+        let dialog = try AgentDialog.parse(["title": "Range", "textField": [:],
+            "projection": ["timelineRanges": [["startFrame": 10, "endFrame": 20]]]])
+        #expect(dialog.projection.timelineRanges.first?.startFrame == 10)
+        #expect(dialog.projection.timelineRanges.first?.endFrame == 20)
+    }
+
+    @Test func storyboardModeUsesHostOwnedUnambiguousLabels() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Storyboard setup",
+            "workflowDecision": "storyboard_mode",
+            "sections": [[
+                "id": "storyboard_mode",
+                "label": "Who writes the step sequences?",
+                "type": "choices",
+                "allowsCustom": true,
+                "options": [
+                    ["id": "agent_created", "label": "I write them"],
+                    ["id": "user_supplied", "label": "I supply it"],
+                ],
+            ]],
+        ])
+
+        try PipelineAgentHarness.validateStoryboardModeDialog(dialog)
+        let section = try #require(dialog.sections.first)
+        #expect(section.label == "How should the step sequences be created?")
+        guard case .choices(let options, _) = section.kind else {
+            Issue.record("Expected Storyboard mode choices")
+            return
+        }
+        #expect(options.map(\.shortLabel) == [
+            "Create sequences for me",
+            "I'll provide sequences",
+        ])
+        #expect(try PipelineAgentHarness.resolveStoryboardCreationPath(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            ),
+            selectedOptionIDs: ["storyboard_mode": ["agent_created"]]
+        ) == .agentCreated)
+    }
+
+    @Test func agentCreatedStoryboardRejectsFurtherQuestions() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Choose the sheet scope",
+            "sections": [[
+                "id": "scope",
+                "label": "How many sheets?",
+                "type": "choices",
+                "options": [
+                    ["id": "lean", "label": "Lean"],
+                    ["id": "full", "label": "Full"],
+                ],
+            ]],
+        ])
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: false,
+                creationPath: .agentCreated,
+                inputReceived: false
+            )
+        }
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: true,
+                creationPath: nil,
+                inputReceived: false
+            )
+        }
+    }
+
+    @Test func userSuppliedStoryboardAcceptsOneBoundedTextIntake() throws {
+        let intake = try AgentDialog.parse([
+            "title": "Provide storyboard sequences",
+            "workflowDecision": "storyboard_input",
+            "textField": [
+                "placeholder": "Paste the step sequences",
+                "multiline": true,
+            ],
+        ])
+        try PipelineAgentHarness.guardStoryboardDecision(
+            intake,
+            hasStoryboard: false,
+            creationPath: .userSupplied,
+            inputReceived: false
+        )
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.guardStoryboardDecision(
+                intake,
+                hasStoryboard: false,
+                creationPath: .userSupplied,
+                inputReceived: true
+            )
+        }
+    }
+
     @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
         let dialog = try AgentDialog.parse([
             "title": "Choose how to develop the treatment",
@@ -58,6 +224,24 @@ struct AgentDialogSubmissionTests {
         }
     }
 
+    @Test func rejectedDialogLeavesNoPendingDecisionAndAllowsARepairedRequest() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let rejected = await harness.executor.execute(name: "show_dialog",
+            args: ["title": "Choose", "textField": [:], "sections": "unsupported"],
+            origin: .inAppChat(sessionID: sessionID))
+        #expect(rejected.isError)
+        #expect(harness.editor.agentService.pendingDialog == nil)
+
+        let repaired = await harness.executor.execute(name: "show_dialog",
+            args: ["title": "Describe the correction", "textField": ["placeholder": "Correction", "multiline": true]],
+            origin: .inAppChat(sessionID: sessionID))
+        #expect(!repaired.isError)
+        #expect(repaired.turnDisposition == .suspendTurn)
+        #expect(harness.editor.agentService.pendingDialog?.title == "Describe the correction")
+    }
+
     @Test func agentDialogSuspendsItsOwningTurn() async throws {
         let harness = ToolHarness()
         harness.editor.agentService.newChat()
@@ -83,6 +267,101 @@ struct AgentDialogSubmissionTests {
         #expect(!result.isError)
         #expect(result.turnDisposition == .suspendTurn)
         #expect(harness.editor.agentService.pendingDialog?.title == "Choose")
+    }
+
+    @Test func imageChoicesRequireMediaRefsForEveryOption() throws {
+        #expect(throws: ToolError.self) {
+            try AgentDialog.parse([
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": "image-a"],
+                        ["id": "studio", "label": "Studio portrait"],
+                    ],
+                ]],
+            ])
+        }
+    }
+
+    @Test func imageChoicesResolveToUsableLibraryImages() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        let firstURL = directory.appendingPathComponent("dusk-street.png")
+        let secondURL = directory.appendingPathComponent("studio-portrait.png")
+        try Data([0]).write(to: firstURL)
+        try Data([0]).write(to: secondURL)
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: firstURL, type: .image, name: "Dusk street"),
+            MediaAsset(id: secondID, url: secondURL, type: .image, name: "Studio portrait"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk street", "mediaRef": String(firstID.prefix(8))],
+                        ["id": "studio", "label": "Studio portrait", "mediaRef": String(secondID.prefix(8))],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(!result.isError)
+        let pending = try #require(harness.editor.agentService.pendingDialog)
+        guard case .choices(let options, _) = pending.sections[0].kind else {
+            Issue.record("Expected image choices")
+            return
+        }
+        #expect(options.compactMap(\.mediaRef) == [firstID, secondID])
+    }
+
+    @Test func imageChoicesRejectNonImageMedia() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        harness.editor.mediaAssets = [
+            MediaAsset(id: firstID, url: URL(fileURLWithPath: "/tmp/one.mov"), type: .video, name: "One"),
+            MediaAsset(id: secondID, url: URL(fileURLWithPath: "/tmp/two.mov"), type: .video, name: "Two"),
+        ]
+
+        let result = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Choose the anchor",
+                "sections": [[
+                    "id": "anchor",
+                    "label": "Which image becomes the anchor?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "one", "label": "One", "mediaRef": firstID],
+                        ["id": "two", "label": "Two", "mediaRef": secondID],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("not an image"))
     }
 
     @Test func externalMCPDialogCannotCaptureAnInAppChat() async {
@@ -138,7 +417,7 @@ struct AgentDialogSubmissionTests {
             dialog,
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: mcpSessionID
+                runtimeGenerationID: mcpSessionID
             )
         )
 
@@ -160,7 +439,7 @@ struct AgentDialogSubmissionTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: mcpSessionID
+                runtimeGenerationID: mcpSessionID
             )
         )
         #expect(stale.isError)
@@ -170,7 +449,7 @@ struct AgentDialogSubmissionTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: owner.id,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(!replacement.isError)

@@ -52,6 +52,107 @@ struct ModelsPaneProjectionTests {
                     isEnabled: { _ in true }, canRun: { _ in false }).isEmpty)
     }
 
+    @Test("8K upscale is limited to the verified model, video dimensions and duration")
+    func eightKAvailabilityMatchesProviderContract() throws {
+        let entry = try #require(FalModelRegistry.entries.first {
+            $0.id == "bria/video/increase-resolution"
+        })
+        guard case .upscale(let caps) = entry.uiCapabilities else {
+            Issue.record("Bria must be registered as an upscaler")
+            return
+        }
+        let model = UpscaleModelConfig(entry: entry, caps: caps)
+
+        let from1080 = try #require(model.selection(
+            sourceType: .video,
+            sourceWidth: 1_920,
+            sourceHeight: 1_080,
+            durationSeconds: 29,
+            targetResolution: "8K"
+        ))
+        #expect(from1080.scaleFactor == 4)
+        #expect(from1080.targetResolution == "8K")
+
+        let from4K = try #require(model.selection(
+            sourceType: .video,
+            sourceWidth: 3_840,
+            sourceHeight: 2_160,
+            durationSeconds: 10,
+            targetResolution: "8k"
+        ))
+        #expect(from4K.scaleFactor == 2)
+        #expect(model.selection(
+            sourceType: .video,
+            sourceWidth: 1_280,
+            sourceHeight: 720,
+            durationSeconds: 10,
+            targetResolution: "8K"
+        ) == nil)
+        #expect(model.selection(
+            sourceType: .image,
+            sourceWidth: 1_920,
+            sourceHeight: 1_080,
+            durationSeconds: 1,
+            targetResolution: "8K"
+        ) == nil)
+        #expect(model.selection(
+            sourceType: .video,
+            sourceWidth: 1_920,
+            sourceHeight: 1_080,
+            durationSeconds: 30,
+            targetResolution: "8K"
+        ) == nil)
+    }
+
+    @Test("8K approval estimate uses the verified per-second price")
+    func eightKCostEstimate() throws {
+        let entry = try #require(FalModelRegistry.entries.first {
+            $0.id == "bria/video/increase-resolution"
+        })
+        guard case .upscale(let caps) = entry.uiCapabilities else {
+            Issue.record("Bria must be registered as an upscaler")
+            return
+        }
+        let model = UpscaleModelConfig(entry: entry, caps: caps)
+
+        #expect(CostEstimator.upscaleCost(model: model, durationSeconds: 10) == 140)
+        #expect(CostEstimator.upscaleCost(model: model, durationSeconds: 1.1) == 16)
+
+        let unpricedEntry = try #require(FalModelRegistry.entries.first {
+            $0.id == "fal-ai/clarity-upscaler"
+        })
+        guard case .upscale(let unpricedCaps) = unpricedEntry.uiCapabilities else {
+            Issue.record("Clarity must be registered as an upscaler")
+            return
+        }
+        let unpriced = UpscaleModelConfig(entry: unpricedEntry, caps: unpricedCaps)
+        #expect(CostEstimator.upscaleCost(model: unpriced, durationSeconds: 10) == nil)
+    }
+
+    @Test("video upscale provenance uses the project source slot")
+    func videoUpscaleProvenance() {
+        var input = GenerationInput(
+            prompt: "",
+            model: "bria/video/increase-resolution",
+            duration: 10,
+            aspectRatio: "",
+            resolution: "8K",
+            imageURLAssetIds: ["legacy-source"]
+        )
+
+        EditSubmitter.recordUpscaleProvenance(
+            in: &input,
+            uploadedURLs: ["https://provider.example/source.mp4"],
+            sourceAssetID: "project-video",
+            sourceType: .video
+        )
+
+        #expect(input.sourceVideoAssetId == "project-video")
+        #expect(input.imageURLAssetIds == nil)
+        #expect(input.imageURLs == ["https://provider.example/source.mp4"])
+        #expect(input.resolution == "8K")
+    }
+
     @Test("Search operates on the same runnable subset")
     func searchDoesNotReintroduceUnavailableModels() {
         let sections = ModelsPaneProjection.sections(

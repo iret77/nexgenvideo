@@ -4,19 +4,39 @@ import SwiftUI
 
 struct AppRelaunchClickProbe: NSViewRepresentable {
     let identifier: String
+    var acceptanceState: Bool?
+    var acceptanceValue: Double?
+    var acceptanceText: String?
+
+    init(identifier: String, acceptanceState: Bool? = nil, acceptanceValue: Double? = nil, acceptanceText: String? = nil) {
+        self.identifier = identifier
+        self.acceptanceState = acceptanceState
+        self.acceptanceValue = acceptanceValue
+        self.acceptanceText = acceptanceText
+    }
 
     func makeNSView(context: Context) -> AppRelaunchClickProbeView {
         let view = AppRelaunchClickProbeView()
         view.identifier = NSUserInterfaceItemIdentifier(identifier)
+        view.acceptanceState = acceptanceState
+        view.acceptanceValue = acceptanceValue
+        view.acceptanceText = acceptanceText
         return view
     }
 
     func updateNSView(_ nsView: AppRelaunchClickProbeView, context: Context) {
         nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+        nsView.acceptanceState = acceptanceState
+        nsView.acceptanceValue = acceptanceValue
+        nsView.acceptanceText = acceptanceText
     }
 }
 
 final class AppRelaunchClickProbeView: NSView {
+    var acceptanceState: Bool?
+    var acceptanceValue: Double?
+    var acceptanceText: String?
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
@@ -116,7 +136,11 @@ enum AppRelaunchSelfTest {
                 )
         }
         guard whatsNewReady else {
-            fail("What's New never became actionable", stateURL: config.stateURL)
+            let diagnostics = homeDiagnostics(
+                probe: "home.whats-new.continue",
+                ["pending \(ChangelogStore.shared.pending?.version ?? "none")"]
+            )
+            fail("What's New never became actionable (\(diagnostics))", stateURL: config.stateURL)
         }
         if let failure = postMouseClick(
             identifier: "home.whats-new.continue",
@@ -150,7 +174,11 @@ enum AppRelaunchSelfTest {
                 )
         }
         guard ready else {
-            fail("the real two-pack restart state never became actionable", stateURL: config.stateURL)
+            let diagnostics = homeDiagnostics(probe: "home.restart-format-packs", [
+                "live \(PluginLoader.liveBinding(id: config.packID)?.version ?? "none")",
+                "restart target \(PluginUpdateCenter.shared.restartTarget(for: config.packID)?.version ?? "none")",
+            ])
+            fail("the real two-pack restart state never became actionable (\(diagnostics))", stateURL: config.stateURL)
         }
 
         write("pressing \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
@@ -181,7 +209,11 @@ enum AppRelaunchSelfTest {
                 )
         }
         guard ready else {
-            fail("the requested pack did not become live in an interactive Home", stateURL: config.stateURL)
+            let diagnostics = homeDiagnostics(probe: "home.settings", [
+                "live \(PluginLoader.liveBinding(id: config.packID)?.version ?? "none")",
+                "restart target \(PluginUpdateCenter.shared.restartTarget(for: config.packID)?.version ?? "none")",
+            ])
+            fail("the requested pack did not become live in an interactive Home (\(diagnostics))", stateURL: config.stateURL)
         }
         guard SettingsWindowController.shared.window?.isVisible != true else {
             fail("Settings was already visible before the Home control click", stateURL: config.stateURL)
@@ -264,10 +296,7 @@ enum AppRelaunchSelfTest {
         return predicate()
     }
 
-    private static func postMouseClick(
-        identifier: String,
-        in window: NSWindow?
-    ) -> String? {
+    static func postMouseClick(identifier: String, in window: NSWindow?) -> String? {
         guard let window else { return "the Home window was unavailable" }
         guard window.isVisible else { return "the Home window was not visible" }
         guard window.isKeyWindow else { return "the Home window was not key" }
@@ -276,21 +305,12 @@ enum AppRelaunchSelfTest {
               let probe = findClickProbe(in: root, identifier: identifier) else {
             return "the control geometry probe was absent"
         }
-        guard probe.window === window else { return "the control probe belonged to another window" }
-        guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
-
-        let frame = probe.bounds
-        guard frame.width.isFinite, frame.height.isFinite,
-              frame.width > 0, frame.height > 0 else {
-            return "the control had no finite clickable frame"
-        }
-        let location = probe.convert(
-            NSPoint(x: frame.midX, y: frame.midY),
-            to: nil
-        )
-        let contentPoint = root.convert(location, from: nil)
-        guard root.bounds.contains(contentPoint) else {
-            return "the control frame was outside the Home window"
+        let location: NSPoint
+        switch clickLocation(for: probe, in: root, window: window) {
+        case .ready(let point):
+            location = point
+        case .blocked(let reason):
+            return "the control was not clickable: \(reason)"
         }
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.mouseEvent(
@@ -321,34 +341,183 @@ enum AppRelaunchSelfTest {
         return nil
     }
 
-    private static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
-        guard let window,
-              window.isVisible,
-              window.isKeyWindow,
-              !window.ignoresMouseEvents,
-              let root = window.contentView,
-              let probe = findClickProbe(in: root, identifier: identifier),
-              probe.window === window,
-              !probe.isHiddenOrHasHiddenAncestor else { return false }
+    static func scrollClickProbeToVisible(identifier: String, in window: NSWindow?) -> String? {
+        guard let window else { return "the window was unavailable" }
+        guard let root = window.contentView,
+              let probe = findClickProbe(in: root, identifier: identifier) else {
+            return "the control geometry probe was absent"
+        }
+        guard probe.window === window else { return "the control probe belonged to another window" }
+        guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
+        for clipView in clipViews(enclosing: probe) {
+            let frame = probe.convert(probe.bounds, to: clipView)
+            let visible = clipView.bounds
+            guard !visible.contains(frame) else { continue }
+            let document = clipView.documentRect
+            var origin = visible.origin
+            if frame.minX < visible.minX || frame.width > visible.width {
+                origin.x = frame.minX
+            } else if frame.maxX > visible.maxX {
+                origin.x = frame.maxX - visible.width
+            }
+            if frame.minY < visible.minY || frame.height > visible.height {
+                origin.y = frame.minY
+            } else if frame.maxY > visible.maxY {
+                origin.y = frame.maxY - visible.height
+            }
+            origin.x = min(max(origin.x, document.minX), max(document.minX, document.maxX - visible.width))
+            origin.y = min(max(origin.y, document.minY), max(document.minY, document.maxY - visible.height))
+            clipView.scroll(to: origin)
+            clipView.enclosingScrollView?.reflectScrolledClipView(clipView)
+        }
+        window.displayIfNeeded()
+        return nil
+    }
+
+    // Partly clipped is enough: the click guard requires full containment in every clip view.
+    static func scrollClickProbeOutOfVisibleArea(
+        identifier: String,
+        in window: NSWindow?
+    ) -> String? {
+        guard let window else { return "the window was unavailable" }
+        guard let root = window.contentView,
+              let probe = findClickProbe(in: root, identifier: identifier) else {
+            return "the control geometry probe was absent"
+        }
+        guard probe.window === window else { return "the control probe belonged to another window" }
+        let enclosingClipViews = clipViews(enclosing: probe)
+        var geometry: [String] = []
+        for clipView in enclosingClipViews {
+            let documentRect = clipView.documentRect
+            let maximumX = max(documentRect.minX, documentRect.maxX - clipView.bounds.width)
+            let maximumY = max(documentRect.minY, documentRect.maxY - clipView.bounds.height)
+            let origins = [
+                NSPoint(x: documentRect.minX, y: documentRect.minY),
+                NSPoint(x: maximumX, y: maximumY),
+            ]
+            for origin in origins {
+                clipView.scroll(to: origin)
+                clipView.enclosingScrollView?.reflectScrolledClipView(clipView)
+                window.displayIfNeeded()
+                let frameInClipView = probe.convert(probe.bounds, to: clipView)
+                if !clipView.bounds.contains(frameInClipView) { return nil }
+                geometry.append(
+                    "document \(describe(documentRect)) visible \(describe(clipView.bounds)) probe \(describe(frameInClipView))"
+                )
+            }
+        }
+        return "the control probe could not be scrolled even partly outside its \(enclosingClipViews.count) clip views "
+            + "(\(geometry.joined(separator: "; ")))"
+    }
+
+    private static func clipViews(enclosing view: NSView) -> [NSClipView] {
+        var result: [NSClipView] = []
+        var ancestor = view.superview
+        while let current = ancestor {
+            if let clipView = current as? NSClipView { result.append(clipView) }
+            ancestor = current.superview
+        }
+        return result
+    }
+
+    private enum ClickTarget {
+        case ready(NSPoint)
+        case blocked(String)
+    }
+
+    private static func homeDiagnostics(probe identifier: String, _ details: [String]) -> String {
+        let home = HomeWindowController.shared.window
+        let windows = NSApp.windows.filter(\.isVisible).map { "\(type(of: $0)):\($0.title)" }
+        var parts: [String] = [
+            "home visible \(home?.isVisible == true)",
+            "home key \(home?.isKeyWindow == true)",
+            "key window \(NSApp.keyWindow.map { "\(type(of: $0)):\($0.title)" } ?? "none")",
+            "modal \(NSApp.modalWindow.map { "\(type(of: $0)):\($0.title)" } ?? "none")",
+        ]
+        parts += details
+        parts.append("probe \(clickProbeFailure(identifier: identifier, in: home) ?? "ready")")
+        parts.append("content \(describe(home?.contentView?.bounds))")
+        parts.append("screen \(describe(home?.screen?.visibleFrame))")
+        parts.append("visible windows \(windows)")
+        return parts.joined(separator: ", ")
+    }
+
+    static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+        clickProbeFailure(identifier: identifier, in: window) == nil
+    }
+
+    static func clickProbeFailure(identifier: String, in window: NSWindow?) -> String? {
+        guard let window else { return "no window" }
+        guard window.isVisible else { return "window hidden" }
+        guard window.isKeyWindow else { return "window not key" }
+        guard !window.ignoresMouseEvents else { return "window ignores mouse events" }
+        guard let root = window.contentView else { return "no content view" }
+        let probes = findClickProbes(in: root, identifier: identifier)
+        guard probes.count == 1, let probe = probes.first else { return "\(probes.count) geometry probes" }
+        guard probe.window === window else { return "probe in another window" }
+        guard !probe.isHiddenOrHasHiddenAncestor else { return "probe hidden" }
+        switch clickLocation(for: probe, in: root, window: window) {
+        case .ready:
+            return nil
+        case .blocked(let reason):
+            return reason
+        }
+    }
+
+    private static func clickLocation(for probe: NSView, in root: NSView, window: NSWindow) -> ClickTarget {
         let frame = probe.bounds
         guard frame.width.isFinite, frame.height.isFinite,
-              frame.width > 0, frame.height > 0 else { return false }
+              frame.width > 0, frame.height > 0 else { return .blocked("probe bounds \(describe(frame))") }
+        let frameInRoot = probe.convert(frame, to: root)
+        guard root.bounds.contains(frameInRoot) else {
+            return .blocked("probe \(describe(frameInRoot)) outside root \(describe(root.bounds))")
+        }
+        var ancestor = probe.superview
+        while let current = ancestor {
+            if current is NSClipView {
+                let frameInClipView = probe.convert(frame, to: current)
+                guard current.bounds.contains(frameInClipView) else {
+                    return .blocked("probe \(describe(frameInClipView)) clipped by \(describe(current.bounds))")
+                }
+            }
+            ancestor = current.superview
+        }
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
-        return root.bounds.contains(root.convert(location, from: nil))
+        let rootPoint = root.convert(location, from: nil)
+        let hitTestPoint = root.superview?.convert(location, from: nil) ?? rootPoint
+        guard root.bounds.contains(rootPoint) else { return .blocked("probe center outside root") }
+        guard let hitTarget = root.hitTest(hitTestPoint) else { return .blocked("no native hit target") }
+        guard hitTarget.window === window, !hitTarget.isHiddenOrHasHiddenAncestor else {
+            return .blocked("native hit \(type(of: hitTarget)) was hidden or in another window")
+        }
+        return .ready(location)
+    }
+
+    private static func describe(_ rect: NSRect?) -> String {
+        guard let rect else { return "none" }
+        return String(format: "%.0f,%.0f %.0fx%.0f", rect.minX, rect.minY, rect.width, rect.height)
     }
 
     private static func isClickProbeAbsent(identifier: String, in window: NSWindow?) -> Bool {
         guard let root = window?.contentView else { return false }
-        return findClickProbe(in: root, identifier: identifier) == nil
+        return findClickProbes(in: root, identifier: identifier).isEmpty
     }
 
     private static func findClickProbe(in view: NSView, identifier: String) -> NSView? {
+        let matches = findClickProbes(in: view, identifier: identifier)
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private static func findClickProbes(in view: NSView, identifier: String) -> [NSView] {
+        var matches: [NSView] = []
         if view is AppRelaunchClickProbeView,
-           view.identifier?.rawValue == identifier { return view }
-        for child in view.subviews {
-            if let match = findClickProbe(in: child, identifier: identifier) { return match }
+           view.identifier?.rawValue == identifier {
+            matches.append(view)
         }
-        return nil
+        for child in view.subviews {
+            matches.append(contentsOf: findClickProbes(in: child, identifier: identifier))
+        }
+        return matches
     }
 
     private static func write(_ value: String, to url: URL) {

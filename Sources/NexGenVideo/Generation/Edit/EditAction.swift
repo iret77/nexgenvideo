@@ -1,6 +1,6 @@
 import Foundation
 
-enum EditAction {
+enum EditAction: Equatable {
     case upscale
     case edit
     case generateMusic
@@ -17,7 +17,7 @@ enum EditAction {
         case .image: candidates = [.upscale, .edit, .rerun, .createVideo]
         case .video: candidates = [.upscale, .edit, .generateMusic, .generateSFX, .rerun]
         case .audio, .text: candidates = [.upscale, .edit, .rerun]
-        case .lottie, .document: candidates = []
+        case .lottie, .subtitle, .document: candidates = []
         }
         return candidates.filter {
             $0.availability(for: asset, effectiveDurationOverride: effectiveDurationOverride).isAvailable
@@ -35,9 +35,6 @@ enum EditAction {
                 guard let h = asset.sourceHeight, h > 0 else {
                     return .disabled(reason: "Loading video metadata…")
                 }
-                if h >= 2160 {
-                    return .disabled(reason: "Already 4K or higher")
-                }
             }
             if Self.isUpscaleResult(asset) {
                 return .disabled(reason: "Already upscaled")
@@ -45,8 +42,11 @@ enum EditAction {
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
             }
-            guard !UpscaleModelConfig.models(for: asset.type).isEmpty else {
-                return .disabled(reason: "No enabled upscaler is available")
+            guard !UpscaleModelConfig.selections(
+                for: asset,
+                effectiveDuration: effectiveDurationOverride
+            ).isEmpty else {
+                return .disabled(reason: "No enabled upscaler supports this source")
             }
             return .available
 
@@ -68,11 +68,16 @@ enum EditAction {
                 return .disabled(reason: "Edit doesn't support text")
             case .lottie:
                 return .disabled(reason: "Edit doesn't support Lottie")
+            case .subtitle:
+                return .disabled(reason: "Edit doesn't support caption files")
             case .document:
                 return .disabled(reason: "Edit doesn't support documents")
             }
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
+            }
+            guard EditSubmitter.editSeed(for: asset) != nil else {
+                return .disabled(reason: "No enabled editing model accepts this source")
             }
             return .available
 
@@ -96,6 +101,10 @@ enum EditAction {
             }
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
+            }
+            guard EditSubmitter.createVideoSeed(for: asset, asReference: false) != nil
+                    || EditSubmitter.createVideoSeed(for: asset, asReference: true) != nil else {
+                return .disabled(reason: "No enabled video model accepts this image")
             }
             return .available
 

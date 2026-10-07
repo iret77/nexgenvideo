@@ -235,4 +235,12 @@ struct MCP20260728Tests {
             #expect(MCP20260728.decodeHeaderValue(encoded) == original)
         }
     }
+
+    @Test("wire bridging never narrows an out-of-range JSON number")
+    func outOfRangeWireNumberStaysDouble() {
+        let value = MCP20260728.WireValue.fromAny(
+            NSNumber(value: Double(Int.max))
+        )
+        #expect(value == .double(Double(Int.max)))
+    }
 }

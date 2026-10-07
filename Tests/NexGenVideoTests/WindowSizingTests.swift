@@ -12,13 +12,13 @@ struct WindowSizingTests {
         }
     }
 
-    @MainActor @Test func editorIdealAndUnboundedProbesStayFinite() {
+    @MainActor @Test func editorUnboundedProbesDoNotPreserveAnEarlierWindowSize() {
         for proposal in [ProposedViewSize.unspecified, .infinity,
                          .init(width: .nan, height: -.infinity)] {
-            #expect(EditorView.containerSize(for: proposal) == AppTheme.Window.projectDefault)
+            #expect(EditorView.containerSize(for: proposal) == .zero)
         }
         #expect(EditorView.containerSize(for: .init(width: 507, height: nil))
-            == CGSize(width: 507, height: AppTheme.Window.projectDefault.height))
+            == CGSize(width: 507, height: 0))
     }
 
     // A small laptop screen: the default must fit inside it (never exceed the desktop) with

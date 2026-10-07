@@ -99,7 +99,7 @@ jobs:
     if: needs.source_gate.outputs.build_required == 'true'
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -154,6 +154,21 @@ jobs:
           done
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
+
+      - name: HDR export QC
+        env:
+          NGV_HDR_RUNTIME_QC: '1'
+          NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
+        run: swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter HDRExportTests
+
+      - name: Upload HDR export QC evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdr-export-qc
+          path: ${{ runner.temp }}/hdr-export-qc
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Lottie export evidence
         if: always()
@@ -327,6 +342,15 @@ jobs:
         run: |
           ditto -x -k candidate/NexGenVideo.zip candidate
           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
+      - name: Exercise native Export Cancel, Retry and Reveal actions
+        run: python3 scripts/export_actions_acceptance.py candidate/NexGenVideo.app --output evidence/export-actions.json
+      - name: Verify generation batch pricing recovery on macOS 26
+        run: |
+          NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
+            candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
+            | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
+      - name: Verify helper recovery during active work
+        run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:

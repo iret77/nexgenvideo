@@ -32,7 +32,7 @@ enum HangDiagnosticReplay {
                     refreshBackendStatusOnInit: false
                 )
             )
-            editor.workspaceFocus = .produce
+            editor.setWorkspaceFocus(.production)
             editor.agentPanelVisible = true
             let matchGeometry = environment["NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY"] == "1"
             let records = try (matchGeometry ? structuralRecords(in: folder) : [])

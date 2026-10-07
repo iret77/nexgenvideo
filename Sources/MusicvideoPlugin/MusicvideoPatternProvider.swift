@@ -82,6 +82,7 @@ public struct MusicvideoPatternProvider: PatternProviding {
             "library_coverage": [
                 "scored": coverage.scored,
                 "unscored": coverage.unscored,
+                "invalid": coverage.invalid.keys.sorted(),
                 "total": coverage.total,
                 "note": "Only scored patterns can be ranked. An unscored pattern is not a gap in the "
                     + "answer — a pattern is optional, and without one the structure comes from the "
@@ -90,7 +91,6 @@ public struct MusicvideoPatternProvider: PatternProviding {
             ],
         ]
         if !coverage.invalid.isEmpty {
-            // A present-but-broken profile is a pack defect, not a normal state. Stay loud.
             body["invalid_profiles"] = coverage.invalid.mapValues { $0.sorted() }
         }
         return try envelope(body)

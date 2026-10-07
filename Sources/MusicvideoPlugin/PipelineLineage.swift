@@ -141,6 +141,13 @@ enum MusicvideoPipelineLineage {
         guard phase != "bible" else { return selectors }
         selectors.append(PipelineLayout.bibleFile)
         selectors.append(PipelineLayout.bibleIdentityVariantsFile)
+        if FileManager.default.fileExists(
+            atPath: dataRoot.appendingPathComponent(
+                PipelineLayout.confirmedIdentityAdoptionsFile
+            ).path
+        ) {
+            selectors.append(PipelineLayout.confirmedIdentityAdoptionsFile)
+        }
         guard phase != "shotlist" else { return selectors }
         if let version = latestShotlistVersion(dataRoot: dataRoot) {
             selectors.append(PipelineLayout.shotlistVersionFile(version))
@@ -181,11 +188,19 @@ enum MusicvideoPipelineLineage {
         case "storyboard":
             return storyboardSelectors(dataRoot: dataRoot)
         case "bible":
-            return [
+            var selectors = [
                 PipelineLayout.bibleFile,
                 PipelineLayout.bibleIdentityVariantsFile,
                 PipelineLayout.assetProofFile(scope: "bible"),
             ]
+            if FileManager.default.fileExists(
+                atPath: dataRoot.appendingPathComponent(
+                    PipelineLayout.confirmedIdentityAdoptionsFile
+                ).path
+            ) {
+                selectors.append(PipelineLayout.confirmedIdentityAdoptionsFile)
+            }
+            return selectors
         case "shotlist":
             if let version = latestShotlistVersion(dataRoot: dataRoot) {
                 return [PipelineLayout.shotlistVersionFile(version)]

@@ -78,12 +78,45 @@ enum Transcription {
         return matchLocale(candidates: candidates, supported: supported)
     }
 
+    static func baseLocaleIdentifier(_ identifier: String) -> String {
+        let subtags = identifier.split(separator: "-", omittingEmptySubsequences: false)
+        guard let extensionIndex = subtags.indices.dropFirst().first(where: {
+            String(subtags[$0]).caseInsensitiveCompare("u") == .orderedSame
+        }), extensionIndex + 1 < subtags.endIndex, !subtags[extensionIndex + 1].isEmpty else {
+            return identifier
+        }
+        return subtags[..<extensionIndex].joined(separator: "-")
+    }
+
+    private static func localeForTranscription(_ locale: Locale) -> Locale {
+        Locale(identifier: baseLocaleIdentifier(locale.identifier(.bcp47)))
+    }
+
     static func matchLocale(candidates: [Locale], supported: [Locale]) -> Locale? {
         for candidate in candidates {
-            guard let lang = candidate.language.languageCode?.identifier else { continue }
+            let base = localeForTranscription(candidate)
+            guard let lang = base.language.languageCode?.identifier else { continue }
             let sameLang = supported.filter { $0.language.languageCode?.identifier == lang }
             guard !sameLang.isEmpty else { continue }
-            let region = candidate.region?.identifier
+
+            let baseIdentifier = base.identifier(.bcp47)
+            if let exact = sameLang.first(where: {
+                $0.identifier(.bcp47).caseInsensitiveCompare(baseIdentifier) == .orderedSame
+            }) {
+                return exact
+            }
+
+            let script = base.language.script?.identifier
+            let sameScript = script.map { script in
+                sameLang.filter { $0.language.script?.identifier == script }
+            } ?? []
+            let region = base.region?.identifier
+            if let regionalScript = sameScript.first(where: { $0.region?.identifier == region }) {
+                return regionalScript
+            }
+            if let scripted = sameScript.first {
+                return scripted
+            }
             return sameLang.first { $0.region?.identifier == region } ?? sameLang.first
         }
         return nil
@@ -98,14 +131,15 @@ enum Transcription {
         }
 
         let supported = await SpeechTranscriber.supportedLocales
-        let locale: Locale
+        let matchedLocale: Locale
         if let preferredLocale, let match = matchLocale(candidates: [preferredLocale], supported: supported) {
-            locale = match
+            matchedLocale = match
         } else if let auto = bestSupportedLocale(from: supported) {
-            locale = auto
+            matchedLocale = auto
         } else {
             throw TranscriptionError.unsupportedLocale((preferredLocale ?? Locale.current).identifier(.bcp47))
         }
+        let locale = localeForTranscription(matchedLocale)
         Log.transcription.notice(
             "transcribe locale=\(locale.identifier(.bcp47))",
             telemetry: "Transcription started",

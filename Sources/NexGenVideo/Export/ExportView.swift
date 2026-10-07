@@ -5,16 +5,21 @@ import UniformTypeIdentifiers
 
 struct ExportView: View {
     @Environment(EditorViewModel.self) var editor
-    @State private var service = ExportService()
+    @State private var queue = ExportQueue.shared
     @State private var mode: ExportMode = .video
     @State private var codec: VideoCodec = .h264
     @State private var resolution: ExportResolution = .matchTimeline
+    @State private var fcpxmlVersion: FCPXMLVersion = .default
+    @State private var fcpxmlTarget: FCPXMLTarget = .default
     @State private var deliveryTarget = DeliveryTargetKindV1.master
     @State private var requireSequenceReview = false
     @State private var preparingDelivery = false
     @State private var preview: NSImage?
+    @State private var selectedJobID: String?
+    @State private var exportError: String?
     @State private var ngvResult: String?
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
+    @State private var hdrCapability: HDRExportCapability?
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
@@ -34,8 +39,25 @@ struct ExportView: View {
                 .background(.ultraThinMaterial)
         }
         .task {
-            loadPreview()
+            await loadPreview()
             ngvSummary = computeNGVSummary()
+            let recovered = queue.loadPersistedDeliveryJobs(
+                ownerKey: editor.openWorkingCopyKey,
+                dataRoot: editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+            )
+            if recovered { editor.onPipelineChanged?() }
+        }
+        .task(id: hdrCapabilityKey) {
+            guard codec == .hdr else {
+                hdrCapability = nil
+                return
+            }
+            let capability = await HDRVideoExporter.capability(
+                renderSize: selectedRenderSize,
+                fps: editor.timeline.fps
+            )
+            guard !Task.isCancelled else { return }
+            hdrCapability = capability
         }
     }
 
@@ -67,6 +89,18 @@ struct ExportView: View {
         .background(AppTheme.Background.baseColor)
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         .padding(AppTheme.Spacing.xl)
+        .overlay(alignment: .bottomTrailing) {
+            if codec == .hdr {
+                Text("Timeline preview · Rec. 709 SDR")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .padding(.horizontal, AppTheme.Spacing.sm)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    .background(AppTheme.Background.raisedColor.opacity(AppTheme.Opacity.strong))
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
+                    .padding(AppTheme.Spacing.xxl)
+            }
+        }
     }
 
     // MARK: - Settings (left)
@@ -75,7 +109,8 @@ struct ExportView: View {
         VStack(spacing: AppTheme.Spacing.none) {
             panelHeader("Export")
 
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             // Settings rows
             VStack(spacing: AppTheme.Spacing.none) {
                 settingRow(label: "Format") {
@@ -130,6 +165,27 @@ struct ExportView: View {
 
                     AppDivider().opacity(AppTheme.Opacity.dim)
 
+                    if codec == .hdr {
+                        settingRow(label: "Color") {
+                            Text("BT.2020 · HLG · 10-bit")
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
+
+                        Text("Maps the Rec. 709 SDR timeline white to 75% HLG reference white. No HDR highlight detail is synthesized.")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .padding(.bottom, AppTheme.Spacing.sm)
+
+                        if let hdrCapability, !hdrCapability.isSupported {
+                            Text(hdrCapability.reason ?? "HDR export is unavailable.")
+                                .interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Status.errorColor)
+                                .padding(.bottom, AppTheme.Spacing.sm)
+                        }
+
+                        AppDivider().opacity(AppTheme.Opacity.dim)
+                    }
+
                     Toggle("Require current sequence review", isOn: $requireSequenceReview)
                         .interfaceFont(size: AppTheme.Typography.ui)
 
@@ -140,15 +196,50 @@ struct ExportView: View {
 
                 case .xml:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                        Text("Exports your timeline as XML for use in other editors.")
+                        Text("Exports XMEML for Adobe Premiere Pro and legacy interchange workflows.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
 
-                        Text("Works with DaVinci Resolve, Premiere Pro, and Final Cut Pro.")
+                        Text("Use Final Cut Pro XML for Final Cut Pro or DaVinci Resolve.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
 
-                        Text("Text overlays, flips, adjustments, effects, and keyframe easing aren't included.")
+                        Text("Text, blend modes, flips, adjustments, effects, and keyframe easing aren't included.")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, AppTheme.Spacing.sm)
+
+                case .fcpxml:
+                    settingRow(label: "Version") {
+                        Picker("", selection: $fcpxmlVersion) {
+                            ForEach(FCPXMLVersion.allCases) { version in
+                                Text(version.rawValue).tag(version)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    settingRow(label: "Target") {
+                        Picker("", selection: $fcpxmlTarget) {
+                            ForEach(FCPXMLTarget.allCases) { target in
+                                Text(target.displayName).tag(target)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    AppDivider().opacity(AppTheme.Opacity.dim)
+
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Text(fcpxmlVersion.compatibilityNote)
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+
+                        Text("Exports exact clip timing, source timecode, titles, transforms, crop, opacity, and static gain. Unsupported properties are listed after export.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
@@ -172,12 +263,23 @@ struct ExportView: View {
                 }
             }
 
-            // Progress
-            if service.isExporting {
+            if !projectJobs.isEmpty {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                    Text("Queue")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    ForEach(projectJobs) { job in
+                        exportJobRow(job)
+                    }
+                }
+                .padding(.top, AppTheme.Spacing.md)
+            }
+
+            if let job = activeJob {
                 VStack(spacing: AppTheme.Spacing.xs) {
-                    ProgressView(value: service.progress)
+                    ProgressView(value: job.progress)
                         .progressViewStyle(.linear)
-                    Text("\(Int(service.progress * 100))%")
+                    Text("\(job.detail) · \(Int(job.progress * 100))%")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -185,7 +287,7 @@ struct ExportView: View {
                 .padding(.top, AppTheme.Spacing.md)
             }
 
-            if let error = service.error {
+            if let error = exportError ?? selectedJob?.failure {
                 Text(error)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
@@ -199,9 +301,44 @@ struct ExportView: View {
                     .padding(.top, AppTheme.Spacing.sm)
             }
 
-            Spacer()
+            if selectedJob?.fcpxmlReport == nil {
+                ForEach(Array((selectedJob?.warnings ?? []).enumerated()), id: \.offset) { _, warning in
+                    Text(warning)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                        .padding(.top, AppTheme.Spacing.sm)
+                }
             }
-            .padding(AppTheme.Spacing.xl)
+
+            if let report = selectedJob?.fcpxmlReport {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("Validated Apple DTD · FCPXML \(report.version.rawValue) · \(ByteCountFormatter.string(fromByteCount: report.outputByteCount, countStyle: .file))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    Text("SHA-256 \(report.outputSHA256)")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                    Text(report.validation.schemaProfile)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .textSelection(.enabled)
+                    Text("Media proof · \(report.mediaBindings.count) asset\(report.mediaBindings.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: report.mediaByteCount, countStyle: .file))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    ForEach(Array(report.warnings.enumerated()), id: \.offset) { _, warning in
+                        Text(warning.message)
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Status.warningColor)
+                    }
+                }
+                .padding(.top, AppTheme.Spacing.sm)
+            }
+
+                Spacer()
+                }
+                .padding(AppTheme.Spacing.xl)
+            }
         }
     }
 
@@ -223,7 +360,7 @@ struct ExportView: View {
                     }
                     let out = resolution.renderSize(for: CGSize(width: editor.timeline.width, height: editor.timeline.height))
                     Text("\(Int(out.width))×\(Int(out.height))")
-                case .xml:
+                case .xml, .fcpxml:
                     Text("\(editor.timeline.width)×\(editor.timeline.height)")
                 case .ngvProject:
                     HStack(spacing: AppTheme.Spacing.xs) {
@@ -237,22 +374,137 @@ struct ExportView: View {
 
             Spacer()
 
-            Button(service.isExporting ? "Cancel Export" : "Cancel") {
-                if service.isExporting {
-                    service.cancel()
+            Button(activeJob?.status == .cancelling ? "Cancelling" : (activeJob != nil ? "Cancel Export" : "Cancel")) {
+                if let activeJob {
+                    queue.cancel(jobID: activeJob.id)
                 } else {
                     editor.showExportDialog = false
                 }
             }
-                .keyboardShortcut(.cancelAction)
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .disabled(activeJob != nil && activeJob?.canCancel != true)
+            .keyboardShortcut(.cancelAction)
             Button("Export") { startExport() }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(service.isExporting || preparingDelivery)
+                .disabled(preparingDelivery || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
         .padding(.vertical, AppTheme.Spacing.lg)
+    }
+
+    private var projectJobs: [ExportJob] {
+        let jobs = queue.jobs(ownerKey: editor.openWorkingCopyKey)
+        guard let activeJob = queue.activeJob(ownerKey: editor.openWorkingCopyKey),
+              !jobs.prefix(4).contains(where: { $0.id == activeJob.id }) else {
+            return Array(jobs.prefix(4))
+        }
+        return [activeJob] + Array(jobs.filter { $0.id != activeJob.id }.prefix(3))
+    }
+
+    private var selectedJob: ExportJob? {
+        if let selectedJobID,
+           let selected = projectJobs.first(where: { $0.id == selectedJobID }) {
+            return selected
+        }
+        return projectJobs.first
+    }
+
+    private var activeJob: ExportJob? {
+        queue.activeJob(ownerKey: editor.openWorkingCopyKey)
+    }
+
+    private func exportJobRow(_ job: ExportJob) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: statusSymbol(job.status))
+                    .foregroundStyle(statusColor(job.status))
+                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text(job.title)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .lineLimit(1)
+                    Text("\(job.detail) · \(job.id.prefix(8))")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Button("Cancel") { queue.cancel(jobID: job.id) }
+                    .disabled(!job.canCancel)
+                    .accessibilityIdentifier("export.job.\(job.id).cancel")
+                    .background { exportActionProbe(job: job, action: "cancel") }
+                Button("Retry") {
+                    do {
+                        let retry = try queue.retry(jobID: job.id)
+                        selectedJobID = retry.id
+                        exportError = nil
+                    } catch {
+                        exportError = error.localizedDescription
+                    }
+                }
+                .disabled(!queue.canRetry(jobID: job.id))
+                .accessibilityIdentifier("export.job.\(job.id).retry")
+                .background { exportActionProbe(job: job, action: "retry") }
+                Button("Reveal") {
+                    if let url = job.destinationURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                        ExportActionsSelfTest.recordReveal(url)
+                    }
+                }
+                .disabled(!job.canReveal)
+                .accessibilityIdentifier("export.job.\(job.id).reveal")
+                .background { exportActionProbe(job: job, action: "reveal") }
+                Spacer()
+            }
+            .buttonStyle(.capsule(.secondary, size: .small))
+        }
+        .padding(AppTheme.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(
+                    selectedJob?.id == job.id
+                        ? AppTheme.Background.prominentColor
+                        : AppTheme.Background.raisedColor
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { selectedJobID = job.id }
+    }
+
+    @ViewBuilder
+    private func exportActionProbe(job: ExportJob, action: String) -> some View {
+        if ExportActionsSelfTest.isRequested {
+            AppRelaunchClickProbe(identifier: "export.job.\(job.id).\(action)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func statusSymbol(_ status: ExportJobStatus) -> String {
+        switch status {
+        case .pending: "clock"
+        case .preparing: "gearshape"
+        case .exporting: "arrow.up.circle"
+        case .cancelling: "xmark.circle"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .cancelled: "xmark.circle.fill"
+        case .interrupted: "pause.circle.fill"
+        }
+    }
+
+    private func statusColor(_ status: ExportJobStatus) -> Color {
+        switch status {
+        case .completed: AppTheme.Status.successColor
+        case .failed: AppTheme.Status.errorColor
+        case .cancelled, .interrupted: AppTheme.Status.warningColor
+        case .pending, .preparing, .exporting, .cancelling: AppTheme.Text.secondaryColor
+        }
     }
 
     // MARK: - Helpers
@@ -277,6 +529,7 @@ struct ExportView: View {
         case .h264:   0.63e6
         case .h265:   0.32e6
         case .prores: 9.0e6
+        case .hdr:    0.45e6
         }
         let bytesPerSec = bytesPerSecPerMP * max(0.1, megapixels)
         return ByteCountFormatter.string(fromByteCount: Int64(bytesPerSec * seconds), countStyle: .file)
@@ -285,8 +538,20 @@ struct ExportView: View {
     private var exportFormat: ExportFormat {
         switch mode {
         case .xml, .ngvProject: .xml   // ngvProject has its own path; never rendered
+        case .fcpxml: .fcpxml
         case .video: codec.exportFormat
         }
+    }
+
+    private var selectedRenderSize: CGSize {
+        resolution.renderSize(for: CGSize(
+            width: editor.timeline.width,
+            height: editor.timeline.height
+        ))
+    }
+
+    private var hdrCapabilityKey: String {
+        "\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))-\(editor.timeline.fps)"
     }
 
     /// Quick estimate for exporting a NexGenVideo Project
@@ -305,26 +570,34 @@ struct ExportView: View {
         return (collect, missing, bytes)
     }
 
-    private func loadPreview() {
-        for track in editor.timeline.tracks where track.type == .video {
-            for clip in track.clips {
-                guard let url = editor.mediaResolver.resolveURL(for: clip.mediaRef) else { continue }
-                let asset = AVURLAsset(url: url)
-                guard !asset.tracks(withMediaType: .video).isEmpty else { continue }
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.maximumSize = CGSize(width: 480, height: 270)
-                generator.appliesPreferredTrackTransform = true
-                let time = CMTime(value: CMTimeValue(clip.trimStartFrame), timescale: CMTimeScale(editor.timeline.fps))
-                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, _, _ in
-                    if let image {
-                        Task { @MainActor in
-                            preview = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-                        }
-                    }
-                }
-                return
-            }
+    private func loadPreview() async {
+        let timeline = editor.timeline
+        guard timeline.totalFrames > 0 else { return }
+        let resolver = editor.mediaResolver.snapshot()
+        let canvas = CGSize(width: timeline.width, height: timeline.height)
+        guard let result = try? await CompositionBuilder.build(
+            timeline: timeline,
+            resolveURL: { resolver.resolveURL(for: $0) },
+            renderSize: canvas
+        ), (try? await result.composition.loadTracks(withMediaType: .video).first) != nil else {
+            return
         }
+        let generator = AVAssetImageGenerator(asset: result.composition)
+        generator.videoComposition = result.videoComposition
+        generator.maximumSize = CGSize(width: 480, height: 270)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let frame = min(max(0, editor.currentFrame), timeline.totalFrames - 1)
+        let time = CMTime(
+            value: CMTimeValue(frame),
+            timescale: CMTimeScale(max(1, timeline.fps))
+        )
+        guard let video = try? await generator.image(at: time).image else { return }
+        preview = NSImage(
+            cgImage: video,
+            size: NSSize(width: video.width, height: video.height)
+        )
     }
 
     private func startExport() {
@@ -334,29 +607,35 @@ struct ExportView: View {
         panel.allowedContentTypes = [
             format == .xml
                 ? .xml
-                : (format == .prores ? .movie : .mpeg4Movie)
+                : (format == .fcpxml
+                    ? (UTType(filenameExtension: "fcpxml") ?? .xml)
+                    : (format == .prores || format.isHDR ? .movie : .mpeg4Movie))
+
         ]
         panel.nameFieldStringValue = "export.\(format.fileExtension)"
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                if mode == .xml {
-                    await service.export(
-                        timeline: editor.timeline,
-                        resolver: editor.mediaResolver,
-                        format: format,
-                        resolution: resolution,
-                        outputURL: url
-                    )
-                    if service.error == nil { editor.showExportDialog = false }
-                    return
-                }
                 preparingDelivery = true
-                service.error = nil
+                exportError = nil
                 ngvResult = nil
+                defer { preparingDelivery = false }
                 do {
-                    _ = try PipelineDeliveryStore.adoptCurrentTimeline(
+                    if mode == .xml || mode == .fcpxml {
+                        let job = try await queue.enqueueInterchange(
+                            editor: editor,
+                            format: format,
+                            outputURL: url,
+                            projectName: editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Timeline Export",
+                            fcpxmlVersion: fcpxmlVersion,
+                            fcpxmlTarget: fcpxmlTarget
+                        )
+                        selectedJobID = job.id
+                        ngvResult = "Queued · \(job.id.prefix(8))"
+                        return
+                    }
+                    _ = try await PipelineDeliveryStore.adoptCurrentTimeline(
                         editor: editor,
                         requireSequenceReview: requireSequenceReview
                     )
@@ -369,22 +648,17 @@ struct ExportView: View {
                         resolution: resolution,
                         requireSequenceReview: requireSequenceReview
                     )
-                    preparingDelivery = false
-                    let attempt = try await PipelineDeliveryStore.export(
+                    let job = try await queue.enqueueDelivery(
                         editor: editor,
                         spec: spec,
                         format: format,
                         resolution: resolution,
-                        outputURL: url,
-                        service: service
+                        outputURL: url
                     )
-                    let outputSize = attempt.outputByteCount.map {
-                        ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
-                    } ?? "exported"
-                    ngvResult = "QC passed · \(outputSize) · \(attempt.id.prefix(8))"
+                    selectedJobID = job.id
+                    ngvResult = "Queued · \(job.id.prefix(8))"
                 } catch {
-                    preparingDelivery = false
-                    service.error = error.localizedDescription
+                    exportError = error.localizedDescription
                 }
             }
         }
@@ -392,6 +666,7 @@ struct ExportView: View {
 
     private func startNGVExport() {
         ngvResult = nil
+        exportError = nil
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(Project.typeIdentifier) ?? .package]
         let base = editor.projectURL?.deletingPathExtension().lastPathComponent ?? Project.defaultProjectName
@@ -400,20 +675,17 @@ struct ExportView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
-                let report = await service.exportProjectPackage(
-                    timeline: editor.timeline,
-                    manifest: editor.mediaManifest,
-                    generationLog: editor.generationLog,
-                    sourceProjectURL: editor.workingRoot,
-                    outputURL: url
-                )
-                guard let report, service.error == nil else { return }
-                if report.missing.isEmpty {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    editor.showExportDialog = false
-                } else {
-                    // Keep the dialog open so the user sees what couldn't be included.
-                    ngvResult = "Exported, but \(report.missing.count) media file\(report.missing.count == 1 ? "" : "s") were missing and couldn't be included."
+                preparingDelivery = true
+                defer { preparingDelivery = false }
+                do {
+                    let job = try await queue.enqueueProjectPackage(
+                        editor: editor,
+                        outputURL: url
+                    )
+                    selectedJobID = job.id
+                    ngvResult = "Queued · \(job.id.prefix(8))"
+                } catch {
+                    exportError = error.localizedDescription
                 }
             }
         }

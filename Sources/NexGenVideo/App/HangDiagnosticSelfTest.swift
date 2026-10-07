@@ -9,6 +9,7 @@ enum HangDiagnosticSelfTest {
     static var requested: Bool {
         ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "wait"
             || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "spin"
+            || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "helper-restart"
             || ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "verify-retained-key"
     }
 
@@ -22,7 +23,7 @@ enum HangDiagnosticSelfTest {
         HangDiagnosticRecorder.shared.start(includeContent: content)
         if content {
             let editor = EditorViewModel()
-            editor.workspaceFocus = .produce
+            editor.setWorkspaceFocus(.production)
             editor.agentPanelVisible = true
             self.editor = editor
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
@@ -37,6 +38,11 @@ enum HangDiagnosticSelfTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                 editor.agentService.messages.append(AgentMessage(role: .assistant,
                     blocks: [.text("NGV_DIAGNOSTIC_REPLAY_CONTROL")]))
+            }
+        }
+        if ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST"] == "helper-restart" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                HangDiagnosticRecorder.shared.terminateHelperForSelfTest()
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {

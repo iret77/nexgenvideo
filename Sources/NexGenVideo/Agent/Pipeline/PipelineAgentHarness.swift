@@ -13,6 +13,25 @@ enum IntakePlanner {
         }
     }
 
+    static func restoredRepeat(
+        _ saved: ChatSessionDecision?, steps: [HardStep], phase: String?,
+        binding: ProjectPackBinding?, dataRoot: URL, ledger: IntakeLedger
+    ) -> HardStep? {
+        guard let saved, saved.origin == .direct, saved.dialog.purpose == .workflowIntake,
+              let key = saved.intakeKey, key.isRepeat,
+              key.packBinding == binding, key.phase == phase,
+              let index = steps.firstIndex(where: { $0.id == key.stepID }),
+              steps[index].repeatable, !ledger.isDeclined(key.stepID),
+              next(Array(steps.prefix(index)), dataRoot: dataRoot, ledger: ledger) == nil else { return nil }
+        let step = steps[index]
+        let count = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
+        guard count > 0, count == key.fingerprint, key.itemNumber == count + 1,
+              saved.dialog.hasSameControls(as: AgentDialog(
+                hardStep: step, isRepeat: true, itemNumber: count + 1
+              )) else { return nil }
+        return step
+    }
+
     static func next(
         _ steps: [HardStep],
         dataRoot: URL,
@@ -158,6 +177,12 @@ enum PipelinePhaseAccess {
 
 @MainActor
 final class PipelineAgentHarness {
+    struct RuntimeContext: Equatable, Sendable {
+        let packID: String?
+        let currentPhase: String?
+        let instructions: String?
+    }
+
     struct Reconciliation {
         let isReady: Bool
         let agentPrompt: String?
@@ -177,21 +202,29 @@ final class PipelineAgentHarness {
         var phase: String? { snapshot.nextPhase }
 
         func agentPrompt() throws -> String? {
+            try assembledPrompt(includeStarter: true)
+        }
+
+        func runtimeInstructions() throws -> String? {
+            try assembledPrompt(includeStarter: false)
+        }
+
+        private func assembledPrompt(includeStarter: Bool) throws -> String? {
             let progress = PackProgress(
                 nextPhase: snapshot.nextPhase,
                 approvedPhases: snapshot.phases.filter(\.approved).count,
                 totalPhases: snapshot.phases.count
             )
-            var prompt = pack.starters(for: progress).first?.prompt
+            var prompt = includeStarter ? pack.starters(for: progress).first?.prompt : nil
             guard let phase = snapshot.nextPhase else { return prompt }
-            let instructions = try contract.instructions(for: phase)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let phaseDocument = try contract.instructions(for: phase)
+            let instructions = phaseDocument.trimmingCharacters(in: .whitespacesAndNewlines)
             if let existing = prompt {
                 if !instructions.isEmpty, !existing.contains(instructions) {
                     prompt = "\(existing)\n\nFollow these packaged instructions for the current phase:\n\n\(instructions)"
                 }
             } else if !instructions.isEmpty {
-                prompt = instructions
+                prompt = includeStarter ? instructions : phaseDocument
             }
             guard var prompt else { return nil }
             if let causality = StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase) {
@@ -318,14 +351,24 @@ final class PipelineAgentHarness {
         case custom
     }
 
+    enum StoryboardCreationPath: Equatable {
+        case agentCreated
+        case userSupplied
+        case custom
+    }
+
     private var offered: OfferedIntake?
     private var intakeResolution: IntakeResolution?
     private var treatmentCreationPath: TreatmentCreationPath?
+    private var storyboardCreationPath: StoryboardCreationPath?
+    private var storyboardInputReceived = false
 
     func reset() {
         offered = nil
         intakeResolution = nil
         treatmentCreationPath = nil
+        storyboardCreationPath = nil
+        storyboardInputReceived = false
     }
 
     func workflowIntakePhase(dialogID: String) -> String? {
@@ -479,9 +522,24 @@ final class PipelineAgentHarness {
         if context.phase != "treatment" {
             treatmentCreationPath = nil
         }
+        if context.phase != "storyboard" {
+            storyboardCreationPath = nil
+            storyboardInputReceived = false
+        }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
         var repeatStep: (step: HardStep, itemNumber: Int)?
+        if offered == nil, let phase = context.phase,
+           let step = IntakePlanner.restoredRepeat(
+            service.sessions.first(where: { $0.id == service.currentSessionId })?.decision,
+            steps: context.manifest.steps(for: phase), phase: phase,
+            binding: editor.declaredPluginBinding, dataRoot: dataRoot, ledger: ledger
+           ) {
+            if let failure = present(step, isRepeat: true, dataRoot: dataRoot, editor: editor) {
+                return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
+            }
+            return .blocked
+        }
         if let previous = offered {
             guard let resolution = intakeResolution,
                   resolution.dialogID == previous.dialogID else {
@@ -599,17 +657,30 @@ final class PipelineAgentHarness {
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding
             )
-            if let tool,
-               let contract,
-               !contract.allowsPhaseBound(tool, phase: phase) {
-                throw GateBlocked(
-                    "\(tool.rawValue) is not part of the "
-                        + "\(PhaseDisplay.label(phase)) phase contract."
-                )
-            }
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message, kind: .agentCorrection)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .agentCorrection)
+        }
+        if let tool,
+           let contract,
+           !contract.allowsPhaseBound(tool, phase: phase) {
+            throw ToolError(
+                "\(tool.rawValue) is not part of the "
+                    + "\(PhaseDisplay.label(phase)) phase contract.",
+                kind: .agentCorrection
+            )
+        }
+        do {
             try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
-            if let index = order.firstIndex(of: phase), index > 0 {
-                let prior = order[index - 1]
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message, kind: .reviewChangedSource)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
+        }
+        if let index = order.firstIndex(of: phase), index > 0 {
+            let prior = order[index - 1]
+            do {
                 try GateGuard.checkApprovable(
                     phase: prior,
                     dataRoot: dataRoot,
@@ -619,9 +690,11 @@ final class PipelineAgentHarness {
                         registry: registry
                     )
                 )
+            } catch let blocked as GateBlocked {
+                throw ToolError(blocked.message, kind: .reviewChangedSource)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reviewChangedSource)
             }
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
         }
     }
 
@@ -672,6 +745,31 @@ final class PipelineAgentHarness {
             dataRoot: dataRoot,
             packName: packName
         ).agentPrompt()
+    }
+
+    func runtimeContext(
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
+    ) throws -> RuntimeContext {
+        guard let packName = try resolvedPack(
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
+            requireMutationBinding: true
+        ) else {
+            return RuntimeContext(
+                packID: nil,
+                currentPhase: nil,
+                instructions: try genericStylePrompt(dataRoot: dataRoot)
+            )
+        }
+        let context = try loadContext(dataRoot: dataRoot, packName: packName)
+        return RuntimeContext(
+            packID: packName,
+            currentPhase: context.phase,
+            instructions: try context.runtimeInstructions()
+        )
     }
 
     private func genericStylePrompt(dataRoot: URL) throws -> String? {
@@ -784,6 +882,17 @@ final class PipelineAgentHarness {
                     "The user chose an agent-proposed treatment. Create 2–3 variants from the approved analysis, lyrics, Brief, and Production Design; do not request a treatment upload or long-form treatment text."
                 )
             }
+        case "storyboard":
+            let hasStoryboard = try StoryboardStore.load(
+                dataRoot: dataRoot,
+                version: .current
+            ) != nil
+            try Self.guardStoryboardDecision(
+                dialog,
+                hasStoryboard: hasStoryboard,
+                creationPath: storyboardCreationPath,
+                inputReceived: storyboardInputReceived
+            )
         default:
             if dialog.workflowDecision != nil {
                 throw ToolError(
@@ -798,12 +907,31 @@ final class PipelineAgentHarness {
         result: AgentDialogResult,
         selectedOptionIDs: [String: Set<String>]
     ) throws {
-        guard dialog.workflowDecision == .treatmentPath else { return }
-        treatmentCreationPath = try Self.resolveTreatmentCreationPath(
-            dialog,
-            result: result,
-            selectedOptionIDs: selectedOptionIDs
-        )
+        switch dialog.workflowDecision {
+        case .treatmentPath:
+            treatmentCreationPath = try Self.resolveTreatmentCreationPath(
+                dialog,
+                result: result,
+                selectedOptionIDs: selectedOptionIDs
+            )
+        case .storyboardMode:
+            storyboardCreationPath = try Self.resolveStoryboardCreationPath(
+                dialog,
+                result: result,
+                selectedOptionIDs: selectedOptionIDs
+            )
+            storyboardInputReceived = false
+        case .storyboardInput:
+            try Self.validateStoryboardInputDialog(dialog)
+            guard !result.direction.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty else {
+                throw ToolError("Paste the Storyboard sequences before continuing.")
+            }
+            storyboardInputReceived = true
+        default:
+            return
+        }
     }
 
     static func resolveTreatmentCreationPath(
@@ -850,6 +978,105 @@ final class PipelineAgentHarness {
               options.map(\.id) == ["agent_proposal", "user_supplied"] else {
             throw ToolError(
                 "The Treatment path dialog must contain one single-select treatment_path section with agent_proposal first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
+        }
+    }
+
+    static func resolveStoryboardCreationPath(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        selectedOptionIDs: [String: Set<String>]
+    ) throws -> StoryboardCreationPath {
+        try validateStoryboardModeDialog(dialog)
+        let explicit = selectedOptionIDs["storyboard_mode"] ?? []
+        let selected: Set<String>
+        if explicit.isEmpty {
+            let labels = Set(result.labels("storyboard_mode"))
+            guard let section = dialog.sections.first,
+                  case .choices(let options, _) = section.kind else {
+                throw ToolError("Choose how the Storyboard should be created.")
+            }
+            selected = Set(options.filter { labels.contains($0.label) }.map(\.id))
+        } else {
+            selected = explicit
+        }
+        if selected == ["agent_created"] {
+            return .agentCreated
+        } else if selected == ["user_supplied"] {
+            return .userSupplied
+        } else if selected.isEmpty,
+                  result.customValues["storyboard_mode"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return .custom
+        } else {
+            throw ToolError("Choose one Storyboard mode before continuing.")
+        }
+    }
+
+    static func validateStoryboardModeDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .storyboardMode,
+              dialog.fileIntake == nil,
+              dialog.textField == nil,
+              dialog.sections.count == 1,
+              let section = dialog.sections.first,
+              section.id == "storyboard_mode",
+              section.allowsCustom,
+              case .choices(let options, let multiSelect) = section.kind,
+              !multiSelect,
+              options.map(\.id) == ["agent_created", "user_supplied"] else {
+            throw ToolError(
+                "The Storyboard mode dialog must contain one single-select storyboard_mode section with agent_created first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
+        }
+    }
+
+    static func guardStoryboardDecision(
+        _ dialog: AgentDialog,
+        hasStoryboard: Bool,
+        creationPath: StoryboardCreationPath?,
+        inputReceived: Bool
+    ) throws {
+        if hasStoryboard {
+            throw ToolError(
+                "A storyboard already exists. Show storyboard/current.yaml and call approve_gate. "
+                    + "Revise it only from an explicit user instruction; do not present a resume, "
+                    + "scope, granularity, sheet-count, or recovery dialog."
+            )
+        }
+        guard let creationPath else {
+            guard dialog.workflowDecision == .storyboardMode else {
+                throw ToolError(
+                    "Before creating the first storyboard, present the Storyboard mode choice with workflowDecision=storyboard_mode: agent_created first (recommended), then user_supplied, with Other enabled."
+                )
+            }
+            try validateStoryboardModeDialog(dialog)
+            return
+        }
+        switch creationPath {
+        case .agentCreated, .custom:
+            throw ToolError(
+                "The Storyboard creation path is already set. Derive step count, framing, "
+                    + "reference demand, and Bible sheet demand from approved project truth; "
+                    + "write the storyboard without another user decision."
+            )
+        case .userSupplied:
+            guard !inputReceived else {
+                throw ToolError(
+                    "The user's Storyboard sequences are already supplied. Validate and write them "
+                        + "without another dialog."
+                )
+            }
+            try validateStoryboardInputDialog(dialog)
+        }
+    }
+
+    static func validateStoryboardInputDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .storyboardInput,
+              dialog.sections.isEmpty,
+              dialog.fileIntake == nil,
+              dialog.textField?.multiline == true else {
+            throw ToolError(
+                "After user_supplied, request the sequences once with workflowDecision=storyboard_input and one multiline text field; do not add choices or file intake."
             )
         }
     }
@@ -947,7 +1174,7 @@ final class PipelineAgentHarness {
                 declaredPack: declaredPack
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
     }
 
@@ -972,7 +1199,11 @@ final class PipelineAgentHarness {
             dialogID: dialog.id
         )
         do {
-            try editor.agentService.presentDialog(dialog)
+            try editor.agentService.presentDialog(dialog, intakeKey: WorkflowIntakeDraftKey(
+                packBinding: editor.declaredPluginBinding,
+                phase: step.phase, stepID: step.id, itemNumber: resolvedItemNumber,
+                fingerprint: fingerprint, isRepeat: isRepeat
+            ))
             return nil
         } catch {
             offered = nil

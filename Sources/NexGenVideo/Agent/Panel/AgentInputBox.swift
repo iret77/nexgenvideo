@@ -183,7 +183,7 @@ struct AgentInputBox<LeadingTools: View>: View {
                 }
 
             if draft.isEmpty {
-                Text("Ask, or type @ to reference media")
+                Text(inputPlaceholder)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(.horizontal, AppTheme.Spacing.lgXl)
@@ -191,6 +191,12 @@ struct AgentInputBox<LeadingTools: View>: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    private var inputPlaceholder: String {
+        guard let task = editor.agentService.pendingFunction else { return "Ask, or type @ to reference media" }
+        return task.requiresDirection ? "Enter task instructions. Use @ to reference media."
+            : "Add optional instructions. Use @ to reference media."
     }
 
     private var bottomBar: some View {
@@ -226,6 +232,10 @@ struct AgentInputBox<LeadingTools: View>: View {
             .glassEffectID("sendStop", in: sendStopNamespace)
             .help("Stop")
             .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
+        } else if editor.agentService.pendingFunction != nil {
+            Button("Run Task", action: onSend)
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .disabled(!canSend)
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
@@ -281,6 +291,11 @@ struct AgentInputBox<LeadingTools: View>: View {
                 showsTypeTabs: true,
                 scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
                 pinnedId: editor.selectedMediaAssetIds.first,
+                state: editor.mediaPickerState(for: .composer),
+                onReveal: { asset in
+                    showReferencePicker = false
+                    editor.revealAssetInMedia(asset)
+                },
                 onPick: { asset in
                     editor.agentService.attachMention(for: asset)
                     showReferencePicker = false

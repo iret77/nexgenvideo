@@ -13,6 +13,9 @@ final class AgentService {
     private var apiKeyGeneration = 0
     private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
+    private let runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)?
+    private let runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)?
+    private let runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)?
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -24,11 +27,17 @@ final class AgentService {
         backend: AgentBackend = AgentBackendPreference.selected,
         refreshBackendStatusOnInit: Bool = true,
         hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
-        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil
+        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil,
+        runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)? = nil,
+        runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
+        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil
     ) {
         self.backend = backend
         self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
         self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
+        self.runtimeAdapterFactory = runtimeAdapterFactory
+        self.runtimeReadinessOverride = runtimeReadinessOverride
+        self.runtimeHostContextOverride = runtimeHostContextOverride
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -85,6 +94,7 @@ final class AgentService {
             }.value
             guard let self, self.apiKeyGeneration == generation else { return }
             self.apiKey = key
+            self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
         }
     }
@@ -107,6 +117,7 @@ final class AgentService {
         switch backend {
         case .anthropicAPI: return isCheckingAPIKey && !hasApiKey
         case .claudeCode: return isCheckingClaude && claudeStatus?.isAuthenticated != true
+        case .codexAppServer: return false
         }
     }
 
@@ -114,13 +125,35 @@ final class AgentService {
         switch backend {
         case .anthropicAPI: return "Checking Anthropic API key…"
         case .claudeCode: return "Checking Claude Code…"
+        case .codexAppServer: return "Checking Codex…"
         }
     }
 
     var canStream: Bool {
+        runtimeReadinessError == nil
+    }
+
+    private var runtimeReadinessError: AgentStreamError? {
+        if let runtimeReadinessOverride { return runtimeReadinessOverride() }
         switch backend {
-        case .anthropicAPI: return hasApiKey
-        case .claudeCode: return claudeStatus?.isAuthenticated == true
+        case .anthropicAPI:
+            return hasApiKey ? nil : .upstream("Add an Anthropic API key in Settings to start.")
+        case .claudeCode:
+            return claudeStatus?.isAuthenticated == true
+                ? nil
+                : .upstream(setupPrompt + " Agent settings.")
+        case .codexAppServer:
+            guard CodexAppServerContract.isAcceptanceRun else {
+                return .upstream(
+                    "Codex remains unavailable until isolation and transcript replay pass approved Actions acceptance."
+                )
+            }
+            return CodexAppServerLocator.executable(
+                environment: ProcessInfo.processInfo.environment,
+                fileManager: .default
+            ) == nil
+                ? .upstream("Install Codex CLI \(CodexAppServerContract.cliVersion) before running the approved acceptance workflow.")
+                : nil
         }
     }
 
@@ -134,6 +167,8 @@ final class AgentService {
             return "Install Claude Code in"
         case .claudeCode:
             return "Sign in to Claude Code in"
+        case .codexAppServer:
+            return "Codex is not available in"
         }
     }
 
@@ -145,11 +180,14 @@ final class AgentService {
             return "Install Claude Code to use the AI chat."
         case .claudeCode:
             return "Sign in to Claude Code to use the AI chat."
+        case .codexAppServer:
+            return "Codex is not available until its isolated runtime passes approved Actions acceptance."
         }
     }
 
     func refreshBackendStatus() {
-        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil {
+        if ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] != nil
+            || WorkspaceUIAcceptance.isRequested {
             isCheckingAPIKey = false
             isCheckingClaude = false
             claudeStatus = .init(executableURL: nil, version: "offline-replay", isAuthenticated: true)
@@ -161,6 +199,8 @@ final class AgentService {
         case .claudeCode:
             isCheckingClaude = true
             Task { await refreshClaudeCodeStatus() }
+        case .codexAppServer:
+            isCheckingClaude = false
         }
     }
 
@@ -204,6 +244,12 @@ final class AgentService {
     var messages: [AgentMessage] = [] {
         didSet { captureDiagnosticTranscript() }
     }
+
+    @ObservationIgnored
+    private var projectGenerationID = UUID()
+
+    @ObservationIgnored
+    private var hostTurnReferences: [UUID: AgentHostTurnReference] = [:]
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
@@ -230,19 +276,21 @@ final class AgentService {
     var streamError: AgentStreamError?
     var onSessionsChanged: (@MainActor () -> Void)?
 
-    var draft: String = ""
-    var mentions: [AgentMention] = []
+    var draft: String = "" {
+        didSet { persistComposerDraft() }
+    }
+    var mentions: [AgentMention] = [] {
+        didSet { persistComposerDraft() }
+    }
 
     /// A starter or pack function staged in the composer as a colored pill: its full prompt is hidden
     /// from the text field, keeping the composer clean. On send the prompt is composed with any typed
     /// note into the outgoing message. Only one may be pending; staging another replaces it.
-    var pendingFunction: PendingFunction?
-
-    struct PendingFunction: Equatable {
-        let title: String
-        let systemImage: String
-        let prompt: String
+    var pendingFunction: PendingFunction? {
+        didSet { persistComposerDraft() }
     }
+
+    typealias PendingFunction = AgentTask
 
     private struct ComposerState {
         let draft: String
@@ -291,9 +339,12 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
+            clearSavedDecision(id: oldValue?.id)
             dialogChoiceSelections = [:]
+            dialogDraft = AgentDialogDraft()
             dialogSubmissionError = nil
             submittingDialogID = nil
+            if pendingDialog == nil { activeIntakeDraftKey = nil }
         }
     }
 
@@ -320,7 +371,8 @@ final class AgentService {
 
     func presentDialog(
         _ dialog: AgentDialog,
-        origin: ToolCallOrigin = .direct
+        origin: ToolCallOrigin = .direct,
+        intakeKey: WorkflowIntakeDraftKey? = nil
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
@@ -332,9 +384,16 @@ final class AgentService {
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
             )
         }
+        let saved = sessions.first { $0.id == currentSessionId }?.decision
+        activeIntakeDraftKey = intakeKey
         dialogOrigins[dialog.id] = origin
         suspendToolCalls(from: origin)
         pendingDialog = dialog
+        if let intakeKey, let saved, saved.intakeKey == intakeKey,
+           saved.dialog.hasSameControls(as: dialog), origin == .direct {
+            dialogDraft = saved.draft
+            dialogChoiceSelections = saved.selections
+        }
         editor?.agentPanelVisible = true
     }
 
@@ -372,7 +431,9 @@ final class AgentService {
     /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
     /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
     /// range selects its choice here, and the card's chip reflects it. Keyed by sectionId → option ids.
-    var dialogChoiceSelections: [String: Set<String>] = [:]
+    var dialogChoiceSelections: [String: Set<String>] = [:] {
+        didSet { persistDecisionDraft() }
+    }
 
     /// The pending dialog's canvas projection, or nil when there's nothing to project (plain card).
     var pendingDialogProjection: AgentDialog.Projection? {
@@ -443,7 +504,9 @@ final class AgentService {
                 try editor.pipelineAgentHarness.recordAgentDecision(
                     dialog,
                     result: result,
-                    selectedOptionIDs: dialogChoiceSelections
+                    selectedOptionIDs: result.selectedOptionIDs.isEmpty
+                        ? dialogChoiceSelections
+                        : result.selectedOptionIDs
                 )
             } catch {
                 dialogSubmissionError = error.localizedDescription
@@ -836,7 +899,7 @@ final class AgentService {
         ) {
             guard let assigned = editor.mediaManifest.intakeRoleByAssetID[asset.id],
                   assigned != requestedRole else { continue }
-            return (asset.name, assigned)
+            return (asset.libraryDisplayName, assigned)
         }
         return nil
     }
@@ -1010,6 +1073,25 @@ final class AgentService {
         for section in dialog.sections {
             var semanticValues = result.labels(section.id)
             var presentedValues = semanticValues.map { section.transcriptValue(for: $0) }
+            var selectedMediaDetails: [String] = []
+            if case .choices(let options, _) = section.kind {
+                let selectedIDs = result.selectedOptionIDs[section.id] ?? []
+                let selectedOptions = options.filter { selectedIDs.contains($0.id) }
+                let mediaValues = selectedOptions.compactMap { option -> String? in
+                    guard option.mediaRef != nil,
+                          let filename = result.selectedMediaFilenames[section.id]?[option.id]
+                    else { return nil }
+                    return "\(option.shortLabel) · \(filename)"
+                }
+                if !mediaValues.isEmpty { presentedValues = mediaValues }
+                selectedMediaDetails = selectedOptions.compactMap { option in
+                    guard let mediaRef = option.mediaRef else { return nil }
+                    let filename = result.selectedMediaFilenames[section.id]?[option.id]
+                    return [option.label, "mediaRef: \(mediaRef)", filename]
+                        .compactMap { $0 }
+                        .joined(separator: " · ")
+                }
+            }
             if let custom = result.customValues[section.id]?.trimmingCharacters(in: .whitespacesAndNewlines),
                !custom.isEmpty {
                 semanticValues.append(custom)
@@ -1022,6 +1104,9 @@ final class AgentService {
             if !semanticValues.isEmpty {
                 selections.append(.init(label: section.shortLabel, values: presentedValues))
                 agentLines.append("\(section.label): \(semanticValues.joined(separator: ", "))")
+                if !selectedMediaDetails.isEmpty {
+                    agentLines.append("Selected image assets: \(selectedMediaDetails.joined(separator: "; "))")
+                }
             }
         }
         let direction = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1161,10 +1246,16 @@ final class AgentService {
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
+        let preservedIntakeKey = activeIntakeDraftKey
+        let preservedDraft = dialogDraft
+        let preservedSelections = dialogChoiceSelections
         submittingDialogID = nil
         pendingDialog = nil
         guard let editor else {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = "The project is unavailable. Reopen it and try again."
             return
         }
@@ -1177,7 +1268,10 @@ final class AgentService {
             editor: editor
         )
         if let failure = reconciliation.failure {
+            activeIntakeDraftKey = preservedIntakeKey
             pendingDialog = dialog
+            dialogDraft = preservedDraft
+            dialogChoiceSelections = preservedSelections
             dialogSubmissionError = failure
             return
         }
@@ -1236,13 +1330,182 @@ final class AgentService {
                 )
             )
         )
-        if claudeRuntimeEnabled, let runtime = _claudeRuntime {
-            runtime.appendTranscriptOnly(message)
-            messages = runtime.messages
-        } else {
-            messages.append(message)
-        }
+        messages.append(message)
         checkpointCurrentSession()
+    }
+
+    func recordHostState(
+        _ record: AgentHostStateRecord,
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        turnReference: AgentHostTurnReference? = nil
+    ) {
+        guard let sessionID = origin.chatSessionID else { return }
+        let verifiedTurnReference = verifiedHostTurnReference(
+            turnReference,
+            origin: origin
+        )
+        if turnReference != nil, verifiedTurnReference == nil {
+            Log.agent.notice(
+                "discarded host state with a stale turn reference id=\(record.id.uuidString)"
+            )
+            return
+        }
+        if sessionID == currentSessionId {
+            guard Self.attachHostState(
+                record,
+                toolUseID: toolUseID,
+                turnReference: verifiedTurnReference,
+                to: &messages
+            ) else { return }
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+            return
+        }
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            return
+        }
+        guard Self.attachHostState(
+            record,
+            toolUseID: toolUseID,
+            turnReference: verifiedTurnReference,
+            to: &sessions[index].messages
+        ) else { return }
+        sessions[index].updatedAt = Date()
+        onSessionsChanged?()
+    }
+
+    func captureHostTurnReference(
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        let chatSessionID: UUID
+        let generationID: UUID
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .inAppChat(let sessionID):
+            guard let runtimeGenerationID else { return nil }
+            chatSessionID = sessionID
+            generationID = runtimeGenerationID
+        case .direct, .externalMCP:
+            return nil
+        }
+        guard
+            let reference = hostTurnReferences[generationID],
+            reference.projectGenerationID == projectGenerationID,
+            reference.chatSessionID == chatSessionID,
+            reference.runtimeGenerationID == generationID,
+            sessionContainsMessage(
+                reference.inputMessageID,
+                sessionID: chatSessionID
+            ) else { return nil }
+        return reference
+    }
+
+    private func verifiedHostTurnReference(
+        _ reference: AgentHostTurnReference?,
+        origin: ToolCallOrigin
+    ) -> AgentHostTurnReference? {
+        guard let reference,
+              reference.projectGenerationID == projectGenerationID,
+              reference.chatSessionID == origin.chatSessionID,
+              sessionContainsMessage(
+                  reference.inputMessageID,
+                  sessionID: reference.chatSessionID
+              ) else { return nil }
+        switch origin {
+        case .embeddedRuntime(let sessionID, let runtimeGenerationID):
+            return sessionID == reference.chatSessionID
+                    && runtimeGenerationID == reference.runtimeGenerationID
+                ? reference
+                : nil
+        case .inAppChat(let sessionID):
+            return sessionID == reference.chatSessionID ? reference : nil
+        case .direct, .externalMCP:
+            return nil
+        }
+    }
+
+    private func sessionContainsMessage(
+        _ messageID: UUID,
+        sessionID: UUID
+    ) -> Bool {
+        if currentSessionId == sessionID {
+            return messages.contains { $0.id == messageID }
+        }
+        return sessions.first(where: { $0.id == sessionID })?.messages.contains {
+            $0.id == messageID
+        } == true
+    }
+
+    @discardableResult
+    private static func attachHostState(
+        _ record: AgentHostStateRecord,
+        toolUseID: String?,
+        turnReference: AgentHostTurnReference?,
+        to messages: inout [AgentMessage]
+    ) -> Bool {
+        let searchableIndices: [Int]
+        if let turnReference {
+            guard let anchor = messages.firstIndex(where: {
+                $0.id == turnReference.inputMessageID && $0.role == .user
+            }) else { return false }
+            let end = messages.indices.dropFirst(anchor + 1).first(where: {
+                messages[$0].role == .user && messages[$0].blocks.contains {
+                    if case .text = $0 { return true }
+                    return false
+                }
+            }) ?? messages.endIndex
+            searchableIndices = Array(anchor..<end)
+        } else {
+            searchableIndices = Array(messages.indices)
+        }
+        if let messageIndex = searchableIndices.reversed().first(where: { index in
+            messages[index].hostStateRecords.contains { $0.id == record.id }
+        }), let stateIndex = messages[messageIndex].hostStateRecords.firstIndex(where: {
+            $0.id == record.id
+        }) {
+            let prior = messages[messageIndex].hostStateRecords[stateIndex]
+            messages[messageIndex].hostStateRecords[stateIndex] = record.associated(
+                with: toolUseID ?? prior.toolUseID,
+                retaining: prior.id
+            )
+            return true
+        }
+        let requestedID = toolUseID ?? record.toolUseID
+        if let requestedID,
+           let messageIndex = searchableIndices.first(where: { index in
+               messages[index].role == .assistant
+                   && messages[index].blocks.contains {
+                       if case .toolUse(let id, _, _) = $0 {
+                           return id == requestedID
+                       }
+                       return false
+                   }
+           }) {
+            let associated = record.associated(with: requestedID)
+            if let index = messages[messageIndex].hostStateRecords.firstIndex(where: {
+                $0.toolUseID == requestedID && $0.phase == associated.phase
+            }) {
+                let priorID = messages[messageIndex].hostStateRecords[index].id
+                messages[messageIndex].hostStateRecords[index] = associated.associated(
+                    with: requestedID,
+                    retaining: priorID
+                )
+            } else {
+                messages[messageIndex].hostStateRecords.append(associated)
+            }
+            return true
+        }
+        guard let turnReference,
+              let messageIndex = messages.firstIndex(where: {
+                  $0.id == turnReference.inputMessageID && $0.role == .user
+              }) else { return false }
+        messages[messageIndex].hostStateRecords.append(
+            record.associated(with: requestedID)
+        )
+        return true
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -1322,14 +1585,25 @@ final class AgentService {
     @ObservationIgnored
     private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
 
-    func presentGenerationBatch(_ batch: GenerationBatch, origin: ToolCallOrigin, editor: EditorViewModel) throws -> ToolResult {
+    func presentGenerationBatch(
+        _ batch: GenerationBatch,
+        recoveries: [String: GenerationBatchRecovery],
+        origin: ToolCallOrigin,
+        editor: EditorViewModel
+    ) throws -> ToolResult {
         if case .externalMCP = origin { throw ToolError("Start batch approval from an in-app chat.") }
         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("Finish the current native decision before reviewing a generation batch.")
         }
         let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
         generationBatchOrigins[batch.id] = (origin, marker)
-        editor.generationBatchCoordinator.pending = batch
+        editor.agentPanelVisible = true
+        do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
+        catch {
+            generationBatchOrigins.removeValue(forKey: batch.id)
+            throw error
+        }
+
         suspendToolCalls(from: origin)
         return .suspended(marker)
     }
@@ -1363,12 +1637,6 @@ final class AgentService {
         let prepare: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
-    }
-
-    private struct SpendPipelineMutationLease {
-        let coordinator: PipelinePhaseRunCoordinator
-        let dataRoot: URL
-        let id: UUID
     }
 
     struct SpendRunStatus: Equatable, Sendable {
@@ -1453,68 +1721,7 @@ final class AgentService {
                     "The project closed before the approved operation could start."
                 )
             }
-            let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
-                .resolvingSymlinksInPath()
-            guard let workingRoot = editor.workingRoot,
-                  let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
-                  currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
-                    == expectedRoot else {
-                throw ToolError(
-                    "The project changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            guard editor.declaredPluginName == pipelineScope.declaredPack,
-                  editor.declaredPluginBinding == pipelineScope.declaredBinding else {
-                throw ToolError(
-                    "The project format changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            let projectHome = FrameInventory.projectHome(of: expectedRoot)
-            guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
-                    == pipelineScope.bindingResolution else {
-                throw ToolError(
-                    "The project format binding changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            do {
-                _ = try ProjectPackGate.requireLiveMutation(
-                    projectURL: projectHome,
-                    declaredPack: pipelineScope.declaredPack,
-                    declaredBinding: pipelineScope.declaredBinding
-                )
-            } catch {
-                throw ToolError(
-                    "The project format binding changed while the spend approval was open: "
-                        + error.localizedDescription
-                )
-            }
-            let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
-                tool: pipelineScope.tool,
-                dataRoot: expectedRoot,
-                declaredPack: pipelineScope.declaredPack,
-                declaredBinding: pipelineScope.declaredBinding
-            )
-            guard currentPhase == pipelineScope.phase else {
-                throw ToolError(
-                    "The pipeline phase changed while the spend approval was open. Review the request and try again."
-                )
-            }
-            guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
-                projectRoot: expectedRoot,
-                label: pipelineScope.phase ?? approval.actionLabel
-            ) else {
-                let active = editor.pipelinePhaseRunCoordinator.runningPhase(
-                    projectRoot: expectedRoot
-                ) ?? "pipeline work"
-                throw ToolError(
-                    "Can't start the approved operation while \(active) is running. Wait for it to finish."
-                )
-            }
-            return SpendPipelineMutationLease(
-                coordinator: editor.pipelinePhaseRunCoordinator,
-                dataRoot: expectedRoot,
-                id: id
-            )
+            return try pipelineScope.acquireMutation(editor: editor, label: approval.actionLabel)
         }
         let prepareOperation: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         if let prepare {
@@ -1837,10 +2044,6 @@ final class AgentService {
         guard let sessionID = origin.chatSessionID else { return }
         if sessionID == currentSessionId {
             guard Self.replacePendingSpendToolResult(result, in: &messages, marker: marker) else { return }
-            _claudeRuntime?.replaceToolResult(
-                containingText: marker,
-                with: result
-            )
             syncMessagesIntoCurrentSession()
             onSessionsChanged?()
             return
@@ -1903,26 +2106,16 @@ final class AgentService {
         defer { hostFollowUpStartInProgress = false }
         prepareSpendToolCallsForFollowUp(from: followUp.origin)
         let followUpText = "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again."
-        let started: Bool
-        if claudeRuntimeEnabled {
-            streamError = nil
-            started = embeddedHostFollowUpSender?(
-                followUpText,
-                followUp.imageBlocks
-            ) ?? claudeRuntime.send(
-                    text: followUpText,
-                    imageBlocks: followUp.imageBlocks,
-                    hidden: true
-                )
-            checkpointCurrentSession()
-        } else {
-            started = send(
-                text: followUpText,
-                mentions: [],
-                hidden: true,
-                allowWhileBlocked: true
-            )
-        }
+        let started = embeddedHostFollowUpSender?(
+            followUpText,
+            followUp.imageBlocks
+        ) ?? send(
+            text: followUpText,
+            mentions: [],
+            hidden: true,
+            allowWhileBlocked: true,
+            runtimeImages: Self.runtimeImages(from: followUp.imageBlocks)
+        )
         if started {
             pendingSpendFollowUps.remove(at: followUpIndex)
         } else if streamError == nil {
@@ -1934,10 +2127,10 @@ final class AgentService {
     }
 
     private func prepareHostFollowUp() -> Bool {
-        guard canStream else {
-            streamError = backend == .claudeCode
+        if let readinessError = runtimeReadinessError {
+            streamError = backend == .claudeCode && runtimeReadinessOverride == nil
                 ? .authenticationRequired
-                : .upstream("Add an Anthropic API key in Settings to continue the agent.")
+                : readinessError
             return false
         }
         if let error = hostFollowUpReadinessOverride?() {
@@ -2015,10 +2208,7 @@ final class AgentService {
         case .inAppChat:
             resumeToolCalls(from: origin)
         case .embeddedRuntime:
-            let preservedMessages = messages
-            _claudeRuntime?.stop()
-            messages = preservedMessages
-            _claudeRuntime = nil
+            rotateRuntime()
         case .direct, .externalMCP:
             break
         }
@@ -2083,9 +2273,11 @@ final class AgentService {
                 return .error("The approval is already being applied.")
             }
             guard let toolExecutor else {
-                let message = "The gate writer is unavailable. The approval request remains open."
-                gateApprovalError = message
-                return .error(message)
+                return recordGateApprovalFailure(
+                    "The gate writer is unavailable. The approval request remains open.",
+                    kind: .hostBusy,
+                    approval: approval
+                )
             }
             gateApprovalIsWriting = true
             defer { gateApprovalIsWriting = false }
@@ -2095,6 +2287,23 @@ final class AgentService {
                 pendingGateOrigin = nil
                 gateApprovalError = nil
                 if approval.sessionId != nil {
+                    recordHostState(
+                        AgentHostStateRecord(
+                            id: approval.sourceHostStateID,
+                            toolUseID: approval.sourceToolUseID,
+                            state: .approved,
+                            phase: approval.phase,
+                            toolName: approval.sourceToolName,
+                            action: .none,
+                            artifactPath: nil,
+                            byteComparison: nil,
+                            previousSHA256: nil,
+                            currentSHA256: nil
+                        ),
+                        origin: origin,
+                        toolUseID: approval.sourceToolUseID,
+                        turnReference: approval.sourceHostTurnReference
+                    )
                     enqueueGateFollowUp(
                         "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
                             + "Continue from the updated project state; do not request this approval again.",
@@ -2106,21 +2315,60 @@ final class AgentService {
                 }
                 return .ok(payload)
             } catch let error as ToolError {
-                return recordGateApprovalFailure(error.message, approval: approval)
+                return recordGateApprovalFailure(
+                    error.message,
+                    kind: error.kind,
+                    approval: approval
+                )
             } catch {
-                return recordGateApprovalFailure(error.localizedDescription, approval: approval)
+                return recordGateApprovalFailure(
+                    error.localizedDescription,
+                    kind: .agentCorrection,
+                    approval: approval
+                )
             }
         }
     }
 
-    private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
+    private func recordGateApprovalFailure(
+        _ reason: String,
+        kind: ToolFailureKind,
+        approval: GateApproval
+    ) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
         gateApprovalError = message
+        let origin = pendingGateOrigin ?? .direct
+        if kind == .approvalStructure
+            || kind == .reviewChangedSource
+            || kind == .agentCorrection
+            || kind == .phaseRecordRepair {
+            pendingGateApproval = nil
+            pendingGateOrigin = nil
+        }
+        recordHostState(
+            AgentHostStateRecord(
+                id: approval.sourceHostStateID,
+                toolUseID: approval.sourceToolUseID,
+                state: .approvalFailed,
+                phase: approval.phase,
+                toolName: approval.sourceToolName,
+                action: kind.hostAction,
+                artifactPath: nil,
+                byteComparison: nil,
+                previousSHA256: nil,
+                currentSHA256: nil
+            ),
+            origin: origin,
+            toolUseID: approval.sourceToolUseID,
+            turnReference: approval.sourceHostTurnReference
+        )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
-                + "The approval card remains open. Address the stated cause without claiming approval, "
-                + "inventing a support team, or asking the user to restart the app.",
-            origin: pendingGateOrigin ?? .direct
+                + (pendingGateApproval == nil
+                    ? "Correct the stated cause before requesting approval again. "
+                    : "The approval card remains open. Address the stated cause before retrying. ")
+                + "Do not claim approval, invent a support team, or ask the user to restart the app.",
+            origin: origin
         )
         return .error(message)
     }
@@ -2229,9 +2477,36 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
-    /// Insert `text` into the input field and focus it — used by the plugin launcher for commands that
-    /// still need an argument, so the user lands in the field ready to type rather than sending an
-    /// incomplete command. Clears mentions (a slash-command carries no media references).
+    @discardableResult
+    func stageTask(_ task: PendingFunction) -> Bool {
+        guard !isStreaming, !isComposerBlocked else { return false }
+        var staged = task
+        if staged.originContext == nil, let editor {
+            let target: String
+            if editor.activePreviewTab == .timeline && editor.selectedClipIds.count > 1 {
+                target = "Task-origin clip IDs: " + editor.selectedClipIds.sorted().joined(separator: ", ")
+            } else {
+                target = editor.inspectedObject.map { "Task-origin object: " + $0.taskTarget }
+                    ?? "No object target was selected."
+            }
+            staged.originContext = Self.selectionHint(editor: editor)
+                .map { $0 + " " + target + " Task-origin timeline frame: \(editor.currentFrame). This is the context captured when the task was chosen; later workspace selections and get_timeline playheads do not replace its target or frame." }
+        }
+        editor?.agentPanelVisible = true
+        pendingFunction = staged
+        recordComposerFocus(true)
+        restoreComposerFocus()
+        return true
+    }
+
+    @discardableResult
+    func stageReply(to messageID: UUID) -> Bool {
+        guard messages.contains(where: { $0.id == messageID && $0.role == .assistant }) else { return false }
+        return stageTask(PendingFunction(title: "Reply to agent", systemImage: "arrowshape.turn.up.left",
+            prompt: "Answer the agent's preceding message. Treat the supplied text as an answer, not as a new project-change request. Preserve all phase and spending approval requirements.",
+            requiresDirection: true, replyToMessageID: messageID))
+    }
+
     func prefillInput(_ text: String) {
         editor?.agentPanelVisible = true
         draft = text
@@ -2241,8 +2516,24 @@ final class AgentService {
         focusInputRequestTick &+= 1
     }
 
+    var canAttachTaskReference: Bool { !isStreaming && !isComposerBlocked }
+
+    private func prepareReferenceTask() -> Bool {
+        stageTask(pendingFunction ?? PendingFunction(
+            title: "Apply a project change", systemImage: "pencil",
+            prompt: "Apply the requested change using the attached references. Respect the current phase and approval gates. Ask for clarification when the requested change is ambiguous.",
+            requiresDirection: true
+        ))
+    }
+
+    static func hasWorkOrderDirection(_ direction: String, mentions: [AgentMention]) -> Bool {
+        let names = mentions.map(\.displayName).sorted { $0.count > $1.count }
+        let text = names.reduce(direction) { $0.replacingOccurrences(of: "@" + $1, with: "") }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func attachMention(for asset: MediaAsset) {
-        editor?.agentPanelVisible = true
+        guard !asset.isGenerating, prepareReferenceTask() else { return }
         pruneDetachedMentions()
         guard !mentions.contains(where: { $0.mediaRef == asset.id && !$0.referencesTimelineContext }) else { return }
         let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
@@ -2252,11 +2543,12 @@ final class AgentService {
 
     func attachMentions(forClipIds clipIds: [String]) {
         guard let editor, !clipIds.isEmpty else { return }
-        editor.agentPanelVisible = true
+        let references = Self.clipMentionReferences(for: clipIds, editor: editor)
+        guard !references.isEmpty, prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let existingClipIds = Set(mentions.compactMap(\.clipId))
-        for ref in Self.clipMentionReferences(for: clipIds, editor: editor) where !existingClipIds.contains(ref.clip.id) {
+        for ref in references where !existingClipIds.contains(ref.clip.id) {
             let displayName = Self.disambiguatedClipMentionName(
                 for: ref.clip,
                 label: ref.label,
@@ -2275,8 +2567,8 @@ final class AgentService {
     }
 
     func attachSelectedTimelineRangeMention() {
-        guard let editor, let range = editor.validSelectedTimelineRange else { return }
-        editor.agentPanelVisible = true
+        guard let editor, let range = editor.validSelectedTimelineRange,
+              prepareReferenceTask() else { return }
         pruneDetachedMentions()
 
         let timelineRange = AgentTimelineRangeMention(range: range, fps: editor.timeline.fps)
@@ -2373,7 +2665,44 @@ final class AgentService {
     private var toolExecutor: ToolExecutor?
     private var currentTask: Task<Void, Never>?
 
+    @ObservationIgnored
+    private var runtimeAdapter: (any AgentRuntimeAdapter)?
+
+    @ObservationIgnored
+    private var runtimeContextSignature: String?
+
+    @ObservationIgnored
+    private var runtimeSessionID: UUID?
+
+    @ObservationIgnored
+    private var runtimeGenerationID: UUID?
+
+    @ObservationIgnored
+    private var pendingTurnImages: [AgentRuntimeImage] = []
+
+    private(set) var lastRuntimeUsage: AgentRuntimeUsage?
+
+    var runtimeDescriptor: AgentRuntimeDescriptor {
+        if let runtimeAdapter { return runtimeAdapter.descriptor }
+        let toolNames: Set<String> = toolExecutor == nil
+            ? []
+            : Set(ToolDefinitions.all.map { $0.name.rawValue })
+        let pluginDirectories = backend == .claudeCode ? configuredPluginDirectories() : []
+        let externalMCPServers = backend == .claudeCode
+            ? ClaudeCodeRuntime.externalMcpServers()
+            : [:]
+        return backend.runtimeDescriptor(
+            toolNames: toolNames,
+            providerExtensions: configuredProviderExtensions(
+                pluginDirectories: pluginDirectories,
+                externalMCPServers: externalMCPServers
+            )
+        )
+    }
+
     func loadSessions(from projectURL: URL?) {
+        isRestoringComposer = true
+        defer { isRestoringComposer = false }
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
         abandonDialog()
@@ -2384,11 +2713,14 @@ final class AgentService {
         pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        projectGenerationID = UUID()
+        hostTurnReferences.removeAll()
+        rotateRuntime()
         composerStates.removeAll()
-        sessions = ChatSessionStore.load(from: projectURL)
-            .filter { !$0.messages.isEmpty }
+        let loadedSessions = ChatSessionStore.load(from: projectURL).filter(\.hasPersistedContent)
+        let resumeID = loadedSessions.first { $0.isOpen && $0.decision?.belongs(to: $0.id) == true }?.id
+            ?? loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
+        sessions = loadedSessions
             .map {
                 var session = $0
                 session.isOpen = false
@@ -2396,18 +2728,29 @@ final class AgentService {
             }
             .sorted { $0.updatedAt > $1.updatedAt }
 
-        let session = ChatSession()
-        sessions.insert(session, at: 0)
-        currentSessionId = session.id
-        messages = []
+        if let resumeID, let index = sessions.firstIndex(where: { $0.id == resumeID }) {
+            sessions[index].isOpen = true
+            currentSessionId = resumeID
+            messages = sessions[index].messages
+        } else {
+            let session = ChatSession()
+            sessions.insert(session, at: 0)
+            currentSessionId = session.id
+            messages = []
+        }
         isStreaming = false
         draft = ""
         mentions.removeAll()
         pendingFunction = nil
         composerHeight = Self.preferredComposerHeight
         composerWantsFocus = false
+        if let resumeID {
+            restoreComposerState(for: resumeID)
+            restoreDecision(for: resumeID)
+        }
         streamError = nil
         toolExecutor?.resetFeedbackState()
+        editor?.resetWorkflowForSessionReload()
     }
 
     var canStartNewConversation: Bool {
@@ -2433,8 +2776,7 @@ final class AgentService {
         abandonSpendApproval()
         // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
         // must therefore START a fresh process, or it would silently continue the previous conversation.
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        rotateRuntime()
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
            let idx = sessions.firstIndex(where: { $0.id == id }),
@@ -2512,9 +2854,9 @@ final class AgentService {
         currentSessionId = id
         messages = sessions[idx].messages
         restoreComposerState(for: id)
+        restoreDecision(for: id)
         isStreaming = false
-        _claudeRuntime?.stop()
-        _claudeRuntime = nil
+        rotateRuntime()
         streamError = nil
         if currentSpendFollowUp != nil {
             Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
@@ -2550,8 +2892,7 @@ final class AgentService {
                 currentSessionId = next.id
                 messages = next.messages
                 restoreComposerState(for: next.id)
-                _claudeRuntime?.stop()
-                _claudeRuntime = nil
+                rotateRuntime()
             } else {
                 newChat()
                 return
@@ -2581,6 +2922,9 @@ final class AgentService {
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
+        hostTurnReferences = hostTurnReferences.filter {
+            $0.value.chatSessionID != id
+        }
         composerStates.removeValue(forKey: id)
         if deletingActive {
             currentTask?.cancel()
@@ -2594,8 +2938,7 @@ final class AgentService {
                 restoreComposerState(for: currentSessionId)
             }
             isStreaming = false
-            _claudeRuntime?.stop()      // its process belonged to the deleted chat
-            _claudeRuntime = nil
+            rotateRuntime()
         }
         if openSessions.isEmpty { newChat(); return }
         onSessionsChanged?()
@@ -2609,28 +2952,17 @@ final class AgentService {
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
-        allowWhileBlocked: Bool = false
+        allowWhileBlocked: Bool = false,
+        runtimeImages: [AgentRuntimeImage] = [],
+        taskContext: String? = nil
+
     ) -> Bool {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
+        guard !isStreaming else { return false }
         guard allowWhileBlocked || !isComposerBlocked else { return false }
-        if claudeRuntimeEnabled {
-            guard canStream else {
-                streamError = .upstream(setupPrompt + " Agent settings.")
-                return false
-            }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return false }
-            guard prepareWorkingCopyForTurn() else { return false }
-            streamError = nil
-            return sendViaClaudeRuntime(
-                trimmed,
-                mentions: mentions,
-                hidden: hidden,
-                presentation: presentation
-            )
-        }
-        guard canStream else {
-            streamError = .upstream("Add an Anthropic API key in Settings to start.")
+        if let readinessError = runtimeReadinessError {
+            streamError = readinessError
+
             return false
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2640,7 +2972,12 @@ final class AgentService {
         let mentionHint = referencedMentions.isEmpty
             ? nil
             : AgentMentionContext.hint(referencedMentions, editor: editor)
-        let hints = [mentionHint, Self.selectionHint(editor: editor)].compactMap(\.self)
+        let hints = [
+            mentionHint,
+            taskContext ?? Self.selectionHint(editor: editor),
+            Self.mentionPathNote(referencedMentions, editor: editor),
+        ].compactMap(\.self)
+
         let contextHint = hints.isEmpty ? nil : hints.joined(separator: " ")
 
         resolveOrphanToolUses()
@@ -2651,14 +2988,47 @@ final class AgentService {
         ))
         checkpointCurrentSession()
         streamError = nil
-        kickOffStream()
+        pendingTurnImages = runtimeImages
+        kickOffRuntimeTurn()
         return true
     }
 
-    func send(controlTurn: AgentControlTurn) {
-        send(
+    @discardableResult
+    func sendWorkOrder(_ function: PendingFunction, direction: String, mentions: [AgentMention]) -> Bool {
+        guard !isStreaming else { return false }
+        if let replyID = function.replyToMessageID {
+            guard messages.contains(where: { $0.id == replyID && $0.role == .assistant }) else { return false }
+        }
+        let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !function.requiresDirection || Self.hasWorkOrderDirection(note, mentions: mentions) else { return false }
+        let presentation = AgentUserPresentation(
+            choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])],
+                attachmentNames: mentions.map(\.displayName), confirmed: true),
+            typedText: note.isEmpty ? nil : note
+        )
+        let prompt: String
+        if let replyID = function.replyToMessageID,
+           let index = messages.firstIndex(where: { $0.id == replyID }) {
+            let question = messages[index...].filter { $0.role == .assistant }
+                .flatMap(\.blocks).compactMap { block -> String? in
+                    if case .text(let text) = block { return text }
+                    return nil
+                }.joined(separator: "\n")
+            prompt = function.prompt + "\nAgent message being answered:\n" + question
+        } else {
+            prompt = function.prompt
+        }
+        return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
+            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
+    }
+
+    @discardableResult
+    func send(controlTurn: AgentControlTurn) -> Bool {
+        guard !isStreaming else { return false }
+        return send(
             text: controlTurn.command,
             mentions: [],
+            hidden: true,
             presentation: controlTurn.presentation
         )
     }
@@ -2695,65 +3065,28 @@ final class AgentService {
     func cancel() {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
-        if claudeRuntimeEnabled {
-            currentTask?.cancel()          // a pending attachment encode
-            currentTask = nil
-            _claudeRuntime?.stop()
-            _claudeRuntime = nil           // next send rebuilds + `--resume`s this chat
-            isStreaming = false
-            return
+        let wasStreaming = isStreaming
+        if wasStreaming, backend == .anthropicAPI,
+           let index = messages.indices.last, messages[index].role == .assistant {
+            messages[index].isIncompleteAPIResponse = true
+        }
+        if let currentSessionId {
+            runtimeAdapter?.cancel(sessionID: currentSessionId)
         }
         currentTask?.cancel()
         currentTask = nil
+        runtimeAdapter = nil
+        runtimeGenerationID = nil
+        runtimeSessionID = nil
+        runtimeContextSignature = nil
         isStreaming = false
+        if wasStreaming {
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+        }
     }
 
-    // MARK: - Claude Code runtime (Stufe B)
-
-    private var claudeRuntimeEnabled: Bool {
-        backend == .claudeCode
-    }
-
-    @ObservationIgnored
-    private var _claudeRuntime: ClaudeCodeRuntime?
-
-    /// The embedded Claude Code runtime for the CURRENT chat, built lazily so its seed + `--resume`
-    /// reflect that chat. Alive across the chat's turns; a switch / cancel / reload rotates it.
-    private var claudeRuntime: ClaudeCodeRuntime {
-        _claudeRuntime ?? makeClaudeRuntime()
-    }
-
-    @discardableResult
-    private func makeClaudeRuntime() -> ClaudeCodeRuntime {
-        let boundSessionId = currentSessionId
-        let chat = boundSessionId.flatMap { id in sessions.first { $0.id == id } }
-        let runtime = ClaudeCodeRuntime(
-            pluginDirectories: configuredPluginDirectories(),
-            mcpPort: Int(MCPService.port),
-            appSessionId: boundSessionId,
-            resumeSessionId: chat?.claudeSessionId,
-            seedMessages: messages,
-            resolveWorkingDirectory: { [weak self] in
-                Self.configuredWorkingDirectory(projectURL: self?.editor?.workingRoot)
-            },
-            onSessionId: { [weak self] sid in
-                self?.storeClaudeSessionId(sid, for: boundSessionId)
-            },
-            onResumeFailed: { [weak self] in
-                self?.clearClaudeSessionId(for: boundSessionId)
-            },
-            onAuthenticationRequired: { [weak self] in
-                self?.requireClaudeAuthentication(for: boundSessionId)
-            },
-            onUpdate: { [weak self] messages, isStreaming in
-                guard let self, self.currentSessionId == boundSessionId else { return }
-                self.messages = messages
-                self.isStreaming = isStreaming
-            }
-        )
-        _claudeRuntime = runtime
-        return runtime
-    }
+    // MARK: - Host-owned runtime
 
     private func requireClaudeAuthentication(for sessionId: UUID?) {
         guard currentSessionId == sessionId else { return }
@@ -2766,7 +3099,7 @@ final class AgentService {
         claudeStatus = status
         isCheckingClaude = false
         streamError = .authenticationRequired
-        _claudeRuntime = nil
+        runtimeContextSignature = nil
         NotificationCenter.default.post(name: .claudeCodeStatusChanged, object: status)
     }
 
@@ -2783,68 +3116,8 @@ final class AgentService {
     private func clearClaudeSessionId(for sessionId: UUID?) {
         guard let sessionId, let idx = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
         sessions[idx].claudeSessionId = nil
-        if currentSessionId == sessionId { _claudeRuntime = nil }
-    }
+        if currentSessionId == sessionId { runtimeContextSignature = nil }
 
-    /// Route a message to the embedded Claude Code runtime. Mirrors the API path's attachment handling
-    /// (`apiMessages`/`inlineImageBlocks`) so uploaded images actually REACH the subprocess instead of
-    /// being dropped: referenced image mentions are inlined as base64 image blocks, and the mention JSON
-    /// + each asset's on-disk path go into the app-context so the agent can Read / inspect_media a
-    /// non-image too.
-    @discardableResult
-    private func sendViaClaudeRuntime(
-        _ trimmed: String,
-        mentions: [AgentMention],
-        hidden: Bool = false,
-        presentation: AgentUserPresentation? = nil
-    ) -> Bool {
-        // One turn at a time per chat: the composer disables send while streaming, but programmatic
-        // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
-        // first turn still encoding its attachments, delivering the two out of order. Marking busy NOW
-        // also means a synchronous launch failure (no binary / no project dir) still transitions
-        // true→false, so its error note + the user message get flushed into the chat and the doc dirtied.
-        guard !isStreaming else { return false }
-        isStreaming = true
-        let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
-        guard !referenced.isEmpty else {
-            // No attachments — send synchronously (the selection/plugin context only).
-            let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-            let started = claudeRuntime.send(
-                text: trimmed,
-                context: context,
-                hidden: hidden,
-                presentation: presentation
-            )
-            checkpointCurrentSession()
-            return started
-        }
-        let selection = Self.selectionHint(editor: editor)
-        let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
-        let pathNote = Self.mentionPathNote(referenced, editor: editor)
-        // Encoding is async: fence the turn to the chat that sent it, so a switch / new-chat / second
-        // send during encode can't deliver this turn into a different chat's process.
-        let turn = currentSessionId
-        currentTask?.cancel()
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            let inlined = await self.inlineImageBlocks(for: referenced)  // base64-encodes off the main actor
-            guard !Task.isCancelled, self.currentSessionId == turn else { return }
-            var parts: [String] = []
-            if let selection { parts.append(selection) }
-            parts.append(mentionHint)
-            if let pathNote { parts.append(pathNote) }
-            if let note = AgentMentionContext.inlineNote(for: inlined) { parts.append(note) }
-            let context = "<app-context>\(parts.joined(separator: " "))</app-context>"
-            self.claudeRuntime.send(
-                text: trimmed,
-                context: context,
-                imageBlocks: inlined.blocks,
-                hidden: hidden,
-                presentation: presentation
-            )
-            self.checkpointCurrentSession()
-        }
-        return true
     }
 
     /// The on-disk path of each mentioned library asset, so the runtime agent (which has native Read over
@@ -2873,89 +3146,388 @@ final class AgentService {
         #endif
     }
 
-    private static func configuredWorkingDirectory(projectURL: URL?) -> URL? {
-        projectURL
+    private func configuredProviderExtensions(
+        pluginDirectories: [URL],
+        externalMCPServers: [String: String]
+    ) -> Set<String> {
+        guard backend == .claudeCode else { return [] }
+        return Set(
+            pluginDirectories.map { "claude-code-plugin:\($0.lastPathComponent)" }
+                + externalMCPServers.keys.map { "mcp:\($0)" }
+        )
     }
 
-    private func kickOffStream() {
-        currentTask?.cancel()
-        isStreaming = true
-        currentTask = Task { [weak self] in
-            defer {
-                self?.isStreaming = false
-                self?.syncMessagesIntoCurrentSession()
-                self?.onSessionsChanged?()
+    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+        if let runtimeHostContextOverride {
+            return try runtimeHostContextOverride()
+        }
+        let language = AgentInterfaceLanguage.current
+        guard let editor,
+              let workingRoot = editor.workingRoot else {
+            if editor?.declaredPluginName != nil {
+                throw ToolError("The format-pack project context is unavailable. Reopen the project.")
             }
-            await self?.runLoop()
+            return .hostOwned(interfaceLanguage: language, tools: toolExecutor == nil ? [] : ToolDefinitions.all)
+        }
+        let resolved: PipelineAgentHarness.RuntimeContext
+        if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            resolved = try editor.pipelineAgentHarness.runtimeContext(
+                dataRoot: dataRoot,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
+            )
+        } else {
+            let packID = try ProjectPackGate.requireLiveMutation(
+                projectURL: workingRoot,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
+            )
+            resolved = .init(packID: packID, currentPhase: nil, instructions: nil)
+        }
+        let pack: AgentRuntimePackContext?
+        if let packID = resolved.packID {
+            guard let binding = editor.declaredPluginBinding,
+                  binding.id == packID else {
+                throw ToolError("The trusted format-pack declaration is unavailable. Reopen the project.")
+            }
+            pack = .init(
+                id: binding.id,
+                version: binding.version,
+                projectSchema: binding.projectSchema,
+                currentPhase: resolved.currentPhase
+            )
+        } else {
+            pack = nil
+        }
+        return .hostOwned(
+            interfaceLanguage: language,
+            pack: pack,
+            phaseInstructions: resolved.instructions
+        )
+    }
+
+    private func configuredRuntime(
+        sessionID: UUID,
+        hostContext: AgentRuntimeHostContext
+    ) throws -> any AgentRuntimeAdapter {
+        let pluginDirectories = backend == .claudeCode ? configuredPluginDirectories() : []
+        let externalMCPServers = backend == .claudeCode
+            ? ClaudeCodeRuntime.externalMcpServers()
+            : [:]
+        let providerExtensions = configuredProviderExtensions(
+            pluginDirectories: pluginDirectories,
+            externalMCPServers: externalMCPServers
+        )
+        let providerConfiguration: String
+        switch backend {
+        case .anthropicAPI:
+            providerConfiguration = "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+        case .codexAppServer:
+            providerConfiguration = CodexAppServerContract.cliVersion
+        case .claudeCode:
+            providerConfiguration = externalMCPServers.keys.sorted().map {
+                "\($0)=\(externalMCPServers[$0] ?? "")"
+            }.joined(separator: ",")
+        }
+        let signature = [
+            backend.runtimeID.rawValue,
+            providerConfiguration,
+            sessionID.uuidString,
+            hostContext.systemInstructions,
+            hostContext.toolSchemas.map(\.name).sorted().joined(separator: ","),
+            editor?.workingRoot?.standardizedFileURL.path ?? "",
+            pluginDirectories.map { $0.standardizedFileURL.path }.joined(separator: ","),
+            providerExtensions.sorted().joined(separator: ","),
+        ].joined(separator: "\u{1F}")
+        if let runtimeAdapter,
+           runtimeSessionID == sessionID,
+           runtimeContextSignature == signature {
+            return runtimeAdapter
+        }
+        rotateRuntime()
+        let adapter: any AgentRuntimeAdapter
+        if let injected = runtimeAdapterFactory?(backend) {
+            adapter = injected
+        } else {
+            switch backend {
+            case .claudeCode:
+                adapter = ClaudeCodeRuntimeAdapter()
+            case .anthropicAPI:
+                guard let client = selectClient() else {
+                    throw AgentRuntimeContractError.sessionNotStarted
+                }
+                adapter = AnthropicRuntimeAdapter(client: client)
+            case .codexAppServer:
+                adapter = CodexAppServerRuntimeAdapter()
+            }
+        }
+        let providerSessionID: String?
+        switch backend {
+        case .claudeCode:
+            providerSessionID = sessions.first { $0.id == sessionID }?.claudeSessionId
+        case .codexAppServer:
+            providerSessionID = nil
+        case .anthropicAPI:
+            providerSessionID = nil
+        }
+        let generationID = UUID()
+        let projectID = projectGenerationID
+        let runtimeBackendID = adapter.descriptor.identity.backendID
+        let request = AgentRuntimeSessionRequest(
+            sessionID: sessionID,
+            runtimeGenerationID: generationID,
+            providerSessionID: providerSessionID,
+            priorMessages: messages,
+            hostContext: hostContext,
+            workingDirectory: editor?.workingRoot,
+            pluginDirectories: pluginDirectories,
+            providerExtensions: providerExtensions,
+            mcpPort: Int(MCPService.port),
+            executeTool: { [weak self] id, name, inputJSON in
+                guard let self,
+                      self.currentSessionId == sessionID,
+                      self.runtimeGenerationID == generationID,
+                      self.projectGenerationID == projectID,
+                      self.backend.runtimeID == runtimeBackendID else {
+                    return .error("The originating chat session is no longer active.")
+                }
+                guard let executor = self.toolExecutor else {
+                    return .error("Tool executor unavailable.")
+                }
+                return await executor.execute(
+                    name: name,
+                    args: Self.parseJSONObject(inputJSON),
+                    origin: .inAppChat(sessionID: sessionID),
+                    toolUseID: id
+                )
+            }
+        )
+        if providerSessionID != nil || messages.dropLast().isEmpty == false {
+            try adapter.resume(request)
+        } else {
+            try adapter.start(request)
+        }
+        runtimeAdapter = adapter
+        runtimeSessionID = sessionID
+        runtimeGenerationID = generationID
+        runtimeContextSignature = signature
+        return adapter
+    }
+
+    private func rotateRuntime() {
+        if let runtimeSessionID {
+            runtimeAdapter?.end(sessionID: runtimeSessionID)
+        }
+        runtimeAdapter = nil
+        runtimeSessionID = nil
+        runtimeGenerationID = nil
+        runtimeContextSignature = nil
+    }
+
+    private func applyRuntimeEvent(
+        _ event: AgentRuntimeEvent,
+        sessionID: UUID,
+        messageIDs: inout [String: UUID],
+        defaultAssistantID: inout UUID?
+    ) {
+        switch event {
+        case .providerSessionStarted(let providerID):
+            switch backend {
+            case .claudeCode, .anthropicAPI:
+                storeClaudeSessionId(providerID, for: sessionID)
+            case .codexAppServer:
+                break
+            }
+        case .providerSessionInvalidated:
+            switch backend {
+            case .claudeCode, .anthropicAPI:
+                clearClaudeSessionId(for: sessionID)
+            case .codexAppServer:
+                runtimeContextSignature = nil
+            }
+        case .text(let messageID, let value, _):
+            let id = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            appendTextDelta(value, toAssistant: id)
+        case .thinking(let messageID, let block):
+            let id = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            if let index = assistantMessageIndex(id: id) {
+                messages[index].blocks.append(.thinking(block))
+            }
+        case .toolCall(let messageID, let id, let name, let inputJSON):
+            let assistantID = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
+        case .toolResult(let id, let content, let isError):
+            let block = AgentContentBlock.toolResult(
+                toolUseId: id,
+                content: content,
+                isError: isError
+            )
+            if messages.last?.role == .user,
+               messages.last?.userPresentation == nil,
+               messages.last?.blocks.isEmpty == false,
+               messages.last?.blocks.allSatisfy({
+                   if case .toolResult = $0 { return true }
+                   return false
+               }) == true {
+                messages[messages.count - 1].blocks.append(block)
+            } else {
+                messages.append(.init(role: .user, blocks: [block]))
+            }
+            defaultAssistantID = nil
+        case .usage(let usage):
+            lastRuntimeUsage = lastRuntimeUsage?.merging(usage) ?? usage
+        case .error(let failure):
+            if backend == .anthropicAPI, let defaultAssistantID,
+               let index = assistantMessageIndex(id: defaultAssistantID) {
+                messages[index].isIncompleteAPIResponse = true
+            }
+            if failure.kind == .authenticationRequired {
+                switch backend {
+                case .claudeCode:
+                    requireClaudeAuthentication(for: sessionID)
+                case .codexAppServer:
+                    streamError = .upstream(failure.message)
+                    runtimeContextSignature = nil
+                case .anthropicAPI:
+                    streamError = .upstream(failure.message)
+                }
+            } else {
+                streamError = .upstream(failure.message)
+            }
+        case .terminal(let outcome):
+            if backend == .anthropicAPI, outcome != .completed(.endTurn),
+               outcome != .completed(.toolUse), let defaultAssistantID,
+               let index = assistantMessageIndex(id: defaultAssistantID) {
+                messages[index].isIncompleteAPIResponse = true
+            }
         }
     }
 
-    private func runLoop() async {
-        guard let client = selectClient() else {
-            streamError = .upstream("No backend available.")
+    private func assistantID(
+        providerMessageID: String?,
+        messageIDs: inout [String: UUID],
+        defaultAssistantID: inout UUID?
+    ) -> UUID {
+        if let providerMessageID, let existing = messageIDs[providerMessageID] {
+            return existing
+        }
+        if providerMessageID == nil, let defaultAssistantID {
+            return defaultAssistantID
+        }
+        let message = AgentMessage(role: .assistant, blocks: [])
+        messages.append(message)
+        if let providerMessageID {
+            messageIDs[providerMessageID] = message.id
+        } else {
+            defaultAssistantID = message.id
+        }
+        return message.id
+    }
+
+    private func kickOffRuntimeTurn() {
+        currentTask?.cancel()
+        lastRuntimeUsage = nil
+        isStreaming = true
+        let boundSessionID = currentSessionId
+        let transientImages = pendingTurnImages
+        pendingTurnImages = []
+        currentTask = Task { [weak self] in
+            await self?.runRuntimeTurn(
+                sessionID: boundSessionID,
+                transientImages: transientImages
+            )
+            guard !Task.isCancelled,
+                  let self,
+                  self.currentSessionId == boundSessionID else { return }
+            self.isStreaming = false
+            self.syncMessagesIntoCurrentSession()
+            self.onSessionsChanged?()
+        }
+    }
+
+    private func runRuntimeTurn(
+        sessionID: UUID?,
+        transientImages: [AgentRuntimeImage]
+    ) async {
+        guard let sessionID, currentSessionId == sessionID else { return }
+        let hostContext: AgentRuntimeHostContext
+        do {
+            hostContext = try runtimeHostContext()
+        } catch {
+            streamError = .upstream(error.localizedDescription)
             return
         }
-        let origin = currentSessionId.map {
-            ToolCallOrigin.inAppChat(sessionID: $0)
-        } ?? .direct
-        let tools = ToolDefinitions.all.map {
-            AnthropicToolSchema(name: $0.name.rawValue, description: $0.description, inputSchema: $0.inputSchema)
+        let runtimeMessages = await runtimeMessages(transientImages: transientImages)
+        guard !Task.isCancelled,
+              currentSessionId == sessionID,
+              let inputMessage = messages.last,
+              inputMessage.role == .user,
+              let currentMessage = runtimeMessages.last else { return }
+        let adapter: any AgentRuntimeAdapter
+        do {
+            adapter = try configuredRuntime(
+                sessionID: sessionID,
+                hostContext: hostContext
+            )
+        } catch {
+            streamError = .upstream(error.localizedDescription)
+            return
         }
-
-        loop: while !Task.isCancelled {
-            resolveOrphanToolUses()
-            let apiMsgs = await apiMessages()
-            let assistant = AgentMessage(role: .assistant, blocks: [])
-            messages.append(assistant)
-            let assistantID = assistant.id
-
-            do {
-                let stream = client.stream(
-                    system: AgentInstructions.serverInstructions,
-                    tools: tools,
-                    messages: apiMsgs
+        let turnID = UUID()
+        guard let runtimeGenerationID else {
+            streamError = .upstream("The agent runtime has no execution identity.")
+            return
+        }
+        hostTurnReferences[runtimeGenerationID] = AgentHostTurnReference(
+            projectGenerationID: projectGenerationID,
+            chatSessionID: sessionID,
+            runtimeGenerationID: runtimeGenerationID,
+            logicalTurnID: turnID,
+            inputMessageID: inputMessage.id
+        )
+        var fence = AgentRuntimeEventFence()
+        fence.begin(sessionID: sessionID, turnID: turnID)
+        do {
+            let stream = try adapter.send(.init(
+                sessionID: sessionID,
+                turnID: turnID,
+                messages: runtimeMessages,
+                currentMessage: currentMessage
+            ))
+            var messageIDs: [String: UUID] = [:]
+            var defaultAssistantID: UUID?
+            for await envelope in stream {
+                guard !Task.isCancelled,
+                      currentSessionId == sessionID,
+                      fence.accepts(envelope) else { continue }
+                applyRuntimeEvent(
+                    envelope.event,
+                    sessionID: sessionID,
+                    messageIDs: &messageIDs,
+                    defaultAssistantID: &defaultAssistantID
                 )
 
-                var stopReason: AnthropicStopReason = .endTurn
-
-                for try await event in stream {
-                    let diagnosticID = HangDiagnosticRecorder.shared.record(.apiApply)
-                    defer {
-                        HangDiagnosticRecorder.shared.record(.apiApply, correlation: diagnosticID, end: true)
-                    }
-                    try Task.checkCancellation()
-                    switch event {
-                    case .textDelta(let chunk):
-                        appendTextDelta(chunk, toAssistant: assistantID)
-                    case .toolUseComplete(let id, let name, let inputJSON):
-                        appendToolUse(id: id, name: name, inputJSON: inputJSON, toAssistant: assistantID)
-                    case .messageStop(let reason):
-                        stopReason = reason
-                    }
-                }
-
-                if stopReason == .toolUse {
-                    if await runPendingToolUses(
-                        assistantID: assistantID,
-                        origin: origin
-                    ) {
-                        break loop
-                    }
-                    continue loop
-                }
-                break loop
-            } catch is CancellationError {
-                dropEmptyAssistantTurn(id: assistantID)
-                break loop
-            } catch let err as AgentStreamError {
-                dropEmptyAssistantTurn(id: assistantID)
-                streamError = err
-                break loop
-            } catch {
-                dropEmptyAssistantTurn(id: assistantID)
-                streamError = .upstream(error.localizedDescription)
-                break loop
             }
+            guard fence.receivedTerminal || Task.isCancelled else {
+                streamError = .upstream("The agent runtime ended without a terminal state.")
+                return
+            }
+        } catch is CancellationError {
+            adapter.cancel(sessionID: sessionID)
+        } catch {
+            streamError = .upstream(error.localizedDescription)
         }
     }
 
@@ -2988,7 +3560,8 @@ final class AgentService {
         assistantID: UUID,
         origin: ToolCallOrigin
     ) async -> Bool {
-        guard let assistantIndex = assistantMessageIndex(id: assistantID) else { return false }
+        guard let assistantIndex = assistantMessageIndex(id: assistantID),
+              !messages[assistantIndex].isIncompleteAPIResponse else { return false }
         let toolUses: [(id: String, name: String, input: String)] = messages[assistantIndex].blocks.compactMap {
             if case let .toolUse(id, name, input) = $0 { return (id, name, input) }
             return nil
@@ -3028,7 +3601,8 @@ final class AgentService {
             let result = await executor.execute(
                 name: use.name,
                 args: Self.parseJSONObject(use.input),
-                origin: origin
+                origin: origin,
+                toolUseID: use.id
             )
             resultBlocks.append(.toolResult(toolUseId: use.id, content: result.content, isError: result.isError))
             turnSuspended = result.turnDisposition == .suspendTurn
@@ -3040,19 +3614,41 @@ final class AgentService {
     }
 
     private func resolvedToolUseIds(afterAssistantAt index: Int) -> Set<String> {
-        let next = index + 1
-        guard next < messages.count, messages[next].role == .user else { return [] }
-        return Set(messages[next].blocks.compactMap {
-            if case let .toolResult(id, _, _) = $0 { return id }
-            return nil
-        })
+        Self.resolvedToolUseIds(afterAssistantAt: index, in: messages)
+    }
+
+    private static func resolvedToolUseIds(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Set<String> {
+        var resolved: Set<String> = []
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { break }
+            } else {
+                guard message.blocks.allSatisfy({
+                    if case .toolResult = $0 { return true }
+                    return false
+                }) else { break }
+                for block in message.blocks {
+                    if case let .toolResult(id, _, _) = block {
+                        resolved.insert(id)
+                    }
+                }
+            }
+            cursor += 1
+        }
+        return resolved
     }
 
     private func resolveOrphanToolUses(reason: String = "Cancelled") {
         var i = 0
         while i < messages.count {
             defer { i += 1 }
-            guard messages[i].role == .assistant else { continue }
+            guard messages[i].role == .assistant,
+                  !messages[i].isIncompleteAPIResponse else { continue }
             let toolUseIds: [String] = messages[i].blocks.compactMap {
                 if case let .toolUse(id, _, _) = $0 { return id }
                 return nil
@@ -3060,18 +3656,10 @@ final class AgentService {
             guard !toolUseIds.isEmpty else { continue }
 
             let next = i + 1
-            let nextIsToolResult = next < messages.count
-                && messages[next].role == .user
-                && messages[next].blocks.contains(where: {
-                    if case .toolResult = $0 { return true }
-                    return false
-                })
-            let resolved: Set<String> = nextIsToolResult
-                ? Set(messages[next].blocks.compactMap {
-                    if case let .toolResult(id, _, _) = $0 { return id }
-                    return nil
-                })
-                : []
+            let resolved = Self.resolvedToolUseIds(
+                afterAssistantAt: i,
+                in: messages
+            )
 
             let orphans = toolUseIds.filter { !resolved.contains($0) }
             guard !orphans.isEmpty else { continue }
@@ -3079,18 +3667,91 @@ final class AgentService {
             let synthetic: [AgentContentBlock] = orphans.map {
                 .toolResult(toolUseId: $0, content: [.text(reason)], isError: true)
             }
-            if nextIsToolResult {
-                messages[next].blocks.insert(contentsOf: synthetic, at: 0)
+            if let resultIndex = Self.firstToolResultMessageIndex(
+                afterAssistantAt: i,
+                in: messages
+            ) {
+                messages[resultIndex].blocks.insert(contentsOf: synthetic, at: 0)
             } else {
                 messages.insert(AgentMessage(role: .user, blocks: synthetic), at: next)
             }
         }
     }
 
+    private static func firstToolResultMessageIndex(
+        afterAssistantAt index: Int,
+        in messages: [AgentMessage]
+    ) -> Int? {
+        var cursor = index + 1
+        while cursor < messages.count, messages[cursor].role == .user {
+            let message = messages[cursor]
+            if message.blocks.isEmpty {
+                guard message.userPresentation?.hostStateRecord != nil else { return nil }
+            } else if message.blocks.allSatisfy({
+                if case .toolResult = $0 { return true }
+                return false
+            }) {
+                return cursor
+            } else {
+                return nil
+            }
+            cursor += 1
+        }
+        return nil
+    }
+
     private static func parseJSONObject(_ json: String) -> [String: Any] {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         return obj
+    }
+
+    private func clearSavedDecision(id: String?) {
+        guard !isRestoringComposer, let id,
+              let owner = dialogOrigins[id]?.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }),
+              sessions[index].decision?.dialog.id == id else { return }
+        sessions[index].decision = nil
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func persistDecisionDraft() {
+        guard !isRestoringComposer, let dialog = pendingDialog,
+              let origin = dialogOrigins[dialog.id],
+              let owner = origin.chatSessionID ?? currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == owner }) else { return }
+        let decision = ChatSessionDecision(dialog: dialog, origin: origin,
+            draft: dialogDraft, selections: dialogChoiceSelections, intakeKey: activeIntakeDraftKey)
+        guard decision.belongs(to: owner), sessions[index].decision != decision else { return }
+        sessions[index].decision = decision
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
+    }
+
+    private func restoreDecision(for id: UUID) {
+        guard pendingDialog == nil,
+              let saved = sessions.first(where: { $0.id == id })?.decision,
+              saved.belongs(to: id), saved.dialog.purpose == .chatClarification else { return }
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
+        dialogOrigins[saved.dialog.id] = saved.origin
+        suspendToolCalls(from: saved.origin)
+        pendingDialog = saved.dialog
+        dialogDraft = saved.draft
+        dialogChoiceSelections = saved.selections
+    }
+
+    private func persistComposerDraft() {
+        guard !isRestoringComposer, let id = currentSessionId,
+              let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let value = ChatSessionDraft(text: draft, mentions: mentions, task: pendingFunction)
+        let saved = value.isEmpty ? nil : value
+        guard sessions[index].draft != saved else { return }
+        sessions[index].draft = saved
+        sessions[index].updatedAt = Date()
+        if let onDraftChanged { onDraftChanged() } else { onSessionsChanged?() }
     }
 
     private func saveComposerState() {
@@ -3112,10 +3773,14 @@ final class AgentService {
     }
 
     private func restoreComposerState(for id: UUID) {
+        let wasRestoring = isRestoringComposer
+        isRestoringComposer = true
+        defer { isRestoringComposer = wasRestoring }
         guard let state = composerStates[id] else {
-            draft = ""
-            mentions = []
-            pendingFunction = nil
+            let saved = sessions.first { $0.id == id }?.draft
+            draft = saved?.text ?? ""
+            mentions = saved?.mentions ?? []
+            pendingFunction = saved?.task
             composerHeight = Self.preferredComposerHeight
             composerWantsFocus = false
             return
@@ -3150,19 +3815,24 @@ final class AgentService {
         }
     }
 
-    private func apiMessages() async -> [AnthropicMessage] {
-        var result: [AnthropicMessage] = []
-        for msg in messages {
-            var content = msg.blocks.compactMap(Self.contentBlockJSON)
+    func runtimeMessages(transientImages: [AgentRuntimeImage]) async -> [AgentRuntimeMessage] {
+        var result: [AgentRuntimeMessage] = []
+        for (index, msg) in messages.enumerated() {
+            if msg.isIncompleteAPIResponse { continue }
+            var content = msg.blocks.compactMap(Self.runtimeContent)
+
             if msg.role == .user, !msg.mentions.isEmpty || msg.contextHint != nil {
                 let inlined = await inlineImageBlocks(for: msg.mentions)
                 var hint = msg.contextHint ?? AgentMentionContext.hint(msg.mentions, editor: editor)
                 if let note = AgentMentionContext.inlineNote(for: inlined) { hint += " " + note }
-                content.insert(contentsOf: inlined.blocks, at: 0)
-                content.insert(["type": "text", "text": hint], at: 0)
+                content.insert(contentsOf: Self.runtimeImages(from: inlined.blocks).map(AgentRuntimeContent.image), at: 0)
+                content.insert(.text("<app-context>\(hint)</app-context>"), at: 0)
+            }
+            if index == messages.indices.last, msg.role == .user {
+                content.append(contentsOf: transientImages.map(AgentRuntimeContent.image))
             }
             guard !content.isEmpty else { continue }
-            result.append(AnthropicMessage(role: msg.role == .user ? .user : .assistant, content: content))
+            result.append(AgentRuntimeMessage(role: msg.role, content: content))
         }
         return result
     }
@@ -3205,28 +3875,29 @@ final class AgentService {
         return out
     }
 
-    private static func contentBlockJSON(_ block: AgentContentBlock) -> [String: Any]? {
+    static func runtimeContent(_ block: AgentContentBlock) -> AgentRuntimeContent? {
+
         switch block {
+        case .thinking(let block):
+            return .thinking(block)
         case .text(let s):
             guard !s.isEmpty else { return nil }
-            return ["type": "text", "text": s]
+            return .text(s)
         case .toolUse(let id, let name, let inputJSON):
-            return [
-                "type": "tool_use", "id": id, "name": name,
-                "input": parseJSONObject(inputJSON),
-            ]
+            return .toolUse(id: id, name: name, inputJSON: inputJSON)
         case .toolResult(let toolUseId, let content, let isError):
-            let contentJSON: [[String: Any]] = content.map {
-                switch $0 {
-                case .text(let s): return ["type": "text", "text": s]
-                case .image(let base64, let mime):
-                    return ["type": "image", "source": ["type": "base64", "media_type": mime, "data": base64]]
-                }
-            }
-            return [
-                "type": "tool_result", "tool_use_id": toolUseId,
-                "content": contentJSON, "is_error": isError,
-            ]
+            return .toolResult(id: toolUseId, content: content, isError: isError)
+        }
+    }
+
+    private static func runtimeImages(from blocks: [[String: Any]]) -> [AgentRuntimeImage] {
+        blocks.compactMap { block in
+            guard block["type"] as? String == "image",
+                  let source = block["source"] as? [String: Any],
+                  source["type"] as? String == "base64",
+                  let mediaType = source["media_type"] as? String,
+                  let base64 = source["data"] as? String else { return nil }
+            return AgentRuntimeImage(mediaType: mediaType, base64: base64)
         }
     }
 
@@ -3261,6 +3932,13 @@ final class AgentService {
             + "…"
             + String(normalized.suffix(trailingCount))
     }
+    private var isRestoringComposer = false
+    var onDraftChanged: (@MainActor () -> Void)?
+    var dialogDraft = AgentDialogDraft() {
+        didSet { persistDecisionDraft() }
+    }
+    private var activeIntakeDraftKey: WorkflowIntakeDraftKey?
+
 }
 
 struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
@@ -3276,6 +3954,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     var hidden: Bool = false
     /// Optional rendering for a structured user action whose blocks remain model-facing.
     var userPresentation: AgentUserPresentation?
+    /// Host-authored tool-call metadata that never becomes provider-facing user content.
+    var hostStateRecords: [AgentHostStateRecord]
+    var isIncompleteAPIResponse: Bool = false
+
 
     init(
         id: UUID = UUID(),
@@ -3284,7 +3966,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         mentions: [AgentMention] = [],
         contextHint: String? = nil,
         hidden: Bool = false,
-        userPresentation: AgentUserPresentation? = nil
+        userPresentation: AgentUserPresentation? = nil,
+        hostStateRecords: [AgentHostStateRecord] = []
     ) {
         self.id = id
         self.role = role
@@ -3293,10 +3976,12 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         self.contextHint = contextHint
         self.hidden = hidden
         self.userPresentation = userPresentation
+        self.hostStateRecords = hostStateRecords
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords, isIncompleteAPIResponse
+
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -3310,22 +3995,31 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
+        hostStateRecords = try c.decodeIfPresent(
+            [AgentHostStateRecord].self,
+            forKey: .hostStateRecords
+        ) ?? []
+        isIncompleteAPIResponse = try c.decodeIfPresent(Bool.self, forKey: .isIncompleteAPIResponse) ?? false
+
     }
 }
 
 enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
+    case thinking(AnthropicThinkingBlock)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)
 
-    private enum Kind: String, Codable { case text, toolUse, toolResult }
+    private enum Kind: String, Codable { case text, thinking, toolUse, toolResult }
     private enum CodingKeys: String, CodingKey {
-        case kind, text, id, name, input, toolUseId, content, isError
+        case kind, text, id, name, input, toolUseId, content, isError, thinking
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(Kind.self, forKey: .kind) {
+        case .thinking:
+            self = .thinking(try c.decode(AnthropicThinkingBlock.self, forKey: .thinking))
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
         case .toolUse:
@@ -3346,6 +4040,9 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .thinking(let block):
+            try c.encode(Kind.thinking, forKey: .kind)
+            try c.encode(block, forKey: .thinking)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)

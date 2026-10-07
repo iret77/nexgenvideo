@@ -43,19 +43,7 @@ enum TimelineRenderer {
             }
         }
 
-        let mutableVC = result.videoComposition.mutableCopy() as! AVMutableVideoComposition
-        if TextLayerController.hasVisibleText(in: timeline) {
-            let (parent, videoLayer) = TextLayerController.buildForExport(
-                timeline: timeline,
-                fps: timeline.fps,
-                renderSize: renderSize
-            )
-            mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
-                postProcessingAsVideoLayer: videoLayer,
-                in: parent
-            )
-        }
-        session.videoComposition = mutableVC
+        session.videoComposition = result.videoComposition
 
         let timescale = CMTimeScale(timeline.fps)
         session.timeRange = CMTimeRange(

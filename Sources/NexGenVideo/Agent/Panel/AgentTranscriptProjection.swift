@@ -6,16 +6,18 @@ struct AgentActivity: Identifiable {
         let id: String
         let name: String
         let inputJSON: String
+        var thinkingSummaries: [String] = []
     }
 
     let id: UUID
     let statuses: [String]
     let steps: [Step]
     let isRunning: Bool
+    var trailingThinkingSummaries: [String] = []
 
     var currentStatus: String? { statuses.last }
     var operationLabel: String {
-        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Working"
+        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Thinking"
     }
 }
 
@@ -45,10 +47,16 @@ struct AgentNoticeReceipt: Identifiable {
     let text: String
 }
 
+struct AgentHostState: Identifiable {
+    let record: AgentHostStateRecord
+    var id: UUID { record.id }
+}
+
 enum AgentTranscriptItem: Identifiable {
     case userIntent(AgentUserIntent)
     case assistantResult(AgentMessage)
     case activity(AgentActivity)
+    case hostState(AgentHostState)
     case receipts(AgentReceiptGroup)
     case notice(AgentNoticeReceipt)
 
@@ -57,6 +65,7 @@ enum AgentTranscriptItem: Identifiable {
         case .userIntent(let intent): "intent-\(intent.id.uuidString)"
         case .assistantResult(let message): "result-\(message.id.uuidString)"
         case .activity(let activity): "activity-\(activity.id.uuidString)"
+        case .hostState(let state): "host-state-\(state.id.uuidString)"
         case .receipts(let group): "receipts-\(group.id.uuidString)"
         case .notice(let notice): "notice-\(notice.id.uuidString)"
         }
@@ -102,16 +111,27 @@ enum AgentTranscriptProjection {
         let activity = makeActivity(messages, isRunning: isRunning)
         var intents: [AgentTranscriptItem] = []
         var resultMessage: AgentMessage?
+        var hostStates: [AgentHostState] = []
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
+        let streamingMessageID = isRunning ? messages.last(where: { $0.role == .assistant })?.id : nil
 
         for message in messages {
+            for hostState in message.hostStateRecords {
+                appendHostState(.init(record: hostState), to: &hostStates)
+            }
             switch message.role {
             case .user:
                 if !message.hidden, let text = authoredText(message) {
                     intents.append(.userIntent(.init(id: message.id, text: text)))
                 }
                 if let presentation = message.userPresentation {
+                    if let hostState = presentation.hostStateRecord {
+                        appendHostState(
+                            .init(record: hostState),
+                            to: &hostStates
+                        )
+                    }
                     if let workflow = presentation.workflowRecord {
                         appendReceipt(
                             .init(id: message.id, content: .workflow(workflow)),
@@ -133,8 +153,19 @@ enum AgentTranscriptProjection {
                     }
                 }
             case .assistant:
+                if message.isIncompleteAPIResponse, message.id != streamingMessageID {
+                    notices.append(.notice(.init(
+                        id: message.id,
+                        text: String(localized: "Response interrupted. This partial answer is not included in the agent’s context. Send a new request to continue.")
+                    )))
+                }
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
                 let persistentBlocks = message.blocks.filter { block in
+                    if message.isIncompleteAPIResponse {
+                        if case .text = block { return true }
+                        return false
+                    }
+                    if case .thinking = block { return false }
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
                 }
@@ -152,9 +183,68 @@ enum AgentTranscriptProjection {
 
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
         let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
-        let output = intents + results + activityItems + receipts + notices
+        let stateItems = hostStates.map(AgentTranscriptItem.hostState)
+        let output = intents + stateItems + results + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
         return AgentTranscriptTurn(id: first.id, items: output)
+    }
+
+    private static func appendHostState(
+        _ state: AgentHostState,
+        to output: inout [AgentHostState]
+    ) {
+        if let exact = output.firstIndex(where: { $0.id == state.id }) {
+            output[exact] = state
+            return
+        }
+        let samePhase = output.indices.filter {
+            output[$0].record.phase == state.record.phase
+        }
+        switch state.record.state {
+        case .approved, .checked, .persisted, .persistedPhaseRecordFailed:
+            for index in samePhase.reversed() {
+                output.remove(at: index)
+            }
+        case .writeOutcomeUnavailable:
+            for index in samePhase.reversed() {
+                if output[index].record.state != .persistedPhaseRecordFailed {
+                    output.remove(at: index)
+                }
+            }
+        case .draft, .writeBlocked, .writeRejected:
+            let hasProtectedState = samePhase.contains {
+                isCleanDurable(output[$0].record.state)
+                    || isRepairRequired(output[$0].record.state)
+            }
+            for index in samePhase.reversed() {
+                if !hasProtectedState
+                    || (!isCleanDurable(output[index].record.state)
+                        && !isRepairRequired(output[index].record.state)) {
+                    output.remove(at: index)
+                }
+            }
+        case .approvalFailed:
+            for index in samePhase.reversed() {
+                if !isRepairRequired(output[index].record.state) {
+                    output.remove(at: index)
+                }
+            }
+        }
+        output.append(state)
+    }
+
+    private static func isCleanDurable(_ state: AgentHostStateRecord.State) -> Bool {
+        switch state {
+        case .persisted, .checked, .approved: true
+        default: false
+        }
+    }
+
+    private static func isRepairRequired(_ state: AgentHostStateRecord.State) -> Bool {
+        switch state {
+        case .persistedPhaseRecordFailed, .writeOutcomeUnavailable: true
+        default: false
+        }
     }
 
     private static func appendReceipt(
@@ -177,31 +267,42 @@ enum AgentTranscriptProjection {
     private static func makeActivity(_ turn: [AgentMessage], isRunning: Bool) -> AgentActivity? {
         var statuses: [String] = []
         var steps: [AgentActivity.Step] = []
+        var thinkingSummaries: [String] = []
 
         for message in turn where message.role == .assistant {
-            guard message.blocks.contains(where: isActivityTool) else { continue }
+            let hasActivityTool = !message.isIncompleteAPIResponse
+                && message.blocks.contains(where: isActivityTool)
             for block in message.blocks {
                 switch block {
+                case .thinking(let block):
+                    if let summary = block.summary { thinkingSummaries.append(summary) }
                 case .text(let text):
+                    guard hasActivityTool else { continue }
                     let status = compactStatus(text)
                     if !status.isEmpty, statuses.last != status { statuses.append(status) }
                 case .toolUse(let id, let name, let inputJSON):
+                    guard !message.isIncompleteAPIResponse else { continue }
                     guard ToolRunPresentation.baseName(for: name) != ToolName.showBlocks.rawValue else {
                         continue
                     }
-                    steps.append(.init(id: id, name: name, inputJSON: inputJSON))
+                    steps.append(.init(
+                        id: id, name: name, inputJSON: inputJSON,
+                        thinkingSummaries: thinkingSummaries
+                    ))
+                    thinkingSummaries = []
                 case .toolResult:
                     break
                 }
             }
         }
 
-        guard !steps.isEmpty else { return nil }
+        guard !steps.isEmpty || !thinkingSummaries.isEmpty else { return nil }
         return AgentActivity(
             id: turn.first?.id ?? UUID(),
             statuses: statuses,
             steps: steps,
-            isRunning: isRunning
+            isRunning: isRunning,
+            trailingThinkingSummaries: thinkingSummaries
         )
     }
 

@@ -48,6 +48,7 @@ struct GenerationRequest {
     let intent: String
     let aspectRatio: String
     let durationSeconds: Double?
+    let outputResolution: String?
     let placement: Placement
     let origin: Origin
     /// Exact user-approved provider target. Nil lets NGV resolve its normal default.
@@ -73,6 +74,7 @@ struct GenerationRequest {
         intent: String,
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
+        outputResolution: String? = nil,
         placement: Placement,
         origin: Origin,
         target: ResolvedGenerationTarget? = nil,
@@ -89,6 +91,7 @@ struct GenerationRequest {
         self.intent = intent
         self.aspectRatio = aspectRatio
         self.durationSeconds = durationSeconds
+        self.outputResolution = outputResolution
         self.placement = placement
         self.origin = origin
         self.target = target
@@ -204,7 +207,7 @@ enum GenerationController {
     enum PreparedSubmission {
         case video(VideoGenerationSubmission, PreparedProviderParameters)
         case image(ImageGenerationSubmission, PreparedProviderParameters)
-        case audio(AudioGenerationSubmission)
+        case audio(AudioGenerationSubmission, PreparedProviderParameters)
         case music(MusicGenerationSubmission)
         case upscale(GenerationRequest.UpscaleSubmission)
 
@@ -222,11 +225,21 @@ enum GenerationController {
                 let parameters = try PreparedProviderParameters(referenceCount: count, build: value.buildParams)
                 guard case .image(let image) = parameters.parameters, image.prompt == compiledPrompt,
                       value.genInput.prompt == compiledPrompt, image.numImages == value.numImages,
-                      (1...4).contains(image.numImages) else {
+                      (1...10).contains(image.numImages) else {
                     throw GenerationRequestError.optionsInvalid("The image output count does not match the prepared request.")
                 }
                 self = .image(value, parameters)
-            case .audio(let make): self = .audio(make(compiledPrompt))
+            case .audio(let make):
+                let value = make(compiledPrompt)
+                let parameters = try PreparedProviderParameters(referenceCount: value.references.count) { slots in
+                    var params = value.params
+                    if params.videoURL == nil { params.videoURL = slots.first }
+                    return .audio(params)
+                }
+                guard value.params.prompt == compiledPrompt, value.genInput.prompt == compiledPrompt else {
+                    throw GenerationRequestError.optionsInvalid("The audio request does not contain the compiled prompt.")
+                }
+                self = .audio(value, parameters)
             case .music(let make): self = .music(make(compiledPrompt))
             case .upscale(let run): self = .upscale(run)
             }
@@ -247,21 +260,46 @@ enum GenerationController {
 
     static func prepareReviewPackage(_ generation: PreparedGeneration, editor: EditorViewModel,
                                     quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote) async throws -> GenerationPackageV1 {
-        let estimate = try? await quoteLoader(generation.target,
-            pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+        if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
+        let estimate: GenerationMoney?
+        let pricingFailure: GenerationPricingFailure?
+        do {
+            estimate = try await quoteLoader(generation.target,
+                pricingInput(generation.request, prepared: generation.submission, compiledPrompt: generation.compiledPrompt))
+            pricingFailure = nil
+        } catch {
+            try Task.checkCancellation()
+            estimate = nil
+            pricingFailure = .classified(
+                error,
+                provider: generation.target.provider,
+                endpoint: generation.target.endpoint
+            )
+        }
+
         try generation.scope?.requireCurrent(editor: editor)
         try await generation.references?.requireUnchanged()
         guard editor.workingRoot == generation.home else { throw GenerationRequestError.gate("The project changed during request preparation.") }
         try generation.destination.requireCurrent(editor: editor)
-        guard let package = try makePackage(generation, estimate: estimate) else {
+        guard let package = try makePackage(
+            generation,
+            estimate: estimate,
+            pricingFailure: pricingFailure
+        ) else {
             throw GenerationRequestError.optionsInvalid("This operation does not support a visual generation package.")
+
         }
         try await package.requireCurrentContext(editor: editor)
+        if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
         try generation.attachReview(package)
         return package
     }
 
-    private static func makePackage(_ generation: PreparedGeneration, estimate: GenerationMoney?) throws -> GenerationPackageV1? {
+    private static func makePackage(
+        _ generation: PreparedGeneration,
+        estimate: GenerationMoney?,
+        pricingFailure: GenerationPricingFailure? = nil
+    ) throws -> GenerationPackageV1? {
         var input: GenerationInput
         let parameters: PreparedProviderParameters
         let modality: String
@@ -271,6 +309,8 @@ enum GenerationController {
             input = video.genInput; parameters = prepared; modality = "video"; count = 1
         case .image(let image, let prepared):
             input = image.genInput; parameters = prepared; modality = "image"; count = image.numImages
+        case .audio(let audio, let prepared):
+            input = audio.genInput; parameters = prepared; modality = "audio"; count = 1
         default: return nil
         }
         let references = generation.references?.receipts ?? []
@@ -286,7 +326,8 @@ enum GenerationController {
             requestParametersJSON: GenerationPackageV1.requestJSON(parameters: parameters, references: references),
             routing: input.productionRouting,
             routeReceipt: .init(target: generation.target, checks: ModelCatalog.shared.routeChecks,
-                capabilitySnapshot: input.productionRouting?.route.capabilitySnapshot), estimate: estimate))
+                capabilitySnapshot: input.productionRouting?.route.capabilitySnapshot), estimate: estimate,
+            pricingFailure: pricingFailure))
     }
 
     @discardableResult
@@ -384,8 +425,9 @@ enum GenerationController {
                 if let plan = image.genInput.frameReferencePlan {
                     guard plan.isExecutable,
                           let referenceSnapshot,
-                          plan.bindings.count == referenceSnapshot.receipts.count,
-                          zip(plan.bindings, referenceSnapshot.receipts).allSatisfy({ pair in
+                          plan.bindings.count + (image.genInput.imageMaskAssetId == nil ? 0 : 1)
+                              == referenceSnapshot.receipts.count,
+                          zip(plan.bindings, referenceSnapshot.receipts.prefix(plan.bindings.count)).allSatisfy({ pair in
                               pair.0.sha256 == pair.1.sourceSHA256
                                   && pair.0.sha256 == pair.1.submittedSHA256
                           }) else {
@@ -394,6 +436,12 @@ enum GenerationController {
                         )
                     }
                 }
+            case .audio(let audio, _):
+                guard audio.genInput.model == target.modelId else {
+                    throw GenerationRequestError.optionsInvalid("The audio request changed its approved model.")
+                }
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: audio.references,
+                    trim: audio.trimmedSourceOverride, preprocess: audio.preprocessRef)
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
@@ -462,6 +510,8 @@ enum GenerationController {
                 }
             } else if case .image(let image, _) = prepared {
                 try referenceSnapshot?.requireIdentity(image.references)
+            } else if case .audio(let audio, _) = prepared {
+                try referenceSnapshot?.requireIdentity(audio.references)
             }
             try generation.scope?.requireCurrent(editor: editor)
         } catch { return .failure(.gate(error.localizedDescription)) }
@@ -469,7 +519,8 @@ enum GenerationController {
         do {
             let priced = try await GenerationBudgetGuard.authorize(
                 input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
-                target: target, editor: editor, approvedPackage: generation.reviewedPackage, quoteLoader: quoteLoader)
+                target: target, editor: editor, approvedPackage: generation.reviewedPackage,
+                requiresVerifiedCeiling: generation.batchItem != nil, quoteLoader: quoteLoader)
             do {
                 let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
                 try package?.persist(editor: editor)
@@ -484,6 +535,7 @@ enum GenerationController {
         } catch { return .failure(.budget(error.localizedDescription)) }
         do {
             try await referenceSnapshot?.requireUnchanged()
+            if let message = generation.preflight?() { throw GenerationRequestError.optionsInvalid(message) }
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             try generation.destination.requireCurrent(editor: editor)
@@ -618,10 +670,10 @@ enum GenerationController {
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
-        case .audio(let submission):
+        case .audio(let submission, let parameters):
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
-                authorization: authorization,
+                authorization: authorization, preparedParameters: parameters,
                 onComplete: audioOnComplete(request, editor: editor, then: onSuccess),
                 onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
@@ -653,12 +705,14 @@ enum GenerationController {
     ) -> GenerationPricingInput {
         var duration = request.durationSeconds
         var outputCount = 1
-        var resolution: String?
+        var resolution: String? = request.outputResolution
         var quality: String?
         var generateAudio: Bool?
+        var referenceCount = 0
 
         switch prepared {
         case .video(let submission, let parameters):
+            referenceCount = parameters.referenceSlots.count
             duration = submission.placeholderDuration
             if case .video(let params) = parameters.parameters {
                 duration = params.duration.seconds.map(Double.init) ?? duration
@@ -666,12 +720,13 @@ enum GenerationController {
                 generateAudio = params.generateAudio
             }
         case .image(let submission, let parameters):
+            referenceCount = parameters.referenceSlots.count
             outputCount = max(1, submission.numImages)
             if case .image(let params) = parameters.parameters {
                 resolution = params.resolution
                 quality = params.quality
             }
-        case .audio(let submission):
+        case .audio(let submission, _):
             let params = submission.params
             duration = params.durationSeconds.map(Double.init) ?? duration
         case .music(let submission):
@@ -688,7 +743,9 @@ enum GenerationController {
             resolution: resolution,
             quality: quality,
             promptCharacterCount: compiledPrompt.count,
-            generateAudio: generateAudio
+            promptUTF8ByteCount: compiledPrompt.utf8.count,
+            generateAudio: generateAudio,
+            referenceCount: referenceCount
         )
     }
 

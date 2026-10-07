@@ -32,6 +32,7 @@ bible agent and is curated / generated there.
 
 - Gate `brief` approved (check via `get_project_state(project_dir)`).
   `brief.yaml` already contains `visual_medium` and `visual_medium_notes`.
+- If `brief.director_pattern` is set, load it with `get_pattern`.
 - User uploads under `import/` (dirty source material).
 - An existing `production_design/production_design.yaml`, if resuming.
 
@@ -88,17 +89,29 @@ via `show_dialog`: "Which of these define the look of the video?"
 For each selected file: `copy_project_file(from: "import/...", to:
 "production_design/refs/<descriptive_name>.<ext>")`. Clean file names,
 lowercase, underscores. The original stays in `import/` (it's a copy).
+Only loose images directly under `import/` are Style-reference candidates.
+Prepared character/location assets keep their intake role and are reserved
+for Bible; the host rejects attempts to stage them as style.
 
 ### 4. Sharpen the style
 
 Read `brief.yaml` — `visual_medium` and `visual_medium_notes` are
 already set. Check whether the notes still fit after seeing the refs.
+When a director pattern is selected, carry its `lighting`, `color`, and
+`craft_signature` entries whose `pipeline_levers` include `bible_look` or
+`bible_lighting` into the proposal. Keep every `basis` label and source URL
+visible in the rationale; inferred material is a target, not a measurement.
 If the refs show a clear, specific style (e.g. "Studio Ghibli, soft
 morning light, warm earth tones"), propose a more precise wording of
 `visual_medium_notes` to the user via `show_dialog`. If accepted, call
 `rewind(target_phase="brief")`, update the Brief through `write_brief`,
 and re-approve it before returning here. Never mutate an approved Brief
 from inside Production Design.
+
+Copying or staging a reference does not change the Brief. Never rewind or
+request another Brief approval unless the user accepted an actual semantic
+change to a Brief field. A lineage refusal is a host error to report, not a
+reason to rewrite byte-equivalent content.
 
 ### 5. Color script (optional, recommended)
 

@@ -12,6 +12,10 @@ on:
         description: Run the Developer ID signing preflight
         type: boolean
         default: true
+      workspace_ui_acceptance:
+        description: Run the workspace UI acceptance
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -38,3 +42,7 @@ jobs:
     if: inputs.signing_preflight
     uses: ./.github/workflows/signing-preflight.yml
     secrets: inherit
+
+  workspace-ui-acceptance:
+    if: inputs.workspace_ui_acceptance
+    uses: ./.github/workflows/workspace-ui-acceptance.yml

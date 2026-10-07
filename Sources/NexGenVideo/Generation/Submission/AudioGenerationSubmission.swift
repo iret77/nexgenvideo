@@ -18,6 +18,7 @@ struct AudioGenerationSubmission {
         projectURL: URL?,
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
+        preparedParameters: PreparedProviderParameters? = nil,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
@@ -36,6 +37,7 @@ struct AudioGenerationSubmission {
                 }
                 return .audio(resolvedParams)
             },
+            preparedParameters: preparedParameters,
             preprocessRef: preprocessRef,
             fileExtension: "mp3",
             projectURL: projectURL,

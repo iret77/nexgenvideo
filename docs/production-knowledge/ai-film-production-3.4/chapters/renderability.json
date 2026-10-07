@@ -1,0 +1,321 @@
+[
+  {
+    "id": "renderability-fd4bc8d94664",
+    "title": "Renderability: Green/Red Lists, Formats, Model Profiles",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 1,
+      "endLine": 4,
+      "sha256": "94e0b91c66cdde61b3241c745a9bb28286ad10c844313721bb038bc5cb500b4f",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "# Renderability: Green/Red Lists, Formats, Model Profiles\n\nWhat current video models render reliably vs. what fails. Tags and confidence labels: legend in sources.md.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "sources.md",
+        "entryIDs": [
+          "sources-1599c8413d5d"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-bc106fd1a218",
+    "title": "1. Green list (reliable)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "1. Green list (reliable)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 5,
+      "endLine": 7,
+      "sha256": "ee2d2ed58deefd5f996c8256b62fbb35c9064c6caa62606a9bfd4b629c5f06c4",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 1. Green list (reliable)\nSingle-subject action with one camera move · dialogue in shot/reverse-shot coverage · weather, fog, dust, embers · fire/water/smoke as atmosphere (not as hero physics) · slow reveals · stylized 3D (most forgiving discipline) · high-action anime · UGC/handheld realism · reflections and light rhythm across cuts (Seedance 2.5) · macro/product turns · creatures from image references.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-81bec1d2ecf4",
+    "title": "2. Red/yellow list (avoid or mitigate)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "2. Red/yellow list (avoid or mitigate)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 8,
+      "endLine": 27,
+      "sha256": "5679408adc5e87c691d73315a3340336036620078e4152f376cd395117cd1f34",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 2. Red/yellow list (avoid or mitigate)\n| Element | Failure | Mitigation |\n|---|---|---|\n| **In-frame text — unified rule** | Text, logos, subtitles, formulas render as scribble or drift between frames | Default: ALL exact on-screen text goes to post-compositing (officially confirmed [BD-off]). Three documented exceptions: (a) **static short text locked via master plate** — content frozen in the reference image + prompt lock \"exactly this one line, frozen and identical in every frame\" (production-proven, platforms-models ch. 13b); (b) 🟡 MiniMax H3 has an official quoted-text channel (visible text in double quotes, verbatim, untranslated [MM-off]) and renders UI/text comparatively stably — syntax documented, quality practitioner-rated: test before relying. Dynamic/changing text stays red everywhere. 🟡 Exception (c) — DESIGNED typography as the product: Higgsfield Marketing Studio's motion-design presets (launch video, hypermotion product ad, 2D and editorial explainer, 3D real-estate flythrough with pricing overlays) render text overlays, numbers and animated charts as the generation's subject, and the vendor shows them \"locked, not melting\" including minutes of editorial text [H-off, P68 — vendor demo, not frame-checked here]; a different generation class from a video model rendering incidental text. Every word and number is still checked against the script before delivery, and the rule for generative FILM shots is unchanged. 🟡 Exception (a) confirmed on 2.5 by [P54]: a one-word character-intro title generated INTO the Seedream 5.0 Pro still and carried by Seedance 2.5 over 20 s with a spelling lock in the prompt (\"the name is Dan — exactly D-A-N, not Dann, not Dane\") — single short static word, plate-locked; still the exception. |\n| Crowds | Clone extras, melting faces in distance | Multi-variant sheet (production-pipeline ch. 3) with extras as silhouette-distinct CLASSES (\"heavy brute\" / \"light scout\") — classes, not outfit variants, kill the clone read; crowds to mid/background; small faces stay unreliable even at high res; fog capped as a visible relation (\"everything past the third rank dissolves into fog\" — never a distance in metres, SKILL rule 7) hides background glitches at army scale (less needed at 4K, still works) [H-off, P25]; formations (66 dancers in rings around a singer) hold across cuts when positions and facing come from blockout boxes and only the movement is prompted [H-off, P66]; a cast of ten distinct extras saved as one element stops per-shot face regeneration [H-off, P69] |\n| Hands + fine object manipulation | Finger errors, object morphing | Close-ups only as short single-action beats, cut away before the fine work; the handling invariant is written once as a lock sentence — inside the beat on the Caption Spine (ch. 12h), as a POSITIVE LOCKS line in the block structure (\"ALWAYS by the handle\") — there is no separate CRITICAL block |\n| Vehicles/wheels/mechanics | Wrong rotation, illogical mechanics | See rescue paths below |\n| Long continuous camera moves | Collapse after several moves (proven in 2.5 too) | One move per shot; cuts instead of tours |\n| Instrument fingering, precise sports technique | Approximate only | Frame around it; cutaways |\n| Physics as hero (glass shattering exactly, complex fluid pours) | Plausible-but-wrong | Describe end state; hide peak behind cut |\n| Tiny hero object carrying the beat (a key, a pill, a seed in a hand) | Object morphs, vanishes or changes size between frames; detail vs. size contradiction (ch. 24b) | Cut to an insert as its own short shot at close scale; carry the beat by the character's reaction; object as a prop sheet (production-pipeline ch. 4) |\n| Dark, figure-less macro (no scale anchor, no figure, low light) | No scale read, no material read — the model fills with generic texture or invents a subject | Add a scale anchor or a figure (SKILL rule 9 on stylized projects), lift a motivated practical, or replace by a still + ellipsis |\n| Continuous approach over distance (a walk/drive/flight that must close the gap on camera) | Scale collapses on the way (same class as wide-shot scale, above); the approach stalls or teleports | Two shots: departure state, arrival state — the distance is an ellipsis (manual cut); never one continuous take |\n| Cut back onto the same emissive object (lamp, screen, fire) whose state must match frame-exactly | Brightness, colour temperature and shape differ between takes; the object appears \"re-lit\" | One state per state sheet (production-pipeline ch. 4); the second view inside the same take, or the object kept in one setup (W10 anchor composition); otherwise accept a grade-side match (post-audio-legal ch. 17) |\n| **Wide shots** (stylized 3D; photoreal crowd scale too) | Scale and distance break at wide range; a flat camera path at constant height/speed leaves characters as dots (vendor-confirmed on Higgsfield's own short and its Hell Grind rebuild) | Open the take on a close/medium of the character and transition into the wide inside the same generation; positions locked by the previs/clay render, not by the wide (pixar-look §10) |\n| Faces that must stay blank (silent passengers, listeners with no beat) | Model animates them anyway — micro-expressions, drift | Hide by design with a motivated occlusion: reflective glass, backlight silhouette, hat brim, distance — copy-ready GLASS block in video-prompting 12e |\n| **Mirror/reflection beats** where a reflected face or pose must match the subject frame-exactly | Reflected face/pose diverges from the subject; reflection doubled, missing, or lagging a beat behind | 🟡 (derivation, not yet [PP]-tested) Reflections as texture/light — glass, water, wet street, chrome — stay GREEN on Seedance 2.5 (§1). For a story mirror beat: Seedance 2.5 only, static camera, ONE readable face in frame — either the reflection alone (subject from behind / over the shoulder) or the subject alone with the mirror as shape (film-craft §2 frame-in-frame); never subject and reflection both readable; otherwise split subject and reflection across a cut. 🟢 Blockout rescue [H-off, P66]: a camera passing THROUGH a mirror held in one 15-s continuous take when the set was blocked as a mirrored twin with both characters moving in sync and the mirror as an opening (production-pipeline ch. 8 protocol b). |\n\n**Feasibility answer (\"can this scene be generated?\") — fixed shape:** one verdict line (green / yellow with rescues / red), then a feasibility table (the pre-decision form of the rule-11 risk register; once the director decides, kept rows move into the rule-11 register unchanged in meaning): Beat or element | Rating 🟢🟡🔴 | Failure (§2 row) | Rescue (§3) | Decision (keep / rescue / cut — the director's, left blank until they decide). Never answer in prose only and never rewrite the scene silently.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-dd52d42341f8",
+    "title": "3. Rescue paths for red/yellow action elements",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "3. Rescue paths for red/yellow action elements"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 28,
+      "endLine": 38,
+      "sha256": "3f54b31f89e12a8e5b6ed00884a4d8f18b19f513ca5813b457cc252e4775553e",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 3. Rescue paths for red/yellow action elements\n- **Fights/multi-person action:** never one long choreography. Decompose into **attack–reaction beats as separate short clips** (attack = clip, reaction = clip), characters locked via references; the EDIT is the fight choreography. Write contacts + settling per beat (video-prompting ch. 14).\n- **Stunt that will not generate → shoot it yourself [H-off, P24]:** two bodies in constant contact over a prop (a struggle for a gun in a car: limbs fused, weapon vanishing) would not converge in text; the feature-film fix was stunt performers in a real car filmed on a phone, fed as MOTION reference — the model laid the cast, interior and light over it. One day of phone footage instead of a week of iterations; the only place a text-to-video-only production stepped outside its rule (production-pipeline ch. 8 phone-shot blocking).\n- **Dance/choreography move by move [H-off, P48]:** \"'dances' means nothing to Seedance\" — write the moves: \"two head nods, shoulders rolling one at a time, a knee dip, a finger snap, a quarter spin at the door\"; per cut one register (\"slow head bob left and right\" · \"sharp footwork, skips, stomps, quick weight shifts\" · \"locking style, arms snapping into frozen geometric poses\" · \"wide arms, shoulder isolations, stopping on the beat\"); the track as timing input (video-prompting ch. 14b).\n- **Vehicles/wheels:** hide wheel rotation — night/rain (motivated motion blur), framing above wheel height, parallel tracking (wheel detail unreadable), cockpit coverage; wheel close-ups only as short beats with water/mud eruption as distraction.\n- **Subject vs. camera motion:** never combine opposing directions (subject runs right + dolly-in = mush) — one motion direction dominates per shot.\n- **Animals:** short single beats, no long behavior chains; image reference instead of species name for fantasy/hybrid creatures.\n- **Moving crowds:** multi-variant sheet + crowd in mid/background layer only; foreground extras directed individually.\n- **Crowd scale — never a number, always three layers [H-off, P25]:** \"the prompt never says show a thousand samurai\": one sharp warrior up front, a dense crowd behind him, silhouettes fading into the mist — about 40 soldiers read clearly and the brain fills in the rest. Pair with the fog cap (§2) and silhouette classes. A synchronised army drop-into-stance is a legitimate held ENDING STATE (formation reads as drilled, not as animation — the async rule applies to individuals, video-prompting ch. 12).\n- **Degradation looks as rescue style:** VHS/CCTV/16mm grain has built-in fault tolerance — a footage format (style-control §6b) is a legitimate rescue for risk shots.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-2e28105ca370",
+    "title": "4. Format matrix (what each look forgives)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "4. Format matrix (what each look forgives)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 39,
+      "endLine": 48,
+      "sha256": "818f65d002d1dce14e011107b2b68496e4697e33e66adfe720bcfddc5f40f50e",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 4. Format matrix (what each look forgives)\n| Format | Fit | Note |\n|---|---|---|\n| **Pixar/stylized 3D** | **Excellent — safest \"cinema look\"** | Stylization absorbs physics/texture errors; audiences expect no real physics. Look definition and evidence: pixar-look.md |\n| High-action anime | Excellent | Speed lines/held poses mask model weaknesses |\n| UGC/found footage | Excellent | Degradation hides artifacts |\n| Photoreal drama, static dialogue | Good with discipline | Reverse plates + framing recycling mandatory |\n| Flat 2D/limited animation | Hard | Punishes every wobble; simple motion only (style-control §5b) |\n| Photoreal action with hero physics | Hardest | Plan rescue cuts per risk shot |\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "pixar-look.md",
+        "entryIDs": [
+          "pixar-look-3dfb4e2f19e1",
+          "pixar-look-4e12a0564475",
+          "pixar-look-70fc2dc072af",
+          "pixar-look-61bf03e96e25",
+          "pixar-look-d866f797cf8b",
+          "pixar-look-8d77a7371d87",
+          "pixar-look-dbab5966991e",
+          "pixar-look-b200d5eaccc4",
+          "pixar-look-14f8ed06620b",
+          "pixar-look-96f0389f0642",
+          "pixar-look-8df617736836",
+          "pixar-look-7fe4492e5b13",
+          "pixar-look-8a6443c51889",
+          "pixar-look-aa1deace90d1"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-b79d484df322",
+    "title": "5. Camera & cut rules",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "5. Camera & cut rules"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 49,
+      "endLine": 51,
+      "sha256": "6de2d7060b09b375186951c51eaad28874b29a5a2750c0e0a1fbcddd6d0c5854",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 5. Camera & cut rules\nOne camera verb per shot · fixed camera grammar per sequence in the shot table's Framing column; in the prompt only the one camera line where continuity across cuts demands it (12h element 5 / OPTICS+CAMERA) · lock positions by previs/clay render or plate, not by the take's opener — the establishing wide is a SHOT, not the opening beat, for crowd scale and stylized 3D (§2 wide-shot row); a plain photoreal two-hander may still open wide · never cross the axis (state it) · match cuts across scene borders bind on identical motion · hectic cuts exactly at hard motion = model hiding failure → reject take.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-32486f234644",
+    "title": "5b. Lighting consistency: directional light vs. whole-body brightness [PP]",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "5b. Lighting consistency: directional light vs. whole-body brightness [PP]"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 52,
+      "endLine": 56,
+      "sha256": "aed13f4d2d499f63e354847e8decfe01d760dde6f7e35050e7da056aecb6ddef",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 5b. Lighting consistency: directional light vs. whole-body brightness [PP]\n🟢 **Directional light and whole-body brightness adjectives on the same object are mutually exclusive.** Once a prompt demands a light DIRECTION, phase, or partial shading on an object (moon phase, backlight, terminator, half-shadow, rim light), never pair it with global brightness words for that same object — \"bright\", \"fully lit\", \"luminous\", \"brightly glowing\", \"strong contrast\". Whole-body words grab the entire object and override the phase: documented failure — a moon prompted with a side-lit phase (lit side toward a low sun, shadow side away) PLUS \"clear bright lunar disc\" rendered as a fully lit disc with no shadow side, physically inconsistent with the stated sun position.\n🟢 **Instead:** describe light exclusively per direction — which side/surface is lit, which lies in shadow. If contrast is wanted, name the contrast of the LIT EDGE against the background (\"the lit edge stands out against the black sky\"), never the brightness of the whole object.\nMemory hook: a phase instruction only wins when no contradicting brightness word stands next to it.\n\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  },
+  {
+    "id": "renderability-6790d7e0229e",
+    "title": "6. Model quick profiles (for shot assignment)",
+    "ancestry": [
+      "Renderability: Green/Red Lists, Formats, Model Profiles",
+      "6. Model quick profiles (for shot assignment)"
+    ],
+    "kind": "knowledge",
+    "applicationContract": "feasibility",
+    "source": {
+      "kind": "user-supplied-archive",
+      "archiveSHA256": "4827d6da3df7654434bceac3e143ec7172f18833a7a45c693fcf55c68a2cd012",
+      "path": "references/renderability.md",
+      "startLine": 57,
+      "endLine": 76,
+      "sha256": "48787bdfa5bcd78ea446e5a8709018626ce0bbb1844ec365ce51c75c390ed9b1",
+      "localDocument": "handbook/renderability.md"
+    },
+    "contentMarkdown": "## 6. Model quick profiles (for shot assignment)\n**Prompt technique is a project decision (SKILL rule 4); the containers per model are in ch. 21 / 12g.** Seedance 2.0 know-how holds on 2.5 unless a documented difference says otherwise (video-prompting ch. 14b table: timestamps, multi-view references, action wording, constraint words).\n\nPer-shot decision rule: Seedance 2.5 whenever references, edits, long takes or choreography matter; Seedance 2.0 for simple UGC-realism shots and drafts (production-pipeline ch. 11); H3 for 2D/anime line quality, quoted on-screen text or cheap hosted 2K; Veo 3.1 for photoreal environments; Kling 3.0 for directed movement in stylized-photoreal; Grok for stylized fast tests; Flux 3 Video for calm dialogue. Ties → the motion ladder; name the pick in the slate.\n| Model | Strengths | Limits / slop accent |\n|---|---|---|\n| **Seedance 2.0** | resolution: native 4K last documented on Higgsfield under HF-CS4-HIST@2026-08 (platforms-models ch. 13 archive, unverified since — working assumption 1080p until the live output dropdown shows 4K), 15-s takes, cost/quality champion, UGC home turf | Peak at take end fails; plastic skin tendency; [P56] keeps 2.0 for SIMPLE shots where 4K crispness matters (Aug 2026), but its physics and reference placement lost to 2.5 in every staged test |\n| **Seedance 2.5** | 30-s takes (extension chains ≈60 s; 180 s beta is Dreamina-only), 50 refs (30i/10v/10a incl. @Clay Render + voice refs), **edit suite** (region/timestamp-scoped, camera-perspective, green-screen, subject-swap, audio-category — video-prompting ch. 14b), complex continuous camera, choreography with weight, in-shot transformations, multi-stage emotions, reflections, skin texture; best adherence with eight references and best emotion progression in the [P56] four-model test | ~2× price; resolution platform-dependent (Higgsfield 1080p since Aug 2026, one practitioner aggregator run at 1080p/30 s with sound, Sep 2026 [P19], Dreamina 480/720p; 4K on Higgsfield only via Upscale / FLUX 3 Video Upscaler per HF-WEB@2026-09-04 — no native 2K/4K verified; other surfaces: read the live form); real-face references are rejected by most hosted surfaces (moderation plan + face-grid fallback: post-audio-legal ch. 20); baked-in artifacts → upscaler; logic decays with take length; in-frame text still broken |\n| **Veo 3.1** | Polished cinematic realism, environments, ingredients/first-last/extension | Physics-correct motion fights stylized looks |\n| **Kling 3.0** | Directed movement, multi-shot storytelling, strongest stylization of the photoreal class, MotionControl | Style drift per generation (ch. 21 sequence rule); 2–3× rerolls for anime |\n| **MiniMax H3 (Hailuo 3)** | 2D/anime line quality, official quoted-text channel + stable UI/text 🟡, LoRA style lock, physics (passes glass test), cheap, native 2K hosted, Ref2VA omni mode (9i/3v/3a), V2V edits without masks, L2VA (events before the image) | Plastic under realism demands [P43, P56 — plastic tears, skin worse than 2.x], audio loops 🟡 [W], one beat per shot [MM-off], weak IP moderation 🟡 [W] (legally risky — practitioners market the local build for \"copyrighted and unrestricted\" content, post-audio-legal ch. 20); [P56] also logged an unprompted camera move in a static-camera test and a screen-direction flip between shots, while lyric text in a music-video test rendered cleanly |\n| **Flux 3 Video** (BFL; on OpenArt and Higgsfield, Aug 2026) 🟡 [P56] | 20-s takes, 1080p, native audio; the most natural DIALOGUE voice of the four models in the test and a strong documentary / interview register; sharp faces and close-ups | Weakest prompt adherence in the test (camera-move chains and staged actions dropped), takes reference images literally (a white sheet background carried into the scene), comic drift, fast unintelligible delivery — route calm dialogue-heavy shots, not choreography; priced above 2.5 on OpenArt; no syntax profile here — write it in the project's technique (SKILL rule 4), camera mid-prompt as on Seedance (12g), with the platform's live docs as the receipt |\n| **Grok Imagine 1.5** | Native stylization bias (anime/cartoon/art-directed), fast, cheap, native audio | Drifts cartoonish on photoreal intent; negatives unreliable; resolution: ch. 21 Grok line |\n| **Wan 2.6/2.7/3.0** (open-weight family; version per surface — Higgsfield: Wan 3.0 / 3.0 Prime, OpenArt: WAN 2.7 and a WAN 3.0 page, 2026-09-04) | Open-weight, LoRA, multi-shot, reference-to-video, 1080p, budget | Less polished than top class |\n| **PixVerse** | Fast social iteration, transition mode | Not for long-form/high-end. No syntax profile here — if a PixVerse prompt is requested, say so and write it in the project's technique (SKILL rule 4), camera mid-prompt as on Seedance (12g), with the platform's live docs as the receipt |\n\n⚠️ **Resolution/duration cells above are capability notes, not receipts.** Before any resolution or duration goes into a Render Slate `Settings` row: apply the platform-ui-workflows.md output-configuration rule — use the LOWER verified value for the surface (Higgsfield: 1080p / 30 s under HF-CS4@2026-09-04), ask the user to read the live model/plan dropdown, and write `unverified` in the slate if neither is possible. Never write a reference key you did not check.\n\nNo universal winner: run the motion ladder (post-audio-legal ch. 19) per style/model before committing.\n⚠️ **Retired/wound down — do not plan pipelines on:** Sora 2 (wind-down 2026) · Runway Gen-3 family (retired Jul 2026) · OpenArt Workflows (sunset Jan 2026). Current surfaces + retirement tracking: platform-ui-workflows.md.\n",
+    "selectionUnit": "applicable-complete-procedure-or-unit-with-governing-context",
+    "runtimeStatus": "3.4-extracted; runtime-delta-pending",
+    "localReferences": [
+      {
+        "sourceName": "platform-ui-workflows.md",
+        "entryIDs": [
+          "platform-ui-workflows-e30f0350bb1f",
+          "platform-ui-workflows-2f383afe514d",
+          "platform-ui-workflows-0e80a0108535",
+          "platform-ui-workflows-8ab18c72dcb8",
+          "platform-ui-workflows-088f56e69ea5",
+          "platform-ui-workflows-34e493e41f4e",
+          "platform-ui-workflows-e05bd36f731b",
+          "platform-ui-workflows-8a74056524f9",
+          "platform-ui-workflows-3bb5486988c8",
+          "platform-ui-workflows-400efdd7af3d",
+          "platform-ui-workflows-1077e071da97",
+          "platform-ui-workflows-f08b43869cb6",
+          "platform-ui-workflows-2ad7b9dfa672",
+          "platform-ui-workflows-d9807171d8f5",
+          "platform-ui-workflows-cd8e026d2b43",
+          "platform-ui-workflows-5f31ed5f0a1c",
+          "platform-ui-workflows-bdcf7e38ec4e",
+          "platform-ui-workflows-253fb6a7aea2",
+          "platform-ui-workflows-ba93278dc53f",
+          "platform-ui-workflows-e02fde049235",
+          "platform-ui-workflows-f5e2173a44a8",
+          "platform-ui-workflows-034df0858abb",
+          "platform-ui-workflows-7f31238fb6a2",
+          "platform-ui-workflows-4f332aba3a08",
+          "platform-ui-workflows-7a81d406d07f",
+          "platform-ui-workflows-74dda66fcff8",
+          "platform-ui-workflows-209503b96ad6",
+          "platform-ui-workflows-343c7a542ef9",
+          "platform-ui-workflows-9713d23643bf",
+          "platform-ui-workflows-9beba4432320",
+          "platform-ui-workflows-003d4c408cc7",
+          "platform-ui-workflows-515512abfea1",
+          "platform-ui-workflows-4f75cc59b2fd",
+          "platform-ui-workflows-198c6011cbc4",
+          "platform-ui-workflows-a7a01fe7ff2d",
+          "platform-ui-workflows-6d1c8543fe7f",
+          "platform-ui-workflows-bdd9f99a65c1",
+          "platform-ui-workflows-c78c55416084",
+          "platform-ui-workflows-a6aa712b0f76",
+          "platform-ui-workflows-6c53ac7b9a95",
+          "platform-ui-workflows-73ddb8ad512a",
+          "platform-ui-workflows-c439a214678b",
+          "platform-ui-workflows-6d145549a58f",
+          "platform-ui-workflows-844033a310a6",
+          "platform-ui-workflows-195f387f06b0",
+          "platform-ui-workflows-985528f70363",
+          "platform-ui-workflows-24d0681b06f7",
+          "platform-ui-workflows-fb93dc3c2816",
+          "platform-ui-workflows-66bc7f65e157",
+          "platform-ui-workflows-d6b96025fe1a",
+          "platform-ui-workflows-8eb2851253d7",
+          "platform-ui-workflows-f9a52af0a5b2",
+          "platform-ui-workflows-52f30b7ebbc2",
+          "platform-ui-workflows-c4c6119621b5",
+          "platform-ui-workflows-ddbf62f5ff79",
+          "platform-ui-workflows-3448d298cce3",
+          "platform-ui-workflows-f8fc0cf41f13",
+          "platform-ui-workflows-0ac7dc788cb3",
+          "platform-ui-workflows-6280fbb95126",
+          "platform-ui-workflows-4915248649a6",
+          "platform-ui-workflows-2c0734e232e1",
+          "platform-ui-workflows-0f58e75ff55c",
+          "platform-ui-workflows-4704610b2152"
+        ]
+      }
+    ],
+    "contextDependencies": [
+      "precedence.json",
+      "application-contracts.json",
+      "locators.json"
+    ]
+  }
+]

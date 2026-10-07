@@ -40,8 +40,8 @@ final class EditorViewModel {
     // MARK: - Panel focus
 
     enum FocusedPanel: String {
-        case media, preview, inspector, timeline, agent
-        /// The Project cockpit when it is the center work surface (Produce focus).
+        case media, preview, inspector, timeline, agent, mediaFolders
+        /// The Project cockpit when it is the center work surface.
         case project
 
         var accessibilityID: String { rawValue + "Panel" }
@@ -52,19 +52,48 @@ final class EditorViewModel {
         }
     }
 
-    /// The top-level workspace focus (docs/UI_UX_CONCEPT.md §3). A focus rearranges the *same*
-    /// canonical panels — it never forks a variant. Ordered left-to-right as the AI-native creative
-    /// order (mirroring Resolve's pages): Produce = generating (cockpit + agent prominent), Edit =
-    /// cutting (Inspector + expanded timeline), Finish = QC + deliver (large player, review, export).
+    /// The top-level workspace. Workspaces rearrange canonical panels without changing project data.
     enum WorkspaceFocus: String, CaseIterable, Sendable {
-        case produce, edit, finish
-        var label: String {
-            switch self {
-            case .produce: "Produce"
-            case .edit: "Edit"
-            case .finish: "Finish"
+        case media, production, edit, postproduction, export
+
+        init(persistedValue: String?) {
+            switch persistedValue {
+            case "media": self = .media
+            case "produce", "production": self = .production
+            case "edit": self = .edit
+            case "post", "postproduction": self = .postproduction
+            case "finish", "export": self = .export
+            default: self = .production
             }
         }
+
+        var label: String {
+            switch self {
+            case .media: "Media"
+            case .production: "Production"
+            case .edit: "Edit"
+            case .postproduction: "Postproduction"
+            case .export: "Export"
+            }
+        }
+    }
+
+    struct WorkspacePresentationState {
+        var sidebarVisible: Bool
+        var inspectorVisible: Bool
+        var focusedPanel: FocusedPanel?
+        var maximizedPanel: FocusedPanel?
+        var selectedClipIds: Set<String>
+        var selectedGap: GapSelection?
+        var selectedTimelineRange: TimelineRangeSelection?
+        var selectedMediaAssetIds: Set<String>
+        var selectedFolderIds: Set<String>
+        var inspectedObject: InspectedObject?
+        var activePreviewTabId: String
+        var timelineFrame: Int
+        var sourceFrame: Int
+        var mediaPanelTab: MediaPanelTab
+        var mediaFolderId: String?
     }
 
     /// The three canonical left-sidebar surfaces, presented as tabs of one sidebar (not separate columns).
@@ -87,12 +116,16 @@ final class EditorViewModel {
     }
 
     var focusedPanel: FocusedPanel?
-    var maximizedPanel: FocusedPanel?
+    var maximizedPanel: FocusedPanel? {
+        didSet { if !canPresentMarkerPanel { markerPanelPresented = false } }
+    }
 
     /// Theater is a VIEW toggle orthogonal to the stage (docs/UI_UX_CONCEPT.md §3): the player fills
     /// the window with floating transport, panels hidden; you stay in your current stage. Transient,
     /// never persisted. Esc exits.
-    var theaterActive: Bool = false
+    var theaterActive: Bool = false {
+        didSet { if !canPresentMarkerPanel { markerPanelPresented = false } }
+    }
 
     func toggleTheater() { theaterActive.toggle() }
 
@@ -107,10 +140,38 @@ final class EditorViewModel {
     }
     var activeFrame: Int { playheadState.timelineFrame }
     var isPlaying: Bool = false
-    var selectedClipIds: Set<String> = []
+    var selectedClipIds: Set<String> = [] {
+        didSet {
+            guard !selectedClipIds.isEmpty else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
     var isMarqueeSelecting: Bool = false
-    var selectedGap: GapSelection?
-    var selectedTimelineRange: TimelineRangeSelection?
+    var selectedGap: GapSelection? {
+        didSet {
+            guard selectedGap != nil else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
+    var selectedTimelineRange: TimelineRangeSelection? {
+        didSet {
+            guard selectedTimelineRange != nil else { return }
+            selectedTimelineMarkerIds = []
+            timelineMarkerPreview = nil
+        }
+    }
+    var selectedTimelineMarkerIds: Set<String> = [] {
+        didSet {
+            guard !selectedTimelineMarkerIds.isEmpty else { return }
+            selectedClipIds = []
+            selectedGap = nil
+            selectedTimelineRange = nil
+        }
+    }
+    var timelineMarkerPreview: TimelineMarker?
+    var markerPanelPresented = false
     var selectedMediaAssetIds: Set<String> = []
     var selectedFolderIds: Set<String> = []
 
@@ -124,18 +185,49 @@ final class EditorViewModel {
     /// asset promotes; a marquee, a multi-selection, or an empty selection yields nil (the Inspector then
     /// shows a summary or panel content, never a half-inspected object). Consumed by the Inspector.
     var selectionInspectedObject: InspectedObject? {
-        InspectedObject.fromSelection(
-            clipIDs: selectedClipIds,
-            mediaAssetIDs: selectedMediaAssetIds,
-            isMarquee: isMarqueeSelecting
-        )
+        switch activePreviewTab {
+        case .timeline:
+            return InspectedObject.fromSelection(
+                clipIDs: selectedClipIds,
+                mediaAssetIDs: [],
+                isMarquee: isMarqueeSelecting
+            )
+        case .mediaAsset:
+            return InspectedObject.fromSelection(
+                clipIDs: [],
+                mediaAssetIDs: selectedMediaAssetIds,
+                isMarquee: false
+            )
+        }
+    }
+
+    var selectedObjectRevisionTask: AgentTask? {
+        guard let label = selectionContextHint else { return nil }
+        let target: String
+        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
+            target = "timeline clip IDs " + selectedClipIds.sorted().joined(separator: ", ")
+        } else if let object = inspectedObject {
+            target = object.taskTarget
+        } else {
+            return nil
+        }
+        return AgentTask(title: "Revise: " + label, systemImage: "pencil",
+            prompt: "Revise only this selected target: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
+            requiresDirection: true)
     }
 
     /// Agent grounding: one line describing what the user is currently inspecting/selecting, so scoped
     /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
     /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
     var selectionContextHint: String? {
-        if selectedClipIds.count > 1 {
+        if activePreviewTab == .timeline && selectedTimelineMarkerIds.count > 1 {
+            return "\(selectedTimelineMarkerIds.count) timeline markers are selected"
+        }
+        if activePreviewTab == .timeline, let marker = selectedTimelineMarker {
+            return "the timeline marker \u{201C}\(marker.title)\u{201D} at \(formatTimecode(frame: marker.startFrame, fps: timeline.fps))"
+        }
+        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
+
             return "\(selectedClipIds.count) timeline clips are selected"
         }
         guard let object = inspectedObject else { return nil }
@@ -188,7 +280,7 @@ final class EditorViewModel {
     var toolMode: ToolMode = .pointer
     var showExportDialog: Bool = false
     var showGenerationPanel: Bool = false {
-        didSet { if showGenerationPanel && !oldValue { showMediaPanelMediaTab() } }
+        didSet { if showGenerationPanel && !oldValue { revealMediaTools() } }
     }
     /// AIEditTab input consumed by GenerationView.
     var pendingPanelSeed: PendingPanelSeed?
@@ -227,6 +319,7 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
+            _ = cancelAudioExtractionForProjectChange()
             if !pipelinePhaseRunCoordinator.hasRunningJobs {
                 pipelinePhaseExecution.reset()
             }
@@ -272,7 +365,7 @@ final class EditorViewModel {
     /// Marks the document edited when the pipeline changes (so the user is prompted to save, which
     /// persists the working copy into the package). Set by the owning document.
     var onPipelineChanged: (() -> Void)?
-    var onWorkingCopyReset: ((URL) -> Void)?
+    var onWorkingCopyReset: (@MainActor (URL) async -> Bool)?
 
     /// Stable store key derived once when `projectURL` changes. It never re-reads a package mid-save.
     var workingCopyKey: String? { projectId.map { "p-" + $0 } }
@@ -412,7 +505,10 @@ final class EditorViewModel {
             }
             self.workingCopyHome = home
             self.capturePluginDeclaration(from: projectURL)
-            self.onWorkingCopyReset?(home)
+            if let reload = self.onWorkingCopyReset {
+                guard await reload(home) else { return }
+            }
+            guard self.projectURL == projectURL, self.workingCopyHome == home else { return }
             self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
             self.verifyPackWiring()
@@ -430,29 +526,43 @@ final class EditorViewModel {
         }
         let phaseCoordinator = pipelinePhaseRunCoordinator
         let importTail = mediaImportTail
+        let extractionTask = cancelAudioExtractionForProjectChange()
         if importTail != nil {
             cancelMediaImport()
         }
         let phaseIsRunning = dataRoot.map {
             phaseCoordinator.runningPhase(projectRoot: $0) != nil
         } ?? false
+        let exportIsRunning = ExportQueue.shared.jobs(ownerKey: key).contains {
+            !$0.status.isTerminal
+        }
+        if exportIsRunning {
+            ExportQueue.shared.cancelAll(ownerKey: key)
+        }
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if importTail != nil || phaseIsRunning {
+        if importTail != nil || extractionTask != nil || phaseIsRunning || exportIsRunning {
+
             Task { @MainActor [phaseCoordinator] in
                 _ = await importTail?.value
+                _ = await extractionTask?.value
                 if let dataRoot, phaseIsRunning {
                     await phaseCoordinator.waitUntilIdle(
                         projectRoot: dataRoot
                     )
                 }
+                if exportIsRunning {
+                    await ExportQueue.shared.waitUntilIdle(ownerKey: key)
+                }
+                ExportQueue.shared.release(ownerKey: key)
                 ProjectWorkingCopy.discard(
                     key: key,
                     ifGeneration: generation
                 )
             }
         } else {
+            ExportQueue.shared.release(ownerKey: key)
             ProjectWorkingCopy.discard(
                 key: key,
                 ifGeneration: generation
@@ -508,9 +618,11 @@ final class EditorViewModel {
         hasProductionPipeline = roots.contains { DataRootResolver.dataRoot(of: $0) != nil }
         if let dataRoot = workingCopyHome.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
             do {
-                if try PipelineDeliveryStore.recoverInterruptedJobs(dataRoot: dataRoot),
-                   let key = openWorkingCopyKey {
-                    try ProjectWorkingCopy.markDirty(key: key)
+                if let key = openWorkingCopyKey,
+                   try ExportQueue.shared.recoverInterruptedDeliveries(
+                       ownerKey: key,
+                       dataRoot: dataRoot
+                   ) {
                     onPipelineChanged?()
                 }
             } catch {
@@ -601,9 +713,9 @@ final class EditorViewModel {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return
         }
-        // Produce focus surfaces the cockpit + agent together, so the work is visible instead of
+        // Production surfaces the cockpit + agent together, so the work is visible instead of
         // buried in a chat panel the user has to notice.
-        workspaceFocus = .produce
+        setWorkspaceFocus(.production)
         agentPanelVisible = true
         Task { [weak self] in
             // Scaffold directly via the in-process engine — no venv, no subprocess, no agent round-trip.
@@ -697,16 +809,19 @@ final class EditorViewModel {
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
-    /// setting it `true` shows the sidebar on the Agent tab; `false` restores the tab that was active
-    /// before the Agent took over (a user on Project must not be dumped on Media).
+    /// Showing the Agent routes to Production; hiding it collapses only that workspace's sidebar.
     var agentPanelVisible: Bool {
-        get { mediaPanelVisible && leftSidebarTab == .agent }
+        get { workspaceFocus == .production && isSidebarPresented }
         set {
             if newValue {
+                setWorkspaceFocus(.production)
+                theaterActive = false
+                maximizedPanel = nil
                 mediaPanelVisible = true
                 leftSidebarTab = .agent
-            } else if leftSidebarTab == .agent {
-                leftSidebarTab = lastNonAgentSidebarTab
+            } else if workspaceFocus == .production {
+                if maximizedPanel == .agent { maximizedPanel = nil }
+                mediaPanelVisible = false
             }
         }
     }
@@ -718,23 +833,85 @@ final class EditorViewModel {
     var mediaPanelVisible: Bool = {
         UserDefaults.standard.object(forKey: "mediaPanelVisible") as? Bool ?? true
     }() {
-        didSet { UserDefaults.standard.set(mediaPanelVisible, forKey: "mediaPanelVisible") }
+        didSet {
+            if !isRestoringWorkspacePresentation {
+                UserDefaults.standard.set(mediaPanelVisible, forKey: "mediaPanelVisible")
+            }
+        }
     }
 
     var inspectorPanelVisible: Bool = {
         UserDefaults.standard.object(forKey: "inspectorPanelVisible") as? Bool ?? true
     }() {
-        didSet { UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible") }
+        didSet {
+            if !isRestoringWorkspacePresentation {
+                UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible")
+            }
+        }
     }
 
-    /// Per-project, session-scoped — not a global preference. NGV is AI-first: every project lands in
-    /// Produce (`applyDefaultWorkspaceFocus`); the user switches stages any time (docs/UI_UX_CONCEPT.md §3).
-    var workspaceFocus: WorkspaceFocus = .produce
+    var isSidebarPresented: Bool {
+        guard !theaterActive else { return false }
+        if let maximizedPanel {
+            return maximizedPanel == sidebarPanel
+        }
+        return mediaPanelVisible
+    }
 
-    /// Single gate for all timeline edit chrome/interaction (trim handles, waveforms, razor): only Edit
-    /// cuts. Produce shows rendered status; Finish is QC + deliver — neither carries trim tooling
-    /// (docs/UI_UX_CONCEPT.md §3).
+    var isInspectorPresented: Bool {
+        guard !theaterActive else { return false }
+        if let maximizedPanel {
+            return maximizedPanel == .inspector
+        }
+        return inspectorPanelVisible
+    }
+
+    func toggleSidebarPresentation() {
+        if theaterActive {
+            theaterActive = false
+            maximizedPanel = nil
+            mediaPanelVisible = true
+        } else if let maximizedPanel {
+            self.maximizedPanel = nil
+            mediaPanelVisible = maximizedPanel != sidebarPanel
+        } else {
+            mediaPanelVisible.toggle()
+        }
+    }
+
+    func toggleInspectorPresentation() {
+        if theaterActive {
+            theaterActive = false
+            maximizedPanel = nil
+            inspectorPanelVisible = true
+        } else if let maximizedPanel {
+            self.maximizedPanel = nil
+            inspectorPanelVisible = maximizedPanel != .inspector
+        } else {
+            inspectorPanelVisible.toggle()
+        }
+    }
+
+    private var sidebarPanel: FocusedPanel {
+        switch workspaceFocus {
+        case .media: .mediaFolders
+        case .edit: .media
+        case .production: .agent
+        case .postproduction, .export: .project
+        }
+    }
+
+    /// Per-project and session-scoped. Presentation state is retained independently per workspace.
+    private(set) var workspaceFocus: WorkspaceFocus = .production
+
+    /// Single gate for timeline editing: only Edit exposes mutation chrome and shortcuts.
     var allowsTimelineEditChrome: Bool { workspaceFocus == .edit }
+
+    // The marker panel is a popover on the timeline toolbar, so it opens only while that toolbar is on screen.
+    var canPresentMarkerPanel: Bool {
+        workspaceFocus != .media && workspaceFocus != .export && !theaterActive
+            && (maximizedPanel == nil || maximizedPanel == .timeline)
+    }
 
     var leftSidebarTab: LeftSidebarTab = {
         if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
@@ -755,37 +932,112 @@ final class EditorViewModel {
     /// `cockpitTab`. Cleared when a generic tab is selected or the surface's data goes away.
     var cockpitPackSurfaceID: String?
 
-    /// Reveal the Project cockpit on a specific panel (title-bar capsule / cross-panel links). In Edit
-    /// the cockpit lives under the sidebar's Project tab; in Produce it is already the center surface.
+    /// Reveal the Project cockpit on a specific panel without changing pipeline state.
     func revealCockpit(_ tab: CockpitTab) {
         cockpitTab = tab
         cockpitPackSurfaceID = nil
-        if workspaceFocus == .edit { leftSidebarTab = .project }
+        setWorkspaceFocus(.production)
     }
 
-    /// Switch the workspace focus. Produce and Finish are non-editing stages: the timeline is
-    /// display-only, so any surviving Edit state (selection, swap banner, crop overlay, active tool)
-    /// is dropped so it can't leak onto the stage. Produce also lands the sidebar on the Agent
-    /// (command *and* watch, concurrently).
+    /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
+        guard focus != workspaceFocus else { return }
+        rememberSourcePosition()
+        mediaBrowserState(for: workspaceFocus).sourceRanges = sourcePreviewStates
+        workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
+            sidebarVisible: mediaPanelVisible,
+            inspectorVisible: inspectorPanelVisible,
+            focusedPanel: focusedPanel,
+            maximizedPanel: maximizedPanel,
+            selectedClipIds: selectedClipIds,
+            selectedGap: selectedGap,
+            selectedTimelineRange: selectedTimelineRange,
+            selectedMediaAssetIds: selectedMediaAssetIds,
+            selectedFolderIds: selectedFolderIds,
+            inspectedObject: inspectedObject,
+            activePreviewTabId: activePreviewTabId,
+            timelineFrame: currentFrame,
+            sourceFrame: sourcePlayheadFrame,
+            mediaPanelTab: mediaPanelTab,
+            mediaFolderId: mediaPanelCurrentFolderId
+        )
         workspaceFocus = focus
-        guard focus != .edit else { return }
-        toolMode = .pointer
-        selectedClipIds = []
-        selectedGap = nil
-        selectedTimelineRange = nil
+        markerPanelPresented = false
+        if focus != .edit {
+            selectedTimelineMarkerIds.removeAll()
+            timelineMarkerPreview = nil
+        }
+        sourcePreviewStates = mediaBrowserState(for: focus).sourceRanges
+        let state = workspacePresentationStates[focus] ?? Self.defaultWorkspacePresentation()
+        isRestoringWorkspacePresentation = true
+        defer { isRestoringWorkspacePresentation = false }
+        mediaPanelVisible = state.sidebarVisible
+        inspectorPanelVisible = state.inspectorVisible
+        focusedPanel = state.focusedPanel
+        maximizedPanel = state.maximizedPanel
+        let clipIDs = Set(timeline.tracks.flatMap(\.clips).map(\.id))
+        selectedClipIds = state.selectedClipIds.intersection(clipIDs)
+        selectedGap = state.selectedGap.flatMap {
+            timeline.tracks.indices.contains($0.trackIndex) ? $0 : nil
+        }
+        selectedTimelineRange = state.selectedTimelineRange
+        let assetIDs = Set(mediaAssets.map(\.id))
+        selectedMediaAssetIds = state.selectedMediaAssetIds.intersection(assetIDs)
+        let folderIDs = Set(folders.map(\.id))
+        selectedFolderIds = state.selectedFolderIds.intersection(folderIDs)
+        inspectedObject = restorableInspectedObject(state.inspectedObject)
+        activePreviewTabId = previewTabs.contains { $0.id == state.activePreviewTabId }
+            ? state.activePreviewTabId
+            : PreviewTab.timeline.id
+        currentFrame = max(0, min(state.timelineFrame, timeline.editingExtentFrames))
+        sourcePlayheadFrame = max(0, state.sourceFrame)
+        mediaPanelTab = state.mediaPanelTab
+        mediaPanelCurrentFolderId = state.mediaFolderId
+        videoEngine?.activateTab(activePreviewTab)
+
         isMarqueeSelecting = false
-        if case .clip = inspectedObject { inspectedObject = nil }
-        if case .mediaAsset = inspectedObject { inspectedObject = nil }
-        cancelMediaSwap()
-        cropEditingActive = false
-        if focus == .produce { leftSidebarTab = .agent }
     }
 
-    /// NGV is AI-first: every project opens in Produce (the AI production cockpit). Non-AI users are
-    /// served by other editors, so imported-media projects are not special-cased.
+    private func restorableInspectedObject(_ object: InspectedObject?) -> InspectedObject? {
+        guard let object else { return nil }
+        switch object {
+        case .clip(let id):
+            return findClip(id: id) == nil ? nil : object
+        case .mediaAsset(let id):
+            return mediaAssets.contains { $0.id == id } ? object : nil
+        default:
+            return object
+        }
+    }
+
+    private static func defaultWorkspacePresentation() -> WorkspacePresentationState {
+        WorkspacePresentationState(
+            sidebarVisible: UserDefaults.standard.object(forKey: "mediaPanelVisible") as? Bool ?? true,
+            inspectorVisible: UserDefaults.standard.object(forKey: "inspectorPanelVisible") as? Bool ?? true,
+            focusedPanel: nil,
+            maximizedPanel: nil,
+            selectedClipIds: [],
+            selectedGap: nil,
+            selectedTimelineRange: nil,
+            selectedMediaAssetIds: [],
+            selectedFolderIds: [],
+            inspectedObject: nil,
+            activePreviewTabId: PreviewTab.timeline.id,
+            timelineFrame: 0,
+            sourceFrame: 0,
+            mediaPanelTab: .assets,
+            mediaFolderId: nil
+        )
+    }
+
+    private static func initialWorkspacePresentations() -> [WorkspaceFocus: WorkspacePresentationState] {
+        let initial = defaultWorkspacePresentation()
+        return Dictionary(uniqueKeysWithValues: WorkspaceFocus.allCases.map { ($0, initial) })
+    }
+
+    /// Preserve the established AI-first landing point while exposing all five workspaces directly.
     func applyDefaultWorkspaceFocus() {
-        setWorkspaceFocus(.produce)
+        setWorkspaceFocus(.production)
     }
 
     // MARK: - Pipeline health (window chrome + panels)
@@ -824,6 +1076,11 @@ final class EditorViewModel {
     @ObservationIgnored private var engineRefreshRequested: UInt64 = 0
     @ObservationIgnored private var engineRefreshCompleted: UInt64 = 0
     @ObservationIgnored private var engineRefreshTask: Task<Void, Never>?
+
+    func resetWorkflowForSessionReload() {
+        pipelineAgentHarness.reset()
+        workflowHandoffPending = false
+    }
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
@@ -879,10 +1136,7 @@ final class EditorViewModel {
         declaredPluginBinding = snapshot.binding
         engineStateRevision = snapshot.revision
         hasProductionPipeline = snapshot.pipeline != nil
-        if let rawValue = snapshot.workspaceFocus,
-           let focus = WorkspaceFocus(rawValue: rawValue) {
-            workspaceFocus = focus
-        }
+        setWorkspaceFocus(WorkspaceFocus(persistedValue: snapshot.workspaceFocus))
         if let rawValue = snapshot.cockpitTab,
            let tab = CockpitTab(rawValue: rawValue) {
             cockpitTab = tab
@@ -972,6 +1226,28 @@ final class EditorViewModel {
 
     var mediaPanelTab: MediaPanelTab = .assets
 
+    func mediaPanelTab(for workspace: WorkspaceFocus) -> MediaPanelTab {
+        workspacePresentationStates[workspace]?.mediaPanelTab ?? .assets
+    }
+
+    func setMediaPanelTab(_ tab: MediaPanelTab, for workspace: WorkspaceFocus) {
+        guard var state = workspacePresentationStates[workspace] else { return }
+        state.mediaPanelTab = tab
+        workspacePresentationStates[workspace] = state
+        if workspace == workspaceFocus {
+            mediaPanelTab = tab
+        }
+    }
+
+    func publishMediaPanelFolder(_ folderId: String?, for workspace: WorkspaceFocus) {
+        guard var state = workspacePresentationStates[workspace] else { return }
+        state.mediaFolderId = folderId
+        workspacePresentationStates[workspace] = state
+        if workspace == workspaceFocus {
+            mediaPanelCurrentFolderId = folderId
+        }
+    }
+
     var mediaPanelOrderedItemIds: [String] = []
     var mediaPanelColumnCount: Int = 1
     var mediaPanelScrollTarget: String?
@@ -988,10 +1264,21 @@ final class EditorViewModel {
     @ObservationIgnored var songAttachInProgress = false
 
     func showMediaPanelMediaTab() {
-        mediaPanelTab = .assets
+        setMediaPanelTab(.assets, for: workspaceFocus)
         // Refresh offline status when the user opens the media tab, so missing
         // files show as offline even for assets not on the timeline.
         refreshMissingMediaCache()
+    }
+
+    func revealMediaTools() {
+        if workspaceFocus != .media && workspaceFocus != .edit {
+            setWorkspaceFocus(.media)
+        }
+        theaterActive = false
+        mediaPanelVisible = true
+        maximizedPanel = nil
+        focusedPanel = .media
+        showMediaPanelMediaTab()
     }
 
     init(agentService: AgentService = AgentService()) {
@@ -1067,6 +1354,7 @@ final class EditorViewModel {
     // MARK: - Playback
 
     func togglePlayback() {
+        guard activePreviewTab.clipType != .document, activePreviewTab.clipType != .image else { return }
         if let videoEngine {
             videoEngine.togglePlayback()
         } else {
@@ -1099,7 +1387,7 @@ final class EditorViewModel {
     }
 
     func seekToFrame(_ frame: Int, mode: PreviewSeekMode = .exact) {
-        let clamped = min(max(0, frame), max(0, timeline.totalFrames))
+        let clamped = min(max(0, frame), max(0, timeline.editingExtentFrames))
         if mode == .interactiveScrub {
             playheadState.timelineFrame = clamped
         } else {
@@ -1121,7 +1409,18 @@ final class EditorViewModel {
     }
 
     func toggleSourcePlayback() {
-        videoEngine?.togglePlayback()
+        togglePlayback()
+    }
+
+    func stepActivePreview(by frames: Int) {
+        let position = activePreviewTab == .timeline ? currentFrame : sourcePlayheadFrame
+        let destination = position.addingReportingOverflow(frames)
+        guard !destination.overflow else { return }
+        if activePreviewTab == .timeline {
+            seekToFrame(destination.partialValue)
+        } else if activePreviewTab.clipType != .document && activePreviewTab.clipType != .image {
+            seekSourceToFrame(destination.partialValue)
+        }
     }
 
     func stepForward() { seekToFrame(currentFrame + 1) }
@@ -1148,7 +1447,6 @@ final class EditorViewModel {
         if isPlaying {
             videoEngine?.pause()
         }
-        videoEngine?.syncTextLayers()
         videoEngine?.rebuild()
     }
 
@@ -1228,13 +1526,15 @@ final class EditorViewModel {
         startFrame: Int,
         addLinkedAudio: Bool = true,
         linkedAudioTrackIndex: Int? = nil,
-        segments: [String: ClosedRange<Double>] = [:]
+        segments: [String: ClosedRange<Double>] = [:],
+        sourceFrameRanges: [String: Range<Int>] = [:]
     ) -> [String] {
         var cursor = startFrame
         var clipIds: [String] = []
         for asset in assets {
-            let segment = segments[asset.id]
-            let durationFrames = clipDurationFrames(for: asset, segment: segment)
+            let range = sourceFrameRanges[asset.id]
+            let segment = range == nil ? segments[asset.id] : nil
+            let durationFrames = range?.count ?? clipDurationFrames(for: asset, segment: segment)
             clipIds.append(contentsOf: placeClip(
                 asset: asset,
                 trackIndex: trackIndex,
@@ -1242,7 +1542,9 @@ final class EditorViewModel {
                 durationFrames: durationFrames,
                 addLinkedAudio: addLinkedAudio,
                 linkedAudioTrackIndex: linkedAudioTrackIndex,
-                sourceSegment: segment
+                sourceSegment: segment,
+                trimStartFrame: range?.lowerBound,
+                trimEndFrame: range.map { max(0, secondsToFrame(seconds: asset.duration, fps: timeline.fps) - $0.upperBound) }
             ))
             cursor += durationFrames
         }
@@ -1327,5 +1629,18 @@ final class EditorViewModel {
     }
 
     var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+    var slipPreview: SlipPreviewState?
+
+    var pendingAudioTrackSelection: AudioTrackSelectionRequest?
+    var audioExtractionProgress: AudioExtractionProgress?
+    @ObservationIgnored var audioExtractionTask: Task<Void, Never>?
+    @ObservationIgnored var audioTrackExtractionClient = AudioTrackExtractionClient.live
+
+    private var workspacePresentationStates = EditorViewModel.initialWorkspacePresentations()
+    @ObservationIgnored private var isRestoringWorkspacePresentation = false
+    var sourcePreviewStates: [String: SourcePreviewState] = [:]
+    var mediaFolderNavigationRequest: MediaFolderNavigationRequest?
+    @ObservationIgnored var mediaPickerStates: [MediaPickerPurpose: MediaPickerState] = [:]
+    @ObservationIgnored var mediaBrowserStates: [WorkspaceFocus: MediaBrowserState] = [:]
 
 }

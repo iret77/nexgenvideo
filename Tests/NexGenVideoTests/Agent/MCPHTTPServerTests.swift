@@ -78,9 +78,9 @@ struct MCPHTTPServerTests {
     func explicitToolCallOrigin() throws {
         let chatID = UUID()
         let mcpID = UUID()
-        let turnID = UUID()
+        let runtimeID = UUID()
         let embeddedData = Data(
-            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\(MCPHTTPServer.agentTurnHeader): \(turnID.uuidString)\r\n\r\n".utf8
+            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\(MCPHTTPServer.agentRuntimeHeader): \(runtimeID.uuidString)\r\n\r\n".utf8
         )
         guard case .complete(let embedded, _) = MCPHTTPServer.decodeRequest(embeddedData) else {
             Issue.record("Embedded request did not decode")
@@ -88,8 +88,11 @@ struct MCPHTTPServerTests {
         }
         #expect(MCPHTTPServer.toolCallOrigin(
             request: embedded,
-            mcpSessionID: turnID
-        ) == .embeddedRuntime(chatSessionID: chatID, mcpSessionID: turnID))
+            mcpSessionID: runtimeID
+        ) == .embeddedRuntime(
+            chatSessionID: chatID,
+            runtimeGenerationID: runtimeID
+        ))
 
         let externalData = Data(
             "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\r\n".utf8
@@ -102,6 +105,32 @@ struct MCPHTTPServerTests {
             request: external,
             mcpSessionID: mcpID
         ) == .externalMCP(sessionID: mcpID))
+    }
+
+    @Test("legacy MCP sessions retain the exact embedded runtime generation")
+    func legacySessionOriginRetainsRuntimeGeneration() {
+        let fallbackID = UUID()
+        let chatID = UUID()
+        let runtimeID = UUID()
+        let origin = MCPHTTPServer.SessionOrigin(mcpSessionID: fallbackID)
+
+        origin.bind(
+            chatSessionID: chatID,
+            runtimeGenerationID: runtimeID
+        )
+
+        #expect(origin.value == .embeddedRuntime(
+            chatSessionID: chatID,
+            runtimeGenerationID: runtimeID
+        ))
+        #expect(origin.accepts(
+            chatSessionID: chatID,
+            runtimeGenerationID: runtimeID
+        ))
+        #expect(!origin.accepts(
+            chatSessionID: chatID,
+            runtimeGenerationID: UUID()
+        ))
     }
 
     @Test("MCP session rotation preserves exact client ownership")
@@ -192,11 +221,11 @@ struct MCPHTTPServerTests {
         }
     }
 
-    @Test("modern requests remain sessionless and retain logical turn ownership")
+    @Test("modern requests remain sessionless and retain runtime ownership")
     func modernRequestsAreSessionless() async throws {
         let port: UInt16 = 29_990
         let chatID = UUID()
-        let turnID = UUID()
+        let runtimeID = UUID()
         let legacyServerCount = MCPRunCounter()
         let modernCallCount = MCPRunCounter()
         let server = MCPHTTPServer(
@@ -212,8 +241,8 @@ struct MCPHTTPServerTests {
             modernHandler: { request, origin in
                 modernCallCount.increment()
                 let owner = switch origin {
-                case .embeddedRuntime(let sessionID, let logicalTurnID):
-                    "\(sessionID.uuidString):\(logicalTurnID.uuidString)"
+                case .embeddedRuntime(let sessionID, let generationID):
+                    "\(sessionID.uuidString):\(generationID.uuidString)"
                 case .direct: "direct"
                 case .inAppChat: "in-app"
                 case .externalMCP: "external"
@@ -235,12 +264,12 @@ struct MCPHTTPServerTests {
                     id: requestID,
                     to: endpoint,
                     agentSessionID: chatID,
-                    agentTurnID: turnID
+                    runtimeGenerationID: runtimeID
                 )
                 #expect(response.statusCode == 200)
                 let text = String(decoding: response.data, as: UTF8.self)
                 #expect(text.contains(chatID.uuidString))
-                #expect(text.contains(turnID.uuidString))
+                #expect(text.contains(runtimeID.uuidString))
                 #expect(response.mcpSessionID == nil)
             }
             #expect(legacyServerCount.value == 1)
@@ -454,7 +483,7 @@ struct MCPHTTPServerTests {
         id: Int,
         to endpoint: URL,
         agentSessionID: UUID,
-        agentTurnID: UUID
+        runtimeGenerationID: UUID
     ) async throws -> (data: Data, statusCode: Int, mcpSessionID: String?) {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -475,8 +504,8 @@ struct MCPHTTPServerTests {
             forHTTPHeaderField: MCPHTTPServer.agentSessionHeader
         )
         request.setValue(
-            agentTurnID.uuidString,
-            forHTTPHeaderField: MCPHTTPServer.agentTurnHeader
+            runtimeGenerationID.uuidString,
+            forHTTPHeaderField: MCPHTTPServer.agentRuntimeHeader
         )
         let (data, rawResponse) = try await URLSession.shared.data(for: request)
         let response = try #require(rawResponse as? HTTPURLResponse)

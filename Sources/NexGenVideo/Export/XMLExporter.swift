@@ -38,9 +38,69 @@ import Foundation
 
 enum XMLExporter {
 
-    static func export(timeline: Timeline, resolver: MediaResolver, outputURL: URL) {
+    enum ExportError: LocalizedError {
+        case serializationFailed(target: URL)
+        case writeFailed(target: URL)
+
+        var errorDescription: String? {
+            let target: URL
+            let recovery: String
+            switch self {
+            case let .serializationFailed(url):
+                target = url
+                recovery = "Try exporting again."
+            case let .writeFailed(url):
+                target = url
+                recovery = "Choose another writable location and try again."
+            }
+            return "Couldn’t export XML to “\(target.lastPathComponent)”. \(recovery)"
+
+        }
+    }
+
+    static func export(
+        timeline: Timeline,
+        resolver: MediaResolver,
+        outputURL: URL,
+        reportedTarget: URL? = nil,
+        preserveOutputIdentity: Bool = false,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws {
+        let target = reportedTarget ?? outputURL
+        if isCancelled() { throw CancellationError() }
         let xml = Builder(timeline: timeline, resolver: resolver).build()
-        try? xml.data(using: .utf8)?.write(to: outputURL)
+        if isCancelled() { throw CancellationError() }
+        let data = try serializedData(xml, target: target)
+        if isCancelled() { throw CancellationError() }
+        do {
+            if preserveOutputIdentity {
+                let handle = try FileHandle(forWritingTo: outputURL)
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+            } else {
+                try data.write(to: outputURL, options: .atomic)
+            }
+            if isCancelled() { throw CancellationError() }
+            guard try Data(contentsOf: outputURL) == data else {
+                throw ExportError.writeFailed(target: target)
+            }
+        } catch let error as ExportError {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ExportError.writeFailed(target: target)
+        }
+    }
+
+    static func serializedData(_ xml: String, target: URL, encoding: String.Encoding = .utf8) throws -> Data {
+
+        guard let data = xml.data(using: encoding) else {
+            throw ExportError.serializationFailed(target: target)
+        }
+        return data
     }
 
     // MARK: - Source timecode
@@ -189,7 +249,7 @@ enum XMLExporter {
 
             var children: [XMLNode] = [
                 leaf("masterclipid", masterclipId(for: clip, isAudio: isAudio)),
-                leaf("name", resolver.displayName(for: clip.mediaRef)),
+                leaf("name", resolver.interchangeFilename(for: clip.mediaRef)),
                 bool("enabled", true),
                 leaf("duration", sourceDuration),
                 rate(fps),
@@ -221,7 +281,7 @@ enum XMLExporter {
             emittedFiles.insert(key)
 
             let entry = resolver.entry(for: mediaRef)
-            let url = resolver.resolveURL(for: mediaRef)
+            let url = resolver.interchangeURL(for: mediaRef)
             // Resolve matches media by exact filename + extension.
             let fileName = url?.lastPathComponent ?? entry?.name ?? mediaRef
             // Resolve needs Premiere's extra-slash host form; the canonical single-slash one fails.

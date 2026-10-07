@@ -17,9 +17,21 @@ struct GateApprovalTests {
         #expect(approval.phaseLabel == PhaseDisplay.label("brief"))
         #expect(approval.phaseLabel == "Brief")
         #expect(approval.notes == "looks good")
+        #expect(approval.sourceToolName == ToolName.approveGate.rawValue)
 
         // A snake_case id resolves to its curated title, never leaking the raw key to the card.
         #expect(GateApproval(phase: "production_design").phaseLabel == "Production Design")
+    }
+
+    @Test("gate approvals preserve the requesting tool for diagnostics")
+    func preservesSourceTool() {
+        let approval = GateApproval(
+            phase: "brief",
+            sourceToolName: ToolName.setGateState.rawValue
+        )
+
+        #expect(approval.scoped(to: UUID()).sourceToolName == ToolName.setGateState.rawValue)
+        #expect(!approval.matchesRequest(GateApproval(phase: "brief")))
     }
 
     @Test("Only the approving states surface a user confirmation")
@@ -181,7 +193,7 @@ struct GateApprovalTests {
         service.isStreaming = true
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: try #require(service.currentSessionId),
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
 
         _ = try service.requestGateApproval(
@@ -233,7 +245,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: .embeddedRuntime(
                 chatSessionID: unrelatedChat,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(service.pendingGateApproval?.sessionId == unrelatedChat)
@@ -249,7 +261,7 @@ struct GateApprovalTests {
             args: ["project_dir": dataRoot.path, "phase": "project_init"],
             origin: .embeddedRuntime(
                 chatSessionID: UUID(),
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
 
@@ -278,6 +290,32 @@ struct GateApprovalTests {
         let state = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path]) as? [String: Any]
         let phases = try #require(state?["phases"] as? [[String: Any]])
         #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
+    }
+
+    @Test("a pending gate records checked without recording approval")
+    func pendingGateRecordsCheckedState() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        h.editor.agentService.newChat()
+        let sessionID = try #require(h.editor.agentService.currentSessionId)
+        h.editor.agentService.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
+        )]
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "gate"
+        )
+
+        #expect(!result.isError)
+        #expect(result.turnDisposition == .suspendTurn)
+        let state = h.editor.agentService.messages.flatMap(\.hostStateRecords).last
+        #expect(state?.state == .checked)
+        #expect(state?.state != .approved)
+        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
     }
 
     @Test("set_gate_state approval request does not mark the project edited")
@@ -332,8 +370,8 @@ struct GateApprovalTests {
         #expect(ToolHarness.textOf(result).contains("future phase"))
     }
 
-    @Test("A failed host write leaves the card open with the real reason")
-    func failedWriteKeepsCard() async throws {
+    @Test("a missing project keeps approval open for reopen recovery")
+    func missingProjectKeepsApprovalOpen() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let missingRoot = FileManager.default.temporaryDirectory
@@ -348,6 +386,67 @@ struct GateApprovalTests {
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
         #expect(service.gateApprovalError?.isEmpty == false)
+    }
+
+    @Test("a competing approval never records checked for the requested phase")
+    func competingApprovalDoesNotRecordChecked() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.inAppChat(sessionID: sessionID)
+        service.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "competing", name: "approve_gate", inputJSON: "{}")]
+        )]
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: origin,
+            toolUseID: "competing"
+        )
+
+        #expect(!result.isError)
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(service.pendingGateApproval?.phase == "brief")
+        #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
+    }
+
+    @Test("gate structure failure is agent correction, not wait-and-retry")
+    func gateStructureFailureIsAgentCorrection() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        service.messages = [AgentMessage(
+            role: .assistant,
+            blocks: [.toolUse(id: "gate", name: "approve_gate", inputJSON: "{}")]
+        )]
+        let pending = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .inAppChat(sessionID: sessionID),
+            toolUseID: "gate"
+        )
+        #expect(!pending.isError)
+        try FileManager.default.removeItem(
+            at: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        )
+
+        let result = await service.resolveGate(.approved)
+
+        #expect(result?.isError == true)
+        #expect(service.pendingGateApproval == nil)
+        let state = try #require(service.messages.flatMap(\.hostStateRecords).last)
+        #expect(state.state == .approvalFailed)
+        #expect(state.action == .agentCorrection)
     }
 
     @Test("An approved gate cannot resume the agent across a host-owned intake card")
@@ -472,7 +571,7 @@ struct GateApprovalTests {
         let chatID = try #require(h.editor.agentService.currentSessionId)
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: chatID,
-            mcpSessionID: UUID()
+            runtimeGenerationID: UUID()
         )
 
         _ = try h.editor.agentService.requestGateApproval(
@@ -495,7 +594,7 @@ struct GateApprovalTests {
             args: [:],
             origin: .embeddedRuntime(
                 chatSessionID: chatID,
-                mcpSessionID: UUID()
+                runtimeGenerationID: UUID()
             )
         )
         #expect(!replacement.isError)

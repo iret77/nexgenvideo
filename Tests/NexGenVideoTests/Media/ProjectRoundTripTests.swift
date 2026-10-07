@@ -224,8 +224,34 @@ struct ProjectRoundTripTests {
             "song-1": "song",
             "proj-1": "style",
         ]
-        #expect(manifest.version == 6)
+        #expect(manifest.version == 7)
         #expect(try roundTrip(manifest) == manifest)
+    }
+
+    @Test func extractedAudioOriginSurvivesManifestRoundTrip() throws {
+        var manifest = MediaManifest()
+        manifest.entries = [
+            MediaManifestEntry(
+                id: "audio-1",
+                name: "Interview - Audio Track 2",
+                type: .audio,
+                source: .project(relativePath: "media/audio.m4a"),
+                duration: 12,
+                originalFilename: "Interview - Audio Track 2.m4a",
+                origin: MediaAssetOrigin(
+                    kind: .extractedAudio,
+                    sourceAssetID: "video-1",
+                    sourceFilename: "Interview.mov",
+                    audioTrackNumber: 2,
+                    audioTrackLabel: "Track 2 (Stereo)"
+                )
+            ),
+        ]
+
+        let decoded = try roundTrip(manifest)
+
+        #expect(decoded.entries.first?.origin == manifest.entries.first?.origin)
+        #expect(decoded.version == MediaManifest.currentVersion)
     }
 
     @MainActor

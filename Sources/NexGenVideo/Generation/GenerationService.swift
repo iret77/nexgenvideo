@@ -81,7 +81,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
-        let count = max(1, min(4, numImages))
+        let count = max(1, min(10, numImages))
         var authorizedGenInput = genInput
         authorizedGenInput.spendTransactionId = authorization.transactionId
         authorizedGenInput.takeRepairPlanID = authorization.takeRepairPlanID
@@ -119,6 +119,10 @@ final class GenerationService {
         // silently renders without the reference).
         let target = authorization.target
         let hosting = Self.referenceHosting(for: target)
+        let validatesVideoGeneration: Bool = {
+            guard case .video? = ModelRegistry.byId[genInput.model] else { return false }
+            return true
+        }()
 
         let task = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
@@ -138,7 +142,7 @@ final class GenerationService {
                     try package.requireRequest(input: authorizedGenInput, target: target, parameters: preparedParameters,
                         references: authorization.referenceSnapshot?.receipts ?? [])
                 }
-                if assetType == .video {
+                if validatesVideoGeneration {
                     try Self.validateVideoTargetCapabilities(
                         resolvedVideoCapabilities,
                         target: target
@@ -153,7 +157,7 @@ final class GenerationService {
                         )
                     }
                 }
-                if assetType == .video {
+                if validatesVideoGeneration {
                     try PipelineProductionRouting.validateSubmission(
                         genInput: authorizedGenInput,
                         target: target,
@@ -256,7 +260,7 @@ final class GenerationService {
                 try await authorization.generationPackage?.requireCurrentContext(editor: editor)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
                 try authorization.generationPackage?.payload.destination.requireCurrent(editor: editor)
-                if assetType == .video {
+                if validatesVideoGeneration {
                     try PipelineProductionRouting.validateSubmission(genInput: finalGenInput, target: target, references: references, editor: editor)
                 }
                 await self.runJob(
@@ -626,7 +630,7 @@ final class GenerationService {
         case .image: ext = "jpg"
         case .video: ext = "mp4"
         case .audio: ext = "mp3"
-        case .text, .lottie: ext = "bin"
+        case .text, .lottie, .subtitle: ext = "bin"
         case .document: ext = "txt"
         }
         let stem = url.deletingPathExtension().lastPathComponent
@@ -699,6 +703,7 @@ final class GenerationService {
             case .audio: return "audio/mpeg"
             case .text: return "application/octet-stream"
             case .lottie: return "application/json"
+            case .subtitle: return "text/vtt"
             case .document: return "text/plain"
             }
         }

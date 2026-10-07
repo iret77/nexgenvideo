@@ -417,6 +417,12 @@ enum MCPGenerationArguments {
         case .upscale(let value):
             values["sourceurl"] = .string(value.sourceURL)
             values["durationseconds"] = .int(value.durationSeconds)
+            if let resolution = value.targetResolution {
+                values["resolution"] = .string(resolution)
+            }
+            if let factor = value.scaleFactor {
+                values["scalefactor"] = .int(factor)
+            }
         }
         return (values, media)
     }
@@ -439,6 +445,7 @@ enum MCPGenerationArguments {
             case "instrumental": ["instrumental"]
             case "durationseconds": ["durationseconds", "duration"]
             case "sourceurl": ["sourceurl"]
+            case "scalefactor", "upscalefactor", "desiredincrease": ["scalefactor"]
             case "requestid", "clientrequestid", "idempotencykey": ["requestid"]
             case "block", "blocking", "sync", "syncmode", "synchronous",
                  "wait", "waitforcompletion": ["sync"]
@@ -712,14 +719,29 @@ enum MCPGenerationArguments {
         case "integer":
             switch value {
             case .int: converted = value
-            case .string(let text) where Int(text) != nil: converted = .int(Int(text)!)
+            case .double(let number):
+                guard let integer = ToolIntegerArgument.exact(number) else {
+                    throw MappingError.incompatibleField(path)
+                }
+                converted = .int(integer)
+            case .string(let text):
+                guard let integer = Int(text) else {
+                    throw MappingError.incompatibleField(path)
+                }
+                converted = .int(integer)
             default: throw MappingError.incompatibleField(path)
             }
         case "number":
             switch value {
             case .int(let number): converted = .double(Double(number))
-            case .double: converted = value
-            case .string(let text) where Double(text) != nil: converted = .double(Double(text)!)
+            case .double(let number):
+                guard number.isFinite else { throw MappingError.incompatibleField(path) }
+                converted = value
+            case .string(let text):
+                guard let number = Double(text), number.isFinite else {
+                    throw MappingError.incompatibleField(path)
+                }
+                converted = .double(number)
             default: throw MappingError.incompatibleField(path)
             }
         case "boolean":
@@ -733,10 +755,10 @@ enum MCPGenerationArguments {
             let values: [Value]
             if case .array(let array) = value { values = array }
             else { values = [value] }
-            if let minimum = integerConstraint("minItems", in: object), values.count < minimum {
+            if let minimum = try integerConstraint("minItems", in: object, path: path), values.count < minimum {
                 throw MappingError.incompatibleField(path)
             }
-            if let maximum = integerConstraint("maxItems", in: object), values.count > maximum {
+            if let maximum = try integerConstraint("maxItems", in: object, path: path), values.count > maximum {
                 throw MappingError.incompatibleField(path)
             }
             if let itemSchema = object["items"] {
@@ -768,11 +790,24 @@ enum MCPGenerationArguments {
         return schemaAlternatives(object)?.contains { schemaAcceptsArray($0) } == true
     }
 
-    private static func integerConstraint(_ key: String, in object: [String: Value]) -> Int? {
+    private static func integerConstraint(
+        _ key: String,
+        in object: [String: Value],
+        path: String
+    ) throws -> Int? {
         switch object[key] {
-        case .int(let value): return value
-        case .double(let value): return Int(value)
-        default: return nil
+        case nil:
+            return nil
+        case .int(let value):
+            guard value >= 0 else { throw MappingError.incompatibleField("\(path).\(key)") }
+            return value
+        case .double(let value):
+            guard let integer = ToolIntegerArgument.exact(value, in: 0...Int.max) else {
+                throw MappingError.incompatibleField("\(path).\(key)")
+            }
+            return integer
+        default:
+            throw MappingError.incompatibleField("\(path).\(key)")
         }
     }
 

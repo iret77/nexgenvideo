@@ -66,27 +66,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 10
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"
 
 asl_range:
   min_s: 2.0
   max_s: 8.0
   typical_s: 4.0
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"
 
-camera_vocabulary:
-  - "motion-control slow push-in"
-  - "static hold on tactile detail"
-  - "rack-focus between foreground and miniature background"
-  - "gentle dolly-along on miniature set"
+camera:
+  vocabulary:
+    - "motion-control slow push-in"
+    - "static hold on tactile detail"
+    - "rack-focus between foreground and miniature background"
+    - "gentle dolly-along on miniature set"
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"
 
-lighting_signature: |
-  warm practical sources (lamps, candles, sun-through-window),
-  visible texture in shadows (clay fingerprints, fabric weave),
-  three-point lighting on character with motivated practical bg,
-  Aardman skews bright primary palette, Laika skews moody desaturated.
+lighting:
+  description: |
+    warm practical sources (lamps, candles, sun-through-window),
+    visible texture in shadows (clay fingerprints, fabric weave),
+    three-point lighting on character with motivated practical bg,
+    Aardman skews bright primary palette, Laika skews moody desaturated.
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, Animation Studies, It's Nice
-  That, Screen Daily and Focus Features articles describing Aardman's
-  Sledgehammer music video work and Laika's craft-driven approach.
-  Specific framing_mix derived qualitatively, not from per-frame
-  Cinemetrics.
+color:
+  description: "Bright primary colour for the Aardman branch or moody desaturation for the Laika branch."
+  basis: inferred
+  sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"
+
+craft_signature:
+  - technique: "Texture-preserving miniature light"
+    directive: "Use motivated practicals and three-point character light while preserving clay, fabric, and miniature texture in shadow."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://en.wikipedia.org/wiki/Aardman_Animations"

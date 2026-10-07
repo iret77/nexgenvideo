@@ -75,4 +75,61 @@ struct PreparedProviderParametersTests {
         #expect(actual.quality == "high")
         #expect(actual.imageURLs == ["hosted-reference"])
     }
+
+    @Test func imageMaskAndOutputOptionsAreFrozenAndBoundByRole() throws {
+        let prepared = try PreparedProviderParameters(referenceCount: 2) { slots in
+            .image(ImageGenerationParams(
+                prompt: "Preserve identity",
+                aspectRatio: "16:9",
+                resolution: "1920x1080",
+                quality: "xhigh",
+                imageURLs: [slots[0]],
+                numImages: 2,
+                maskURL: slots[1],
+                background: "transparent",
+                outputFormat: "webp",
+                outputCompression: 90
+            ))
+        }
+        guard case .image(let actual) = try prepared.bind(["reference", "mask"]) else {
+            Issue.record("Expected prepared image parameters")
+            return
+        }
+        #expect(actual.imageURLs == ["reference"])
+        #expect(actual.maskURL == "mask")
+        #expect(actual.background == "transparent")
+        #expect(actual.outputFormat == "webp")
+        #expect(actual.outputCompression == 90)
+        #expect(GenerationPackageV1.referenceRoles(parameters: prepared) == [
+            "image_reference", "image_mask",
+        ])
+    }
+
+    @Test func audioSettingsAndVideoReferenceAreFrozenTogether() throws {
+        var duration = 8
+        let prepared = try PreparedProviderParameters(referenceCount: 1) { slots in
+            .audio(.init(prompt: "Footsteps", voice: "voice", lyrics: "words", styleInstructions: "quiet",
+                instrumental: true, durationSeconds: duration, videoURL: slots[0]))
+        }
+        duration = 20
+        guard case .audio(let actual) = try prepared.bind(["hosted-source"]) else {
+            Issue.record("Expected prepared audio parameters"); return
+        }
+        #expect(actual.durationSeconds == 8)
+        #expect(actual.prompt == "Footsteps")
+        #expect(actual.voice == "voice")
+        #expect(actual.lyrics == "words")
+        #expect(actual.styleInstructions == "quiet")
+        #expect(actual.instrumental)
+        #expect(actual.videoURL == "hosted-source")
+        #expect(throws: (any Error).self) { try prepared.bind([]) }
+        #expect(throws: (any Error).self) {
+            try PreparedProviderParameters(referenceCount: 1) { _ in
+                .audio(.init(prompt: "Footsteps", voice: nil, lyrics: nil, styleInstructions: nil,
+                    instrumental: false, durationSeconds: 8, videoURL: "https://unreviewed.invalid/video"))
+            }
+        }
+    }
+
+
 }

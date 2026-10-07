@@ -43,7 +43,7 @@ extension EditorViewModel {
         case .audio:
             // Audio tracks must come at or after the first audio track
             return max(bounded, z.firstAudioIndex)
-        case .document:
+        case .subtitle, .document:
             // Never placed on a track (isPlaceable == false), so there is no zone to clamp into.
             return bounded
         }
@@ -51,6 +51,58 @@ extension EditorViewModel {
 
     func removeTrack(id: String) {
         removeTracks(ids: [id])
+    }
+
+    struct TrackReorderResult: Equatable {
+        let trackId: String
+        let fromIndex: Int
+        let toIndex: Int
+    }
+
+    @discardableResult
+    func reorderTrack(id: String, to targetIndex: Int) -> TrackReorderResult? {
+        guard let fromIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let toIndex = trackReorderDestination(from: fromIndex, requested: targetIndex)
+        let result = TrackReorderResult(trackId: id, fromIndex: fromIndex, toIndex: toIndex)
+        guard fromIndex != toIndex else { return result }
+
+        withTimelineSwap(actionName: "Reorder Track") {
+            moveTrack(from: fromIndex, to: toIndex)
+        }
+        return result
+    }
+
+    @discardableResult
+    func reorderTrackLive(id: String, to targetIndex: Int) -> TrackReorderResult? {
+        guard let fromIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        let toIndex = trackReorderDestination(from: fromIndex, requested: targetIndex)
+        let result = TrackReorderResult(trackId: id, fromIndex: fromIndex, toIndex: toIndex)
+        guard fromIndex != toIndex else { return result }
+        moveTrack(from: fromIndex, to: toIndex)
+        return result
+    }
+
+    @discardableResult
+    func commitTrackReorder(id: String, before: Timeline) -> TrackReorderResult? {
+        guard let toIndex = timeline.tracks.firstIndex(where: { $0.id == id }) else {
+            timeline = before
+            return nil
+        }
+        timeline = before
+        return reorderTrack(id: id, to: toIndex)
+    }
+
+    private func trackReorderDestination(from index: Int, requested: Int) -> Int {
+        let zone = zones
+        let isAudio = timeline.tracks[index].type == .audio
+        let lower = isAudio ? zone.firstAudioIndex : 0
+        let upper = isAudio ? zone.trackCount - 1 : zone.firstAudioIndex - 1
+        return max(lower, min(upper, requested))
+    }
+
+    private func moveTrack(from source: Int, to destination: Int) {
+        let track = timeline.tracks.remove(at: source)
+        timeline.tracks.insert(track, at: destination)
     }
 
     func removeTracks(ids: [String]) {
@@ -79,8 +131,6 @@ extension EditorViewModel {
         toggleTrackFlag(trackIndex: trackIndex, keyPath: \.syncLocked, onName: "Sync Lock Track", offName: "Unlock Track Sync")
     }
 
-    /// Flip a `Bool` on a track, register a reversing undo, and publish the change.
-    /// `onName` is used when the flag transitions false → true; `offName` for true → false.
     private func toggleTrackFlag(
         trackIndex: Int,
         keyPath: WritableKeyPath<Track, Bool>,
@@ -89,23 +139,18 @@ extension EditorViewModel {
     ) {
         guard timeline.tracks.indices.contains(trackIndex) else { return }
         let was = timeline.tracks[trackIndex][keyPath: keyPath]
-        timeline.tracks[trackIndex][keyPath: keyPath].toggle()
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.timeline.tracks[trackIndex][keyPath: keyPath] = was
+        withTimelineSwap(actionName: was ? offName : onName) {
+            timeline.tracks[trackIndex][keyPath: keyPath].toggle()
         }
-        undoManager?.setActionName(was ? offName : onName)
-        notifyTimelineChanged()
     }
 
     // MARK: - Sizing
 
     func setTrackHeight(trackIndex: Int, height: CGFloat) {
-        guard timeline.tracks.indices.contains(trackIndex) else { return }
-        let prev = timeline.tracks[trackIndex].displayHeight
-        timeline.tracks[trackIndex].displayHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, height))
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.setTrackHeight(trackIndex: trackIndex, height: prev)
+        guard timeline.tracks.indices.contains(trackIndex), height.isFinite else { return }
+        let clamped = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, height))
+        withTimelineSwap(actionName: "Resize Track") {
+            timeline.tracks[trackIndex].displayHeight = clamped
         }
-        undoManager?.setActionName("Resize Track")
     }
 }

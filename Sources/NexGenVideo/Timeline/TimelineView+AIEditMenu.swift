@@ -11,15 +11,26 @@ extension TimelineView {
         for action in actions {
             switch action {
             case .upscale:
-                let models = editor.aiEditUpscaleModels(clipId: clipId)
-                guard !models.isEmpty else { continue }
+                let selections = editor.aiEditUpscaleSelections(clipId: clipId)
+                guard !selections.isEmpty else { continue }
                 let upscaleItem = NSMenuItem(title: "Upscale", action: nil, keyEquivalent: "")
                 let modelsMenu = NSMenu()
                 modelsMenu.autoenablesItems = false
-                for model in models {
-                    let item = NSMenuItem(title: model.displayName, action: #selector(performAIEditUpscale(_:)), keyEquivalent: "")
+                for selection in selections {
+                    let item = NSMenuItem(
+                        title: editor.aiEditUpscaleLabel(
+                            clipId: clipId,
+                            selection: selection
+                        ),
+                        action: #selector(performAIEditUpscale(_:)),
+                        keyEquivalent: ""
+                    )
                     item.target = self
-                    item.representedObject = ["clipId": clipId, "modelId": model.id]
+                    item.representedObject = [
+                        "clipId": clipId,
+                        "modelId": selection.model.id,
+                        "targetResolution": selection.targetResolution ?? "",
+                    ]
                     item.isEnabled = aiAllowed
                     modelsMenu.addItem(item)
                 }
@@ -78,8 +89,12 @@ extension TimelineView {
         guard let info = (sender as? NSMenuItem)?.representedObject as? [String: Any],
               let clipId = info["clipId"] as? String,
               let modelId = info["modelId"] as? String,
-              let model = UpscaleModelConfig.allModels.first(where: { $0.id == modelId }) else { return }
-        editor.runAIUpscale(clipId: clipId, model: model)
+              let targetResolution = info["targetResolution"] as? String,
+              let selection = editor.aiEditUpscaleSelections(clipId: clipId).first(where: {
+                  $0.model.id == modelId
+                      && ($0.targetResolution ?? "") == targetResolution
+              }) else { return }
+        editor.runAIUpscale(clipId: clipId, selection: selection)
     }
 
     @objc private func performAIEditVideoAudio(_ sender: Any?) {

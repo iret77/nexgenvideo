@@ -1,15 +1,53 @@
 import Foundation
 
 extension GenerationPackageV1 {
+    func pricingInput() throws -> GenerationPricingInput {
+        let parameters = try restoreParameters()
+        var duration: Double?
+        var resolution: String?
+        var quality: String?
+        var generateAudio: Bool?
+        switch parameters.parameters {
+        case .image(let image):
+            resolution = image.resolution
+            quality = image.quality
+        case .video(let video):
+            duration = video.duration.seconds.map(Double.init)
+                ?? (payload.generationInput.duration > 0
+                    ? Double(payload.generationInput.duration)
+                    : nil)
+            resolution = video.resolution
+            generateAudio = video.generateAudio
+        default:
+            throw GenerationRequestError.gate("This saved request has no supported pricing input.")
+        }
+        return GenerationPricingInput(
+            modelId: payload.target.modelId,
+            modality: payload.modality == "image" ? .image : .video,
+            durationSeconds: duration,
+            outputCount: payload.outputCount,
+            resolution: resolution,
+            quality: quality,
+            promptCharacterCount: payload.prompt.count,
+            promptUTF8ByteCount: payload.prompt.utf8.count,
+            generateAudio: generateAudio,
+            referenceCount: parameters.referenceSlots.count
+        )
+    }
+
     func restoreParameters() throws -> PreparedProviderParameters {
         struct Parameters: Decodable {
             let kind: String
             let prompt: String
-            let aspectRatio: String
+            let aspectRatio: String?
             let resolution: String?
             let quality: String?
             let imageURLs: [String]?
             let numImages: Int?
+            let maskURL: String?
+            let background: String?
+            let outputFormat: String?
+            let outputCompression: Int?
             let duration: VideoDuration?
             let sourceVideoURL: String?
             let startFrameURL: String?
@@ -18,6 +56,12 @@ extension GenerationPackageV1 {
             let referenceVideoURLs: [String]?
             let referenceAudioURLs: [String]?
             let generateAudio: Bool?
+            let voice: String?
+            let lyrics: String?
+            let styleInstructions: String?
+            let instrumental: Bool?
+            let durationSeconds: Int?
+            let videoURL: String?
         }
         try validate()
         let data = Data(payload.requestParametersJSON.utf8)
@@ -25,22 +69,32 @@ extension GenerationPackageV1 {
         let parameters: BackendGenerationParams
         switch saved.kind {
         case "image":
-            guard let count = saved.numImages, count == payload.outputCount, payload.modality == "image" else {
+            guard let aspectRatio = saved.aspectRatio, let count = saved.numImages, count == payload.outputCount, payload.modality == "image" else {
                 throw GenerationRequestError.gate("The saved image output count is invalid.")
             }
-            parameters = .image(.init(prompt: saved.prompt, aspectRatio: saved.aspectRatio, resolution: saved.resolution,
-                quality: saved.quality, imageURLs: saved.imageURLs ?? [], numImages: count))
+            parameters = .image(.init(prompt: saved.prompt, aspectRatio: aspectRatio, resolution: saved.resolution,
+                quality: saved.quality, imageURLs: saved.imageURLs ?? [], numImages: count,
+                maskURL: saved.maskURL, background: saved.background, outputFormat: saved.outputFormat,
+                outputCompression: saved.outputCompression))
+
         case "video":
-            guard let duration = saved.duration, let audio = saved.generateAudio,
+            guard let aspectRatio = saved.aspectRatio, let duration = saved.duration, let audio = saved.generateAudio,
                   payload.modality == "video", payload.outputCount == 1 else {
                 throw GenerationRequestError.gate("The saved video request is incomplete.")
             }
-            parameters = .video(.init(prompt: saved.prompt, duration: duration, aspectRatio: saved.aspectRatio,
+            parameters = .video(.init(prompt: saved.prompt, duration: duration, aspectRatio: aspectRatio,
                 resolution: saved.resolution, sourceVideoURL: saved.sourceVideoURL,
                 startFrameURL: saved.startFrameURL, endFrameURL: saved.endFrameURL,
                 referenceImageURLs: saved.referenceImageURLs ?? [], referenceVideoURLs: saved.referenceVideoURLs ?? [],
                 referenceAudioURLs: saved.referenceAudioURLs ?? [], generateAudio: audio))
-        default: throw GenerationRequestError.gate("This saved request has no supported visual generation operation.")
+        case "audio":
+            guard payload.modality == "audio", payload.outputCount == 1, let instrumental = saved.instrumental else {
+                throw GenerationRequestError.gate("The saved audio request is incomplete.")
+            }
+            parameters = .audio(.init(prompt: saved.prompt, voice: saved.voice, lyrics: saved.lyrics,
+                styleInstructions: saved.styleInstructions, instrumental: instrumental,
+                durationSeconds: saved.durationSeconds, videoURL: saved.videoURL))
+        default: throw GenerationRequestError.gate("This saved request has no supported generation operation.")
         }
         guard try Self.canonicalData(parameters) == data, saved.prompt == payload.prompt else {
             throw GenerationRequestError.gate("The saved provider parameters cannot be restored without changing the request.")

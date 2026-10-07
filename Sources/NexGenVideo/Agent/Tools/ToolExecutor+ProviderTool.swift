@@ -15,7 +15,7 @@ extension ToolExecutor {
     ) async throws -> ToolResult {
         let tool = try args.requireString("tool")
         if Self.looksLikeGeneration(tool) {
-            throw ToolError("'\(tool)' looks like content generation — use generate_video / generate_image / generate_audio (or upscale_media). Those enforce the prompt engine and the spend confirmation; run_provider_tool is for non-generative workflow tools only.")
+            throw ToolError(Self.generationRefusal(for: tool))
         }
 
         let providers = ProviderManifest.toolProvidersCheapestFirst()
@@ -171,6 +171,25 @@ extension ToolExecutor {
             "text_to_speech", "synthesi", "dream", "upscale", "outpaint", "inpaint", "diffus",
         ]
         return markers.contains { n.contains($0) }
+    }
+
+    /// Agent-facing refusal that names only gated paths able to perform the requested operation.
+    nonisolated static func generationRefusal(for name: String) -> String {
+        let n = name.lowercased()
+        let gate = "run_provider_tool is for non-generative workflow tools only; do not retry this operation through it."
+        if n.contains("outpaint") {
+            return "'\(name)' is content generation. Outpainting has no gated NexGenVideo path. \(gate)"
+        }
+        if n.contains("inpaint") {
+            return "'\(name)' is content generation. Masked still-image edits use compile_prompt, then "
+                + "generate_image with an edit model whose list_models entry reports supportsMask=true and a "
+                + "maskMediaRef. Video inpainting has no gated NexGenVideo path. \(gate)"
+        }
+        if n.contains("upscale") {
+            return "'\(name)' is content generation. Use upscale_media, which enforces the spend confirmation. \(gate)"
+        }
+        return "'\(name)' looks like content generation. Use compile_prompt, then generate_video, "
+            + "generate_image, or generate_audio; they enforce the prompt engine and the spend confirmation. \(gate)"
     }
 
     /// Names that denote a creative prompt to a content model — the prompt-engine gate's concern.

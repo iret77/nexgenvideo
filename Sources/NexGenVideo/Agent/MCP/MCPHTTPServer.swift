@@ -4,12 +4,13 @@ import Network
 
 actor MCPHTTPServer {
     static let agentSessionHeader = "X-NexGen-Agent-Session"
-    static let agentTurnHeader = "X-NexGen-Agent-Turn"
+    static let agentRuntimeHeader = "X-NexGen-Agent-Runtime"
 
     final class SessionOrigin: @unchecked Sendable {
         private let lock = NSLock()
         private let mcpSessionID: UUID
         private var chatSessionID: UUID?
+        private var runtimeGenerationID: UUID?
 
         init(mcpSessionID: UUID) {
             self.mcpSessionID = mcpSessionID
@@ -20,21 +21,26 @@ actor MCPHTTPServer {
                 chatSessionID.map {
                     .embeddedRuntime(
                         chatSessionID: $0,
-                        mcpSessionID: mcpSessionID
+                        runtimeGenerationID: runtimeGenerationID ?? mcpSessionID
                     )
                 } ?? .externalMCP(sessionID: mcpSessionID)
             }
         }
 
-        func bind(chatSessionID: UUID?) {
+        func bind(chatSessionID: UUID?, runtimeGenerationID: UUID?) {
             lock.withLock {
                 self.chatSessionID = chatSessionID
+                self.runtimeGenerationID = runtimeGenerationID
             }
         }
 
-        func accepts(chatSessionID: UUID?) -> Bool {
+        func accepts(
+            chatSessionID: UUID?,
+            runtimeGenerationID: UUID?
+        ) -> Bool {
             lock.withLock {
                 self.chatSessionID == chatSessionID
+                    && self.runtimeGenerationID == runtimeGenerationID
             }
         }
     }
@@ -545,11 +551,13 @@ actor MCPHTTPServer {
                 )
                 if isInitialize {
                     session.origin.bind(
-                        chatSessionID: Self.agentChatSessionID(request: request)
+                        chatSessionID: Self.agentChatSessionID(request: request),
+                        runtimeGenerationID: Self.agentRuntimeID(request: request)
                     )
                 }
                 if isInitialize || session.origin.accepts(
-                    chatSessionID: Self.agentChatSessionID(request: request)
+                    chatSessionID: Self.agentChatSessionID(request: request),
+                    runtimeGenerationID: Self.agentRuntimeID(request: request)
                 ) {
                     response = await session.transport.handleRequest(request)
                 } else {
@@ -636,10 +644,10 @@ actor MCPHTTPServer {
             )
         }
 
-        let logicalTurnID = Self.agentTurnID(request: request) ?? UUID()
+        let runtimeGenerationID = Self.agentRuntimeID(request: request) ?? UUID()
         let origin = Self.toolCallOrigin(
             request: request,
-            mcpSessionID: logicalTurnID
+            mcpSessionID: runtimeGenerationID
         )
         return await MCP20260728.handle(
             body: request.body,
@@ -843,16 +851,16 @@ actor MCPHTTPServer {
         if let chatSessionID = agentChatSessionID(request: request) {
             return .embeddedRuntime(
                 chatSessionID: chatSessionID,
-                mcpSessionID: mcpSessionID
+                runtimeGenerationID: mcpSessionID
             )
         }
         return .externalMCP(sessionID: mcpSessionID)
     }
 
-    private nonisolated static func agentTurnID(
+    private nonisolated static func agentRuntimeID(
         request: HTTPRequest
     ) -> UUID? {
-        header(request.headers, named: agentTurnHeader)
+        header(request.headers, named: agentRuntimeHeader)
             .flatMap(UUID.init(uuidString:))
     }
 

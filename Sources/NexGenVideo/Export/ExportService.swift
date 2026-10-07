@@ -4,11 +4,42 @@ import AppKit
 enum ExportError: LocalizedError {
     case unsupportedPreset
     case invalidFormat
+    case xmlEncodingFailed(format: String)
+    case xmlValidationFailed(version: String, reason: String)
+    case xmlTimingInvalid(reason: String)
+    case xmlInvalidCharacter(context: String, codePoint: String)
+    case xmlWriteFailed(destination: URL, reason: String)
+    case xmlMediaReadFailed(source: URL, reason: String)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedPreset: "Export preset not supported on this system"
         case .invalidFormat: "Invalid export format"
+        case .xmlEncodingFailed(let format):
+            "The timeline couldn't be encoded as \(format). Try the export again."
+        case .xmlValidationFailed(let version, _):
+            "FCPXML \(version) validation failed. Try the export again or select another FCPXML version."
+        case .xmlTimingInvalid(let reason):
+            "The timeline contains a time value FCPXML cannot represent: \(reason)"
+        case .xmlInvalidCharacter(let context, let codePoint):
+            "\(context) contains the XML-incompatible control character \(codePoint). Remove it and export again."
+        case .xmlWriteFailed(let destination, _):
+            "Couldn’t export FCPXML to “\(destination.lastPathComponent)”. Choose another writable location and try again."
+        case .xmlMediaReadFailed(let source, _):
+            "Couldn’t read “\(source.lastPathComponent)” for FCPXML export. Relink the media and try again."
+        }
+    }
+
+    var failureReason: String? {
+        switch self {
+        case .xmlValidationFailed(_, let reason),
+             .xmlTimingInvalid(let reason),
+             .xmlInvalidCharacter(let reason, _),
+             .xmlWriteFailed(_, let reason),
+             .xmlMediaReadFailed(_, let reason):
+            reason
+        case .unsupportedPreset, .invalidFormat, .xmlEncodingFailed(_):
+            nil
         }
     }
 }
@@ -19,17 +50,43 @@ struct ExportRunReport {
     let unprocessableMediaRefs: Set<String>
 }
 
+final class ExportCancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func reset() {
+        lock.withLock { value = false }
+    }
+
+    func cancel() {
+        lock.withLock { value = true }
+    }
+
+    var isCancelled: Bool {
+        lock.withLock { value }
+    }
+}
+
 @Observable
 @MainActor
 final class ExportService {
+    enum Event: Sendable, Equatable {
+        case preparing
+        case exporting
+        case progress(Double)
+    }
+
     var progress: Double = 0
     var isExporting = false
     var error: String?
     var lastReport: ExportRunReport?
+    var lastFCPXMLReport: FCPXMLExportReport?
 
     func cancel() {
         cancelRequested = true
+        cancellationFlag.cancel()
         activeExportSession?.cancelExport()
+        activeHDRCancellation?.cancel()
     }
 
     func export(
@@ -38,17 +95,31 @@ final class ExportService {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
-        acquireSlot: Bool = true
+        projectName: String = "Timeline Export",
+        fcpxmlVersion: FCPXMLVersion = .default,
+        fcpxmlTarget: FCPXMLTarget = .default,
+        referenceOutputURL: URL? = nil,
+        stagedMediaDirectoryURL: URL? = nil,
+        preserveOutputIdentity: Bool = false,
+        acquireSlot: Bool = true,
+        event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async {
         error = nil
         lastReport = nil
+        lastFCPXMLReport = nil
         cancelRequested = false
+        cancellationFlag.reset()
         isExporting = true
         progress = 0
+        event?(.preparing)
         defer { isExporting = false }
         let resolver = liveResolver.snapshot()
+        if acquireSlot {
+            await ExportCoordinator.acquireExport()
+        }
+        defer { if acquireSlot { ExportCoordinator.endExport() } }
         var styleReview: TimelineStyleReview.Snapshot?
-        if format != .xml {
+        if format != .xml && format != .fcpxml {
             do {
                 styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
                 if let review = styleReview {
@@ -57,22 +128,80 @@ final class ExportService {
             } catch { self.error = error.localizedDescription; return }
         }
 
-        if format == .xml {
+        if format == .xml || format == .fcpxml {
+            let formatName = format.fileExtension
             Log.export.notice(
-                "export requested format=xml",
+                "export requested format=\(formatName)",
                 telemetry: "Export started",
-                data: ["format": "xml", "tracks": timeline.tracks.count, "clips": timeline.tracks.reduce(0) { $0 + $1.clips.count }]
+                data: [
+                    "format": formatName,
+                    "tracks": timeline.tracks.count,
+                    "clips": timeline.tracks.reduce(0) { $0 + $1.clips.count },
+                ]
             )
-            XMLExporter.export(timeline: timeline, resolver: resolver, outputURL: outputURL)
-            progress = 1.0
-            Log.export.notice("export ok format=xml", telemetry: "Export finished", data: ["format": "xml"])
+            do {
+                event?(.exporting)
+                if format == .xml {
+                    let cancellationFlag = cancellationFlag
+                    try await Task.detached(priority: .userInitiated) {
+                        try XMLExporter.export(
+                            timeline: timeline,
+                            resolver: resolver,
+                            outputURL: outputURL,
+                            reportedTarget: referenceOutputURL,
+                            preserveOutputIdentity: preserveOutputIdentity,
+                            isCancelled: { cancellationFlag.isCancelled }
+                        )
+                    }.value
+                } else {
+                    lastFCPXMLReport = try await FCPXMLExporter.export(
+                        timeline: timeline,
+                        resolver: resolver,
+                        projectName: projectName,
+                        version: fcpxmlVersion,
+                        target: fcpxmlTarget,
+                        outputURL: outputURL,
+                        publishedOutputURL: referenceOutputURL,
+                        stagedMediaDirectoryURL: stagedMediaDirectoryURL,
+                        preserveOutputIdentity: preserveOutputIdentity,
+                        isCancelled: { [weak self] in self?.cancelRequested ?? true },
+                        progress: { [weak self] value in
+                            self?.progress = value
+                            event?(.progress(value))
+                        }
+                    )
+                }
+                progress = 1.0
+                event?(.progress(1.0))
+                var evidence: [String: Any] = ["format": formatName]
+                if let report = lastFCPXMLReport {
+                    evidence["version"] = report.version.rawValue
+                    evidence["target"] = report.target.rawValue
+                    evidence["schemaProfile"] = report.validation.schemaProfile
+                    evidence["assets"] = report.validation.assetCount
+                    evidence["storyElements"] = report.validation.storyElementCount
+                    evidence["sha256"] = report.outputSHA256
+                    evidence["bytes"] = report.outputByteCount
+                    evidence["mediaBytes"] = report.mediaByteCount
+                    evidence["stagedProjectMedia"] = report.stagedProjectMediaCount
+                    evidence["warnings"] = report.warnings.count
+                }
+                Log.export.notice(
+                    "export ok format=\(formatName)",
+                    telemetry: "Export finished",
+                    data: evidence
+                )
+            } catch {
+                let cancelled = cancelRequested || error is CancellationError
+                self.error = cancelled ? "Export was cancelled" : error.localizedDescription
+                Log.export.error(
+                    "export failed format=\(formatName): \(Log.detail(error))",
+                    telemetry: "Export failed",
+                    data: ["format": formatName, "destination": outputURL.path, "error": Log.detail(error)]
+                )
+            }
             return
         }
-
-        if acquireSlot {
-            await ExportCoordinator.acquireExport()
-        }
-        defer { if acquireSlot { ExportCoordinator.endExport() } }
 
         Log.export.notice(
             "export requested format=\(String(describing: format)) resolution=\(resolution.rawValue)",
@@ -87,12 +216,26 @@ final class ExportService {
             ]
         )
 
+        if format.isHDR {
+            await exportHDR(
+                timeline: timeline,
+                resolver: resolver,
+                resolution: resolution,
+                outputURL: outputURL,
+                styleReview: styleReview
+            )
+            return
+        }
+
         do {
+            if cancelRequested { throw CancellationError() }
             try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
+            if cancelRequested { throw CancellationError() }
             let prepared = try await makeExportSession(
                 timeline: timeline, resolver: resolver,
                 format: format, resolution: resolution
             )
+            if cancelRequested { throw CancellationError() }
             if styleReview != nil {
                 guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
                     throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
@@ -108,11 +251,15 @@ final class ExportService {
             try? FileManager.default.removeItem(at: outputURL)
 
             nonisolated(unsafe) let unsafeSession = session
+            event?(.exporting)
             let progressTask = Task { @MainActor in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(200))
                     let p = Double(unsafeSession.progress)
-                    if p != self.progress { self.progress = p }
+                    if p != self.progress {
+                        self.progress = p
+                        event?(.progress(p))
+                    }
                 }
             }
 
@@ -126,6 +273,7 @@ final class ExportService {
                     unprocessableMediaRefs: prepared.result.unprocessableMediaRefs
                 )
                 progress = 1.0
+                event?(.progress(1.0))
                 Log.export.notice(
                     "export ok",
                     telemetry: "Export finished",
@@ -172,6 +320,96 @@ final class ExportService {
 
     }
 
+    private func exportHDR(
+        timeline: Timeline,
+        resolver: MediaResolver,
+        resolution: ExportResolution,
+        outputURL: URL,
+        styleReview: TimelineStyleReview.Snapshot?
+    ) async {
+        do {
+            let renderSize = resolution.renderSize(for: CGSize(
+                width: timeline.width,
+                height: timeline.height
+            ))
+            try await HDRVideoExporter.requireCapability(
+                renderSize: renderSize,
+                fps: timeline.fps
+            )
+            try await TimelineStyleReview.revalidate(
+                styleReview,
+                timeline: timeline,
+                resolver: resolver
+            )
+            let result = try await CompositionBuilder.build(
+                timeline: timeline,
+                resolveURL: { resolver.resolveURL(for: $0) },
+                renderSize: renderSize
+            )
+            if styleReview != nil {
+                guard result.offlineMediaRefs.isEmpty,
+                      result.unprocessableMediaRefs.isEmpty else {
+                    throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
+                }
+            }
+            let cancellation = HDRVideoExporter.Cancellation()
+            activeHDRCancellation = cancellation
+            defer { activeHDRCancellation = nil }
+            if cancelRequested { cancellation.cancel() }
+            try await HDRVideoExporter.export(
+                .init(
+                    composition: result.composition,
+                    videoComposition: result.videoComposition,
+                    audioMix: result.audioMix,
+                    textOverlays: [],
+                    fps: timeline.fps
+                ),
+                renderSize: renderSize,
+                to: outputURL,
+                cancellation: cancellation,
+                onProgress: { [weak self] value in
+                    Task { @MainActor in self?.progress = value }
+                }
+            )
+            try await TimelineStyleReview.revalidate(
+                styleReview,
+                timeline: timeline,
+                resolver: resolver
+            )
+            lastReport = .init(
+                outputSize: await Self.encodedVideoSize(of: outputURL) ?? renderSize,
+                offlineMediaRefs: result.offlineMediaRefs,
+                unprocessableMediaRefs: result.unprocessableMediaRefs
+            )
+            progress = 1
+            Log.export.notice(
+                "hdr export ok",
+                telemetry: "Export finished",
+                data: ["format": "hevc-main10-hlg", "resolution": resolution.rawValue]
+            )
+        } catch {
+            if cancelRequested || error is CancellationError {
+                self.error = "Export was cancelled"
+                Log.export.notice(
+                    "hdr export cancelled",
+                    telemetry: "Export cancelled",
+                    data: ["format": "hevc-main10-hlg", "resolution": resolution.rawValue]
+                )
+            } else {
+                self.error = Log.detail(error)
+                Log.export.error(
+                    "hdr export failed: \(Log.detail(error))",
+                    telemetry: "Export failed",
+                    data: [
+                        "format": "hevc-main10-hlg",
+                        "resolution": resolution.rawValue,
+                        "error": Log.detail(error),
+                    ]
+                )
+            }
+        }
+    }
+
     /// Writes a self-contained `.ngv` bundle (all media collected internally).
     @discardableResult
     func exportProjectPackage(
@@ -180,12 +418,17 @@ final class ExportService {
         generationLog: GenerationLog,
         sourceProjectURL: URL?,
         outputURL: URL,
-        acquireSlot: Bool = true
+        stagingURL: URL? = nil,
+        acquireSlot: Bool = true,
+        event: (@MainActor @Sendable (Event) -> Void)? = nil
     ) async -> ProjectPackageExporter.Report? {
         isExporting = true
         progress = 0
         error = nil
         lastReport = nil
+        cancelRequested = false
+        cancellationFlag.reset()
+        event?(.preparing)
         defer { isExporting = false }
 
         if acquireSlot {
@@ -194,6 +437,8 @@ final class ExportService {
         defer { if acquireSlot { ExportCoordinator.endExport() } }
 
         do {
+            event?(.exporting)
+            let cancellationFlag = cancellationFlag
             Log.export.notice(
                 "ngv export start url=\(outputURL.lastPathComponent)",
                 telemetry: "NexGenVideo project export started",
@@ -208,10 +453,18 @@ final class ExportService {
                 try ProjectPackageExporter.export(
                     timeline: timeline, manifest: manifest, generationLog: generationLog,
                     sourceProjectURL: sourceProjectURL, to: outputURL,
-                    progress: { p in Task { @MainActor in self.progress = p } }
+                    stagingURL: stagingURL,
+                    isCancelled: { cancellationFlag.isCancelled },
+                    progress: { p in
+                        Task { @MainActor in
+                            self.progress = p
+                            event?(.progress(p))
+                        }
+                    }
                 )
             }.value
             progress = 1.0
+            event?(.progress(1.0))
             Log.export.notice(
                 "ngv export ok collected=\(report.collected.count) missing=\(report.missing.count)",
                 telemetry: "NexGenVideo project export finished",
@@ -261,19 +514,7 @@ final class ExportService {
         }
         session.audioMix = result.audioMix
 
-        let mutableVC = result.videoComposition.mutableCopy() as! AVMutableVideoComposition
-        if TextLayerController.hasVisibleText(in: timeline) {
-            let (parent, videoLayer) = TextLayerController.buildForExport(
-                timeline: timeline,
-                fps: timeline.fps,
-                renderSize: renderSize
-            )
-            mutableVC.animationTool = AVVideoCompositionCoreAnimationTool(
-                postProcessingAsVideoLayer: videoLayer,
-                in: parent
-            )
-        }
-        session.videoComposition = mutableVC
+        session.videoComposition = result.videoComposition
         return (session, result, renderSize)
     }
 
@@ -299,11 +540,15 @@ final class ExportService {
             }
         case .prores:
             AVAssetExportPresetAppleProRes422LPCM
-        case .xml:
-            AVAssetExportPresetPassthrough // unreachable — XML returns early
+        case .xml, .fcpxml, .hevcMain10HLG:
+            AVAssetExportPresetPassthrough // Interchange and HDR use separate export paths
+
         }
     }
 
     private var activeExportSession: AVAssetExportSession?
     private var cancelRequested = false
+    private var activeHDRCancellation: HDRVideoExporter.Cancellation?
+    private let cancellationFlag = ExportCancellationFlag()
+
 }

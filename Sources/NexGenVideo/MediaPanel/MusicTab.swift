@@ -321,8 +321,11 @@ struct MusicTab: View {
             } label: { Label("Mood", systemImage: "slider.horizontal.3") }
             Divider() // app-theme: native-menu-divider
             Button {
-                editor.agentService.prefillInput("")
-            } label: { Label("Ask the agent…", systemImage: "bubble.left.and.text.bubble.right") }
+                editor.agentService.stageTask(.init(title: "Revise Timeline Music", systemImage: "music.note",
+                    prompt: "Revise the music for the current timeline according to the supplied instructions. Use existing project tools and obtain any required spend approval.",
+                    requiresDirection: true))
+            } label: { Label("Revise timeline music…", systemImage: "music.note") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")

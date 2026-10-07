@@ -22,6 +22,15 @@ struct PatternDriftTests {
             durationS: 4, type: .performance, description: "d", visualPrompt: "v", mood: "m", framing: framing)
     }
 
+    static func shot(_ i: Int, framing: Framing, duration: Double) throws -> Shot {
+        let start = Double(i) * 20
+        return try Shot(
+            id: String(format: "s%03d", i), section: "verse", timeStart: start, timeEnd: start + duration,
+            durationS: duration, type: .performance, description: "d", visualPrompt: "v", mood: "m",
+            framing: framing
+        )
+    }
+
     static func shotlist(_ shots: [Shot]) throws -> Shotlist {
         try Shotlist(
             schema_: shotlistSchemaVersion, mode: .beat, project: "proj",
@@ -61,6 +70,33 @@ struct PatternDriftTests {
         let shots = try (1...6).map { try Self.shot($0, framing: .wide) }
         let ctx = AuditContext(shotlist: try Self.shotlist(shots), brief: try Self.brief(pattern: nil))
         #expect(try MusicvideoChecks.patternDriftCheck(ctx).isEmpty)
+    }
+
+    @Test("ASL outside the sourced range is included in the drift report")
+    func aslDriftMeasured() throws {
+        let pattern = try #require(try Patterns.loadAllPatterns().first)
+        let framing = try #require(pattern.framingMix.byFraming().max(by: { $0.value < $1.value })?.key)
+        let duration = pattern.aslRange.maxS + 10
+        let shots = try (1...6).map { try Self.shot($0, framing: framing, duration: duration) }
+        let ctx = AuditContext(shotlist: try Self.shotlist(shots), brief: try Self.brief(pattern: pattern.id))
+        let findings = try MusicvideoChecks.patternDriftCheck(ctx)
+        #expect(findings.contains { $0.code == "PATTERN_DRIFT" && $0.message.contains("average shot length") })
+    }
+
+    @Test("shots without framing do not count toward the framing sample")
+    func unframedShotsDoNotCreateFramingDrift() throws {
+        let pattern = try #require(try Patterns.loadAllPatterns().first)
+        let duration = (pattern.aslRange.minS + pattern.aslRange.maxS) / 2
+        var shots = try (2...6).map { i -> Shot in
+            let start = Double(i) * 20
+            return try Shot(
+                id: String(format: "s%03d", i), section: "verse", timeStart: start, timeEnd: start + duration,
+                durationS: duration, type: .performance, description: "d", visualPrompt: "v", mood: "m"
+            )
+        }
+        shots.insert(try Self.shot(1, framing: Self.rarestFraming(pattern), duration: duration), at: 0)
+        let ctx = AuditContext(shotlist: try Self.shotlist(shots), brief: try Self.brief(pattern: pattern.id))
+        #expect(try MusicvideoChecks.patternDriftCheck(ctx).allSatisfy { $0.code != "PATTERN_DRIFT" })
     }
 
     @Test("below the minimum shot count → no drift (quantization-noise guard)")

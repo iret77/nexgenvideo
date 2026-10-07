@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 2,
+  "files": [
+    {
+      "path": "LICENSE.source.txt",
+      "sha256": "f303d9dd21d9d85d46b01095001baf21ea4eeb2d5662593e4044859acb4dda94"
+    },
+    {
+      "path": "README.md",
+      "sha256": "044ef3c80521f96070ff8e53b27413f30fb293b1566a01ef3ed423ee9989dcc7"
+    },
+    {
+      "path": "application-contracts.json",
+      "sha256": "7054f083959a36ad0796ea9729dfacd309f32b05adef1fa73b23580b128ed238"
+    },
+    {
+      "path": "blueprint-bindings.md",
+      "sha256": "0c784bec46ae1dae01d0169b49ac6989fa2f5be50c4d8f037f4985a9cc37c11c"
+    },
+    {
+      "path": "blueprints.json",
+      "sha256": "fa6f6a3e29543e56850590546eae4d7f3a39f7f89847cae6b534c26a3bfa5c9e"
+    },
+    {
+      "path": "chapters/agent-models.json",
+      "sha256": "3a136f6f8ffeddc30a3c19422007ddf512f765d5ad98f95604742e0862d60d25"
+    },
+    {
+      "path": "chapters/director-recipes.json",
+      "sha256": "608b4e2ed7204e864d463ae1621860e7a1d3a09b5feb3c1001723bb5eddb571e"
+    },
+    {
+      "path": "chapters/film-craft.json",
+      "sha256": "17172105053b7afed29b4526bd376ade338ed04c070c034cd23f4a40be92418c"
+    },
+    {
+      "path": "chapters/genre-baselines.json",
+      "sha256": "c4c89c7d090f0d057aa14e20a3026c29eb1f33be3fc63e7d890dd1a56e897475"
+    },
+    {
+      "path": "chapters/glossary.json",
+      "sha256": "18dee550a6b4fa52db4c58cf9c0c12032e8e2ac042f46c5b32cfc5e3f05c336c"
+    },
+    {
+      "path": "chapters/image-model-logic.json",
+      "sha256": "8e323e1c5356d8d0740e7aa79bd4cbcb4e77d81aed31930cd4972a25270bb089"
+    },
+    {
+      "path": "chapters/pixar-look.json",
+      "sha256": "3bad97ceeeaabaf1979fbb44a71c0674f616d5d98f77c8578a48b6861744c812"
+    },
+    {
+      "path": "chapters/platform-ui-workflows.json",
+      "sha256": "0a6722167d1a87b97e5a103a569716e9012726153251802a0f647613c2a04067"
+    },
+    {
+      "path": "chapters/platforms-models.json",
+      "sha256": "d85c21c9c24d934425d185e242293636a75649c4c63cf1d6316d49318f51d371"
+    },
+    {
+      "path": "chapters/post-audio-legal.json",
+      "sha256": "ba84df43aa832b11ff90b54afa908a768b7a57b47e5676c2a7bb3b4e8a3c34f3"
+    },
+    {
+      "path": "chapters/production-bible.json",
+      "sha256": "22fecb35927a219aaffb1e590733e135d86d9f3eb5ee81a7ca51876f5a133d8f"
+    },
+    {
+      "path": "chapters/production-pipeline.json",
+      "sha256": "8491c24589311d30e3456ee468ca3e882e5c50a4a1f7cc641e1c1a119aa75c1b"
+    },
+    {
+      "path": "chapters/renderability.json",
+      "sha256": "7fa02a3c38ed393ce574f3abb1c2e012961a41dbdcc3d1ba827b0e234f0bb3d9"
+    },
+    {
+      "path": "chapters/skill.json",
+      "sha256": "915d27064ddba1f4f3c887d676a0112d7e1c20aa1f528cf7d57ee5af524ff071"
+    },
+    {
+      "path": "chapters/sources.json",
+      "sha256": "6507884dd5aef6f9c2279e098e02a23fdc28f108a880e1e4b8a6ccabde3f972b"
+    },
+    {
+      "path": "chapters/story-structures.json",
+      "sha256": "2ff256ad08ecaf9fa1cb4e5353547c7dabe520666813be573ae60c4e4422826a"
+    },
+    {
+      "path": "chapters/style-control.json",
+      "sha256": "382416a4d6143abbc8c26a8239965ceea89be8913bbaf6d2ac2fb4840b3f4571"
+    },
+    {
+      "path": "chapters/video-prompting.json",
+      "sha256": "c1e00ff01855cfbc6e4c857c7b9911121df37bf2876e344f377231b1a3b07fd9"
+    },
+    {
+      "path": "chapters/worked-example.json",
+      "sha256": "78411a81f9ff3b705ea815e5b84c7e941b1aa9a88f9ff6127c5015dc120add8f"
+    },
+    {
+      "path": "chapters/workflows.json",
+      "sha256": "28b127436ff05d56dfe48ecca7f67e14147b86b20f6f7cd3684f9146d2f9202a"
+    },
+    {
+      "path": "coverage.md",
+      "sha256": "67172a31e54b862488887a9f81e9012f2994a604d83571574d34e4c247f126e0"
+    },
+    {
+      "path": "formats/future-packs.spec.md",
+      "sha256": "655fc1793c0397297569a6d82a8ccf1b8296526b4dabb7d2c0143e5ae2e4fe06"
+    },
+    {
+      "path": "formats/musicvideo-coverage.spec.md",
+      "sha256": "1f180b080cdc78e6e2337df63cb8b253f1745d00c56744372a08260f4076eea3"
+    },
+    {
+      "path": "formats/musicvideo-performance-sync.spec.md",
+      "sha256": "edb5af1ccf53a3ef767bd72c2efd38f62938b8797dcaa593a594d27121c0e774"
+    },
+    {
+      "path": "formats/musicvideo-visual-arc.spec.md",
+      "sha256": "168827e9c6c3c19b50a4ea1e6d6abd1ef358c216244ae26e43868deb76a561bb"
+    },
+    {
+      "path": "handbook/agent-models.md",
+      "sha256": "3ddca9dbd81dfefaf0e28ab02bdec91252d964c36ffd55104518a1f0b3a6ce9e"
+    },
+    {
+      "path": "handbook/director-recipes.md",
+      "sha256": "cae3859462f668d149f8156ff16e39800ac4f186c3b0a9ce64f0c621752c6a26"
+    },
+    {
+      "path": "handbook/film-craft.md",
+      "sha256": "ea4998d528faea02f0531c753e79c7ee3f0dafb291b00dd07847a16bc1027d98"
+    },
+    {
+      "path": "handbook/genre-baselines.md",
+      "sha256": "1d51f2de136020025b071dab40a96526c917b0ca63ef62d892163b28d83603ae"
+    },
+    {
+      "path": "handbook/glossary.md",
+      "sha256": "ef56c6baff31949e0de22bc3e53b4c6943b22c25e167867fe7d9f5d09be41b5e"
+    },
+    {
+      "path": "handbook/image-model-logic.md",
+      "sha256": "123c088a2ac3d8664660ce5520cded04cfe83b3e01997b0321b628099fb547c3"
+    },
+    {
+      "path": "handbook/pixar-look.md",
+      "sha256": "99d10b410313b8b9f2798359d1236a0bca474d0f7513ebe272ad1601edffe935"
+    },
+    {
+      "path": "handbook/platform-ui-workflows.md",
+      "sha256": "0ffd1bdbfbcb99b98994375f3b3e8308cfd18f1cdc7f793633403ed490c549d8"
+    },
+    {
+      "path": "handbook/platforms-models.md",
+      "sha256": "8f2680d2434457bccafc49b37ed138077ec91a164b2404a3fa43a2ec011dc6f6"
+    },
+    {
+      "path": "handbook/post-audio-legal.md",
+      "sha256": "797409212d685fe1360fe6d5400e3ffe78a4b917f7ebe1dbdbf0cd0779c71762"
+    },
+    {
+      "path": "handbook/production-bible.md",
+      "sha256": "6161a6e26bfde7cf353ba7124738d9e539ffd3f2cd0416ca21e6b7f13e5cfc2e"
+    },
+    {
+      "path": "handbook/production-pipeline.md",
+      "sha256": "77fc92cee63ed0cc9ae1492ab31b582d8c52fce735474883a42b16ea12569c1c"
+    },
+    {
+      "path": "handbook/renderability.md",
+      "sha256": "79b2daa6d600bc4cc9ba2595bab39cfbb940eff089da72b93bb265a501e036ea"
+    },
+    {
+      "path": "handbook/skill.md",
+      "sha256": "ee82e0acbd88efb882828012a8b0738c8f35c2be8f79d2a751e597b8f4294e35"
+    },
+    {
+      "path": "handbook/sources.md",
+      "sha256": "55bca452238a57eff82d02042dfc4883dfad96e47c06925ab5f290efd4454e54"
+    },
+    {
+      "path": "handbook/story-structures.md",
+      "sha256": "d22209dbe1d4e7cb24c102a36f880df3936d4270457d78ee6c89d12fb5d81689"
+    },
+    {
+      "path": "handbook/style-control.md",
+      "sha256": "ec8b864e9fcf34a70c4975f4c436d91114c2b530c004235c5005ee2310684e45"
+    },
+    {
+      "path": "handbook/video-prompting.md",
+      "sha256": "765847d1977ea24766e2cc3d7b1dd876796e0b0a46fdda6ec0fd4548afadf056"
+    },
+    {
+      "path": "handbook/worked-example.md",
+      "sha256": "e706ba8bde80352bce458cb923cd9e18b7a20947459c21255632dae8873dc193"
+    },
+    {
+      "path": "handbook/workflows.md",
+      "sha256": "584fc8245f845d37746ee646a255ba7758f8ad79f3b76cad8889c09945cb4abf"
+    },
+    {
+      "path": "index.json",
+      "sha256": "3e4bde504c6c81c0c104160967237b213771b3ef212f580214b8d3558fb68a29"
+    },
+    {
+      "path": "inventory.json",
+      "sha256": "e5d9e59f251acc943c5e2d1e22c86efcb9787d8427131c9d4affbc098f094a0f"
+    },
+    {
+      "path": "locators.json",
+      "sha256": "03878cc2234b450f1f2bc5cd9c9ce937f83f85baf7099a2dc0910e020c01a863"
+    },
+    {
+      "path": "migration-3.4.spec.md",
+      "sha256": "fdeb39695a3bc610065d99fc08df15c47a0fb3b8ece7d01a6800e09a938ef6bc"
+    },
+    {
+      "path": "precedence.json",
+      "sha256": "d3b789e03b6b8110f233c5343acccfc8f4df2c1ebff562f96dc3629bd3d13f97"
+    },
+    {
+      "path": "procedures.json",
+      "sha256": "d65952f74e801a71cd699d14f9b3f0cd3f321b30e7e2da4ffc55e51089eda7cb"
+    },
+    {
+      "path": "retrieval-plans.json",
+      "sha256": "c4fae1aa66f7fa045035822ba4bd53abaa1be21a3a45c14d62b280d28a933ecd"
+    },
+    {
+      "path": "source-delta.json",
+      "sha256": "9aa5e465dd705ec1dde1071fb78c5cb0b089f56da276517aef343bcb7bc05ed8"
+    },
+    {
+      "path": "tables.json",
+      "sha256": "bb4bc1a2c9a06cb9802ce439b971e413ce77a2fd4563c5f8ac96f11040a490fc"
+    },
+    {
+      "path": "templates.json",
+      "sha256": "df6f57d9af4178438990d1ab16ed62ff1ad48b639b6993526abdd44c45dc6af3"
+    },
+    {
+      "path": "units.json",
+      "sha256": "909ce96b5165130e88042407e91e74befea2c33cb6b46ee56c54592f637969c2"
+    },
+    {
+      "path": "validate_corpus.py",
+      "sha256": "1b4c0ef04978f0add2c57f1ff727ba74edccdc216c3b24f8a53fcb7c8407f072"
+    }
+  ]
+}

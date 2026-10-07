@@ -55,27 +55,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
 
 asl_range:
   min_s: 60.0
   max_s: 240.0
   typical_s: 180.0
+  basis: inferred
+  sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
 
-camera_vocabulary:
-  - "continuous tracking shot"
-  - "Steadicam / gimbal long take"
-  - "synchronized lateral dolly"
-  - "single long crane move"
+camera:
+  vocabulary:
+    - "continuous tracking shot"
+    - "Steadicam / gimbal long take"
+    - "synchronized lateral dolly"
+    - "single long crane move"
+  basis: inferred
+  sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
 
-lighting_signature: |
-  fully pre-lit set with constant exposure across the entire
-  choreographed run, daylight or controlled practical mix, no
-  lighting changes mid-shot (camera + performers move through fixed
-  light field), bright high-key bias for clarity.
+lighting:
+  description: |
+    fully pre-lit set with constant exposure across the entire
+    choreographed run, daylight or controlled practical mix, no
+    lighting changes mid-shot (camera + performers move through fixed
+    light field), bright high-key bias for clarity.
+  basis: inferred
+  sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
 
-approximation_basis: |
-  Aggregation of the cited OK Go official blog, No Film School,
-  PetaPixel articles and the OK Go Wikipedia videography page
-  describing Kulash + Sie's precision-engineered single-take
-  approach. ASL-range reflects the genre's typical full-song
-  single-take (one shot = one video), not per-cut.
+color:
+  description: "A stable daylight/practical mix with a bright high-key bias."
+  basis: inferred
+  sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
+
+craft_signature:
+  - technique: "Constant-exposure choreography"
+    directive: "Pre-light the complete route for constant exposure while camera and performers move through a fixed light field."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"

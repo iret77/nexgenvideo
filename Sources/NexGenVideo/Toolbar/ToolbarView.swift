@@ -5,6 +5,7 @@ struct ToolbarView: View {
     @Environment(EditorViewModel.self) var editor
 
     var body: some View {
+        @Bindable var editor = editor
         HStack(spacing: AppTheme.Spacing.md) {
             // Undo / Redo
             HStack(spacing: AppTheme.Spacing.md) {
@@ -19,6 +20,7 @@ struct ToolbarView: View {
             HStack(spacing: AppTheme.Spacing.md) {
                 toolModeButton("cursorarrow", mode: .pointer, help: "Pointer (V)")
                 toolModeButton("scissors", mode: .razor, help: "Razor (C)")
+                toolModeButton("arrow.left.and.right", mode: .slip, help: "Slip (T)")
             }
 
             AppDivider()
@@ -37,6 +39,20 @@ struct ToolbarView: View {
             // Add content
             HStack(spacing: AppTheme.Spacing.md) {
                 textGlyphButton("T", help: "Add Text", action: { _ = editor.addTextClip() })
+                Button {
+                    editor.markerPanelPresented = true
+                } label: {
+                    Label("Markers", systemImage: "bookmark")
+                        .interfaceFont(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .padding(.horizontal, AppTheme.Spacing.sm)
+                        .frame(height: AppTheme.Control.iconTarget)
+                        .hoverHighlight(isActive: editor.markerPanelPresented)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $editor.markerPanelPresented, arrowEdge: .bottom) {
+                    MarkerPanelView()
+                }
             }
 
             Spacer()

@@ -31,6 +31,16 @@ class CIChangesTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(classify([path])["bundle_required"])
 
+    def test_export_actions_always_exercise_the_native_bundle(self):
+        for path in ("Sources/NexGenVideo/App/ExportActionsSelfTest.swift",
+                     "Sources/NexGenVideo/Export/ExportQueue.swift",
+                     "Sources/NexGenVideo/Export/ExportView.swift",
+                     "scripts/export_actions_acceptance.py"):
+            with self.subTest(path=path):
+                plan = classify([path])
+                self.assertTrue(plan["build_required"])
+                self.assertTrue(plan["bundle_required"])
+
     def test_unknown_and_empty_diffs_fail_safe(self):
         self.assertTrue(classify(["unexpected.config"])["build_required"])
         self.assertTrue(all(classify([]).values()))

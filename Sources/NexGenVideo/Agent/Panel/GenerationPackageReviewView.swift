@@ -7,12 +7,20 @@ struct GenerationPackageReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text(package.renderID).fontWeight(AppTheme.FontWeight.semibold).textSelection(.enabled)
+            Text("\(package.payload.target.provider.displayName) · \(package.payload.target.transport.rawValue.uppercased())")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
             Text("Outputs: \(package.payload.outputCount) · \(destinationLabel)")
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             if let estimate = package.payload.estimate {
                 Text("Estimated cost: €\(estimate.eurAmount, specifier: "%.2f")")
+            } else if let failure = package.payload.pricingFailure {
+                Text(pricingFailureLabel(failure.reason))
+                    .foregroundStyle(AppTheme.Status.warningColor)
+                Text(failure.detail)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
             } else {
-                Text("Monetary estimate unavailable").foregroundStyle(AppTheme.Status.warningColor)
+                Text("Pricing record unavailable. Prepare this request again.")
+                    .foregroundStyle(AppTheme.Status.warningColor)
             }
             ForEach(Array(package.payload.references.enumerated()), id: \.offset) { index, reference in
                 Text("\(index + 1). \(roleLabel(package.payload.referenceRoles[index])) · \(reference.displayName ?? String(localized: "Reference"))")
@@ -70,6 +78,14 @@ struct GenerationPackageReviewView: View {
         case .modelCatalog: String(localized: "Model catalog checked")
         case .accountEntitlement: String(localized: "Account entitlement checked")
         case .toolSchema: String(localized: "Tool schema checked")
+        }
+    }
+
+    private func pricingFailureLabel(_ reason: GenerationPricingFailure.Reason) -> String {
+        switch reason {
+        case .unsupportedCombination: String(localized: "No verified price for these options")
+        case .priceQueryUnavailable: String(localized: "Provider pricing unavailable")
+        case .exchangeRateUnavailable: String(localized: "EUR conversion unavailable")
         }
     }
 

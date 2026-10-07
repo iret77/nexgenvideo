@@ -6,7 +6,7 @@ extension EditorViewModel {
 
     // MARK: - Add / move
 
-    func addClips(assets: [MediaAsset], trackIndex: Int, startFrame: Int, linkedAudioTrackIndex: Int? = nil, segments: [String: ClosedRange<Double>] = [:]) {
+    func addClips(assets: [MediaAsset], trackIndex: Int, startFrame: Int, linkedAudioTrackIndex: Int? = nil, segments: [String: ClosedRange<Double>] = [:], sourceFrameRanges: [String: Range<Int>] = [:]) {
         // Every path that turns assets into clips lands here — drag, agent tool, paste. Documents are
         // source material the pipeline READS; they have no duration and nothing to render, so they are
         // dropped at the one choke point rather than guarded at each caller.
@@ -20,7 +20,7 @@ extension EditorViewModel {
         }
 
         withTimelineSwap(actionName: "Add Clips") {
-            let totalDur = assets.reduce(0) { $0 + clipDurationFrames(for: $1, segment: segments[$1.id]) }
+            let totalDur = assets.reduce(0) { $0 + (sourceFrameRanges[$1.id]?.count ?? clipDurationFrames(for: $1, segment: segments[$1.id])) }
             clearRegion(trackIndex: trackIndex, start: startFrame, end: startFrame + totalDur, prune: false)
             if let aid = audioTrackId,
                let audioIdx = timeline.tracks.firstIndex(where: { $0.id == aid }) {
@@ -37,7 +37,7 @@ extension EditorViewModel {
 
             createClips(
                 from: assets, trackIndex: resolvedTrackIndex, startFrame: startFrame,
-                linkedAudioTrackIndex: resolvedAudioIndex, segments: segments
+                linkedAudioTrackIndex: resolvedAudioIndex, segments: segments, sourceFrameRanges: sourceFrameRanges
             )
             sortClips(trackIndex: resolvedTrackIndex)
             pruneEmptyTracks()
@@ -233,12 +233,20 @@ extension EditorViewModel {
     }
 
     func registerTimelineSwap(undoState: Timeline, redoState: Timeline, actionName: String) {
+        let opensGroup = undoManager?.groupingLevel == 0
+        if opensGroup { undoManager?.beginUndoGrouping() }
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.timeline = undoState
+            vm.selectedTimelineMarkerIds.formIntersection(undoState.markers.map(\.id))
+            if let preview = vm.timelineMarkerPreview,
+               !undoState.markers.contains(where: { $0.id == preview.id }) {
+                vm.timelineMarkerPreview = nil
+            }
             vm.notifyTimelineChanged()
             vm.registerTimelineSwap(undoState: redoState, redoState: undoState, actionName: actionName)
         }
         undoManager?.setActionName(actionName)
+        if opensGroup { undoManager?.endUndoGrouping() }
     }
 
     /// Run `work` as a single atomic mutation, registering one timeline-swap undo
@@ -340,9 +348,9 @@ extension EditorViewModel {
         }
         modify(&clip)
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
-        // Text renders via CATextLayer overlay — skip the composition path.
+        // Text has no AV source track; only its compositor instructions need refreshing.
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
             return
         }
         if rebuild {
@@ -369,7 +377,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshTextCompositing() }
         if touchedVisual {
             if rebuild {
                 notifyTimelineChangedDebounced()
@@ -384,7 +392,7 @@ extension EditorViewModel {
               let loc = findClip(id: clipId) else { return }
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = original
         if original.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
         } else {
             notifyTimelineChanged()
         }
@@ -447,7 +455,7 @@ extension EditorViewModel {
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
         registerClipPropertySwap(clipId: clipId, undoTarget: before, redoTarget: clip)
         if clip.mediaType == .text {
-            videoEngine?.syncTextLayers()
+            videoEngine?.refreshTextCompositing()
         } else {
             notifyTimelineChanged()
         }
@@ -469,7 +477,7 @@ extension EditorViewModel {
                 touchedVisual = true
             }
         }
-        if touchedText { videoEngine?.syncTextLayers() }
+        if touchedText { videoEngine?.refreshTextCompositing() }
         if touchedVisual { notifyTimelineChanged() }
     }
 
@@ -481,7 +489,7 @@ extension EditorViewModel {
             }
             vm.registerClipPropertySwap(clipId: clipId, undoTarget: redoTarget, redoTarget: undoTarget)
             if undoTarget.mediaType == .text {
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshTextCompositing()
             } else {
                 vm.notifyTimelineChanged()
             }
@@ -618,12 +626,12 @@ extension EditorViewModel {
             !ids.contains($0.key)
         }
 
-        for id in ids { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
-        selectedMediaAssetIds.removeAll()
+        for id in ids.sorted() { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
+        selectedMediaAssetIds.subtract(ids)
+        inspectedObject = selectionInspectedObject
 
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Delete Media")
-            vm.selectedMediaAssetIds.removeAll()
         }
         undoManager?.setActionName("Delete Media")
         if !clipIdsToRemove.isEmpty {

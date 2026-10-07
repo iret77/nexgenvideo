@@ -119,11 +119,8 @@ For any section whose options aren't exhaustive, set `allowsCustom: true` so the
    - `beat` — many short shots (1.5-15 s), on downbeats, maximum
      editing freedom
    - `multicam` — n cameras across the whole song, cut in the timeline
-   - `phrase` — **not yet available**: analysis now produces per-line lyric
-     alignment, but the downstream phrase-mode artifact and gate contract is not implemented. Don't
-     offer it as a choice; if the user asks, explain it's coming and
-     use `section` or `beat` for now. `write_brief` rejects it outright,
-     so this is enforced, not just advised.
+   - `phrase` is not a selectable mode (`write_brief` rejects it). If the user
+     asks for lyric-phrase cutting, say it is planned and use `section` or `beat`.
 4. **Concept type** — narrative | performance | abstract | hybrid
    (allowsCustom for documentary etc.)
 
@@ -208,6 +205,16 @@ explain the affected approvals and use an explicit rewind before rewriting it.
      or for layout-driven / text-in-image-heavy projects).
    - `flash` / cheap-fast — a cheap & fast image model for storyboards
      and bulk drafts without a premium quality requirement.
+
+   When the live catalog offers GPT Image 2.5, present Flare as the default
+   fast route and Sunburst only as the precision option for hero keyframes,
+   strict identity/detail work, or exact edits. Do not select Sunburst merely
+   because it ranks as premium, and do not assume either route exists without
+   `list_models`. The schema-valid values are
+   `fal:fal-ai/gpt-image-2.5/{flare|sunburst}/{text-to-image|edit}`. Store the
+   text route for prompt-only work and the matching edit route when that brief
+   role requires anchors or masks. Tool calls use the exact `id` returned by
+   `list_models`, not the brief's provider namespace prefix.
 
    Output into `brief.yaml`:
    - `hybrid` → `bible_image_model` and `composite_image_model` set
@@ -331,10 +338,12 @@ explain the affected approvals and use an explicit rewind before rewriting it.
     2-3 fitting director patterns from the pack's pattern library. Each
     pattern has referenced templates (director / film / DOP / music
     video) with verifiable sources. In the storyboard, the pattern acts
-    as a compose backbone (framing_mix, section_arc, asl_range,
-    lighting_signature, camera_vocabulary). The sanity check
-    `PATTERN_DRIFT` (warn) mirrors the real framing distribution against
-    the pattern.
+    as a compose backbone (`framing_mix`, `section_arc`, `asl_range`,
+    `camera`, `lighting`, `color`, and `craft_signature`). Every operative
+    value says whether it is measured, documented, or inferred; preserve that
+    distinction when presenting it. The sanity check
+    `PATTERN_DRIFT` (warn) mirrors the real framing distribution and
+    average shot length against the pattern.
 
     a) **Read the affect first, then generate suggestions.** Before
        `suggest_patterns`, determine the track's emotional register

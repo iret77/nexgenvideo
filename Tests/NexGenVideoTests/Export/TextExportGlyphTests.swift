@@ -3,10 +3,7 @@ import Foundation
 import Testing
 @testable import NexGenVideo
 
-/// Regression: text GLYPHS (not just layer background fills) must render in exports.
-/// The export layer tree is never attached to a display cycle, so CATextLayer backing
-/// stores stay empty unless buildForExport forces display — background colors composite
-/// regardless, which masked this in background-fill-based tests.
+// Background fills alone cannot prove that offscreen text glyphs rasterize.
 @Suite("Export — text glyph rendering")
 @MainActor
 struct TextExportGlyphTests {

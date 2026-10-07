@@ -260,10 +260,10 @@ extension ToolExecutor {
         let brief = try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile)
         let briefJSON = (try? JSONEncoder().encode(brief)) ?? Data()
         var options: [String: Any] = [:]
-        if let bpm = args["perceived_bpm"] as? Double { options["perceived_bpm"] = bpm }
+        if let bpm = args.double("perceived_bpm") { options["perceived_bpm"] = bpm }
         if let mode = args["match_mode"] as? String { options["match_mode"] = mode }
         if let excluded = args["excluded_pattern_ids"] as? [String] { options["excluded_pattern_ids"] = excluded }
-        if let top = args["top"] as? Int { options["max_results"] = top }
+        if let top = args.int("top") { options["max_results"] = top }
         // #214: forward the recorded affect detection/override so the affect axis comes from audio +
         // lyrics, not the brief tone-tag map. Pure passthrough — the host never interprets the affect
         // vocabulary (a pack concern); it hands the pack the bytes it wrote. Absent → assembler falls back.
@@ -336,6 +336,34 @@ extension ToolExecutor {
         ])
     }
 
+    /// Engine contract of the pack code that will read this project's brief. A pack compiled into
+    /// the host (tests, development) is built from this tree; a loaded bundle declares its own.
+    func residentPackEngineContract(_ editor: EditorViewModel, dataRoot: URL) throws -> Int {
+        guard let binding = try mutationPackDeclaration(editor, dataRoot: dataRoot).binding else {
+            return EngineContract.current
+        }
+        guard PluginLoader.isResident(binding.id) else { return EngineContract.current }
+        guard let record = PluginLoader.residentRecordsForInventory().first(where: { $0.id == binding.id }),
+              let info = PluginBundleInfo(bundleURL: record.bundleURL) else {
+            return 0
+        }
+        return info.engineContract
+    }
+
+    nonisolated static func briefModelContractViolation(
+        key: String,
+        value: Any,
+        packContract: Int
+    ) -> String? {
+        guard ["frame_image_model", "bible_image_model", "composite_image_model"].contains(key),
+              let raw = value as? String,
+              let model = FrameImageModel(rawValue: raw),
+              model.minimumEngineContract > packContract else { return nil }
+        return "brief rejected — field `\(key)`: `\(raw)` needs a format pack built for engine contract "
+            + "\(model.minimumEngineContract); this project's pack was built for contract \(packContract). "
+            + "Choose another model. Nothing was written; fix and re-call."
+    }
+
     /// #247 — write `brief.yaml` through the real engine `Brief` decoder + `validate()`, not freeform
     /// YAML. The agent supplies the brief fields (validated against `BriefWriteContract`); the host
     /// injects the server-owned fields, decodes `Brief.self` (which enforces every enum + validation
@@ -347,8 +375,16 @@ extension ToolExecutor {
         try validateUnknownKeys(args, allowed: BriefWriteContract.allowedKeys.union(["project_dir"]), path: "write_brief")
 
         var payload: [String: Any] = [:]
+        let packContract = try residentPackEngineContract(editor, dataRoot: root)
         for field in BriefWriteContract.fields where args[field.key] != nil {
             if let violation = briefEnumViolation(field, value: args[field.key]!) { throw ToolError(violation) }
+            if let violation = Self.briefModelContractViolation(
+                key: field.key,
+                value: args[field.key]!,
+                packContract: packContract
+            ) {
+                throw ToolError(violation)
+            }
             payload[field.key] = args[field.key]
         }
         payload["schema"] = briefSchemaVersion
@@ -554,7 +590,7 @@ extension ToolExecutor {
                 declaredBinding: declaration.binding
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
         let extraDirs = PackCatalog.projectDirs(activePack: editor.activePluginName)
         do {
@@ -639,6 +675,23 @@ extension ToolExecutor {
         }
     }
 
+    private static func requirePhaseOwnedCopyDestination(
+        _ relativePath: String,
+        currentPhase: String?
+    ) throws {
+        guard let currentPhase else { return }
+        let destinationPhase = relativePath.hasPrefix("production_design/")
+            ? "production_design"
+            : "bible"
+        guard destinationPhase == currentPhase else {
+            throw ToolError(
+                "copy_project_file cannot stage a \(PhaseDisplay.label(destinationPhase)) asset "
+                    + "during \(PhaseDisplay.label(currentPhase)). Leave the source in import/ "
+                    + "until \(PhaseDisplay.label(destinationPhase)) is the current phase."
+            )
+        }
+    }
+
     func listProjectFilesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let subdir = try args.requireString("subdir")
@@ -652,7 +705,11 @@ extension ToolExecutor {
         return try jsonResult(["subdir": subdir, "files": files])
     }
 
-    func copyProjectFileTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func copyProjectFileTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        currentPhase: String? = nil
+    ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let fromRel = args.string("from")
         let mediaID = args.string("media")
@@ -661,12 +718,37 @@ extension ToolExecutor {
         }
         let toRel = try args.requireString("to")
         try Self.requirePipelineAssetCopyPath(toRel, source: false)
+        try Self.requirePhaseOwnedCopyDestination(
+            toRel,
+            currentPhase: currentPhase
+        )
         if let fromRel {
             try Self.requirePipelineAssetCopyPath(fromRel, source: true)
         }
         let to = try Self.resolveInside(root, toRel)
         let sourceAsset = try mediaID.map {
             try asset($0, editor: editor)
+        }
+        let isProductionDesignDestination = toRel.hasPrefix("production_design/")
+        if isProductionDesignDestination, let fromRel {
+            let confirmedIdentity = try ConfirmedIdentityAssetStoreV1.currentEntry(
+                fromRel,
+                dataRoot: root
+            )
+            if confirmedIdentity != nil {
+                throw ToolError(
+                    "Prepared character and location references are reserved for Bible identity."
+                )
+            }
+        }
+        if isProductionDesignDestination,
+           let sourceAsset,
+           let assignedRole = editor.mediaManifest.intakeRoleByAssetID[sourceAsset.id],
+           assignedRole != "style" {
+            throw ToolError(
+                "Media '\(sourceAsset.name)' is assigned as \(assignedRole), not style. "
+                    + "Use the matching prepared asset in Bible."
+            )
         }
         let from: URL
         if let sourceAsset {
@@ -694,27 +776,8 @@ extension ToolExecutor {
                 throw ToolError("Source not found or not a regular file: '\(fromRel!)'.")
             }
         }
-        do {
-            try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if from.standardizedFileURL != to.standardizedFileURL {
-                if FileManager.default.fileExists(atPath: to.path) { try FileManager.default.removeItem(at: to) }
-                try FileManager.default.copyItem(at: from, to: to)
-            }
-        } catch {
-            throw ToolError(
-                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
-                    + error.localizedDescription
-            )
-        }
-        let proofRecorded = try updatePipelineAssetProof(
-            sourceAsset: sourceAsset,
-            sourceRelativePath: fromRel,
-            destinationRelativePath: toRel,
-            destinationURL: to,
-            dataRoot: root
-        )
-        let confirmedIdentityProvenance = if let fromRel {
-            try ConfirmedIdentityAssetStoreV1.adopt(
+        let carriesConfirmedIdentity = if let fromRel {
+            try ConfirmedIdentityAssetStoreV1.prepareAdoption(
                 from: fromRel,
                 to: toRel,
                 dataRoot: root
@@ -722,12 +785,138 @@ extension ToolExecutor {
         } else {
             false
         }
+        if carriesConfirmedIdentity {
+            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+            try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(
+                declaration.binding
+            )
+        }
+        let scope = toRel.hasPrefix("production_design/")
+            ? "production_design"
+            : "bible"
+        var transactionPaths = [
+            to,
+            PipelineLayout.url(
+                PipelineLayout.assetProofFile(scope: scope),
+                in: root
+            ),
+        ]
+        if scope == "bible" {
+            transactionPaths.append(PipelineLayout.url(
+                PipelineLayout.confirmedIdentityAdoptionsFile,
+                in: root
+            ))
+        }
+        var proofRecorded = false
+        var confirmedIdentityProvenance = false
+        do {
+            try ArtifactTransaction.perform(
+                paths: transactionPaths,
+                dataRoot: root
+            ) {
+                try FileManager.default.createDirectory(
+                    at: to.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if from.standardizedFileURL != to.standardizedFileURL {
+                    if FileManager.default.fileExists(atPath: to.path) {
+                        try FileManager.default.removeItem(at: to)
+                    }
+                    try FileManager.default.copyItem(at: from, to: to)
+                }
+                proofRecorded = try updatePipelineAssetProof(
+                    sourceAsset: sourceAsset,
+                    sourceRelativePath: fromRel,
+                    destinationRelativePath: toRel,
+                    destinationURL: to,
+                    dataRoot: root
+                )
+                if carriesConfirmedIdentity, let fromRel {
+                    confirmedIdentityProvenance = try ConfirmedIdentityAssetStoreV1
+                        .adopt(
+                            from: fromRel,
+                            to: toRel,
+                            dataRoot: root
+                        )
+                    guard confirmedIdentityProvenance else {
+                        throw ToolError(
+                            "The staged Bible reference no longer matches its confirmed source."
+                        )
+                    }
+                } else if scope == "bible" {
+                    _ = try ConfirmedIdentityAssetStoreV1.removeAdoption(
+                        at: toRel,
+                        dataRoot: root
+                    )
+                }
+            }
+        } catch {
+            throw ToolError(
+                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
+                    + error.localizedDescription
+            )
+        }
         return try jsonResult([
             "from": fromRel.map { $0 as Any } ?? NSNull(),
             "media": mediaID.map { $0 as Any } ?? NSNull(),
             "to": toRel,
             "generated_provenance": proofRecorded,
             "confirmed_identity_provenance": confirmedIdentityProvenance,
+        ])
+    }
+
+    func recoverConfirmedIdentityProvenanceTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any]
+    ) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(
+            declaration.binding
+        )
+        guard let status = ConfirmedIdentityProvenanceRecovery.status(
+            dataRoot: root
+        ) else {
+            throw ToolError(
+                "No legacy confirmed-identity provenance needs recovery."
+            )
+        }
+        guard status.eligible else {
+            throw ToolError(
+                status.blocker
+                    ?? "Confirmed-identity provenance is not recoverable."
+            )
+        }
+        let mutationID = try reservePipelineMutation(
+            label: "Recover identity-reference provenance",
+            dataRoot: root,
+            editor: editor
+        )
+        defer {
+            editor.pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: root,
+                id: mutationID
+            )
+        }
+        _ = try ProjectPackGate.requireLiveMutation(
+            projectURL: FrameInventory.projectHome(of: root),
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding
+        )
+        guard let result = try ConfirmedIdentityAssetStoreV1
+            .recoverLegacyAdoptions(dataRoot: root) else {
+            throw ToolError(
+                "No legacy confirmed-identity provenance needs recovery."
+            )
+        }
+        return try jsonResult([
+            "recovered_targets": result.recoveredTargets,
+            "discarded_non_bible_targets": result.discardedNonBibleTargets,
+            "discarded_stale_targets": result.discardedStaleTargets,
+            "legacy_manifest_sha256": result.legacyManifestSHA256,
+            "recovered_manifest_sha256": result.recoveredManifestSHA256,
+            "receipt_id": result.receiptID,
+            "gates_changed": false,
         ])
     }
 
@@ -841,7 +1030,10 @@ extension ToolExecutor {
     func approveGateTool(
         _ editor: EditorViewModel,
         _ args: [String: Any],
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        hostStateID: UUID = UUID(),
+        hostTurnReference: AgentHostTurnReference? = nil
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -865,7 +1057,10 @@ extension ToolExecutor {
                 dataRoot: root,
                 action: .approve,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                sourceToolUseID: toolUseID,
+                sourceHostStateID: hostStateID,
+                sourceHostTurnReference: hostTurnReference
             ),
             origin: origin
         )
@@ -875,7 +1070,10 @@ extension ToolExecutor {
     func setGateStateTool(
         _ editor: EditorViewModel,
         _ args: [String: Any],
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        toolUseID: String? = nil,
+        hostStateID: UUID = UUID(),
+        hostTurnReference: AgentHostTurnReference? = nil
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
@@ -914,7 +1112,7 @@ extension ToolExecutor {
                 declaredBinding: declaredBinding
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
         let resolvedPack = declaredPack
         // Approving states defer their write to the durable user card.
@@ -933,7 +1131,11 @@ extension ToolExecutor {
                     dataRoot: root,
                     action: .setState(state),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    sourceToolName: ToolName.setGateState.rawValue,
+                    sourceToolUseID: toolUseID,
+                    sourceHostStateID: hostStateID,
+                    sourceHostTurnReference: hostTurnReference
                 ),
                 origin: origin
             )
@@ -951,7 +1153,11 @@ extension ToolExecutor {
             )
         }
         if let key = editor.openWorkingCopyKey {
-            try ProjectWorkingCopy.markDirty(key: key)
+            do {
+                try ProjectWorkingCopy.markDirty(key: key)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reopenProject)
+            }
         }
         let gates = try mutateGates(
             dataRoot: root,
@@ -1003,9 +1209,20 @@ extension ToolExecutor {
 
     /// Revalidates and commits a durable approval after the user acts.
     func commitGateApproval(_ approval: GateApproval) async throws -> String {
-        guard let editor else { throw ToolError("Editor not available") }
+        guard let editor else {
+            throw ToolError("Editor not available", kind: .hostBusy)
+        }
         guard let root = approval.dataRoot else {
-            throw ToolError("The approval request no longer identifies its project data root.")
+            throw ToolError(
+                "The approval request no longer identifies its project data root.",
+                kind: .reopenProject
+            )
+        }
+        guard FileManager.default.fileExists(atPath: root.path) else {
+            throw ToolError(
+                "The project is no longer available. Reopen it, then approve again.",
+                kind: .reopenProject
+            )
         }
         let mutationID = try reservePipelineMutation(
             label: "Approve \(approval.phase)",
@@ -1025,7 +1242,8 @@ extension ToolExecutor {
         guard currentDeclaration.packName == approval.declaredPack,
               currentDeclaration.binding == approval.declaredBinding else {
             throw ToolError(
-                "The project format changed while this approval was open. Review it again."
+                "The project format changed while this approval was open. Review it again.",
+                kind: .reviewChangedSource
             )
         }
         do {
@@ -1037,7 +1255,8 @@ extension ToolExecutor {
         } catch {
             throw ToolError(
                 "The project format changed while this approval was open: "
-                    + error.localizedDescription
+                    + error.localizedDescription,
+                kind: .reopenProject
             )
         }
         try await enforceGateRequirement(
@@ -1046,27 +1265,39 @@ extension ToolExecutor {
             declaredPack: approval.declaredPack,
             declaredBinding: approval.declaredBinding,
             editor: editor,
-            mutationID: mutationID
+            mutationID: mutationID,
+            failureKind: .approvalStructure
         )
         if let key = editor.openWorkingCopyKey {
-            try ProjectWorkingCopy.markDirty(key: key)
-        }
-        let gates = try mutateGates(
-            dataRoot: root,
-            declaredPack: approval.declaredPack,
-            declaredBinding: approval.declaredBinding
-        ) { gates in
-            switch approval.action {
-            case .approve:
-                GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
-            case .setState(let state):
-                GatesOperations.setState(
-                    &gates,
-                    phase: approval.phase,
-                    state: state,
-                    notes: approval.notes
-                )
+            do {
+                try ProjectWorkingCopy.markDirty(key: key)
+            } catch {
+                throw ToolError(error.localizedDescription, kind: .reopenProject)
             }
+        }
+        let gates: Gates
+        do {
+            gates = try mutateGates(
+                dataRoot: root,
+                declaredPack: approval.declaredPack,
+                declaredBinding: approval.declaredBinding
+            ) { gates in
+                switch approval.action {
+                case .approve:
+                    GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
+                case .setState(let state):
+                    GatesOperations.setState(
+                        &gates,
+                        phase: approval.phase,
+                        state: state,
+                        notes: approval.notes
+                    )
+                }
+            }
+        } catch let error as ToolError {
+            throw ToolError(error.message, kind: .approvalStructure)
+        } catch {
+            throw ToolError(error.localizedDescription, kind: .approvalStructure)
         }
         editor.onPipelineChanged?()
         let gate = gates.get(approval.phase)
@@ -1080,7 +1311,10 @@ extension ToolExecutor {
             "approved_by": gate.approvedBy.map { $0 as Any } ?? NSNull(),
             "notes": gate.notes.map { $0 as Any } ?? NSNull(),
         ]) else {
-            throw ToolError("The updated gate could not be encoded.")
+            throw ToolError(
+                "The updated gate could not be encoded.",
+                kind: .approvalStructure
+            )
         }
         return payload
     }
@@ -1092,7 +1326,8 @@ extension ToolExecutor {
         declaredPack: String?,
         declaredBinding: ProjectPackBinding?,
         editor: EditorViewModel,
-        mutationID: UUID? = nil
+        mutationID: UUID? = nil,
+        failureKind: ToolFailureKind = .agentCorrection
     ) async throws {
         do {
             try await NativeGateWriter.requireApprovalReady(
@@ -1104,7 +1339,7 @@ extension ToolExecutor {
                 mutationID: mutationID
             )
         } catch {
-            throw ToolError(error.localizedDescription)
+            throw ToolError(error.localizedDescription, kind: failureKind)
         }
     }
 
@@ -3286,7 +3521,7 @@ extension ToolExecutor {
                     PipelineAssemblyStore.DriftAction(rawValue: $0)
                 }
                 if action == .adopt {
-                    let finished = try PipelineDeliveryStore.adoptCurrentTimeline(
+                    let finished = try await PipelineDeliveryStore.adoptCurrentTimeline(
                         editor: editor,
                         requireSequenceReview: false
                     )
@@ -4747,7 +4982,10 @@ extension ToolExecutor {
         summary["downbeats"] = downbeats.map(ms)
         summary["sections"] = (obj["sections"] as? [[String: Any]] ?? []).map { s -> [String: Any] in
             var out: [String: Any] = [:]
-            if let i = (s["index"] as? NSNumber)?.intValue { out["index"] = i }
+            if let value = s["index"],
+               let index = ToolIntegerArgument.exact(value) {
+                out["index"] = index
+            }
             if let start = number(s["start"]) { out["start"] = ms(start) }
             if let end = number(s["end"]) { out["end"] = ms(end) }
             out["label"] = (s["label"] as? String).map { $0 as Any } ?? NSNull()

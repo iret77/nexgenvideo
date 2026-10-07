@@ -4,10 +4,34 @@ import Foundation
 extension ToolExecutor {
     private static let addCaptionsAllowedKeys: Set<String> = [
         "clipIds", "fontName", "fontSize", "color", "centerX", "centerY", "textCase", "censorProfanity", "language",
+        "subtitleMediaRef",
     ]
 
     func addCaptions(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         try validateUnknownKeys(args, allowed: Self.addCaptionsAllowedKeys, path: "add_captions")
+
+        if args.keys.contains("subtitleMediaRef") {
+            guard let mediaRef = args.string("subtitleMediaRef"), !mediaRef.isEmpty else {
+                throw ToolError("add_captions: subtitleMediaRef must be a non-empty media asset id string.")
+            }
+            let combined = Set(args.keys).subtracting(["subtitleMediaRef"])
+            guard combined.isEmpty else {
+                throw ToolError(
+                    "add_captions: subtitleMediaRef can't be combined with \(combined.sorted().joined(separator: ", "))."
+                )
+            }
+            let asset = try asset(mediaRef, editor: editor)
+            guard asset.type == .subtitle else {
+                throw ToolError("add_captions: '\(mediaRef)' is \(asset.type.rawValue), not a caption file.")
+            }
+            do {
+                let ids = try await editor.placeCaptions(fromSubtitleAssets: [asset])
+                guard !ids.isEmpty else { throw ToolError("The caption file contains no cues.") }
+                return .ok("Added \(ids.count) caption\(ids.count == 1 ? "" : "s") from '\(asset.userFacingFilename)'.")
+            } catch let error as SubtitleFileParser.ParseError {
+                throw ToolError("add_captions: \(error.localizedDescription)")
+            }
+        }
 
         let clipIds = (args["clipIds"] as? [Any])?.compactMap { $0 as? String } ?? []
 

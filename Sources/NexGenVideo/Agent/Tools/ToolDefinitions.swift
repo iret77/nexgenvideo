@@ -4,16 +4,20 @@ import NexGenEngine
 
 enum ToolName: String, CaseIterable, Sendable {
     case getTimeline = "get_timeline"
+    case manageMarkers = "manage_markers"
     case getProductionKnowledge = "get_production_knowledge"
     case getMedia = "get_media"
     case addClips = "add_clips"
     case insertClips = "insert_clips"
     case removeClips = "remove_clips"
     case removeTracks = "remove_tracks"
+    case reorderTrack = "reorder_track"
     case moveClips = "move_clips"
     case setClipProperties = "set_clip_properties"
     case setKeyframes = "set_keyframes"
     case splitClip = "split_clip"
+    case rippleTrim = "ripple_trim"
+    case slipClip = "slip_clip"
     case rippleDeleteRanges = "ripple_delete_ranges"
     case removeWords = "remove_words"
     case syncAudio = "sync_audio"
@@ -81,6 +85,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case runProviderTool = "run_provider_tool"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
+    case recoverConfirmedIdentityProvenance =
+        "recover_confirmed_identity_provenance"
     case writeAnalysisInterpretation = "write_analysis_interpretation"
     case writeBrief = "write_brief"
     case writeProductionDesign = "write_production_design"
@@ -98,6 +104,7 @@ enum ToolName: String, CaseIterable, Sendable {
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
+             .recoverConfirmedIdentityProvenance,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
              .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
@@ -149,6 +156,17 @@ enum ToolName: String, CaseIterable, Sendable {
         }
     }
 
+    var isCanonicalArtifactWriter: Bool {
+        switch self {
+        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+             .writePhaseExtension:
+            true
+        default:
+            false
+        }
+    }
+
     func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
         guard isDurableWrite else { return false }
         switch self {
@@ -189,7 +207,7 @@ struct AgentTool: @unchecked Sendable {
 enum ToolDefinitions {
     static let all: [AgentTool] = base + [
         AgentTool(name: .prepareGenerationBatch,
-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, the review opens with approval unavailable and offers pricing retry or an explicit route change for the affected items; never describe it as ready to approve. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
             inputSchema: objectSchema(properties: [
                 "requestID": ["type": "string"],
                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
@@ -214,7 +232,7 @@ enum ToolDefinitions {
                     "operation": ["type": "string", "enum": ["search", "read", "recommend_style"]],
                     "query": ["type": "string", "description": "Search words or a library ID; empty lists the index."],
                     "entryID": ["type": "string", "description": "Exact library/entry ID from search; required for read."],
-                    "offset": ["type": "integer", "minimum": 0, "description": "Index offset for search pagination."],
+                    "offset": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Index offset for search pagination."],
                     "genre": ["type": "string", "description": "Known genre or format signal for recommend_style."],
                     "named_styles": ["type": "array", "items": ["type": "string"], "description": "Explicitly named directors, DoPs, or a documented alias for recommend_style."],
                     "moods": ["type": "array", "items": ["type": "string"], "description": "Feel or tone words for recommend_style."],
@@ -225,17 +243,23 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getTimeline,
-            description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), track list with types and order, and all clips with their frames and properties. The clipId/trackId values here are what every other tool accepts.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media).\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",
+            description: "Always call at the start of a session. Returns project settings (fps, resolution, totalFrames), persistent project markers, track list with types and order, and all clips with their frames and properties. markerId/clipId/trackId values are stable references accepted by mutation tools. Windowed reads return markers intersecting the same half-open frame range.\n\nClip and track fields equal to their defaults are omitted: mediaType 'video', sourceClipType = mediaType, speed 1, volume 1, opacity 1, visual blendMode 'normal', trims/fades 0, identity transform/crop, default textStyle, track muted/hidden false. Text clips never report trims (no source media). blendMode applies only to visual clips (video, image, Lottie, text); nonvisual clips omit it. Unsupported preserved project settings report blendMode 'normal' with blendModeUnsupported true. blendModeContract lists the supported version and modes.\n\nCaption clips (sharing a captionGroupId) come back per track as captionGroups instead of clips entries: properties common to the group are hoisted into 'shared' and each clip is a [clipId, startFrame, durationFrames, text] row (caption box width/height are auto-fit per text and omitted). Rows are capped at 200 per group — when clipCount exceeds the rows shown, page with startFrame/endFrame. Caption clips whose properties deviate from the group appear individually in clips.",
+
             inputSchema: objectSchema(
                 properties: [
-                    "startFrame": ["type": "integer", "description": "Optional. Window start (inclusive); only clips intersecting [startFrame, endFrame) are returned. Tracks report totalClips when the window hides some."],
-                    "endFrame": ["type": "integer", "description": "Optional. Window end (exclusive)."],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Window start (inclusive); only clips intersecting [startFrame, endFrame) are returned. Tracks report totalClips when the window hides some."],
+                    "endFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Window end (exclusive)."],
                 ]
             )
         ),
         AgentTool(
+            name: .manageMarkers,
+            description: "Create, update, or delete one persistent timeline marker as one atomic undoable edit. Times are project frames; durationFrames=0 is a point and positive duration is [startFrame,endFrame). Use type=none or color=automatic to clear optional metadata. Markers annotate review, shot, chapter, cue, or general notes; they never replace canonical pipeline artifacts or approvals.",
+            inputSchema: markerSchema
+        ),
+        AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
+            description: "Present a native structured dialog in the current task interaction dock for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Write every option from the user's point of view: first person always means the user, different actors must be named, and each outcome must be clear without its icon (for example, 'Create sequences for me' versus 'I'll provide sequences'). Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. When the decision is between concrete image assets, call get_media and give every option its exact mediaRef plus a descriptive shortLabel; the card shows clickable thumbnails and the library filename, so never use bare labels such as v1/v2. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -250,8 +274,10 @@ enum ToolDefinitions {
                             "analysis_interpretation_review",
                             "analysis_track_replacement",
                             "treatment_path",
+                            "storyboard_mode",
+                            "storyboard_input",
                         ],
-                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions and for the initial Treatment path choice.",
+                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions, the initial Treatment path choice, the initial Storyboard creation-mode choice, and the single Storyboard text intake after user_supplied.",
                     ],
                     "textField": [
                         "type": "object",
@@ -275,6 +301,7 @@ enum ToolDefinitions {
                     ],
                     "sections": [
                         "type": "array",
+                        "maxItems": AgentDialog.maxSections,
                         "description": "At most 3 focused sections (more is rejected \u{2014} split into separate dialogs).",
                         "items": [
                             "type": "object",
@@ -289,20 +316,28 @@ enum ToolDefinitions {
                                 "defaultOn": ["type": "boolean", "description": "toggle sections only"],
                                 "options": [
                                     "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": AgentDialog.maxOptionsPerSection,
                                     "items": [
                                         "type": "object",
                                         "additionalProperties": false,
                                         "properties": [
                                             "id": ["type": "string"],
-                                            "label": ["type": "string", "description": "Full option meaning. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
+                                            "label": ["type": "string", "description": "Full option meaning, written from the user's point of view. First person always means the user; name any other actor. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
                                             "shortLabel": [
                                                 "type": "string",
                                                 "maxLength": AgentDialog.maxChoiceDisplayLength,
                                                 "description": "Concise chip title without explanatory copy, e.g. 'Phrase'. Maximum \(AgentDialog.maxChoiceDisplayLength) characters.",
                                             ],
-                                            "symbol": ["type": "string", "description": "SF Symbol per option"],
+                                            "symbol": ["type": "string", "description": "SF Symbol for a non-media option."],
+                                            "mediaRef": [
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "description": "Exact image asset ID from get_media. If one option has mediaRef, every option in the section must have a distinct image mediaRef; the card renders selectable thumbnails with persistent filenames.",
+                                            ],
                                             "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
+                                        "required": ["label"],
                                     ],
                                 ],
                             ],
@@ -322,8 +357,8 @@ enum ToolDefinitions {
                                     "properties": [
                                         "id": ["type": "string", "description": "Stable id; a choices option points at it via rangeRef."],
                                         "label": ["type": "string", "description": "Short label drawn as a chip at the range start."],
-                                        "startFrame": ["type": "integer", "description": "Range start (project frames, inclusive)."],
-                                        "endFrame": ["type": "integer", "description": "Range end (project frames, exclusive; must be > startFrame)."],
+                                        "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Range start (project frames, inclusive)."],
+                                        "endFrame": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Range end (project frames, exclusive; must be > startFrame)."],
                                     ],
                                     "required": ["startFrame", "endFrame"],
                                 ],
@@ -377,16 +412,17 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .inspectMedia,
-            description: "Look at a media asset before referencing or editing it. Images: the image plus dimensions and EXIF. Video: sample frames plus a transcription of the audio track. Audio: transcription. Lottie: frames sampled evenly across the animation (over gray), plus framerate and duration — use this to verify a Lottie you wrote looks and moves right. Transcription is sentence-level segments — [text, start, end] tuples, capped at 400 — in source seconds, or project frames when clipId is set. When capped, pass the returned nextStartSeconds as startSeconds for the next page.\n\nLong media: pass overview=true for a one-image storyboard, read the segments, then re-call with startSeconds/endSeconds to zoom — windowed calls only transcribe that span, so they are fast.",
+            description: "Look at a media asset before referencing or editing it. Images: the image plus dimensions and EXIF. Video: sample frames plus a transcription of the audio track. Audio: transcription. Lottie: frames sampled evenly across the animation (over gray), plus framerate and duration — use this to verify a Lottie you wrote looks and moves right. Set coordinateGrid=true on image, video-frame, or Lottie inspection to overlay a labeled 0–1 grid without changing the asset. Its display-oriented source space and top-left origin exactly match set_clip_properties.crop: a visible box [x0, y0]–[x1, y1] maps to left=x0, top=y0, right=1−x1, bottom=1−y1. The grid is unavailable on overview storyboards because every tile has its own source space. Transcription is sentence-level segments — [text, start, end] tuples, capped at 400 — in source seconds, or project frames when clipId is set. When capped, pass the returned nextStartSeconds as startSeconds for the next page.\n\nLong media: pass overview=true for a one-image storyboard, read the segments, then re-call with startSeconds/endSeconds and coordinateGrid=true to zoom — windowed calls only transcribe that span, so they are fast.",
             inputSchema: objectSchema(
                 properties: [
                     "mediaRef": ["type": "string", "description": "Asset ID from get_media."],
                     "clipId": ["type": "string", "description": "Optional. A clip referencing this mediaRef; transcript times come back as project frames for that clip (out-of-range entries dropped)."],
-                    "maxFrames": ["type": "integer", "description": "Video and Lottie. Sample frame count (default 6, max 12)."],
-                    "startSeconds": ["type": "number", "description": "Video/audio. Source-time window start; scopes frames and transcription."],
-                    "endSeconds": ["type": "number", "description": "Video/audio. Window end (default: asset duration)."],
+                    "maxFrames": ["type": "integer", "minimum": 1, "maximum": 12, "description": "Video and Lottie. Sample frame count (default 6, max 12)."],
+                    "startSeconds": ["type": "number", "minimum": 0, "maximum": Double(ToolIntegerArgument.maximumFrame), "description": "Video/audio. Source-time window start; scopes frames and transcription."],
+                    "endSeconds": ["type": "number", "minimum": 0, "maximum": Double(ToolIntegerArgument.maximumFrame), "description": "Video/audio. Window end (default: asset duration)."],
                     "wordTimestamps": ["type": "boolean", "description": "Video/audio. Add word-level [text, start, end] tuples (capped at 10000 — most clips return all words at once; narrow with startSeconds/endSeconds only for very long media). Use for word-boundary edits like filler-word removal."],
                     "overview": ["type": "boolean", "description": "Video only. One storyboard grid of visually distinct, timestamped moments instead of frames — far more coverage per token; few tiles means static footage. maxFrames ignored."],
+                    "coordinateGrid": ["type": "boolean", "description": "Optional, default false. Overlay a labeled 0–1 grid in display-oriented source coordinates, origin top-left. Image/video/Lottie frames only; incompatible with overview."],
                 ],
                 required: ["mediaRef"]
             )
@@ -396,8 +432,8 @@ enum ToolDefinitions {
             description: "Returns the spoken transcript of the CURRENT timeline in project frames — the post-edit caption track in one call. Unlike inspect_media (which transcribes one source asset in isolation, in source seconds), this walks every audio/video clip on the timeline, maps each word through that clip's trim/speed/position, and concatenates in timeline order. Deleted ranges are gone by construction, so after cuts this always reflects what's actually audible — no stale results, no per-clip frame math.\n\nReturns clips in timeline order, each with its words nested as compact [index, text, startFrame, endFrame] rows (the field order is given once in wordFormat) — clipId and trackIndex are stated once per clip, not repeated per word. The index is a stable, global, 0-based position in timeline order; pass it straight to remove_words to cut that word (the intuitive path for text-based editing). Words are monotonic and non-overlapping; each is attributed to one clip, so a word split across a clip seam is emitted once. Indices stay global even when scoped with clipId or paged with a window. Capped at 10000 words total; page with startFrame/endFrame using nextStartFrame. Pass clipId to scope to a single clip (\"what does this clip say?\"). Transcription runs on-device.\n\nUse for transcript-driven edits (filler-word / dead-air removal, locating a quote, take selection) and to verify what remains after cutting. To cut, prefer remove_words (give it the indices); drop to ripple_delete_ranges only for non-word-aligned spans.",
             inputSchema: objectSchema(
                 properties: [
-                    "startFrame": ["type": "integer", "description": "Optional. Only return words ending after this project frame. Use with the returned nextStartFrame to page a long timeline."],
-                    "endFrame": ["type": "integer", "description": "Optional. Only return words starting before this project frame."],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Only return words ending after this project frame. Use with the returned nextStartFrame to page a long timeline."],
+                    "endFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Only return words starting before this project frame."],
                     "clipId": ["type": "string", "description": "Scope the transcript to a single clip — returns only what that clip says, in project frames. Answers \"what's in clip X?\" without scanning the whole timeline."],
                     "wordTimestamps": ["type": "boolean", "description": "Compatibility input accepted from inspect_media-style calls. Timeline transcripts always return word timestamps."],
                 ]
@@ -405,12 +441,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .inspectTimeline,
-            description: "See the composited timeline — what the user actually sees in the preview at a given frame: all video tracks stacked with their transforms, opacity, crop, and keyframes applied, plus text and caption overlays baked in. Use this to verify your edits landed (a PIP's position, a title's placement, layer order) — inspect_media shows the raw source asset, not the cut.\n\nFrames are project frames (from get_timeline). Pass a single startFrame for one composited frame; add endFrame to sample maxFrames evenly across [startFrame, endFrame) for a transition or sequence. Frames past content render black. Returns frames downscaled for token efficiency, with the frameNumbers sampled.",
+            description: "See the composited timeline — what the user actually sees in the preview at a given frame: all video tracks stacked with their transforms, opacity, crop, and keyframes applied, with text and captions in the same per-clip blend pipeline. Use this to verify your edits landed (a PIP's position, a title's placement, layer order). For source-crop coordinates, use inspect_media with coordinateGrid=true: timeline frames are canvas space after crop and transform, so a canvas grid would not be the crop contract.\n\nFrames are project frames (from get_timeline). Pass a single startFrame for one composited frame; add endFrame to sample maxFrames evenly across [startFrame, endFrame) for a transition or sequence. Frames past content render black. Returns frames downscaled for token efficiency, with the frameNumbers sampled.",
             inputSchema: objectSchema(
                 properties: [
-                    "startFrame": ["type": "integer", "description": "Project frame to render (default 0). With no endFrame, a single frame is returned."],
-                    "endFrame": ["type": "integer", "description": "Optional. Sample maxFrames evenly across [startFrame, endFrame) instead of one frame."],
-                    "maxFrames": ["type": "integer", "description": "Frames to sample when endFrame is set (default 6, max 12)."],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Project frame to render (default 0). With no endFrame, a single frame is returned."],
+                    "endFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Sample maxFrames evenly across [startFrame, endFrame) instead of one frame."],
+                    "maxFrames": ["type": "integer", "minimum": 1, "maximum": 12, "description": "Frames to sample when endFrame is set (default 6, max 12)."],
                 ]
             )
         ),
@@ -422,7 +458,7 @@ enum ToolDefinitions {
                     "query": ["type": "string", "description": "What to find. Visual: a caption-style scene description. Spoken: the words to match."],
                     "scope": ["type": "string", "enum": ["visual", "spoken", "both"], "description": "Optional. Default both."],
                     "mediaRef": ["type": "string", "description": "Optional. Restrict the search to one asset from get_media."],
-                    "limit": ["type": "integer", "description": "Optional. Max hits per group (default 10, max 50)."],
+                    "limit": ["type": "integer", "minimum": 1, "maximum": 50, "description": "Optional. Max hits per group (default 10, max 50)."],
                 ],
                 required: ["query"]
             )
@@ -440,11 +476,11 @@ enum ToolDefinitions {
                             "additionalProperties": false,
                             "properties": [
                                 "mediaRef": ["type": "string", "description": "ID of the media asset from get_media"],
-                                "trackIndex": ["type": "integer", "description": "Optional. Track index (0-based). Omit on every entry to auto-create one shared track per asset zone (video/audio)."],
-                                "startFrame": ["type": "integer", "description": "Timeline frame position to place the clip (project frames)."],
-                                "durationFrames": ["type": "integer", "description": "Clip length on the timeline, in project frames."],
-                                "trimStartFrame": ["type": "integer", "description": "Optional. Frames skipped from the START of the source media before the clip begins — a SOURCE offset, NOT a timeline position, but measured in PROJECT frames (the timeline's fps, same units as startFrame/durationFrames — never the source's own fps). 0 (default) starts at the source's first frame. Set this to trim on placement instead of a follow-up set_clip_properties call; semantics are identical to set_clip_properties."],
-                                "trimEndFrame": ["type": "integer", "description": "Optional. Frames trimmed off the END of the source media, in PROJECT frames — same units as trimStartFrame. 0 (default) trims nothing off the end."],
+                                "trackIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Track index (0-based). Omit on every entry to auto-create one shared track per asset zone (video/audio)."],
+                                "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Timeline frame position to place the clip (project frames)."],
+                                "durationFrames": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Clip length on the timeline, in project frames."],
+                                "trimStartFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Frames skipped from the START of the source media before the clip begins — a SOURCE offset, NOT a timeline position, but measured in PROJECT frames (the timeline's fps, same units as startFrame/durationFrames — never the source's own fps). 0 (default) starts at the source's first frame. Set this to trim on placement instead of a follow-up set_clip_properties call; semantics are identical to set_clip_properties."],
+                                "trimEndFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Frames trimmed off the END of the source media, in PROJECT frames — same units as trimStartFrame. 0 (default) trims nothing off the end."],
                             ],
                             "required": ["mediaRef", "startFrame", "durationFrames"],
                         ],
@@ -458,8 +494,8 @@ enum ToolDefinitions {
             description: "Inserts one or more media assets at a single point and RIPPLES: every clip at or after atFrame is pushed right to open a gap, so nothing is overwritten. This is the non-destructive counterpart to add_clips (which clears the landing region, trimming/splitting/removing whatever's there). Use insert_clips to splice footage in without losing existing clips; use add_clips to fill empty space or deliberately overwrite.\n\nEntries are laid end-to-end starting at atFrame on the target track (entry[0] at atFrame, entry[1] immediately after, ...). The push equals the sum of the entries' durations and is applied to the target track, every sync-locked track, AND the audio track any auto-created linked audio lands on — so a clip and its linked audio stay aligned. As in add_clips, a video asset with audio spawns a linked audio clip. One undoable action; one bad entry rejects the whole call with no partial state.\n\ntrackIndex is required — ripple needs an existing track to push. For placement into empty space, use add_clips.",
             inputSchema: objectSchema(
                 properties: [
-                    "trackIndex": ["type": "integer", "description": "Track index (0-based, from get_timeline) to insert into and ripple."],
-                    "atFrame": ["type": "integer", "description": "Timeline frame (project frames) where insertion begins. Every clip at or after this frame on rippled tracks shifts right by the total inserted duration."],
+                    "trackIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Track index (0-based, from get_timeline) to insert into and ripple."],
+                    "atFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Timeline frame (project frames) where insertion begins. Every clip at or after this frame on rippled tracks shifts right by the total inserted duration."],
                     "entries": [
                         "type": "array",
                         "description": "Clips to insert, placed sequentially from atFrame. Validated up front; one bad entry rejects the whole call.",
@@ -468,9 +504,9 @@ enum ToolDefinitions {
                             "additionalProperties": false,
                             "properties": [
                                 "mediaRef": ["type": "string", "description": "ID of the media asset from get_media."],
-                                "durationFrames": ["type": "integer", "description": "Optional. Timeline length in project frames. Omit to use the asset's full source duration."],
-                                "trimStartFrame": ["type": "integer", "description": "Optional. Frames skipped from the START of the source media — a SOURCE offset in PROJECT frames (same units as atFrame/durationFrames, never the source's own fps). 0 (default) starts at the source's first frame."],
-                                "trimEndFrame": ["type": "integer", "description": "Optional. Frames trimmed off the END of the source media, in PROJECT frames. 0 (default) trims nothing."],
+                                "durationFrames": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Timeline length in project frames. Omit to use the asset's full source duration."],
+                                "trimStartFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Frames skipped from the START of the source media — a SOURCE offset in PROJECT frames (same units as atFrame/durationFrames, never the source's own fps). 0 (default) starts at the source's first frame."],
+                                "trimEndFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Frames trimmed off the END of the source media, in PROJECT frames. 0 (default) trims nothing."],
                             ],
                             "required": ["mediaRef"],
                         ],
@@ -500,11 +536,22 @@ enum ToolDefinitions {
                 properties: [
                     "trackIndexes": [
                         "type": "array",
-                        "items": ["type": "integer"],
+                        "items": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
                         "description": "Track indexes (0-based, from get_timeline) to remove.",
                     ],
                 ],
                 required: ["trackIndexes"]
+            )
+        ),
+        AgentTool(
+            name: .reorderTrack,
+            description: "Moves one track to a new 0-based timeline index in one undoable action. Use its stable trackId from get_timeline. Visual tracks remain in the visual Z-order zone and audio tracks remain in the audio routing zone, so an out-of-zone destination is clamped to the nearest valid index. The track's ID, role, clips, flags, and selection stay intact.",
+            inputSchema: objectSchema(
+                properties: [
+                    "trackId": ["type": "string", "description": "Stable track ID from get_timeline"],
+                    "toIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Requested destination index"],
+                ],
+                required: ["trackId", "toIndex"]
             )
         ),
         AgentTool(
@@ -520,8 +567,8 @@ enum ToolDefinitions {
                             "additionalProperties": false,
                             "properties": [
                                 "clipId": ["type": "string", "description": "The clip ID to move."],
-                                "toTrack": ["type": "integer", "description": "Destination track index (0-based). Omit to keep the clip on its current track."],
-                                "toFrame": ["type": "integer", "description": "Destination start frame. Omit to keep the clip at its current start."],
+                                "toTrack": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Destination track index (0-based). Omit to keep the clip on its current track."],
+                                "toFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Destination start frame. Omit to keep the clip at its current start."],
                             ],
                             "required": ["clipId"],
                         ],
@@ -532,20 +579,22 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .setClipProperties,
-            description: "Apply the same property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, transform, or — for text clips only — content, fontName, fontSize, color, alignment. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis (no effect on text clips). When a text clip's content or font changes without an explicit transform, the bounding box auto-refits. Text-only fields with any non-text clip in clipIds are rejected.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume or opacity here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, transform, text*) don't propagate. trim and speed are skipped for text partners.",
+            description: "Apply the same property values to one or more clips in a single undoable action. Pass any combination of durationFrames, trimStartFrame, trimEndFrame, speed, volume, opacity, blendMode, transform, crop, or — for text clips only — content, fontName, fontSize, color, alignment. All values are validated for every target before any clip changes. All values are applied to every clip in clipIds; for per-clip differences, make separate calls. trimStartFrame/trimEndFrame are offsets from the source media, not the timeline. speed 1.0 is normal, <1.0 slows (clip gets longer on the timeline), >1.0 speeds up. volume and opacity are 0.0–1.0. transform uses 0–1 normalized canvas coords, partial merge (pass only centerY to reposition vertically); flipHorizontal/flipVertical mirror the clip across the corresponding axis (including text clips). crop is a partial set of 0–1 edge insets in the display-oriented source frame, origin top-left, before effects and transform. Omitted crop edges keep the effective animated crop at the current playhead, clamped separately to each target clip's first or last frame when the playhead is outside it; all zeros restore the full source. At least 5% must remain visible on each axis. Crop does not change the project/canvas aspect, transform box, position, rotation, or flips; its visible pixel aspect is sourceAspect × visibleWidth ÷ visibleHeight. A static crop clears crop keyframes; use set_keyframes for animated crop. When a text clip's content or font changes without an explicit transform, the bounding box auto-refits. Text-only fields with any non-text clip in clipIds are rejected; crop accepts only video, image, and Lottie clips. blendMode accepts the closed v1 enum for visual clips (video, image, Lottie, text); any nonvisual target rejects the entire call. Normal is the default; omitting blendMode leaves it unchanged. Blend changes preserve opacity keyframes.\n\nFor moves and start-frame changes, use move_clips. For animated values (keyframes), use set_keyframes — setting volume, opacity, or crop here clears any existing keyframe track on that property.\n\nTiming changes (durationFrames, trimStartFrame, trimEndFrame, speed) on a linked clip carry over to its linked partner so audio/video stay in sync — same as the timeline UI. Per-clip fields (volume, opacity, blendMode, transform, crop, text*) don't propagate. trim and speed are skipped for text partners.",
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": [
                         "type": "array",
+                        "minItems": 1,
                         "description": "Clip IDs to update. The property values below apply to every clip in this list.",
                         "items": ["type": "string"],
                     ],
-                    "durationFrames": ["type": "integer", "description": "New duration in frames."],
-                    "trimStartFrame": ["type": "integer", "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the start of the source — measured in PROJECT frames (the timeline's fps, same units as startFrame/durationFrames; never the source's own fps). To turn a get_transcript project frame P into this clip's source offset, use trimStartFrame + (P − startFrame) × speed; setting trimStartFrame to that value makes the clip begin at P's source content."],
-                    "trimEndFrame": ["type": "integer", "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the end of the source, in PROJECT frames. Maps the same way as trimStartFrame via startFrame/speed."],
-                    "speed": ["type": "number", "description": "Playback speed multiplier (default 1.0). >1 speeds up, <1 slows down. The clip's timeline length is rescaled to keep the same source content (2x speed → half the frames), unless you also pass durationFrames to set the length explicitly."],
-                    "volume": ["type": "number", "description": "Volume 0.0-1.0. Clears any existing volume keyframes."],
-                    "opacity": ["type": "number", "description": "Opacity 0.0-1.0. Clears any existing opacity keyframes."],
+                    "durationFrames": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "New duration in frames."],
+                    "trimStartFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the start of the source — measured in PROJECT frames (the timeline's fps, same units as startFrame/durationFrames; never the source's own fps). To turn a get_transcript project frame P into this clip's source offset, use trimStartFrame + (P − startFrame) × speed; setting trimStartFrame to that value makes the clip begin at P's source content."],
+                    "trimEndFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "SOURCE-media offset, NOT a timeline frame: frames trimmed off the end of the source, in PROJECT frames. Maps the same way as trimStartFrame via startFrame/speed."],
+                    "speed": ["type": "number", "exclusiveMinimum": 0, "maximum": Double(ToolIntegerArgument.maximumFrame), "description": "Playback speed multiplier (default 1.0). >1 speeds up, <1 slows down. The clip's timeline length is rescaled to keep the same source content (2x speed → half the frames), unless you also pass durationFrames to set the length explicitly."],
+                    "volume": ["type": "number", "minimum": 0, "maximum": 1, "description": "Volume 0.0-1.0. Clears any existing volume keyframes."],
+                    "opacity": ["type": "number", "minimum": 0, "maximum": 1, "description": "Opacity 0.0-1.0. Clears any existing opacity keyframes."],
+                    "blendMode": ["type": "string", "enum": ClipBlendMode.allCases.map(\.rawValue), "description": "Per-clip compositing mode (v1). Applies to video, image, Lottie and text clips; all nonvisual targets are rejected. Omission preserves the current mode; normal is the default. Opacity and fades control the blend strength. Does not propagate to linked clips."],
                     "transform": [
                         "type": "object",
                         "additionalProperties": false,
@@ -559,6 +608,17 @@ enum ToolDefinitions {
                             "flipVertical": ["type": "boolean", "description": "Mirror across the horizontal axis."],
                         ],
                     ],
+                    "crop": objectSchema(
+                        properties: [
+                            "left": ["type": "number", "minimum": 0, "maximum": 1, "description": "Inset from the display-oriented source left edge."],
+                            "top": ["type": "number", "minimum": 0, "maximum": 1, "description": "Inset from the display-oriented source top edge."],
+                            "right": ["type": "number", "minimum": 0, "maximum": 1, "description": "Inset from the display-oriented source right edge."],
+                            "bottom": ["type": "number", "minimum": 0, "maximum": 1, "description": "Inset from the display-oriented source bottom edge."],
+                        ]
+                    ).merging([
+                        "minProperties": 1,
+                        "description": "Partial static source crop. Omitted edges retain the effective crop at the playhead, clamped into each target clip. Each axis must retain at least 0.05. Clears crop keyframes."
+                    ]) { _, new in new },
                     "content": ["type": "string", "description": "Text clips only. New text content."],
                     "fontName": ["type": "string", "description": "Text clips only. Font PostScript or family name."],
                     "fontSize": ["type": "number", "description": "Text clips only. Font size in canvas points."],
@@ -570,7 +630,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .setKeyframes,
-            description: "Set animated keyframes on one property of one clip. Replaces the existing keyframe track for that property (pass an empty array to clear). Frames are CLIP-RELATIVE offsets (0 = first frame of the clip), so keyframes follow the clip when it moves. Rows are sorted by frame internally and the LAST row for any duplicate frame wins. Values must be finite numbers. Each row is `[frame, ...values, interp?]` where interp ∈ {linear, hold, smooth} (default smooth).\n\nProperties and their value layouts:\n  • volume `[frame, value]` — value 0.0–1.0\n  • opacity `[frame, value]` — value 0.0–1.0\n  • rotation `[frame, degrees]` — clockwise degrees\n  • position `[frame, topLeftX, topLeftY]` — TOP-LEFT corner in 0–1 normalized canvas coords. NOT the center. (Default static transform centers a full-canvas clip, so top-left of the static is (0, 0); a centered half-size clip has top-left (0.25, 0.25).)\n  • scale `[frame, width, height]` — clip's normalized width and height in 0–1 canvas coords (1.0 = fills the canvas axis). NOT a scale factor.\n  • crop `[frame, top, right, bottom, left]` — side insets in 0–1 of the source media.\n\nMotion keyframes (position/scale/rotation) override the static `transform` value when active.",
+            description: "Set animated keyframes on one property of one clip. Replaces the existing keyframe track for that property (pass an empty array to clear). Frames are CLIP-RELATIVE offsets (0 = first frame of the clip), so keyframes follow the clip when it moves. Rows are sorted by frame internally and the LAST row for any duplicate frame wins. Values must be finite numbers. Each row is `[frame, ...values, interp?]` where interp ∈ {linear, hold, smooth} (default smooth).\n\nProperties and their value layouts:\n  • volume `[frame, value]` — value 0.0–1.0\n  • opacity `[frame, value]` — value 0.0–1.0\n  • rotation `[frame, degrees]` — clockwise degrees\n  • position `[frame, topLeftX, topLeftY]` — TOP-LEFT corner in 0–1 normalized canvas coords. NOT the center. (Default static transform centers a full-canvas clip, so top-left of the static is (0, 0); a centered half-size clip has top-left (0.25, 0.25).)\n  • scale `[frame, width, height]` — clip's normalized width and height in 0–1 canvas coords (1.0 = fills the canvas axis). NOT a scale factor.\n  • crop `[frame, top, right, bottom, left]` — animated insets in the same display-oriented source space as set_clip_properties.crop and inspect_media coordinateGrid; each axis must retain at least 0.05.\n\nMotion keyframes (position/scale/rotation) override the static `transform` value when active. Crop is evaluated independently first, then the resulting source pixels use that frame's transform.",
             inputSchema: objectSchema(
                 properties: [
                     "clipId": ["type": "string", "description": "The clip ID."],
@@ -607,9 +667,34 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "clipId": ["type": "string", "description": "The clip ID to split"],
-                    "atFrame": ["type": "integer", "description": "Frame position to split at (must be between clip start and end)"],
+                    "atFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Frame position to split at (must be between clip start and end)"],
                 ],
                 required: ["clipId", "atFrame"]
+            )
+        ),
+        AgentTool(
+            name: .rippleTrim,
+            description: "Ripple-trims one edge of a clip and shifts later clips in the same undoable operation. deltaFrames is the pointer-style edge movement: positive moves the edge later and negative moves it earlier. Linked clips follow by default, sync-locked tracks stay aligned, and markers ripple with the edit. Source handles and the one-frame minimum are enforced.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose edge anchors the trim"],
+                    "edge": ["type": "string", "enum": ["left", "right"]],
+                    "deltaFrames": ["type": "integer", "minimum": -ToolIntegerArgument.maximumFrame, "maximum": ToolIntegerArgument.maximumFrame, "description": "Signed timeline-frame movement of the chosen edge; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Trim linked partners together (default true)"],
+                ],
+                required: ["clipId", "edge", "deltaFrames"]
+            )
+        ),
+        AgentTool(
+            name: .slipClip,
+            description: "Shifts the source in/out range inside a clip without changing its timeline start, duration, transitions, or keyframes. Positive deltaFrames reveals earlier source material; negative values reveal later material. Linked audio/video partners follow by default, and the shared edit clamps exactly to the tightest source handle.",
+            inputSchema: objectSchema(
+                properties: [
+                    "clipId": ["type": "string", "description": "The clip whose source range should shift"],
+                    "deltaFrames": ["type": "integer", "minimum": -ToolIntegerArgument.maximumFrame, "maximum": ToolIntegerArgument.maximumFrame, "description": "Signed timeline-frame source shift; must not be zero"],
+                    "includeLinked": ["type": "boolean", "description": "Slip eligible linked partners together (default true)"],
+                ],
+                required: ["clipId", "deltaFrames"]
             )
         ),
         AgentTool(
@@ -617,12 +702,12 @@ enum ToolDefinitions {
             description: "Cuts one or more ranges out and closes the gaps in one undoable action — the fast path for filler-word/dead-air removal. Replaces hand-cranked split_clip → split_clip → remove_clips → move_clips loops: pass every range at once.\n\nTwo modes — pass exactly one of clipId or trackIndex:\n• trackIndex (preferred for transcript-driven cuts): ranges are PROJECT frames and may span any number of clips on that track. get_transcript returns a clips array with nested words in project frames — collect every cut across the whole timeline and pass them in ONE call, no per-clip splitting and no re-reading the timeline between cuts. units must be 'frames'.\n• clipId: ranges are cut within that single clip only, clamped to its visible span. Allows units 'seconds' (source-media seconds, e.g. inspect_media WITHOUT a clipId or search_media hits); 'frames' = project frames. Use when you already have one clip's per-word timestamps.\n\nOverlapping ranges merge. Linked audio/video partners of every touched clip are cut on the same span so A/V stays in sync. Remaining clips shift left to close every gap; sync-locked tracks shift along to preserve alignment (their content isn't cut). Refuses without changing anything if a sync-locked track can't absorb the shift (e.g. it would move past frame 0). Returns the anchor track's post-cut layout (clip ids/frames) so you don't need to re-read.",
             inputSchema: objectSchema(
                 properties: [
-                    "trackIndex": ["type": "integer", "description": "Cut project-frame ranges spanning every clip they cross on this track, in one call. From get_transcript's clips array. Mutually exclusive with clipId; requires units 'frames'."],
+                    "trackIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Cut project-frame ranges spanning every clip they cross on this track, in one call. From get_transcript's clips array. Mutually exclusive with clipId; requires units 'frames'."],
                     "clipId": ["type": "string", "description": "Cut ranges within this single clip only, clamped to its visible span. Mutually exclusive with trackIndex."],
                     "ranges": [
                         "type": "array",
                         "description": "Ranges to remove, each a [start, end] pair (end > start). In the unit given by 'units'.",
-                        "items": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2],
+                        "items": ["type": "array", "items": ["type": "number", "minimum": 0, "maximum": Double(ToolIntegerArgument.maximumFrame)], "minItems": 2, "maxItems": 2],
                     ],
                     "units": ["type": "string", "enum": ["seconds", "frames"], "description": "Interpretation of range values. 'frames' (default) = project/timeline frames, matching get_transcript and inspect_media-with-clipId. 'seconds' = source-media seconds (clipId mode only)."],
                 ],
@@ -637,7 +722,25 @@ enum ToolDefinitions {
                     "words": [
                         "type": "array",
                         "description": "Words to remove, by their get_transcript index. Each element is either a single index (e.g. 42) or an inclusive [startIndex, endIndex] span (e.g. [12, 18] removes words 12 through 18). Mix freely: [3, [12, 18], 40]. Indices come from the current get_transcript; re-read after any edit.",
-                        "items": ["type": ["integer", "array"]],
+                        "items": [
+                            "anyOf": [
+                                [
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": ToolIntegerArgument.maximumFrame,
+                                ] as [String: Any],
+                                [
+                                    "type": "array",
+                                    "items": [
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": ToolIntegerArgument.maximumFrame,
+                                    ],
+                                    "minItems": 2,
+                                    "maxItems": 2,
+                                ] as [String: Any],
+                            ],
+                        ],
                     ],
                     "cutAggressiveness": [
                         "type": "string",
@@ -650,14 +753,20 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .syncAudio,
-            description: "Align one or more clips to a reference clip by cross-correlating audio and shifting targets on the timeline. referenceClipId stays put — use for dual-system sound (camera + external audio) or multicam. Returns offsetFrames and confidence (0–1) per target; refuses weak matches.",
+            description: "Align one or more clips to a reference for dual-system sound or multicam. auto uses compatible embedded source timecode first, then multi-anchor audio matching; QuickTime capture dates narrow the audio search but never move a clip without audio confirmation. Audio matching checks several non-silent regions, estimates clock drift, and refuses weak or ambiguous repeated matches. Force one method with mode. Returns method, offsetFrames, confidence, reason, anchor counts, and drift per target. All accepted moves form one undoable timeline action; if a target would start before frame 0, the synchronized group shifts right together.",
             inputSchema: objectSchema(
                 properties: [
-                    "referenceClipId": ["type": "string", "description": "Clip the others align to. Stays put."],
+                    "referenceClipId": ["type": "string", "description": "Clip the others align to. It moves only when the synchronized group must shift right to stay at or after frame 0."],
                     "targetClipId": ["type": "string", "description": "Single clip to align. Use targetClipIds for several."],
                     "targetClipIds": ["type": "array", "items": ["type": "string"], "description": "Clips to align with the reference."],
-                    "searchWindowSeconds": ["type": "number", "description": "Max ± offset to search in seconds (default 30)."],
-                    "minConfidence": ["type": "number", "description": "Minimum correlation confidence 0–1 (default 0.5)."],
+                    "mode": [
+                        "type": "string",
+                        "enum": ["auto", "audio", "timecode"],
+                        "description": "auto (default), audio, or timecode. auto prefers compatible source timecode and falls back to audio.",
+                    ],
+                    "searchWindowSeconds": ["type": "number", "exclusiveMinimum": 0, "maximum": 3600, "description": "Max ± audio offset to search in seconds (default 30), centered on the current placement and separately on capture-date evidence when available."],
+                    "minConfidence": ["type": "number", "minimum": 0, "maximum": 1, "description": "Minimum audio confidence 0–1 (default 0.7)."],
+
                 ],
                 required: ["referenceClipId"]
             )
@@ -679,9 +788,9 @@ enum ToolDefinitions {
                             "type": "object",
                             "additionalProperties": false,
                             "properties": [
-                                "trackIndex": ["type": "integer", "description": "Optional. Track index (0-based) for an existing non-audio track. Omit on every entry to auto-create one new track for the batch."],
-                                "startFrame": ["type": "integer", "description": "Frame position to place the clip"],
-                                "durationFrames": ["type": "integer", "description": "Duration in frames (>= 1)"],
+                                "trackIndex": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional. Track index (0-based) for an existing non-audio track. Omit on every entry to auto-create one new track for the batch."],
+                                "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Frame position to place the clip"],
+                                "durationFrames": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Duration in frames (>= 1)"],
                                 "content": ["type": "string", "description": "Text to display. Supports \\n for line breaks."],
                                 "transform": [
                                     "type": "object",
@@ -708,9 +817,10 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .addCaptions,
-            description: "Auto-caption spoken audio: transcribes on-device and places styled caption clips on a new track — the same pipeline as the editor's Captions tab. This is the reliable path for 'caption this'; prefer it over hand-placing add_texts from a transcript. Omit clipIds to auto-pick the track with the most speech; pass clipIds to caption specific clips (e.g. only the interview).",
+            description: "Auto-caption spoken audio or import an SRT/WebVTT asset as editable caption clips. For a caption asset, pass only subtitleMediaRef; its plain text, authored timing, language provenance, and overlaps are preserved without transcription. Otherwise omit clipIds to auto-pick the track with the most speech or pass clipIds for specific clips.",
             inputSchema: objectSchema(
                 properties: [
+                    "subtitleMediaRef": ["type": "string", "description": "Optional caption asset id from import_media. Mutually exclusive with every other parameter."],
                     "clipIds": ["type": "array", "items": ["type": "string"], "description": "Optional. Audio/video clips to caption. Omit to auto-detect the primary spoken track."],
                     "language": ["type": "string", "description": "Optional BCP-47 language of the speech (e.g. 'es', 'ja', 'en-GB'). Defaults to the system language — set this when the footage is in another language, or transcription will be garbage."],
                     "fontName": ["type": "string", "description": "Optional font PostScript or family name (default 'Helvetica-Bold'). Falls back to bold system font if not found."],
@@ -725,14 +835,19 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .exportProject,
-            description: "Exports from the current project using the same modes as the Export dialog. mode defaults to video. video renders H.264, H.265, or ProRes; xml writes timeline XML; nexgen writes a self-contained .nexgen project package. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten by default to match the UI save flow; pass overwrite=false to refuse. video renders in the background and returns status=started with the destination path; the app posts a system notification on completion or failure, so do not expect a final result inline. xml and nexgen finish before returning and report their result inline.",
+            description: "Queues an export from the current project using the same host queue as the Export dialog. mode defaults to video. video renders H.264, H.265, ProRes, or HEVC Main10 HDR (HLG) and records delivery/QC provenance, including BT.2020 HLG conversion and HDR QC when selected; xml writes Premiere-compatible XMEML; fcpxml writes versioned Final Cut Pro XML with validation, warnings, transactional output, and byte provenance; nexgen writes a self-contained .nexgen project package. Use one stable UUID requestID when retrying the same tool call after a reconnect; the host joins that exact job and rejects changed inputs under the same ID. Omit outputPath to write a unique file to ~/Downloads. Existing direct outputPath files are overwritten only if they remain unchanged from enqueue; pass overwrite=false to refuse immediately. video returns after enqueue. xml, fcpxml, and nexgen wait for their queued job.",
+
             inputSchema: objectSchema(
                 properties: [
-                    "mode": ["type": "string", "enum": ["video", "xml", "nexgen"], "description": "Optional. Default video."],
-                    "codec": ["type": "string", "enum": ["H.264", "H.265", "ProRes"], "description": "Video mode only. Optional. Default H.264."],
+                    "mode": ["type": "string", "enum": ["video", "xml", "fcpxml", "nexgen"], "description": "Optional. Default video."],
+                    "codec": ["type": "string", "enum": ["H.264", "H.265", "ProRes", "HEVC Main10 HDR (HLG)"], "description": "Video mode only. Optional. Default H.264."],
+
                     "resolution": ["type": "string", "enum": ["720p", "1080p", "2K", "4K", "Match Timeline"], "description": "Video mode only. Optional. Default Match Timeline."],
+                    "version": ["type": "string", "enum": ["1.10", "1.11", "1.12", "1.13", "1.14"], "description": "FCPXML mode only. Optional. Default 1.10 for broad compatibility."],
+                    "target": ["type": "string", "enum": ["final-cut-pro", "resolve"], "description": "FCPXML mode only. Optional. Default final-cut-pro."],
                     "outputPath": ["type": "string", "description": "Optional. Absolute destination path. If omitted, a unique project-named file is written to ~/Downloads. If no extension is provided, the mode's extension is appended."],
                     "overwrite": ["type": "boolean", "description": "Optional. Default true, matching the UI save flow. false refuses when outputPath already exists."],
+                    "requestID": ["type": "string", "format": "uuid", "description": "Optional stable job UUID. Reuse only to join the exact same export after reconnect."],
                 ]
             )
         ),
@@ -749,7 +864,7 @@ enum ToolDefinitions {
                     "model": ["type": "string", "description": "Model ID (e.g. 'veo3.1-fast'). Use list_models to see options. Defaults to first available model."],
                     "duration": [
                         "anyOf": [
-                            ["type": "integer"] as [String: Any],
+                            ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame] as [String: Any],
                             ["type": "string", "enum": ["auto"]] as [String: Any],
                         ],
                         "description": "Duration in seconds, or 'auto' when list_models reports supportsAuto. Valid seconds and ranges depend on model.",
@@ -782,6 +897,11 @@ enum ToolDefinitions {
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16')"],
                     "resolution": ["type": "string", "description": "Resolution (e.g. '2K', '4K')"],
                     "quality": ["type": "string", "description": "Image quality (e.g. 'low', 'medium', 'high'). Only supported by some models — see list_models."],
+                    "numImages": ["type": "integer", "minimum": 1, "maximum": 10, "description": "Number of outputs. Must not exceed the selected model's maxImages."],
+                    "background": ["type": "string", "description": "Background mode from list_models, such as auto, transparent, or opaque."],
+                    "outputFormat": ["type": "string", "description": "Output format from list_models, such as png, jpeg, or webp."],
+                    "outputCompression": ["type": "integer", "minimum": 0, "maximum": 100, "description": "JPEG/WebP compression quality when supported. Omit for PNG."],
+                    "maskMediaRef": ["type": "string", "description": "Optional image mask asset for an edit model that reports supportsMask=true."],
                     "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images for free generation. Omit for format-pack Frames shots; the host supplies their semantic plan."],
                     "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ for free or design-sheet generation. Production Design and format-pack Frames shots attach their host-owned sets automatically; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
@@ -804,9 +924,9 @@ enum ToolDefinitions {
                     "lyrics": ["type": "string", "description": "MiniMax Music only. Lyrics with optional [Verse]/[Chorus] section tags. If omitted and instrumental=false, MiniMax auto-writes lyrics from the prompt."],
                     "styleInstructions": ["type": "string", "description": "Gemini TTS only. Optional delivery instructions (e.g. 'warm and slow', 'British accent')."],
                     "instrumental": ["type": "boolean", "description": "Music models only. true = no vocals when the selected model supports it. Defaults to false."],
-                    "duration": ["type": "integer", "description": "Length in seconds. ElevenLabs Music: 3–600. Sonilo text-to-music: up to 600. For a video source, defaults to the span/clip length. Ignored by TTS, MiniMax, and Lyria 3 Pro."],
-                    "videoSourceStartFrame": ["type": "integer", "description": "Video-to-audio models only. Start frame (timeline) of a span to render and score — pair with videoSourceEndFrame. Use get_timeline for frame numbers; for the whole timeline use 0 to the timeline's end frame."],
-                    "videoSourceEndFrame": ["type": "integer", "description": "Video-to-audio models only. End frame (exclusive) of the span to score. Must be > videoSourceStartFrame."],
+                    "duration": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Length in seconds. ElevenLabs Music: 3–600. Sonilo text-to-music: up to 600. For a video source, defaults to the span/clip length. Ignored by TTS, MiniMax, and Lyria 3 Pro."],
+                    "videoSourceStartFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Video-to-audio models only. Start frame (timeline) of a span to render and score — pair with videoSourceEndFrame. Use get_timeline for frame numbers; for the whole timeline use 0 to the timeline's end frame."],
+                    "videoSourceEndFrame": ["type": "integer", "minimum": 1, "maximum": ToolIntegerArgument.maximumFrame, "description": "Video-to-audio models only. End frame (exclusive) of the span to score. Must be > videoSourceStartFrame."],
                     "videoSourceMediaRef": ["type": "string", "description": "Video-to-audio models only. Score this existing video asset instead of a timeline span. Mutually exclusive with the videoSource frames."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
@@ -819,7 +939,8 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "mediaRef": ["type": "string", "description": "ID of the video or image asset to upscale"],
-                    "model": ["type": "string", "description": "Upscaler model ID (e.g. 'bytedance-upscaler', 'seedvr-image-upscaler'). Defaults to the first model that supports the asset's type."],
+                    "model": ["type": "string", "description": "Upscaler model ID from list_models. Defaults to the first model that supports the source and target."],
+                    "targetResolution": ["type": "string", "enum": ["8K"], "description": "Optional output target. Use list_models to confirm the selected model and source dimensions support it."],
                     "sourceClipId": ["type": "string", "description": "Optional. Video clip id (from get_timeline) referencing mediaRef. When set and the clip is trimmed, only the clip's visible range is upscaled, not the full source."],
                 ],
                 required: ["mediaRef"]
@@ -827,7 +948,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .importMedia,
-            description: "Imports external media into the project's library — the bridge for assets coming from other MCP servers (stock libraries, music services, web search) or local files the user already has. The project must be saved first. Every successful import is copied into the project's self-contained working media store and included in the package on Save; source files are never referenced in place. The 'source' object must set exactly one of: url (HTTPS only; max 1 GB), path (absolute local file path; may also be a directory, which is imported recursively, mirroring its subfolder structure as media folders), or bytes (base64-encoded inline data — max ~15 MB of base64 ≈ 11 MB binary; use url/path for anything larger). For url, type is inferred from the URL path's file extension unless source.mimeType is set as an override (needed for signed URLs whose path has no usable extension). For bytes, source.mimeType is required.\n\nSupported types and extensions: video (mov, mp4, m4v), audio (mp3, wav, aac, m4a, aiff, aifc, flac), image (png, jpg, jpeg, tiff, heic). Anything else is rejected — the caller must transcode externally.\n\nURL imports return only after the complete redirect chain, size limit, and decoded media payload have been validated and the asset is available in get_media. Path and bytes imports also finalize before returning. Costs nothing.",
+            description: "Imports external media into the project's library — the bridge for assets coming from other MCP servers (stock libraries, music services, web search) or local files the user already has. The project must be saved first. Every successful import is copied into the project's self-contained working media store and included in the package on Save; source files are never referenced in place. The 'source' object must set exactly one of: url (HTTPS only; max 1 GB), path (absolute local file path; may also be a directory, which is imported recursively, mirroring its subfolder structure as media folders), or bytes (base64-encoded inline data — max ~15 MB of base64 ≈ 11 MB binary; use url/path for anything larger). For url, type is inferred from the URL path's file extension unless source.mimeType is set as an override (needed for signed URLs whose path has no usable extension). For bytes, source.mimeType is required.\n\nSupported types and extensions: video (mov, mp4, m4v), audio (mp3, wav, aac, m4a, aiff, aifc, flac), image (png, jpg, jpeg, tiff, heic), caption files (srt, vtt). Caption assets are expanded into editable clips with add_captions subtitleMediaRef, not add_clips. Anything else is rejected — the caller must transcode externally.\n\nURL imports return only after the complete redirect chain, size limit, and decoded media payload have been validated and the asset is available in get_media. Path and bytes imports also finalize before returning. Costs nothing.",
             inputSchema: objectSchema(
                 properties: [
                     "source": [
@@ -838,7 +959,7 @@ enum ToolDefinitions {
                             "url": ["type": "string", "description": "HTTPS URL. Pre-signed URLs are fine but must not expire mid-download."],
                             "path": ["type": "string", "description": "Absolute local file or directory path, readable by the NexGenVideo process. A directory is imported recursively — every openable file is pulled in and the folder structure is replicated as media folders."],
                             "bytes": ["type": "string", "description": "Base64-encoded media data. Prefer url or path for anything over ~10MB."],
-                            "mimeType": ["type": "string", "description": "Required when bytes is set. Optional override for url when its path has no usable extension (e.g. signed URLs). Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, image/png, image/jpeg, image/tiff, image/heic."],
+                            "mimeType": ["type": "string", "description": "Required when bytes is set. Optional override for url when its path has no usable extension (e.g. signed URLs). Accepted: video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/aac, audio/mp4, image/png, image/jpeg, image/tiff, image/heic, application/x-subrip, text/vtt."],
                         ],
                     ],
                     "name": ["type": "string", "description": "Display name in the library. Defaults to the filename derived from url/path, or 'Imported asset' for bytes."],
@@ -1100,7 +1221,7 @@ enum ToolDefinitions {
                 properties: [
                     "clipId": ["type": "string", "description": "Timeline clip to measure — returns its current GRADED look (effects applied). Provide this or mediaRef."],
                     "mediaRef": ["type": "string", "description": "Media asset id from get_media to measure RAW (no grade). Provide this or clipId."],
-                    "atFrame": ["type": "integer", "description": "Optional project frame to sample a clip. Defaults to the clip's midpoint. Ignored for mediaRef."],
+                    "atFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame, "description": "Optional project frame to sample a clip. Defaults to the clip's midpoint. Ignored for mediaRef."],
                     "reference": ["type": "string", "description": "Optional image/video asset id from get_media to compare against; returns its scopes + the subject−reference gap."],
                 ]
             )
@@ -1145,13 +1266,13 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .suggestPatterns,
-            description: "Rank every valid authored director/style pattern against the project using the frozen Pattern-fit contract (packs that ship a pattern library, e.g. musicvideo). The pack assembles a project profile from the persisted Brief — you only supply the song's perceived_bpm and, optionally, a match_mode and pattern ids to exclude. Returns a `PatternRecommendationSet`: each result carries a Compatibility Index (0–100, NOT a probability of success), its band, confidence, coverage, per-axis strengths/conflicts and triggered adaptations, plus best_overall/production_efficient/creative_stretch slots and up to three high-impact follow-up questions. A partially authored library is normal: patterns without a fit_profile are not candidates, valid profiles rank immediately, `library_coverage` names the scored/unscored/total field, and present-but-invalid profiles appear under `invalid_profiles`. There is no whole-library completeness gate. Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only. Errors if the active pack ships no patterns.",
+            description: "Rank every valid authored director/style pattern against the project using the frozen Pattern-fit contract (packs that ship a pattern library, e.g. musicvideo). The pack assembles a project profile from the persisted Brief — you only supply the song's perceived_bpm and, optionally, a match_mode and pattern ids to exclude. Returns a `PatternRecommendationSet`: each result carries a Compatibility Index (0–100, NOT a probability of success), its band, confidence, coverage, per-axis strengths/conflicts and triggered adaptations, plus best_overall/production_efficient/creative_stretch slots and up to three high-impact follow-up questions. A partially authored library is normal: patterns without a fit_profile are not candidates, valid profiles rank immediately when their content uses the current schema, `library_coverage` names scored/unscored/invalid/total, and present-but-invalid profiles or content appear under `invalid_profiles`. There is no whole-library completeness gate. Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only. Errors if the active pack ships no patterns.",
             inputSchema: objectSchema(
                 properties: [
                     "perceived_bpm": ["type": "number", "description": "The song's perceived BPM (from analysis). Only 3% of total fit — omit if unknown."],
                     "match_mode": ["type": "string", "enum": ["conservative", "balanced", "experimental"], "description": "Conflict appetite (default balanced): conservative caps conflicted patterns hard, experimental lifts the cap."],
                     "excluded_pattern_ids": ["type": "array", "items": ["type": "string"], "description": "Pattern ids the user has ruled out — hard-excluded from the ranking."],
-                    "top": ["type": "integer", "description": "How many results to return (default 5)."],
+                    "top": ["type": "integer", "minimum": 1, "maximum": 50, "description": "How many results to return (default 5)."],
                     "project_dir": ["type": "string", "description": "Optional pipeline data root; omit to use the open project."],
                 ]
             )
@@ -1198,7 +1319,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getPattern,
-            description: "Load one director pattern by id (an id from suggest_patterns): its framing_mix, asl_range, camera vocabulary, lighting signature, section arc, references and (when authored) its fit_profile. Consume these directives when writing the storyboard/shotlist/bible so the plan follows the pattern. Read-only.",
+            description: "Load one director pattern by id (an id from suggest_patterns). Every operative block — framing_mix, asl_range, camera, lighting, and color — carries basis (measured/documented/inferred), source URLs, and a reference video when measured. `craft_signature` contains citable techniques bound to named pipeline levers. Consume the directives in production design, storyboard, Bible, and shot planning; visual_prompt techniques are also injected by compile_prompt. Never describe inferred values as measurements. Read-only.",
             inputSchema: objectSchema(
                 properties: [
                     "id": ["type": "string", "description": "Pattern id from suggest_patterns (e.g. anime-shinkai-emotional-landscape)."],
@@ -1285,7 +1406,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .rewind,
-            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nResets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1323,7 +1444,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Production Design accepts loose style images from `import/` or unassigned/generated media; prepared character and location assets remain Bible identity inputs. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. A current confirmed identity copied into Bible retains its original confirmation and records a separate exact source/target hash proof. Returns `{from, media, to, generated_provenance, confirmed_identity_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1332,6 +1453,13 @@ enum ToolDefinitions {
                     "to": ["type": "string", "description": "Destination path, data-root-relative (e.g. 'bible/refs/mouse/face.png')."],
                 ],
                 required: ["to"]
+            )
+        ),
+        AgentTool(
+            name: .recoverConfirmedIdentityProvenance,
+            description: "Explicitly recover the legacy mixed confirmed-identity provenance reported by get_project_state.confirmed_identity_recovery. WRITES. Call only when that object reports `eligible: true` and `action: recover_confirmed_identity_provenance`. The transaction separates creative intake from Bible staging proofs, preserves valid exact source/target hashes, audits and discards altered or symlinked proof claims, and never changes gates or lineage approvals.",
+            inputSchema: objectSchema(
+                properties: ["project_dir": projectDirProperty]
             )
         ),
         AgentTool(
@@ -1756,6 +1884,58 @@ enum ToolDefinitions {
         }
         properties["project_dir"] = projectDirProperty
         return objectSchema(properties: properties, required: BriefWriteContract.requiredKeys)
+    }
+
+    // Messages API and MCP require an object at the top level; the per-action rules stay in anyOf.
+    private static var markerSchema: [String: Any] {
+        var schema = objectSchema(
+            properties: [
+                "action": ["type": "string", "enum": ["create", "update", "delete"]],
+                "markerId": ["type": "string", "minLength": 1],
+                "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
+                "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic (update only)."],
+            ],
+            required: ["action"]
+        )
+        schema["anyOf"] = [
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["create"]],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                    "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                    "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue)],
+                    "color": ["type": "string", "pattern": "^#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$", "description": "#RGB, #RRGGBB, or #RRGGBBAA."],
+                ],
+                required: ["action", "startFrame", "title"]
+            ),
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["update"]],
+                    "markerId": ["type": "string", "minLength": 1],
+                    "startFrame": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "durationFrames": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
+                    "title": ["type": "string", "minLength": 1, "maxLength": TimelineMarker.maxTitleLength],
+                    "note": ["type": "string", "maxLength": TimelineMarker.maxNoteLength],
+                    "type": ["type": "string", "enum": TimelineMarker.Kind.allCases.map(\.rawValue) + ["none"]],
+                    "color": ["type": "string", "pattern": "^(?:automatic|#?(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))$", "description": "#RGB, #RRGGBB, #RRGGBBAA, or automatic."],
+                ],
+                required: ["action", "markerId"]
+            ),
+            objectSchema(
+                properties: [
+                    "action": ["type": "string", "enum": ["delete"]],
+                    "markerId": ["type": "string", "minLength": 1],
+                ],
+                required: ["action", "markerId"]
+            ),
+        ]
+        return schema
     }
 
     private static func objectSchema(

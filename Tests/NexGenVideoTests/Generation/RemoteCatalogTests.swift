@@ -16,12 +16,25 @@ struct RemoteCatalogTests {
     @Test func checkedInCatalogCarriesAllSeedance25Endpoints() throws {
         let data = try Data(contentsOf: repositoryRoot.appendingPathComponent("catalog/models.json"))
         let entries = try JSONDecoder().decode([CatalogEntry].self, from: data)
-        #expect(Set(entries.map(\.id)) == [
+        let seedance: Set<String> = [
             "bytedance/seedance-2.5/text-to-video",
             "bytedance/seedance-2.5/image-to-video",
             "bytedance/seedance-2.5/reference-to-video",
-        ])
-        for entry in entries {
+        ]
+        let gptImage25: Set<String> = [
+            "fal-ai/gpt-image-2.5/flare/text-to-image",
+            "fal-ai/gpt-image-2.5/flare/edit",
+            "fal-ai/gpt-image-2.5/sunburst/text-to-image",
+            "fal-ai/gpt-image-2.5/sunburst/edit",
+        ]
+        #expect(Set(entries.map(\.id)) == seedance.union(gptImage25))
+        for entry in entries where gptImage25.contains(entry.id) {
+            guard case .image = entry.uiCapabilities else {
+                Issue.record("expected image entry for \(entry.id)")
+                continue
+            }
+        }
+        for entry in entries where seedance.contains(entry.id) {
             guard case .video(let caps) = entry.uiCapabilities else {
                 Issue.record("expected video entry for \(entry.id)")
                 continue
@@ -69,5 +82,34 @@ struct RemoteCatalogTests {
         #expect(entry.allowedEndpoints == seed.allowedEndpoints)
         #expect(entry.offers == seed.offers)
         #expect(FalModelRegistry.model(for: entry.id)?.videoDuration == .secondsOrAuto)
+    }
+
+    @Test func legacyUpscaleCapabilitiesDecodeWithoutTargetConstraints() throws {
+        let json = #"""
+        [{
+          "id":"legacy/upscale",
+          "kind":"upscale",
+          "displayName":"Legacy Upscale",
+          "allowedEndpoints":["legacy/upscale"],
+          "responseShape":"video",
+          "uiCapabilities":{
+            "speed":"Fast",
+            "p75DurationSeconds":30,
+            "supportedTypes":["video"]
+          }
+        }]
+        """#
+
+        let entry = try #require(
+            JSONDecoder().decode([CatalogEntry].self, from: Data(json.utf8)).first
+        )
+        guard case .upscale(let caps) = entry.uiCapabilities else {
+            Issue.record("expected an upscale entry")
+            return
+        }
+        #expect(caps.targets.isEmpty)
+        #expect(caps.maxDurationSecondsExclusive == nil)
+        #expect(caps.maxInputLongEdgeExclusive == nil)
+        #expect(caps.maxInputShortEdgeExclusive == nil)
     }
 }

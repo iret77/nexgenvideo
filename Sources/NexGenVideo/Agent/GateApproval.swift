@@ -30,6 +30,10 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let action: Action
     let declaredPack: String?
     let declaredBinding: ProjectPackBinding?
+    let sourceToolName: String
+    let sourceToolUseID: String?
+    let sourceHostStateID: UUID
+    let sourceHostTurnReference: AgentHostTurnReference?
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
 
@@ -40,6 +44,10 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         action: Action = .approve,
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil,
+        sourceToolName: String = ToolName.approveGate.rawValue,
+        sourceToolUseID: String? = nil,
+        sourceHostStateID: UUID = UUID(),
+        sourceHostTurnReference: AgentHostTurnReference? = nil,
         sessionId: UUID? = nil,
         id: String = UUID().uuidString
     ) {
@@ -51,6 +59,10 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         self.action = action
         self.declaredPack = declaredPack
         self.declaredBinding = declaredBinding
+        self.sourceToolName = sourceToolName
+        self.sourceToolUseID = sourceToolUseID
+        self.sourceHostStateID = sourceHostStateID
+        self.sourceHostTurnReference = sourceHostTurnReference
         self.sessionId = sessionId
     }
 
@@ -62,6 +74,10 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             action: action,
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,
+            sourceToolName: sourceToolName,
+            sourceToolUseID: sourceToolUseID,
+            sourceHostStateID: sourceHostStateID,
+            sourceHostTurnReference: sourceHostTurnReference,
             sessionId: sessionId,
             id: id
         )
@@ -74,6 +90,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             && action == other.action
             && declaredPack == other.declaredPack
             && declaredBinding == other.declaredBinding
+            && sourceToolName == other.sourceToolName
             && sessionId == other.sessionId
     }
 

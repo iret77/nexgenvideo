@@ -69,6 +69,7 @@ extension MediaTab {
     }
 
     func publishOrderedIds(_ ids: [String]) {
+        guard workspace == editor.workspaceFocus else { return }
         if editor.mediaPanelOrderedItemIds != ids {
             editor.mediaPanelOrderedItemIds = ids
         }
@@ -99,19 +100,22 @@ extension MediaTab {
                             .id(cell.id)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(AppTheme.Spacing.md)
                 .padding(.top, topPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollPosition(id: scrollAssetBinding)
             .coordinateSpace(name: "mediaGrid")
             .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                guard workspace == editor.workspaceFocus else { return }
                 assetFrames = frames
                 if editor.mediaPanelColumnCount != cols { editor.mediaPanelColumnCount = cols }
             }
             .onAppear { publishOrderedIds(orderedIds) }
             .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
             .onChange(of: editor.mediaPanelScrollTarget) { _, target in
-                guard let target else { return }
+                guard workspace == editor.workspaceFocus, let target else { return }
                 withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                     proxy.scrollTo(target, anchor: .center)
                 }
@@ -210,15 +214,17 @@ extension MediaTab {
                     }
                     .padding(AppTheme.Spacing.md)
                 }
+                .scrollPosition(id: scrollAssetBinding)
                 .coordinateSpace(name: "mediaGrid")
                 .onPreferenceChange(AssetFramePreferenceKey.self) { frames in
+                    guard workspace == editor.workspaceFocus else { return }
                     assetFrames = frames
                     if editor.mediaPanelColumnCount != dims.cols { editor.mediaPanelColumnCount = dims.cols }
                 }
                 .onAppear { publishOrderedIds(orderedIds) }
                 .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
                 .onChange(of: editor.mediaPanelScrollTarget) { _, target in
-                    guard let target else { return }
+                    guard workspace == editor.workspaceFocus, let target else { return }
                     withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                         proxy.scrollTo(target, anchor: .center)
                     }
@@ -319,6 +325,7 @@ extension MediaTab {
                                 .id(asset.id)
                         }
                     }
+                    .scrollTargetLayout()
                 }
             }
         }
@@ -373,7 +380,7 @@ extension MediaTab {
     func assetCellView(for asset: MediaAsset) -> some View {
         AssetThumbnailView(
             asset: asset,
-            onMoveToFolderMenu: AnyView(moveToFolderMenu(for: asset))
+            onMoveToFolderMenu: workspace == .media ? AnyView(moveToFolderMenu(for: asset)) : nil
         )
         .draggable(dragPayload(for: asset)) {
             dragPreview(for: asset)
@@ -414,7 +421,7 @@ extension MediaTab {
                     renamingFolderId = nil
                 },
                 onCancelRename: { renamingFolderId = nil },
-                onDelete: { editor.deleteFolders(ids: [folder.id]) },
+                onDelete: { editor.deleteMediaSelection() },
                 shouldAutoFocus: pendingFolderFocusId == folder.id,
                 onAutoFocusConsumed: { pendingFolderFocusId = nil }
             )
@@ -443,7 +450,7 @@ extension MediaTab {
     }
 
     @ViewBuilder
-    fileprivate func moveToFolderMenu(for asset: MediaAsset) -> some View {
+    func moveToFolderMenu(for asset: MediaAsset) -> some View {
         let targetIds: Set<String> = editor.selectedMediaAssetIds.contains(asset.id)
             ? editor.selectedMediaAssetIds
             : [asset.id]

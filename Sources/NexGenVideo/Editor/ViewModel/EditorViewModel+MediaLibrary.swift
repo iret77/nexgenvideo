@@ -214,6 +214,7 @@ enum MediaImportError: LocalizedError, Equatable, Sendable {
     case projectChanged
     case unsupportedFile(String)
     case invalidLottie(String)
+    case invalidSubtitle(String, String)
     case sourceUnavailable(String)
     case sourceNotFile(String)
     case folderUnreadable(String, String)
@@ -231,6 +232,8 @@ enum MediaImportError: LocalizedError, Equatable, Sendable {
             "Can't import \"\(name)\" — unsupported file type."
         case .invalidLottie(let name):
             "Can't import \"\(name)\" — not a Lottie animation."
+        case .invalidSubtitle(let name, let reason):
+            "Can't import \"\(name)\" — \(reason)"
         case .sourceUnavailable(let name):
             "Can't import \"\(name)\" — the file is unavailable."
         case .sourceNotFile(let name):
@@ -286,7 +289,13 @@ enum DurableMediaStore {
     ) async throws -> DurableMediaCopy {
         let fm = FileManager.default
         let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
-        let projectMedia = mediaDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let requestedMedia = mediaDirectory.standardizedFileURL
+        let projectMedia = requestedMedia.resolvingSymlinksInPath()
+        guard projectMedia.path == requestedMedia.path else {
+            throw MediaImportError.prepareFailed(
+                "the project media folder resolves outside its expected location"
+            )
+        }
         let values: URLResourceValues
         do {
             values = try source.resourceValues(forKeys: [.isRegularFileKey])
@@ -313,7 +322,7 @@ enum DurableMediaStore {
             }
         }
 
-        let staging = mediaDirectory.appendingPathComponent(
+        let staging = projectMedia.appendingPathComponent(
             ".import-\(UUID().uuidString).partial",
             isDirectory: false
         )
@@ -345,18 +354,34 @@ enum DurableMediaStore {
             }
             try output.synchronize()
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-            if let reusable = reusableByDigest[digest],
-               fm.fileExists(atPath: reusable.path),
-               try Self.matchesDigest(digest, at: reusable) {
-                try fm.removeItem(at: staging)
-                completed = true
-                return DurableMediaCopy(url: reusable, created: false, digest: digest)
+            if let reusable = reusableByDigest[digest] {
+                let normalizedReusable = reusable.standardizedFileURL
+                let resolvedReusable = normalizedReusable.resolvingSymlinksInPath()
+                if resolvedReusable.path == normalizedReusable.path,
+                   resolvedReusable.path.hasPrefix(projectMedia.path + "/"),
+                   fm.fileExists(atPath: resolvedReusable.path),
+                   try Self.matchesDigest(digest, at: resolvedReusable) {
+                    try fm.removeItem(at: staging)
+                    completed = true
+                    return DurableMediaCopy(
+                        url: resolvedReusable,
+                        created: false,
+                        digest: digest
+                    )
+                }
             }
 
             let ext = (fileExtension ?? fileURL.pathExtension).lowercased()
             let filename = ext.isEmpty ? digest : "\(digest).\(ext)"
-            let destination = mediaDirectory.appendingPathComponent(filename)
+            let destination = projectMedia.appendingPathComponent(filename)
             if fm.fileExists(atPath: destination.path) {
+                guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                    == destination.standardizedFileURL.path else {
+                    throw MediaImportError.copyFailed(
+                        fileURL.lastPathComponent,
+                        "the content-addressed destination is a symbolic link"
+                    )
+                }
                 guard try Self.digest(of: destination) == digest else {
                     throw MediaImportError.copyFailed(
                         fileURL.lastPathComponent,
@@ -370,13 +395,22 @@ enum DurableMediaStore {
             do {
                 try fm.moveItem(at: staging, to: destination)
             } catch {
-                guard fm.fileExists(atPath: destination.path),
+                guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                        == destination.standardizedFileURL.path,
+                      fm.fileExists(atPath: destination.path),
                       try Self.matchesDigest(digest, at: destination) else {
                     throw error
                 }
                 try fm.removeItem(at: staging)
                 completed = true
                 return DurableMediaCopy(url: destination, created: false, digest: digest)
+            }
+            guard destination.standardizedFileURL.resolvingSymlinksInPath().path
+                == destination.standardizedFileURL.path else {
+                throw MediaImportError.copyFailed(
+                    fileURL.lastPathComponent,
+                    "the content-addressed destination escaped project storage"
+                )
             }
             completed = true
             return DurableMediaCopy(url: destination, created: true, digest: digest)
@@ -446,6 +480,16 @@ private enum MediaImportPreparer {
             for (index, file) in plan.files.enumerated() {
                 if Task.isCancelled { throw MediaImportError.cancelled }
                 await progress(index, file.name)
+                if file.type == .subtitle {
+                    do {
+                        _ = try await SubtitleFileParser.parseFile(at: file.url)
+                    } catch {
+                        throw MediaImportError.invalidSubtitle(
+                            file.url.lastPathComponent,
+                            error.localizedDescription
+                        )
+                    }
+                }
                 let copy = try await DurableMediaStore.copy(
                     file.url,
                     into: mediaDirectory,
@@ -472,7 +516,8 @@ extension EditorViewModel {
         guard let workingRoot, let key = openWorkingCopyKey else {
             throw MediaImportError.projectMustBeSaved
         }
-        let mediaDir = workingRoot.appendingPathComponent(
+        let canonicalRoot = workingRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let mediaDir = canonicalRoot.appendingPathComponent(
             Project.mediaDirectoryName,
             isDirectory: true
         )
@@ -482,7 +527,15 @@ extension EditorViewModel {
                 at: mediaDir,
                 withIntermediateDirectories: true
             )
-            return mediaDir
+            let canonicalMedia = mediaDir.standardizedFileURL.resolvingSymlinksInPath()
+            guard canonicalMedia.path == mediaDir.standardizedFileURL.path else {
+                throw MediaImportError.prepareFailed(
+                    "the project media folder resolves outside its expected location"
+                )
+            }
+            return canonicalMedia
+        } catch let error as MediaImportError {
+            throw error
         } catch {
             throw MediaImportError.prepareFailed(error.localizedDescription)
         }
@@ -514,7 +567,9 @@ extension EditorViewModel {
             guard let id = MediaTab.assetId(fromDragString: String(line)) else { return nil }
             // A document has no duration and nothing to draw — dropping one would make a clip no
             // player can render. Filtered here so the timeline never even offers the drop.
-            return mediaAssets.first { $0.id == id && $0.type.isPlaceable }
+            return mediaAssets.first {
+                $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle)
+            }
         }
     }
 
@@ -1259,11 +1314,10 @@ extension EditorViewModel {
             mediaManifest.entries[idx].sourceFPS = asset.sourceFPS
             mediaManifest.entries[idx].hasAudio = asset.hasAudio
             mediaManifest.entries[idx].originalFilename = asset.originalFilename
+            mediaManifest.entries[idx].origin = asset.origin
         }
     }
 
-    /// Text is composited via `CALayer.render` — `AVAssetImageGenerator`
-    /// doesn't evaluate `animationTool` on single-frame extraction.
     func captureCurrentFrameToMedia() {
         guard let currentItem = videoEngine?.player.currentItem else {
             Log.project.error("captureCurrentFrameToMedia: no preview item")
@@ -1287,7 +1341,6 @@ extension EditorViewModel {
         }
 
         let asset = currentItem.asset
-        let timelineSnapshot = timeline
         let fps = timeline.fps
         let canvas = CGSize(width: timeline.width, height: timeline.height)
         let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
@@ -1317,24 +1370,9 @@ extension EditorViewModel {
             }
 
             let data = await MainActor.run { () -> Data? in
-                let finalCG: CGImage
-                if isTimelineTab {
-                    let textRoot = TextLayerController.buildSnapshot(
-                        timeline: timelineSnapshot,
-                        canvasSize: canvas,
-                        atFrame: frame
-                    )
-                    guard let composited = Self.compositeCapture(
-                        video: videoCG, textRoot: textRoot, canvas: canvas
-                    ) else {
-                        Log.project.error("captureCurrentFrameToMedia: composite failed")
-                        return nil
-                    }
-                    finalCG = composited
-                } else {
-                    finalCG = videoCG
-                }
-                let rep = NSBitmapImageRep(cgImage: finalCG)
+                // Captured timeline PNGs must re-import through the opaque, color-tagged video path.
+                guard let image = isTimelineTab ? OpaqueImage.flatten(videoCG) : videoCG else { return nil }
+                let rep = NSBitmapImageRep(cgImage: image)
                 guard let data = rep.representation(using: .png, properties: [:]) else {
                     Log.project.error("captureCurrentFrameToMedia: png encode failed")
                     return nil
@@ -1383,13 +1421,29 @@ extension EditorViewModel {
         return context.makeImage()
     }
 
-    func finalizeImportedAsset(_ asset: MediaAsset) async {
+    @discardableResult
+    func finalizeImportedAsset(_ asset: MediaAsset) async -> Bool {
+
         Log.project.notice(
             "media finalize start asset=\(asset.id.prefix(8)) type=\(asset.type.rawValue)",
             telemetry: "Media asset finalize started",
             data: ["assetId": Telemetry.shortId(asset.id), "type": asset.type.rawValue]
         )
-        await asset.loadMetadata()
+        if asset.type == .subtitle {
+            do {
+                let document = try await SubtitleFileParser.parseFile(at: asset.url)
+                asset.duration = document.cues.map(\.end.milliseconds).max()
+                    .map { Double($0) / 1_000 } ?? 0
+            } catch {
+                reportMediaImportFailure(MediaImportError.invalidSubtitle(
+                    asset.userFacingFilename,
+                    error.localizedDescription
+                ))
+                return false
+            }
+        } else {
+            await asset.loadMetadata()
+        }
         updateManifestMetadata(for: asset)
         refreshMissingMediaCache()
         searchIndex.schedule(asset)
@@ -1401,7 +1455,7 @@ extension EditorViewModel {
             mediaVisualCache.generateWaveform(for: asset)
         case .image:
             mediaVisualCache.generateImageThumbnail(for: asset)
-        case .text, .lottie, .document:
+        case .text, .lottie, .subtitle, .document:
             break
         }
         Log.project.notice(
@@ -1417,17 +1471,19 @@ extension EditorViewModel {
                 "hasAudio": asset.hasAudio
             ]
         )
+        return true
     }
 
-    struct TextClipSpec {
-        let trackIndex: Int
+    struct TextClipSpec: Sendable {
+        var trackIndex: Int
         let startFrame: Int
-        let durationFrames: Int
+        var durationFrames: Int
         let content: String
         let style: TextStyle
         /// When nil the box is auto-fit to content and centered on the canvas.
         let transform: Transform?
         var captionGroupId: String? = nil
+        var captionProvenance: CaptionProvenance? = nil
     }
 
     /// Batch variant of `addTextClip` for agent flows.
@@ -1471,6 +1527,7 @@ extension EditorViewModel {
                 clip.textContent = spec.content
                 clip.textStyle = spec.style
                 clip.captionGroupId = spec.captionGroupId
+                clip.captionProvenance = spec.captionProvenance
                 timeline.tracks[spec.trackIndex].clips.append(clip)
                 createdIds[i] = clip.id
             }
@@ -1479,7 +1536,7 @@ extension EditorViewModel {
         for i in Set(specs.map(\.trackIndex)) where timeline.tracks.indices.contains(i) {
             sortClips(trackIndex: i)
         }
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshTextCompositing()
         return createdIds.compactMap { $0 }
     }
 
@@ -1515,13 +1572,13 @@ extension EditorViewModel {
         undoManager?.registerUndo(withTarget: self) { vm in
             if let loc = vm.findClip(id: clipId) {
                 vm.timeline.tracks[loc.trackIndex].clips.remove(at: loc.clipIndex)
-                vm.videoEngine?.syncTextLayers()
+                vm.videoEngine?.refreshTextCompositing()
             }
         }
         undoManager?.setActionName("Add Text")
 
         selectedClipIds = [clipId]
-        videoEngine?.syncTextLayers()
+        videoEngine?.refreshTextCompositing()
         return clipId
     }
 }

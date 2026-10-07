@@ -1,14 +1,38 @@
 import AVFoundation
 import CoreMedia
+import CryptoKit
 import Foundation
 import NexGenEngine
 
 enum PipelineDeliveryStore {
-    struct FinishedState {
+    struct FinishedState: Sendable {
         let plan: FinishPlanV1
         let planData: Data
         let manifest: FinishedTimelineManifestV1
         let manifestData: Data
+    }
+
+    struct OutputEvidence {
+        let sha256: String
+        let byteCount: Int64
+        let probeQC: DeliveryProbeQCV1
+        let hdrQC: DeliveryHDRQCV1?
+    }
+
+    struct FinishResult {
+        let attempt: DeliveryAttemptV1
+        let selectionWarning: String?
+    }
+
+    private struct AdoptionPreparation: Sendable {
+        let metadata: ProjectMeta
+        let timelineData: Data
+        let timelineSHA256: String
+        let timelinePath: String
+        let plan: FinishPlanV1
+        let planData: Data
+        let media: [RenderPublishedArtifactV1]
+        let assemblyIsCurrent: Bool
     }
 
     static let selectionPath = "delivery/selection.v1.json"
@@ -16,90 +40,66 @@ enum PipelineDeliveryStore {
     private static let jobsDirectory = "delivery/jobs"
     private static let timelinesDirectory = "delivery/timelines"
 
+    static func hdrQCPath(attemptID: String) -> String {
+        "\(attemptsDirectory)/\(attemptID).hdr-qc.v1.json"
+    }
+
     @MainActor
     static func adoptCurrentTimeline(
         editor: EditorViewModel,
         requireSequenceReview: Bool
-    ) throws -> FinishedState {
+    ) async throws -> FinishedState {
         guard let home = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: home),
               let workingCopyKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before preparing delivery.")
         }
-        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
-            ProjectMeta.self,
-            at: PipelineLayout.projectFile
-        )
-        let timelineData = try PipelineAssemblyStore.canonical(editor.timeline)
-        guard editor.timeline.totalFrames > 0,
-              editor.timeline.tracks.contains(where: {
-                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
-              }) else {
-            throw ToolError("Add visible video to the timeline before preparing delivery.")
+        let boundTimeline = editor.timeline
+        let boundManifest = editor.mediaManifest
+        let boundResolver = editor.mediaResolver.snapshot()
+        let cancellationFlag = ExportCancellationFlag()
+        let prepared = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try prepareAdoption(
+                    dataRoot: dataRoot,
+                    timeline: boundTimeline,
+                    resolver: boundResolver,
+                    requireSequenceReview: requireSequenceReview,
+                    isCancelled: { cancellationFlag.isCancelled }
+                )
+            }.value
+        } onCancel: {
+            cancellationFlag.cancel()
         }
-        let timelineSHA256 = FileDigest.sha256(of: timelineData)
-        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
-
-        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
-        let assemblyIsCurrent = assembly.map {
-            $0.manifest.timelineFingerprint == timelineSHA256
-        } ?? false
-        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
-            try FileDigest.sha256(of: ProjectLocalFile.resolve(
-                AssemblyManifestV1.relativePath,
-                dataRoot: dataRoot
-            ))
-        } else {
-            nil
+        guard editor.openWorkingCopyKey == workingCopyKey,
+              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL,
+              editor.mediaManifest == boundManifest,
+              FileDigest.sha256(
+                  of: try PipelineAssemblyStore.canonical(editor.timeline)
+              ) == prepared.timelineSHA256,
+              try YAMLArtifactStore(dataRoot: dataRoot).load(
+                  ProjectMeta.self,
+                  at: PipelineLayout.projectFile
+              ) == prepared.metadata else {
+            throw CancellationError()
         }
-
-        let sequenceReviewSHA256: String?
-        do {
-            _ = try PipelineSequenceReviewStore.requireCurrent(
-                dataRoot: dataRoot,
-                timeline: editor.timeline
-            )
-            sequenceReviewSHA256 = try FileDigest.sha256(of: ProjectLocalFile.resolve(
-                SequenceReviewV1.relativePath,
-                dataRoot: dataRoot
-            ))
-        } catch {
-            if requireSequenceReview {
-                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
-            }
-            sequenceReviewSHA256 = nil
-        }
-
-        let plan = FinishPlanV1(
-            projectID: metadata.project,
-            sourceTimelineSHA256: timelineSHA256,
-            assemblyManifestSHA256: assemblyManifestSHA256,
-            sequenceReviewSHA256: sequenceReviewSHA256,
-            operations: []
-        )
-        try DeliveryValidatorV1.validate(plan: plan)
-        let planData = try PipelineAssemblyStore.canonical(plan)
-        let media = try currentMediaProofs(
-            timeline: editor.timeline,
-            resolver: editor.mediaResolver.snapshot()
-        )
         let manifest = FinishedTimelineManifestV1(
-            projectID: metadata.project,
-            finishPlanSHA256: FileDigest.sha256(of: planData),
-            timelinePath: timelinePath,
-            timelineSHA256: timelineSHA256,
-            media: media,
+            projectID: prepared.metadata.project,
+            finishPlanSHA256: FileDigest.sha256(of: prepared.planData),
+            timelinePath: prepared.timelinePath,
+            timelineSHA256: prepared.timelineSHA256,
+            media: prepared.media,
             operationProofs: [],
-            adoptedManualTimeline: !assemblyIsCurrent
+            adoptedManualTimeline: !prepared.assemblyIsCurrent
         )
         try DeliveryValidatorV1.validate(
             manifest: manifest,
-            plan: plan,
-            planSHA256: FileDigest.sha256(of: planData),
-            currentTimelineSHA256: timelineSHA256
+            plan: prepared.plan,
+            planSHA256: FileDigest.sha256(of: prepared.planData),
+            currentTimelineSHA256: prepared.timelineSHA256
         )
         let manifestData = try PipelineAssemblyStore.canonical(manifest)
-        let timelineURL = dataRoot.appendingPathComponent(timelinePath)
+        let timelineURL = dataRoot.appendingPathComponent(prepared.timelinePath)
         let planURL = dataRoot.appendingPathComponent(FinishPlanV1.relativePath)
         let manifestURL = dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath)
         try ProjectWorkingCopy.markDirty(key: workingCopyKey)
@@ -112,19 +112,19 @@ enum PipelineDeliveryStore {
                 withIntermediateDirectories: true
             )
             if FileManager.default.fileExists(atPath: timelineURL.path) {
-                guard try Data(contentsOf: timelineURL) == timelineData else {
+                guard try Data(contentsOf: timelineURL) == prepared.timelineData else {
                     throw ToolError("An immutable finished timeline has different bytes.")
                 }
             } else {
-                try timelineData.write(to: timelineURL, options: .atomic)
+                try prepared.timelineData.write(to: timelineURL, options: .atomic)
             }
-            try planData.write(to: planURL, options: .atomic)
+            try prepared.planData.write(to: planURL, options: .atomic)
             try manifestData.write(to: manifestURL, options: .atomic)
         }
         editor.onPipelineChanged?()
         return .init(
-            plan: plan,
-            planData: planData,
+            plan: prepared.plan,
+            planData: prepared.planData,
             manifest: manifest,
             manifestData: manifestData
         )
@@ -132,8 +132,10 @@ enum PipelineDeliveryStore {
 
     static func requireCurrentFinished(
         dataRoot: URL,
-        timeline: Timeline
+        timeline: Timeline,
+        isCancelled: @Sendable () -> Bool = { false }
     ) throws -> FinishedState {
+        if isCancelled() { throw CancellationError() }
         let planData = try Data(contentsOf: ProjectLocalFile.resolve(
             FinishPlanV1.relativePath,
             dataRoot: dataRoot
@@ -155,37 +157,44 @@ enum PipelineDeliveryStore {
             planSHA256: FileDigest.sha256(of: planData),
             currentTimelineSHA256: timelineSHA256
         )
-        let frozenTimeline = try ProjectLocalFile.requireHash(
+        let frozenTimeline = try requireCancellableHash(
             manifest.timelineSHA256,
             at: manifest.timelinePath,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            isCancelled: isCancelled
         )
         guard try Data(contentsOf: frozenTimeline) == timelineData else {
             throw ToolError("The finished timeline snapshot is stale.")
         }
         for item in manifest.media {
+            if isCancelled() { throw CancellationError() }
             let url = try boundURL(item.path, dataRoot: dataRoot)
-            guard try FileDigest.sha256(of: url) == item.sha256 else {
+            guard try cancellableSHA256(of: url, isCancelled: isCancelled) == item.sha256 else {
                 throw ToolError("Finished media changed or is offline: \(item.path)")
             }
         }
         for operation in plan.operations {
-            _ = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
                 operation.settingsSHA256,
                 at: operation.settingsPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
-            _ = try ProjectLocalFile.requireHash(
+            _ = try requireCancellableHash(
                 operation.outputSHA256,
                 at: operation.outputPath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
         }
         if let expectedAssembly = plan.assemblyManifestSHA256 {
-            let currentAssembly = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            let currentAssembly = try requireCancellableHash(
                 expectedAssembly,
                 at: AssemblyManifestV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
             _ = currentAssembly
             guard let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot),
@@ -194,15 +203,18 @@ enum PipelineDeliveryStore {
             }
         }
         if let expectedReview = plan.sequenceReviewSHA256 {
-            _ = try ProjectLocalFile.requireHash(
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
                 expectedReview,
                 at: SequenceReviewV1.relativePath,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
             )
             _ = try PipelineSequenceReviewStore.requireCurrent(
                 dataRoot: dataRoot,
                 timeline: timeline
             )
+            if isCancelled() { throw CancellationError() }
         }
         return .init(
             plan: plan,
@@ -222,7 +234,9 @@ enum PipelineDeliveryStore {
         requireSequenceReview: Bool,
         extensionRefs: [String] = []
     ) throws -> DeliverySpecV1 {
-        guard format != .xml else { throw ToolError("Delivery video needs a video codec.") }
+        guard format != .xml, format != .fcpxml else {
+            throw ToolError("Delivery video needs a video codec.")
+        }
         let outputSize = resolution.renderSize(for: CGSize(
             width: timeline.width,
             height: timeline.height
@@ -230,38 +244,339 @@ enum PipelineDeliveryStore {
         let hasAudio = timeline.tracks.contains {
             $0.type == .audio && !$0.muted && !$0.clips.isEmpty
         }
+        var requirements = [
+            DeliveryRequirementV1(
+                id: "core.sequence-review",
+                state: .enforced,
+                required: requireSequenceReview,
+                value: requireSequenceReview ? "current" : "optional"
+            ),
+            DeliveryRequirementV1(
+                id: "core.offline-media",
+                state: .enforced,
+                required: true,
+                value: "reject"
+            ),
+        ]
+        if format.isHDR {
+            requirements.append(contentsOf: [
+                .init(
+                    id: "core.hdr-conversion",
+                    state: .enforced,
+                    required: true,
+                    value: HDRVideoExporter.conversionID
+                ),
+                .init(
+                    id: "core.hdr-qc",
+                    state: .enforced,
+                    required: true,
+                    value: DeliveryHDRQCV1.schemaVersion
+                ),
+            ])
+        }
         let spec = DeliverySpecV1(
             id: id,
             targetKind: targetKind,
-            container: format == .prores ? "mov" : "mp4",
+            container: containerID(format),
             videoCodec: codecID(format),
             width: Int(outputSize.width),
             height: Int(outputSize.height),
             fpsNumerator: timeline.fps,
-            colorSpace: "rec709-sdr",
-            hdr: false,
+            colorSpace: format.isHDR ? "bt2020-hlg" : "rec709-sdr",
+            hdr: format.isHDR,
             audioLayout: hasAudio ? "present" : "none",
-            captionMode: TextLayerController.hasVisibleText(in: timeline)
+            captionMode: TextLayerStyle.hasVisibleText(in: timeline)
                 ? "burned-in" : "none",
             disclosureMode: "project-record",
-            requirements: [
-                .init(
-                    id: "core.sequence-review",
-                    state: .enforced,
-                    required: requireSequenceReview,
-                    value: requireSequenceReview ? "current" : "optional"
-                ),
-                .init(
-                    id: "core.offline-media",
-                    state: .enforced,
-                    required: true,
-                    value: "reject"
-                ),
-            ],
+            requirements: requirements,
             extensionRefs: extensionRefs
         )
         try validateSupportedSpec(spec)
         return spec
+    }
+
+    static func requireBoundFinished(
+        dataRoot: URL,
+        finished: FinishedState,
+        timeline: Timeline,
+        resolver: MediaResolver,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws {
+        if isCancelled() { throw CancellationError() }
+        let timelineData = try PipelineAssemblyStore.canonical(timeline)
+        let timelineSHA256 = FileDigest.sha256(of: timelineData)
+        try DeliveryValidatorV1.validate(
+            manifest: finished.manifest,
+            plan: finished.plan,
+            planSHA256: FileDigest.sha256(of: finished.planData),
+            currentTimelineSHA256: timelineSHA256
+        )
+        guard finished.manifestData == (try PipelineAssemblyStore.canonical(finished.manifest)),
+              finished.planData == (try PipelineAssemblyStore.canonical(finished.plan)) else {
+            throw ToolError("The bound delivery evidence is not canonical.")
+        }
+        let frozenTimeline = try requireCancellableHash(
+            finished.manifest.timelineSHA256,
+            at: finished.manifest.timelinePath,
+            dataRoot: dataRoot,
+            isCancelled: isCancelled
+        )
+        guard try Data(contentsOf: frozenTimeline) == timelineData else {
+            throw ToolError("The bound finished timeline snapshot changed.")
+        }
+        let mediaProofs = try currentMediaProofs(
+            timeline: timeline,
+            resolver: resolver,
+            isCancelled: isCancelled
+        )
+        guard mediaProofs == finished.manifest.media else {
+            throw ToolError("The bound delivery media changed or was substituted.")
+        }
+        for operation in finished.plan.operations {
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
+                operation.settingsSHA256,
+                at: operation.settingsPath,
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
+            )
+            _ = try requireCancellableHash(
+                operation.outputSHA256,
+                at: operation.outputPath,
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
+            )
+        }
+        if let assemblySHA256 = finished.plan.assemblyManifestSHA256 {
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
+                assemblySHA256,
+                at: AssemblyManifestV1.relativePath,
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
+            )
+        }
+        if let sequenceReviewSHA256 = finished.plan.sequenceReviewSHA256 {
+            if isCancelled() { throw CancellationError() }
+            _ = try requireCancellableHash(
+                sequenceReviewSHA256,
+                at: SequenceReviewV1.relativePath,
+                dataRoot: dataRoot,
+                isCancelled: isCancelled
+            )
+        }
+    }
+
+    static func extensionFiles(
+        for spec: DeliverySpecV1,
+        dataRoot: URL
+    ) throws -> [(path: String, url: URL)] {
+        try validateSupportedSpec(spec)
+        return try spec.extensionRefs.map { path in
+            let url = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else {
+                throw ToolError("A required delivery extension is missing: \(path)")
+            }
+            return (path, url)
+        }
+    }
+
+    static func enqueueAttempt(
+        id: String,
+        dataRoot: URL,
+        finished: FinishedState,
+        spec: DeliverySpecV1,
+        format: ExportFormat,
+        resolution: ExportResolution,
+        outputURL: URL,
+        timeline: Timeline,
+        resolver: MediaResolver,
+        bindingAlreadyValidated: Bool = false
+    ) throws -> DeliveryAttemptV1 {
+        try safeID(id)
+        let currentURL = dataRoot.appendingPathComponent(
+            "\(jobsDirectory)/\(id)/current.v1.json"
+        )
+        let attemptURL = dataRoot.appendingPathComponent(
+            "\(attemptsDirectory)/\(id).v1.json"
+        )
+        guard !FileManager.default.fileExists(atPath: currentURL.path),
+              !FileManager.default.fileExists(atPath: attemptURL.path) else {
+            throw ToolError("A delivery job with this ID already exists in project history.")
+        }
+        try validateSupportedSpec(spec)
+        guard outputURL.pathExtension.lowercased() == spec.container else {
+            throw ToolError("The delivery filename extension does not match the delivery container.")
+        }
+        _ = try extensionFiles(for: spec, dataRoot: dataRoot)
+        let outputSize = resolution.renderSize(for: CGSize(
+            width: timeline.width,
+            height: timeline.height
+        ))
+        guard spec.videoCodec == codecID(format),
+              spec.container == containerID(format),
+              spec.width == Int(outputSize.width),
+              spec.height == Int(outputSize.height),
+              spec.fpsNumerator == timeline.fps,
+              spec.fpsDenominator == 1 else {
+            throw ToolError("The delivery spec does not match the bound timeline.")
+        }
+        if !bindingAlreadyValidated {
+            try requireBoundFinished(
+                dataRoot: dataRoot,
+                finished: finished,
+                timeline: timeline,
+                resolver: resolver
+            )
+        }
+        let requiresReview = spec.requirements.contains {
+            $0.id == "core.sequence-review" && $0.required
+        }
+        guard !requiresReview || finished.plan.sequenceReviewSHA256 != nil else {
+            throw ToolError("This delivery spec requires a current sequence review.")
+        }
+        let attempt = DeliveryAttemptV1(
+            id: id,
+            spec: spec,
+            finishedTimelineSHA256: finished.manifest.timelineSHA256,
+            sequenceReviewSHA256: finished.plan.sequenceReviewSHA256,
+            status: .queued,
+            outputPath: outputURL.path,
+            createdAt: currentTimestamp()
+        )
+        try record(attempt, dataRoot: dataRoot, terminal: false)
+        return attempt
+    }
+
+    static func markRunning(
+        _ attempt: DeliveryAttemptV1,
+        dataRoot: URL
+    ) throws -> DeliveryAttemptV1 {
+        let running = copy(attempt, status: .running)
+        try record(running, dataRoot: dataRoot, terminal: false)
+        return running
+    }
+
+    static func finishUnsuccessful(
+        _ attempt: DeliveryAttemptV1,
+        status: DeliveryJobStatusV1,
+        reason: String,
+        dataRoot: URL
+    ) throws -> DeliveryAttemptV1 {
+        guard [.failed, .cancelled, .interrupted].contains(status) else {
+            throw ToolError("Invalid unsuccessful delivery status.")
+        }
+        let terminal = copy(
+            attempt,
+            status: status,
+            failures: [reason],
+            completedAt: currentTimestamp()
+        )
+        try record(terminal, dataRoot: dataRoot, terminal: true)
+        return terminal
+    }
+
+    static func finishSuccessful(
+        _ attempt: DeliveryAttemptV1,
+        dataRoot: URL,
+        finished: FinishedState,
+        outputURL: URL,
+        evidence: OutputEvidence,
+        publishedState: ExportQueue.PathState,
+        warnings: [String] = [],
+        selectIfCurrent: Bool
+    ) throws -> FinishResult {
+        guard case .file(let sha256, let byteCount) = publishedState,
+              sha256 == evidence.sha256 else {
+            throw ToolError("The published delivery bytes do not match the verified export.")
+        }
+        guard byteCount == Int(evidence.byteCount) else {
+            throw ToolError("The published delivery size changed before its receipt was recorded.")
+        }
+        let succeeded = copy(
+            attempt,
+            status: .succeeded,
+            outputPath: outputURL.path,
+            outputSHA256: evidence.sha256,
+            outputByteCount: evidence.byteCount,
+            probeQC: evidence.probeQC,
+            warnings: attempt.warnings + warnings,
+            completedAt: currentTimestamp()
+        )
+        try DeliveryValidatorV1.validateSuccessfulAttempt(
+            succeeded,
+            finishedTimelineSHA256: finished.manifest.timelineSHA256,
+            requiredSequenceReviewSHA256: finished.plan.sequenceReviewSHA256
+        )
+        try record(succeeded, dataRoot: dataRoot, terminal: true, hdrQC: evidence.hdrQC)
+        var selectionWarning: String?
+        if selectIfCurrent && isCurrent(finished, dataRoot: dataRoot) {
+            do {
+                try select(succeeded, dataRoot: dataRoot)
+            } catch {
+                selectionWarning = "Delivery completed, but its current selection could not be updated: \(error.localizedDescription)"
+            }
+        }
+        return .init(attempt: succeeded, selectionWarning: selectionWarning)
+    }
+
+    static func inspectSuccessfulOutput(
+        outputURL: URL,
+        spec: DeliverySpecV1,
+        expectedDurationFrames: Int,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) async throws -> OutputEvidence {
+        let qc = try await probeOutput(
+            outputURL: outputURL,
+            spec: spec,
+            expectedDurationFrames: expectedDurationFrames,
+            isCancelled: isCancelled
+        )
+        if isCancelled() { throw CancellationError() }
+        guard qc.passed else {
+            throw ToolError("The exported bytes do not match the delivery spec.")
+        }
+        let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true,
+              let size = values.fileSize,
+              size > 0 else {
+            throw ToolError("The exported delivery is missing or empty.")
+        }
+        let hdrQC = spec.hdr
+            ? try await HDRDeliveryQC.probe(
+                outputURL: outputURL,
+                spec: spec,
+                isCancelled: isCancelled
+            )
+            : nil
+        if isCancelled() { throw CancellationError() }
+        return OutputEvidence(
+            sha256: try cancellableSHA256(of: outputURL, isCancelled: isCancelled),
+            byteCount: Int64(size),
+            probeQC: qc,
+            hdrQC: hdrQC
+        )
+    }
+
+    static func listAttempts(dataRoot: URL) throws -> [DeliveryAttemptV1] {
+        let root = dataRoot.appendingPathComponent(attemptsDirectory)
+        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+        guard root.resolvingSymlinksInPath()
+                == dataRoot.resolvingSymlinksInPath().appendingPathComponent(attemptsDirectory) else {
+            throw ToolError("Delivery attempts cannot traverse symbolic links.")
+        }
+        return try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ).filter { $0.pathExtension == "json" }.map { url in
+            let value = try JSONDecoder().decode(
+                DeliveryAttemptV1.self,
+                from: Data(contentsOf: url)
+            )
+            try DeliveryValidatorV1.validate(attempt: value)
+            return value
+        }.sorted { $0.createdAt > $1.createdAt }
     }
 
     @MainActor
@@ -271,152 +586,59 @@ enum PipelineDeliveryStore {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
-        service: ExportService
+        service: ExportService,
+        acquireSlot: Bool = true
     ) async throws -> DeliveryAttemptV1 {
         guard let home = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: home) else {
+              let dataRoot = DataRootResolver.dataRoot(of: home),
+              let ownerKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before exporting a delivery.")
         }
-        try recoverInterruptedJobs(dataRoot: dataRoot)
-        try validateSupportedSpec(spec)
-        guard outputURL.pathExtension.lowercased() == spec.container else {
-            throw ToolError("The delivery filename extension does not match the delivery container.")
-        }
-        for path in spec.extensionRefs {
-            let extensionURL = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
-            let values = try extensionURL.resourceValues(forKeys: [.isRegularFileKey])
-            guard values.isRegularFile == true else {
-                throw ToolError("A required delivery extension is missing: \(path)")
-            }
-        }
-        let finished = try requireCurrentFinished(
-            dataRoot: dataRoot,
-            timeline: editor.timeline
-        )
-        let requiresReview = spec.requirements.contains {
-            $0.id == "core.sequence-review" && $0.required
-        }
-        guard !requiresReview || finished.plan.sequenceReviewSHA256 != nil else {
-            throw ToolError("This delivery spec requires a current sequence review.")
-        }
-        guard spec.videoCodec == codecID(format),
-              spec.container == (format == .prores ? "mov" : "mp4"),
-              spec.width == Int(resolution.renderSize(for: CGSize(
-                  width: editor.timeline.width,
-                  height: editor.timeline.height
-              )).width),
-              spec.height == Int(resolution.renderSize(for: CGSize(
-                  width: editor.timeline.width,
-                  height: editor.timeline.height
-              )).height),
-              spec.fpsNumerator == editor.timeline.fps,
-              spec.fpsDenominator == 1 else {
-            throw ToolError("The delivery spec does not match the selected export settings.")
-        }
-        let id = UUID().uuidString.lowercased()
-        let createdAt = currentTimestamp()
-        let base = DeliveryAttemptV1(
-            id: id,
+        let job = try await ExportQueue.shared.enqueueDelivery(
+            editor: editor,
             spec: spec,
-            finishedTimelineSHA256: finished.manifest.timelineSHA256,
-            sequenceReviewSHA256: finished.plan.sequenceReviewSHA256,
-            status: .queued,
-            createdAt: createdAt
+            format: format,
+            resolution: resolution,
+            outputURL: outputURL
         )
-        try record(base, dataRoot: dataRoot, terminal: false)
-        let running = copy(base, status: .running)
-        try record(running, dataRoot: dataRoot, terminal: false)
-
-        await withTaskCancellationHandler {
-            await service.export(
-                timeline: editor.timeline,
-                resolver: editor.mediaResolver,
-                format: format,
-                resolution: resolution,
-                outputURL: outputURL
-            )
+        let completed = await withTaskCancellationHandler {
+            await ExportQueue.shared.waitForCompletion(jobID: job.id)
         } onCancel: {
-            Task { @MainActor in service.cancel() }
+            Task { @MainActor in ExportQueue.shared.cancel(jobID: job.id) }
         }
-
-        if let error = service.error {
-            let status: DeliveryJobStatusV1 = error == "Export was cancelled"
-                ? .cancelled : .failed
-            let failed = copy(
-                base,
-                status: status,
-                outputPath: outputURL.path,
-                failures: [error],
-                completedAt: currentTimestamp()
-            )
-            try record(failed, dataRoot: dataRoot, terminal: true)
-            editor.onPipelineChanged?()
-            throw ToolError(error)
-        }
-        guard let report = service.lastReport,
-              report.offlineMediaRefs.isEmpty,
-              report.unprocessableMediaRefs.isEmpty else {
-            let reason = "Delivery export did not consume every required media source."
-            let failed = copy(
-                base,
-                status: .failed,
-                outputPath: outputURL.path,
-                failures: [reason],
-                completedAt: currentTimestamp()
-            )
-            try record(failed, dataRoot: dataRoot, terminal: true)
-            editor.onPipelineChanged?()
+        guard let completed, completed.status == .completed else {
+            let reason = completed?.failure ?? "Export did not complete."
+            service.error = reason
             throw ToolError(reason)
         }
-        let succeeded: DeliveryAttemptV1
-        do {
-            let qc = try await probeOutput(
-                outputURL: outputURL,
-                spec: spec,
-                expectedDurationFrames: editor.timeline.totalFrames
-            )
-            guard qc.passed else { throw ToolError("The exported bytes do not match the delivery spec.") }
-            let values = try outputURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            guard values.isRegularFile == true,
-                  let size = values.fileSize,
-                  size > 0 else {
-                throw ToolError("The exported delivery is missing or empty.")
-            }
-            succeeded = copy(
-                base,
-                status: .succeeded,
-                outputPath: outputURL.path,
-                outputSHA256: try FileDigest.sha256(of: outputURL),
-                outputByteCount: Int64(size),
-                probeQC: qc,
-                completedAt: currentTimestamp()
-            )
-            try DeliveryValidatorV1.validateSuccessfulAttempt(
-                succeeded,
-                finishedTimelineSHA256: finished.manifest.timelineSHA256,
-                requiredSequenceReviewSHA256: finished.plan.sequenceReviewSHA256
-            )
-        } catch {
-            let reason = error.localizedDescription
-            let failed = copy(
-                base,
-                status: .failed,
-                outputPath: outputURL.path,
-                failures: [reason],
-                completedAt: currentTimestamp()
-            )
-            try record(failed, dataRoot: dataRoot, terminal: true)
-            editor.onPipelineChanged?()
-            throw error
+        service.progress = 1
+        let jobID = job.id
+        let cancellationFlag = ExportCancellationFlag()
+        let attempt = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                try loadAttempt(
+                    id: jobID,
+                    dataRoot: dataRoot,
+                    isCancelled: { cancellationFlag.isCancelled }
+                )
+            }.value
+        } onCancel: {
+            cancellationFlag.cancel()
         }
-        try record(succeeded, dataRoot: dataRoot, terminal: true)
-        try select(succeeded, dataRoot: dataRoot)
-        editor.onPipelineChanged?()
-        return succeeded
+        guard editor.openWorkingCopyKey == ownerKey,
+              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL else {
+            throw CancellationError()
+        }
+        return attempt
     }
 
     @discardableResult
-    static func recoverInterruptedJobs(dataRoot: URL) throws -> Bool {
+    static func recoverInterruptedJobs(
+        dataRoot: URL,
+        excludingIDs: Set<String> = [],
+        willMutate: (() throws -> Void)? = nil,
+        didRecover: ((DeliveryAttemptV1) -> Void)? = nil
+    ) throws -> Bool {
         let root = dataRoot.appendingPathComponent(jobsDirectory)
         guard FileManager.default.fileExists(atPath: root.path) else { return false }
         guard root.resolvingSymlinksInPath()
@@ -434,7 +656,9 @@ enum PipelineDeliveryStore {
                 DeliveryAttemptV1.self,
                 from: Data(contentsOf: currentURL)
             )
+            guard !excludingIDs.contains(value.id) else { continue }
             guard [.queued, .running].contains(value.status) else { continue }
+            if !recovered { try willMutate?() }
             let interrupted = copy(
                 value,
                 status: .interrupted,
@@ -442,12 +666,18 @@ enum PipelineDeliveryStore {
                 completedAt: currentTimestamp()
             )
             try record(interrupted, dataRoot: dataRoot, terminal: true)
+            didRecover?(interrupted)
             recovered = true
         }
         return recovered
     }
 
-    static func loadAttempt(id: String, dataRoot: URL) throws -> DeliveryAttemptV1 {
+    static func loadAttempt(
+        id: String,
+        dataRoot: URL,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws -> DeliveryAttemptV1 {
+        if isCancelled() { throw CancellationError() }
         try safeID(id)
         let path = "\(attemptsDirectory)/\(id).v1.json"
         let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
@@ -459,16 +689,120 @@ enum PipelineDeliveryStore {
         }
         if value.status == .succeeded {
             let output = try boundURL(value.outputPath ?? "", dataRoot: dataRoot)
-            guard try FileDigest.sha256(of: output) == value.outputSHA256 else {
+            guard try cancellableSHA256(
+                of: output,
+                isCancelled: isCancelled
+            ) == value.outputSHA256 else {
                 throw ToolError("The selected delivery output bytes changed.")
+            }
+            if value.spec.hdr {
+                let hdrQC = try JSONDecoder().decode(
+                    DeliveryHDRQCV1.self,
+                    from: Data(contentsOf: ProjectLocalFile.resolve(
+                        hdrQCPath(attemptID: id),
+                        dataRoot: dataRoot
+                    ))
+                )
+                try DeliveryValidatorV1.validate(
+                    hdrQC: hdrQC,
+                    outputSHA256: value.outputSHA256 ?? ""
+                )
             }
         }
         return value
     }
 
+    private static func prepareAdoption(
+        dataRoot: URL,
+        timeline: Timeline,
+        resolver: MediaResolver,
+        requireSequenceReview: Bool,
+        isCancelled: @Sendable () -> Bool
+    ) throws -> AdoptionPreparation {
+        if isCancelled() { throw CancellationError() }
+        guard timeline.totalFrames > 0,
+              timeline.tracks.contains(where: {
+                  $0.type == .video && !$0.hidden && !$0.clips.isEmpty
+              }) else {
+            throw ToolError("Add visible video to the timeline before preparing delivery.")
+        }
+        let metadata = try YAMLArtifactStore(dataRoot: dataRoot).load(
+            ProjectMeta.self,
+            at: PipelineLayout.projectFile
+        )
+        let timelineData = try PipelineAssemblyStore.canonical(timeline)
+        let timelineSHA256 = FileDigest.sha256(of: timelineData)
+        let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
+
+        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
+        let assemblyIsCurrent = assembly.map {
+            $0.manifest.timelineFingerprint == timelineSHA256
+        } ?? false
+        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
+            try cancellableSHA256(
+                of: ProjectLocalFile.resolve(
+                    AssemblyManifestV1.relativePath,
+                    dataRoot: dataRoot
+                ),
+                isCancelled: isCancelled
+            )
+        } else {
+            nil
+        }
+
+        let sequenceReviewSHA256: String?
+        do {
+            if isCancelled() { throw CancellationError() }
+            _ = try PipelineSequenceReviewStore.requireCurrent(
+                dataRoot: dataRoot,
+                timeline: timeline
+            )
+            if isCancelled() { throw CancellationError() }
+            sequenceReviewSHA256 = try cancellableSHA256(
+                of: ProjectLocalFile.resolve(
+                    SequenceReviewV1.relativePath,
+                    dataRoot: dataRoot
+                ),
+                isCancelled: isCancelled
+            )
+        } catch {
+            if isCancelled() { throw CancellationError() }
+            if requireSequenceReview {
+                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
+            }
+            sequenceReviewSHA256 = nil
+        }
+
+        let plan = FinishPlanV1(
+            projectID: metadata.project,
+            sourceTimelineSHA256: timelineSHA256,
+            assemblyManifestSHA256: assemblyManifestSHA256,
+            sequenceReviewSHA256: sequenceReviewSHA256,
+            operations: []
+        )
+        try DeliveryValidatorV1.validate(plan: plan)
+        let planData = try PipelineAssemblyStore.canonical(plan)
+        let media = try currentMediaProofs(
+            timeline: timeline,
+            resolver: resolver,
+            isCancelled: isCancelled
+        )
+        return .init(
+            metadata: metadata,
+            timelineData: timelineData,
+            timelineSHA256: timelineSHA256,
+            timelinePath: timelinePath,
+            plan: plan,
+            planData: planData,
+            media: media,
+            assemblyIsCurrent: assemblyIsCurrent
+        )
+    }
+
     private static func currentMediaProofs(
         timeline: Timeline,
-        resolver: MediaResolver
+        resolver: MediaResolver,
+        isCancelled: @Sendable () -> Bool = { false }
     ) throws -> [RenderPublishedArtifactV1] {
         let refs = Set(timeline.tracks.filter { track in
             !track.hidden && (track.type != .audio || !track.muted)
@@ -478,6 +812,7 @@ enum PipelineDeliveryStore {
             }
         }).sorted()
         return try refs.map { ref in
+            if isCancelled() { throw CancellationError() }
             guard let url = resolver.resolveURL(for: ref) else {
                 throw ToolError("Delivery media is offline: \(resolver.displayName(for: ref))")
             }
@@ -488,22 +823,42 @@ enum PipelineDeliveryStore {
             let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
             return .init(
                 path: resolvedURL.path,
-                sha256: try FileDigest.sha256(of: resolvedURL)
+                sha256: try cancellableSHA256(
+                    of: resolvedURL,
+                    isCancelled: isCancelled
+                )
             )
         }
     }
 
     private static func validateSupportedSpec(_ spec: DeliverySpecV1) throws {
         try DeliveryValidatorV1.validate(spec: spec)
-        guard ["mp4", "mov"].contains(spec.container),
-              ["avc1", "hvc1", "apcn"].contains(spec.videoCodec),
-              spec.colorSpace == "rec709-sdr",
-              !spec.hdr,
-              ["present", "none"].contains(spec.audioLayout),
+        guard ["present", "none"].contains(spec.audioLayout),
               ["burned-in", "none"].contains(spec.captionMode),
               spec.disclosureMode == "project-record",
               spec.loudnessTarget == nil else {
             throw ToolError("The requested delivery setting is not implemented by the current exporter.")
+        }
+        if spec.hdr {
+            let conversion = spec.requirements.first { $0.id == "core.hdr-conversion" }
+            let qc = spec.requirements.first { $0.id == "core.hdr-qc" }
+            guard spec.container == "mov",
+                  spec.videoCodec == "hvc1",
+                  spec.colorSpace == "bt2020-hlg",
+                  conversion?.state == .enforced,
+                  conversion?.required == true,
+                  conversion?.value == HDRVideoExporter.conversionID,
+                  qc?.state == .enforced,
+                  qc?.required == true,
+                  qc?.value == DeliveryHDRQCV1.schemaVersion else {
+                throw ToolError("HDR delivery requires Main10 BT.2020 HLG conversion and QC evidence.")
+            }
+        } else {
+            guard ["mp4", "mov"].contains(spec.container),
+                  ["avc1", "hvc1", "apcn"].contains(spec.videoCodec),
+                  spec.colorSpace == "rec709-sdr" else {
+                throw ToolError("The requested SDR delivery setting is not implemented by the current exporter.")
+            }
         }
         for path in spec.extensionRefs {
             guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("..") else {
@@ -515,21 +870,26 @@ enum PipelineDeliveryStore {
     static func probeOutput(
         outputURL: URL,
         spec: DeliverySpecV1,
-        expectedDurationFrames: Int
+        expectedDurationFrames: Int,
+        isCancelled: @Sendable () -> Bool = { false }
     ) async throws -> DeliveryProbeQCV1 {
+        if isCancelled() { throw CancellationError() }
         let asset = AVURLAsset(url: outputURL)
         let duration = try await asset.load(.duration)
+        if isCancelled() { throw CancellationError() }
         guard duration.isNumeric,
               let videoTrack = try await asset.loadTracks(withMediaType: .video).first,
               let videoDescription = try await videoTrack.load(.formatDescriptions).first else {
             throw ToolError("The exported delivery has no playable video track.")
         }
+        if isCancelled() { throw CancellationError() }
         let naturalSize = try await videoTrack.load(.naturalSize)
         let transform = try await videoTrack.load(.preferredTransform)
         let encodedSize = naturalSize.applying(transform)
         let nominalFPS = try await videoTrack.load(.nominalFrameRate)
         let actualCodec = fourCC(CMFormatDescriptionGetMediaSubType(videoDescription))
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        if isCancelled() { throw CancellationError() }
         var audioCodec: String?
         var audioChannels = 0
         if let audioTrack = audioTracks.first,
@@ -539,6 +899,7 @@ enum PipelineDeliveryStore {
                 audioChannels = Int(basic.pointee.mChannelsPerFrame)
             }
         }
+        if isCancelled() { throw CancellationError() }
         let expectedDuration = Double(expectedDurationFrames)
             / Double(spec.fpsNumerator) * Double(spec.fpsDenominator)
         let frameTolerance = Double(spec.fpsDenominator) / Double(spec.fpsNumerator)
@@ -568,7 +929,8 @@ enum PipelineDeliveryStore {
     private static func record(
         _ attempt: DeliveryAttemptV1,
         dataRoot: URL,
-        terminal: Bool
+        terminal: Bool,
+        hdrQC: DeliveryHDRQCV1? = nil
     ) throws {
         try DeliveryValidatorV1.validate(attempt: attempt)
         guard terminal == ![.queued, .running].contains(attempt.status) else {
@@ -585,8 +947,55 @@ enum PipelineDeliveryStore {
         let attemptURL = dataRoot.appendingPathComponent(
             "\(attemptsDirectory)/\(attempt.id).v1.json"
         )
+        let hdrURL: URL?
+        let hdrData: Data?
+        if attempt.status == .succeeded, attempt.spec.hdr {
+            guard terminal, let hdrQC, let outputSHA256 = attempt.outputSHA256 else {
+                throw ToolError("A successful HDR delivery requires QC evidence.")
+            }
+            try DeliveryValidatorV1.validate(
+                hdrQC: hdrQC,
+                outputSHA256: outputSHA256
+            )
+            hdrURL = dataRoot.appendingPathComponent(hdrQCPath(attemptID: attempt.id))
+            hdrData = try PipelineAssemblyStore.canonical(hdrQC)
+        } else {
+            guard hdrQC == nil else {
+                throw ToolError("HDR QC evidence does not match the delivery attempt.")
+            }
+            hdrURL = nil
+            hdrData = nil
+        }
         var paths = [currentURL, eventURL]
         if terminal { paths.append(attemptURL) }
+        if let hdrURL { paths.append(hdrURL) }
+        if FileManager.default.fileExists(atPath: currentURL.path) {
+            let currentData = try Data(contentsOf: currentURL)
+            let current = try JSONDecoder().decode(DeliveryAttemptV1.self, from: currentData)
+            if ![.queued, .running].contains(current.status) {
+                guard currentData == bytes else {
+                    throw ToolError("A terminal delivery attempt cannot transition to another status.")
+                }
+                return
+            }
+            let allowed: Bool = switch (current.status, attempt.status) {
+            case (.queued, .queued), (.queued, .running), (.queued, .failed),
+                 (.queued, .cancelled), (.queued, .interrupted),
+                 (.running, .running), (.running, .succeeded), (.running, .failed),
+                 (.running, .cancelled), (.running, .interrupted):
+                true
+            default:
+                false
+            }
+            guard allowed else {
+                throw ToolError("Delivery attempt status cannot move backward.")
+            }
+        } else {
+            guard attempt.status == .queued else {
+                throw ToolError("A delivery attempt must begin in the queued state.")
+            }
+        }
+
         try ArtifactTransaction.perform(paths: paths, dataRoot: dataRoot) {
             try FileManager.default.createDirectory(
                 at: eventDirectory,
@@ -611,6 +1020,19 @@ enum PipelineDeliveryStore {
                     }
                 } else {
                     try bytes.write(to: attemptURL, options: .atomic)
+                }
+            }
+            if let hdrURL, let hdrData {
+                try FileManager.default.createDirectory(
+                    at: hdrURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if FileManager.default.fileExists(atPath: hdrURL.path) {
+                    guard try Data(contentsOf: hdrURL) == hdrData else {
+                        throw ToolError("Immutable HDR QC evidence has different bytes.")
+                    }
+                } else {
+                    try hdrData.write(to: hdrURL, options: .atomic)
                 }
             }
         }
@@ -647,6 +1069,22 @@ enum PipelineDeliveryStore {
         try PipelineAssemblyStore.canonical(next).write(to: url, options: .atomic)
     }
 
+    private static func isCurrent(_ finished: FinishedState, dataRoot: URL) -> Bool {
+        guard let planURL = try? ProjectLocalFile.resolve(
+            FinishPlanV1.relativePath,
+            dataRoot: dataRoot
+        ),
+        let manifestURL = try? ProjectLocalFile.resolve(
+            FinishedTimelineManifestV1.relativePath,
+            dataRoot: dataRoot
+        ),
+        let planData = try? Data(contentsOf: planURL),
+        let manifestData = try? Data(contentsOf: manifestURL) else {
+            return false
+        }
+        return planData == finished.planData && manifestData == finished.manifestData
+    }
+
     private static func copy(
         _ attempt: DeliveryAttemptV1,
         status: DeliveryJobStatusV1,
@@ -654,6 +1092,7 @@ enum PipelineDeliveryStore {
         outputSHA256: String? = nil,
         outputByteCount: Int64? = nil,
         probeQC: DeliveryProbeQCV1? = nil,
+        warnings: [String]? = nil,
         failures: [String]? = nil,
         completedAt: String? = nil
     ) -> DeliveryAttemptV1 {
@@ -667,7 +1106,7 @@ enum PipelineDeliveryStore {
             outputSHA256: outputSHA256 ?? attempt.outputSHA256,
             outputByteCount: outputByteCount ?? attempt.outputByteCount,
             probeQC: probeQC ?? attempt.probeQC,
-            warnings: attempt.warnings,
+            warnings: warnings ?? attempt.warnings,
             failures: failures ?? attempt.failures,
             createdAt: attempt.createdAt,
             completedAt: completedAt ?? attempt.completedAt
@@ -677,9 +1116,17 @@ enum PipelineDeliveryStore {
     private static func codecID(_ format: ExportFormat) -> String {
         switch format {
         case .h264: "avc1"
-        case .h265: "hvc1"
+        case .h265, .hevcMain10HLG: "hvc1"
         case .prores: "apcn"
-        case .xml: ""
+        case .xml, .fcpxml: ""
+        }
+    }
+
+    private static func containerID(_ format: ExportFormat) -> String {
+        switch format {
+        case .h264, .h265: "mp4"
+        case .prores, .hevcMain10HLG: "mov"
+        case .xml, .fcpxml: ""
         }
     }
 
@@ -691,6 +1138,42 @@ enum PipelineDeliveryStore {
             UInt8(value & 0xff),
         ]
         return String(bytes: bytes, encoding: .ascii) ?? String(value)
+    }
+
+    static func cancellableSHA256(
+        of url: URL,
+        isCancelled: @Sendable () -> Bool
+    ) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            if isCancelled() { throw CancellationError() }
+            guard let data = try handle.read(upToCount: 1_048_576), !data.isEmpty else {
+                break
+            }
+            hasher.update(data: data)
+        }
+        if isCancelled() { throw CancellationError() }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func requireCancellableHash(
+        _ expectedSHA256: String,
+        at relativePath: String,
+        dataRoot: URL,
+        isCancelled: @Sendable () -> Bool
+    ) throws -> URL {
+        let url = try ProjectLocalFile.resolve(relativePath, dataRoot: dataRoot)
+        let actual = try cancellableSHA256(of: url, isCancelled: isCancelled)
+        guard actual == expectedSHA256 else {
+            throw ProjectLocalFileError.hashMismatch(
+                path: relativePath,
+                expected: expectedSHA256,
+                actual: actual
+            )
+        }
+        return url
     }
 
     private static func boundURL(_ path: String, dataRoot: URL) throws -> URL {

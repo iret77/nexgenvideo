@@ -70,27 +70,48 @@ framing_mix:
   pov_pct: 0
   insert_pct: 5
   aerial_pct: 0
+  basis: inferred
+  sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
 
 asl_range:
   min_s: 0.8
   max_s: 4.0
   typical_s: 2.0
+  basis: inferred
+  sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
 
-camera_vocabulary:
-  - "rapid push-in"
-  - "fisheye lens"
-  - "circle dolly"
-  - "whip pan"
-  - "snorri-cam style"
-  - "slow motion accents"
+camera:
+  vocabulary:
+    - "rapid push-in"
+    - "fisheye lens"
+    - "circle dolly"
+    - "whip pan"
+    - "snorri-cam style"
+    - "slow motion accents"
+  basis: inferred
+  sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
 
-lighting_signature: |
-  saturated colours, strong key-light contrast, neon and practical
-  light sources, often with one bold accent colour per shot.
+lighting:
+  description: |
+    saturated colours, strong key-light contrast, neon and practical
+    light sources, often with one bold accent colour per shot.
+  basis: inferred
+  sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
 
-approximation_basis: |
-  Aggregation of the cited Wikipedia, Billboard, DJBooth, Raptology
-  and Hiphophero articles describing Hype Williams' signature
-  techniques and his successors' continued use. Not Cinemetrics-
-  grade — actual ASL and framing distribution per video varies
-  widely.
+color:
+  description: "Saturated colour with one bold accent colour per shot."
+  basis: inferred
+  sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
+
+craft_signature:
+  - technique: "Bold practical-light spectacle"
+    directive: "Use strong key contrast, neon or visible practicals, saturated colour, and one bold accent per shot."
+    pipeline_levers: [visual_prompt, bible_look, bible_lighting]
+    basis: inferred
+    sources:
+    - "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"

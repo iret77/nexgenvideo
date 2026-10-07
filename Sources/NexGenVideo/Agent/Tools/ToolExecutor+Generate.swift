@@ -540,6 +540,8 @@ extension ToolExecutor {
             throw ToolError("Text generation is not wired through the generate tool.")
         case .lottie:
             throw ToolError("Lottie animations aren't generated through this tool.")
+        case .subtitle:
+            throw ToolError("Caption files are imported, not generated through this tool.")
         case .document:
             throw ToolError("Documents are source material you import, not something this tool generates.")
         }
@@ -861,7 +863,23 @@ extension ToolExecutor {
                 throw ToolError("The batch item has no exact prepared inputs.")
             }
             try await GenerationPackageInputs.persist(package: value.package, snapshot: references, editor: editor)
-            batch.packages.append(value.package)
+            let recovery = GenerationBatchRecovery(
+                options: options,
+                pipelineScope: try spendPipelineScope(tool: pipelineTool, editor: editor)
+            ) { editor, option in
+                let replacement = try await prepare(editor, option)
+                guard replacement.package.payload.target == option.target,
+                      let references = replacement.generation?.references else {
+                    throw ToolError("The changed route has no exact prepared inputs.")
+                }
+                try await GenerationPackageInputs.persist(
+                    package: replacement.package,
+                    snapshot: references,
+                    editor: editor
+                )
+                return replacement.package
+            }
+            batch.entries.append((value.package, recovery))
             return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
         }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
@@ -972,14 +990,24 @@ extension ToolExecutor {
         aspectRatio: String,
         resolution: String?,
         quality: String?,
-        referenceCount: Int
+        referenceCount: Int,
+        numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false
     ) -> [CatalogImageOfferingCandidate] {
         ModelCatalog.shared.compatibleImageOfferings(
             preferredModelID: preferredModelID,
             aspectRatio: aspectRatio,
             resolution: resolution,
             quality: quality,
-            referenceCount: referenceCount
+            referenceCount: referenceCount,
+            numImages: numImages,
+            background: background,
+            outputFormat: outputFormat,
+            outputCompression: outputCompression,
+            hasMask: hasMask
         )
     }
 
@@ -988,14 +1016,24 @@ extension ToolExecutor {
         aspectRatio: String,
         resolution: String?,
         quality: String?,
-        referenceCount: Int
+        referenceCount: Int,
+        numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false
     ) -> [SpendOption] {
         availableImageOfferings(
             preferredModelID: preferredModelID,
             aspectRatio: aspectRatio,
             resolution: resolution,
             quality: quality,
-            referenceCount: referenceCount
+            referenceCount: referenceCount,
+            numImages: numImages,
+            background: background,
+            outputFormat: outputFormat,
+            outputCompression: outputCompression,
+            hasMask: hasMask
         ).map { candidate in
             SpendOption(
                 modelId: candidate.model.id,
@@ -1005,7 +1043,7 @@ extension ToolExecutor {
                     model: candidate.model,
                     resolution: candidate.resolution,
                     quality: candidate.quality,
-                    numImages: 1
+                    numImages: numImages
                 ),
                 requiresCatalogAvailability: true
             )
@@ -1643,15 +1681,30 @@ extension ToolExecutor {
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
         await CatalogDiscovery.ensureCurrent()
-        guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? ImageModelConfig.allModels.first?.id else {
+        let requestedEditInputs = !args.stringArray("referenceMediaRefs").isEmpty
+            || !args.stringArray("referenceProjectPaths").isEmpty
+            || args.string("maskMediaRef") != nil
+        let defaultModelID = requestedEditInputs
+            ? "fal-ai/gpt-image-2.5/flare/edit"
+            : "fal-ai/gpt-image-2.5/flare/text-to-image"
+        let defaultModel = ImageModelConfig.allModels.first {
+            $0.id == defaultModelID
+        } ?? ImageModelConfig.allModels.first
+        guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? defaultModel?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        let resolution = args.string("resolution") ?? model.resolutions?.first
-        let quality = args.string("quality") ?? model.qualities?.last
+        let resolution = args.string("resolution") ?? model.defaultResolution(for: aspectRatio)
+        let quality = args.string("quality")
+            ?? (model.qualities?.contains("high") == true ? "high" : model.qualities?.last)
+        let numImages = args.int("numImages") ?? 1
+        let background = args.string("background")
+        let requestedOutputFormat = args.string("outputFormat")
+        let currentOutputFormat = requestedOutputFormat ?? model.defaultOutputFormat
+        let outputCompression = args.int("outputCompression")
         let (precompiled, raw) = try await Self.agentPrompt(
             args,
             prompt: prompt,
@@ -1677,6 +1730,13 @@ extension ToolExecutor {
                 throw ToolError("referenceMediaRefs entry '\(id)' must be an image asset (got \(a.type.rawValue))")
             }
             return a
+        }
+        let mask: MediaAsset? = try args.string("maskMediaRef").map { id in
+            let value = try asset(id, editor: editor, label: "Edit mask")
+            guard value.type == .image else {
+                throw ToolError("maskMediaRef '\(id)' must be an image asset (got \(value.type.rawValue))")
+            }
+            return value
         }
         let requestedProjectPaths = initialFramePlan == nil
             ? args.stringArray("referenceProjectPaths")
@@ -1716,7 +1776,11 @@ extension ToolExecutor {
             resolution: resolution,
             quality: quality,
             imageRefCount: refs.count,
-            numImages: 1
+            numImages: numImages,
+            background: background,
+            outputFormat: currentOutputFormat,
+            outputCompression: outputCompression,
+            hasMask: mask != nil
         )
         let isMarble = MarbleModelRegistry.isMarbleModel(model.id)
         if isMarble, refs.isEmpty {
@@ -1725,7 +1789,7 @@ extension ToolExecutor {
             )
         }
         let credits = CostEstimator.imageCost(
-            model: model, resolution: resolution, quality: quality, numImages: 1)
+            model: model, resolution: resolution, quality: quality, numImages: numImages)
         let originalModelId = model.id
         let exactImageOptions: (@MainActor () -> [SpendOption])?
         if isMarble {
@@ -1737,7 +1801,12 @@ extension ToolExecutor {
                     aspectRatio: aspectRatio,
                     resolution: resolution,
                     quality: quality,
-                    referenceCount: refs.count
+                    referenceCount: refs.count,
+                    numImages: numImages,
+                    background: background,
+                    outputFormat: requestedOutputFormat,
+                    outputCompression: outputCompression,
+                    hasMask: mask != nil
                 )
             }
         }
@@ -1811,7 +1880,12 @@ extension ToolExecutor {
                             aspectRatio: aspectRatio,
                             resolution: resolution,
                             quality: quality,
-                            referenceCount: generationReferences.count
+                            referenceCount: generationReferences.count,
+                            numImages: numImages,
+                            background: background,
+                            outputFormat: requestedOutputFormat,
+                            outputCompression: outputCompression,
+                            hasMask: mask != nil
                         ).first {
                             Self.sameImageOffering($0, as: approved.target)
                         }
@@ -1849,6 +1923,8 @@ extension ToolExecutor {
                     let finalAspectRatio = selectedAspectRatio
                     let finalResolution = selectedResolution
                     let finalQuality = selectedQuality
+                    let finalOutputFormat = requestedOutputFormat
+                        ?? selectedModel.defaultOutputFormat
                     func genInput(_ compiled: String) -> GenerationInput {
                         var input = GenerationInput(
                             prompt: compiled, model: finalModelID, duration: 0,
@@ -1859,6 +1935,10 @@ extension ToolExecutor {
                         input.promptProjectKey = approvedPrompt?.binding.projectKey
                         input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
                         input.frameReferencePlan = framePlan
+                        input.numImages = numImages
+                        input.imageBackground = background
+                        input.imageOutputFormat = finalOutputFormat
+                        input.imageOutputCompression = outputCompression
                         return input
                     }
                     let preflight: GenerationController.Preflight = {
@@ -1874,7 +1954,11 @@ extension ToolExecutor {
                             resolution: finalResolution,
                             quality: finalQuality,
                             imageRefCount: generationReferences.count,
-                            numImages: 1)
+                            numImages: numImages,
+                            background: background,
+                            outputFormat: finalOutputFormat,
+                            outputCompression: outputCompression,
+                            hasMask: mask != nil)
                     }
                     if MarbleModelRegistry.isMarbleModel(finalModelID) {
                         guard let reference = generationReferences.first else {
@@ -1910,12 +1994,13 @@ extension ToolExecutor {
                                 genInput: genInput(compiled), model: finalModel,
                                 references: generationReferences,
                                 referenceAssetIDs: generationReferences.map(\.id),
-                                name: name, folderId: folderId)
+                                mask: mask,
+                                name: name, numImages: numImages, folderId: folderId)
                         }))
                     return try await self.prepareController(
                         request, editor: editor, preflight: preflight,
                         success: {
-                            "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
+                            "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio), outputs: \(numImages)"
                         })
                 }
 
@@ -2329,6 +2414,7 @@ extension ToolExecutor {
             )
         }
         let dialog = try AgentDialog.parse(args)
+        try validateDialogMediaChoices(dialog, editor: editor)
         try editor.pipelineAgentHarness.guardAgentDecision(dialog, editor: editor)
         try editor.agentService.presentDialog(dialog, origin: origin)
         // Canvas projection (A3, #124): reveal the Review gallery at the shot so its candidates are
@@ -2339,6 +2425,32 @@ extension ToolExecutor {
             editor.inspectedObject = .shot(shot)
         }
         return .suspended("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP — the user's structured answer arrives as the next semantic user turn; do not act on this step until then.")
+    }
+
+    private func validateDialogMediaChoices(
+        _ dialog: AgentDialog,
+        editor: EditorViewModel
+    ) throws {
+        let usableIDs = Set(editor.agentPickableMediaAssets.map(\.id))
+        for section in dialog.sections {
+            guard case .choices(let options, _) = section.kind else { continue }
+            for option in options {
+                guard let mediaRef = option.mediaRef else { continue }
+                let media = try asset(mediaRef, editor: editor, label: "Image choice")
+                guard media.type == .image else {
+                    throw ToolError(
+                        "show_dialog: mediaRef '\(mediaRef)' in section '\(section.id)' is "
+                            + "\(media.type.rawValue), not an image."
+                    )
+                }
+                guard usableIDs.contains(media.id) else {
+                    throw ToolError(
+                        "show_dialog: image choice '\(mediaRef)' is not currently usable. "
+                            + "Wait for generation to finish or choose an available asset from get_media."
+                    )
+                }
+            }
+        }
     }
 
     /// Validation IS the execution: a strict parse failure returns the exact violation for the
@@ -2556,28 +2668,50 @@ extension ToolExecutor {
             throw ToolError("Upscale supports video and image assets only (got \(asset.type.rawValue))")
         }
 
-        let available = UpscaleModelConfig.models(for: asset.type)
-        let model: UpscaleModelConfig
-        if let requested = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) {
-            guard let match = available.first(where: { $0.id == requested }) else {
-                let ids = available.map(\.id).joined(separator: ", ")
-                throw ToolError("Model '\(requested)' does not support \(asset.type.rawValue). Available: \(ids)")
-            }
-            model = match
-        } else {
-            guard let first = available.first else {
-                throw ToolError("No upscaler available for \(asset.type.rawValue)")
-            }
-            model = first
-        }
-
         let trimmed = try trimmedSource(args, editor: editor, source: asset)
+        let upDuration = max(
+            1,
+            trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)
+        )
+        let targetResolution = args.string("targetResolution")
+        let available = UpscaleModelConfig.models(for: asset.type)
+        let candidates = available.flatMap {
+            $0.selections(
+                sourceType: asset.type,
+                sourceWidth: asset.sourceWidth,
+                sourceHeight: asset.sourceHeight,
+                durationSeconds: upDuration
+            )
+        }.filter {
+            guard let targetResolution else { return true }
+            return $0.targetResolution?.caseInsensitiveCompare(targetResolution) == .orderedSame
+        }
+        let selection: UpscaleSelection
+        if let requested = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) {
+            guard let match = candidates.first(where: { $0.model.id == requested }) else {
+                let options = candidates.map(\.displayName).joined(separator: ", ")
+                throw ToolError(
+                    "Model '\(requested)' does not support this \(asset.type.rawValue) source"
+                        + (targetResolution.map { " at \($0)" } ?? "")
+                        + ". Available: \(options)"
+                )
+            }
+            selection = match
+        } else {
+            guard let first = candidates.first else {
+                throw ToolError(
+                    "No upscaler supports this \(asset.type.rawValue) source"
+                        + (targetResolution.map { " at \($0)" } ?? "")
+                )
+            }
+            selection = first
+        }
+        let model = selection.model
 
         // Cost-Guard (M7): approval before this paid upscale. Upscalers are type-specific, so no swap.
-        let upSeconds = Int((trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded())
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
+            credits: CostEstimator.upscaleCost(model: model, durationSeconds: upDuration),
             actionLabel: "Upscale",
             selectionScope: .upscale,
             pipelineTool: .upscaleMedia,
@@ -2589,6 +2723,7 @@ extension ToolExecutor {
                         guard let placeholderId = await EditSubmitter.submitUpscale(
                             asset: asset,
                             model: model,
+                            targetResolution: selection.targetResolution,
                             editor: editor,
                             trimmedSource: trimmed,
                             origin: .agentTool,
@@ -2618,7 +2753,7 @@ extension ToolExecutor {
                     throw ToolError(message)
                 case .succeeded(let completed):
                     return try await Self.completedGenerationResult(
-                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
+                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName)\(selection.targetResolution.map { ", target: \($0)" } ?? ""), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
                         asset: asset.type == .image ? completed : nil
                     )
                 }
@@ -2833,6 +2968,22 @@ extension ToolExecutor {
         if includeType { info["type"] = "image" }
         if let r = m.resolutions { info["resolutions"] = r }
         if let q = m.qualities { info["qualities"] = q }
+        if let backgrounds = m.backgrounds { info["backgrounds"] = backgrounds }
+        if let formats = m.outputFormats { info["outputFormats"] = formats }
+        if let format = m.defaultOutputFormat { info["defaultOutputFormat"] = format }
+        info["supportsOutputCompression"] = m.supportsOutputCompression
+        info["supportsMask"] = m.supportsMask
+        if let custom = m.customSize {
+            let customInfo: [String: Any] = [
+                "dimensionMultiple": custom.dimensionMultiple,
+                "maxEdge": custom.maxEdge,
+                "minPixels": custom.minPixels,
+                "maxPixels": custom.maxPixels,
+                "minAspectRatio": custom.minAspectRatio,
+                "maxAspectRatio": custom.maxAspectRatio,
+            ]
+            info["customSize"] = customInfo
+        }
         return info
     }
 
@@ -2857,11 +3008,31 @@ extension ToolExecutor {
     }
 
     nonisolated static func upscaleModelInfo(_ m: UpscaleModelConfig) -> [String: Any] {
-        [
+        var info: [String: Any] = [
             "id": m.id, "displayName": m.displayName,
             "type": "upscale",
             "speed": m.speed,
             "supportedTypes": m.supportedTypes.map(\.rawValue).sorted(),
         ]
+        if !m.caps.targets.isEmpty {
+            info["targets"] = m.caps.targets.map {
+                [
+                    "resolution": $0.resolution,
+                    "longEdge": $0.longEdge,
+                    "shortEdge": $0.shortEdge,
+                    "scaleFactors": $0.scaleFactors,
+                ] as [String: Any]
+            }
+        }
+        if let value = m.caps.maxDurationSecondsExclusive {
+            info["sourceDurationMustBeLessThanSeconds"] = value
+        }
+        if let value = m.caps.maxInputLongEdgeExclusive {
+            info["sourceLongEdgeMustBeLessThan"] = value
+        }
+        if let value = m.caps.maxInputShortEdgeExclusive {
+            info["sourceShortEdgeMustBeLessThan"] = value
+        }
+        return info
     }
 }

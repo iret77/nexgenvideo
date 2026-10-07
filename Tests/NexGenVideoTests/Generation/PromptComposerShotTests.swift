@@ -471,7 +471,7 @@ struct PromptComposerShotTests {
 
         let prompt = try await PromptCompiler.compile(
             intent: "The performer holds a precise opening pose.",
-            modelId: "fal-ai/gpt-image-2",
+            modelId: "fal-ai/gpt-image-2.5/flare/text-to-image",
             modality: .image,
             editor: editor,
             shotId: shot.id,
@@ -480,6 +480,8 @@ struct PromptComposerShotTests {
         ).text
 
         #expect(prompt.contains("fully pre-lit set with constant exposure"))
+        #expect(prompt.contains("stable daylight/practical mix"))
+        #expect(prompt.contains("fixed light field"))
         #expect(!prompt.contains("continuous tracking shot"))
         #expect(!prompt.contains("Steadicam / gimbal long take"))
         #expect(!prompt.contains("synchronized lateral dolly"))

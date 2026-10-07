@@ -2,7 +2,7 @@ import Foundation
 import NexGenEngine
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    static let currentVersion = 6
+    static let currentVersion = 7
 
     var version: Int = currentVersion
     var entries: [MediaManifestEntry] = []
@@ -62,6 +62,19 @@ struct MediaManifestEntry: Codable, Sendable, Equatable, Identifiable {
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
     var originalFilename: String? = nil
+    var origin: MediaAssetOrigin? = nil
+}
+
+struct MediaAssetOrigin: Codable, Sendable, Equatable {
+    enum Kind: String, Codable, Sendable {
+        case extractedAudio
+    }
+
+    let kind: Kind
+    let sourceAssetID: String
+    let sourceFilename: String
+    let audioTrackNumber: Int
+    let audioTrackLabel: String
 }
 
 struct GenerationInput: Codable, Sendable, Equatable {
@@ -113,6 +126,27 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var referenceReceipts: [GenerationReferenceReceipt]? = nil
     var generationPackageID: String? = nil
     var frameReferencePlan: FrameReferencePlanV1? = nil
+    var imageMaskAssetId: String? = nil
+    var imageBackground: String? = nil
+    var imageOutputFormat: String? = nil
+    var imageOutputCompression: Int? = nil
+    var imageMaskURL: String? = nil
+    /// Source range an edit consumed. Nil on records written before ranges were recorded.
+    var sourceRange: GenerationSourceRange? = nil
+}
+
+struct GenerationSourceRange: Codable, Sendable, Equatable {
+    /// Nil when the whole source was used.
+    let trim: GenerationSourceTrim?
+}
+
+struct GenerationSourceTrim: Codable, Sendable, Equatable {
+    let trimStartFrame: Int
+    let trimEndFrame: Int
+    let sourceFramesConsumed: Int
+    let fps: Int
+
+    var durationSeconds: Double { Double(sourceFramesConsumed) / Double(max(1, fps)) }
 }
 
 struct GenerationCompileRecipe: Codable, Sendable, Equatable {

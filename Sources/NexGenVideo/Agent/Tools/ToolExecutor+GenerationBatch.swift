@@ -74,6 +74,7 @@ extension ToolExecutor {
         await CatalogDiscovery.ensureCurrent()
         let collector = GenerationBatchPreparation()
         var items: [GenerationBatch.Item] = []
+        var recoveries: [String: GenerationBatchRecovery] = [:]
         var phase: String?
         try await GenerationBatchPreparation.$current.withValue(collector) {
             for entry in entries {
@@ -87,18 +88,25 @@ extension ToolExecutor {
                     phase = actualPhase
                 }
                 let request = try expandingIdPrefixes(in: rawRequest, editor: editor)
-                let count = collector.packages.count
+                let count = collector.entries.count
                 _ = try await generate(editor, request, type: tool == .generateImage ? .image : .video, origin: origin)
-                guard collector.packages.count == count + 1, let package = collector.packages.last else {
+                guard collector.entries.count == count + 1, let prepared = collector.entries.last else {
                     throw ToolError("The batch item did not produce exactly one prepared request.")
                 }
                 try scope.requireCurrent(editor: editor)
-                items.append(.init(id: UUID().uuidString, purpose: purpose, package: package))
+                let itemID = UUID().uuidString
+                items.append(.init(id: itemID, purpose: purpose, package: prepared.package))
+                recoveries[itemID] = prepared.recovery
             }
         }
         let batch = try GenerationBatch(payload: .init(nonce: nonce, projectKey: projectKey, phase: phase,
             items: items, requestSHA256: requestHash))
         editor.agentPanelVisible = true
-        return try editor.agentService.presentGenerationBatch(batch, origin: origin, editor: editor)
+        return try editor.agentService.presentGenerationBatch(
+            batch,
+            recoveries: recoveries,
+            origin: origin,
+            editor: editor
+        )
     }
 }

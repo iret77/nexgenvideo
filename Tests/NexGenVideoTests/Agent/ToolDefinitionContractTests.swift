@@ -5,6 +5,16 @@ import NexGenEngine
 
 @Suite("Agent tool semantic contracts")
 struct ToolDefinitionContractTests {
+    @Test("sync_audio exposes bounded methods and evidence")
+    func syncAudioSchemaCarriesEvidenceContract() throws {
+        let tool = try #require(ToolDefinitions.all.first { $0.name == .syncAudio })
+        let properties = try #require(tool.inputSchema["properties"] as? [String: Any])
+        let mode = try #require(properties["mode"] as? [String: Any])
+        #expect(mode["enum"] as? [String] == ["auto", "audio", "timecode"])
+        #expect(tool.description.contains("method, offsetFrames, confidence, reason"))
+        #expect(tool.description.contains("refuses weak or ambiguous repeated matches"))
+    }
+
     @Test("every object schema is closed or an explicitly typed dynamic map")
     func objectSchemasAreClosed() {
         let dynamicMaps: [String: String] = [
@@ -56,6 +66,27 @@ struct ToolDefinitionContractTests {
         }
     }
 
+    @Test("crop and inspect grid publish one closed normalized source-space contract")
+    func cropAndGridSchemaContract() throws {
+        let setTool = try #require(ToolDefinitions.all.first { $0.name == .setClipProperties })
+        let setProperties = try #require(schemaProperties(setTool.inputSchema["properties"]))
+        let crop = try #require(setProperties["crop"])
+        #expect(crop["additionalProperties"] as? Bool == false)
+        #expect(crop["minProperties"] as? Int == 1)
+        let cropProperties = try #require(schemaProperties(crop["properties"]))
+        #expect(Set(cropProperties.keys) == ["left", "top", "right", "bottom"])
+        for edge in cropProperties.values {
+            #expect((edge["minimum"] as? NSNumber)?.doubleValue == 0)
+            #expect((edge["maximum"] as? NSNumber)?.doubleValue == 1)
+        }
+
+        let inspectTool = try #require(ToolDefinitions.all.first { $0.name == .inspectMedia })
+        let inspectProperties = try #require(schemaProperties(inspectTool.inputSchema["properties"]))
+        #expect(inspectProperties["coordinateGrid"]?["type"] as? String == "boolean")
+        #expect(inspectTool.description.contains("display-oriented source"))
+        #expect(setTool.description.contains("display-oriented source"))
+    }
+
     @Test("unknown keys are rejected at the tool boundary")
     @MainActor
     func unknownKeysAreRejectedAtBoundary() async {
@@ -75,6 +106,9 @@ struct ToolDefinitionContractTests {
                     "id": "clean",
                     "label": "Clean",
                     "bogus": true,
+                ], [
+                    "id": "textured",
+                    "label": "Textured",
                 ]],
             ]],
         ])
@@ -109,7 +143,7 @@ struct ToolDefinitionContractTests {
         ])
         #expect(
             ToolHarness.textOf(badWorkflowDecision)
-                .contains("expected one of analysis_tempo, analysis_interpretation_review, analysis_track_replacement, treatment_path")
+                .contains("expected one of analysis_tempo, analysis_interpretation_review, analysis_track_replacement, treatment_path, storyboard_mode, storyboard_input")
         )
 
         let longChoiceLabel = String(
@@ -133,6 +167,23 @@ struct ToolDefinitionContractTests {
                 .contains("show_dialog.sections[0].options[0].shortLabel: expected at most \(AgentDialog.maxChoiceDisplayLength) character(s)")
         )
 
+        let emptyMediaRef = await harness.runRaw("show_dialog", args: [
+            "title": "Choose",
+            "sections": [[
+                "id": "anchor",
+                "label": "Anchor",
+                "type": "choices",
+                "options": [
+                    ["id": "one", "label": "One", "mediaRef": ""],
+                    ["id": "two", "label": "Two", "mediaRef": "image-two"],
+                ],
+            ]],
+        ])
+        #expect(
+            ToolHarness.textOf(emptyMediaRef)
+                .contains("show_dialog.sections[0].options[0].mediaRef: expected at least 1 character(s)")
+        )
+
         let negativeCost = await harness.runRaw("record_render", args: [
             "phase": "preview",
             "shot_id": "s001",
@@ -154,6 +205,29 @@ struct ToolDefinitionContractTests {
             ToolHarness.textOf(unboundGeneration)
                 .contains("missing required field 'shotId'")
         )
+    }
+
+    @Test("every tool schema is a top-level object, as the Messages API and MCP require")
+    func toolSchemasAreTopLevelObjects() {
+        for tool in ToolDefinitions.all {
+            #expect(tool.inputSchema["type"] as? String == "object", "\(tool.name.rawValue)")
+        }
+    }
+
+    @Test("every integer argument declares semantic bounds")
+    func integerSchemasAreBounded() {
+        var failures: [String] = []
+        for tool in ToolDefinitions.all {
+            auditIntegerBounds(
+                tool.inputSchema,
+                path: tool.name.rawValue,
+                failures: &failures
+            )
+        }
+        if !failures.isEmpty {
+            Issue.record("Unbounded integer arguments: \(failures.joined(separator: "; "))")
+        }
+        #expect(failures.isEmpty)
     }
 
     @Test("every generation tool requires the compile-time shot binding")
@@ -464,6 +538,7 @@ struct ToolDefinitionContractTests {
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs,
+            .recoverConfirmedIdentityProvenance,
             .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
             .writePhaseExtension, .nextRenderShot,
@@ -600,6 +675,47 @@ struct ToolDefinitionContractTests {
                         path: "\(path).\(keyword).\(key)",
                         dynamicMaps: dynamicMaps,
                         seenDynamicMaps: &seenDynamicMaps,
+                        failures: &failures
+                    )
+                }
+            }
+        }
+    }
+
+    private func auditIntegerBounds(
+        _ schema: [String: Any],
+        path: String,
+        failures: inout [String]
+    ) {
+        if schema["type"] as? String == "integer",
+           schema["const"] == nil,
+           (schema["minimum"] == nil || schema["maximum"] == nil) {
+            failures.append(path)
+        }
+
+        if let properties = schemaProperties(schema["properties"]) {
+            for key in properties.keys.sorted() {
+                guard let child = properties[key] else { continue }
+                auditIntegerBounds(
+                    child,
+                    path: "\(path).\(key)",
+                    failures: &failures
+                )
+            }
+        }
+        if let items = schema["items"] as? [String: Any] {
+            auditIntegerBounds(
+                items,
+                path: "\(path)[]",
+                failures: &failures
+            )
+        }
+        for keyword in ["anyOf", "oneOf", "allOf"] {
+            if let alternatives = schema[keyword] as? [[String: Any]] {
+                for (index, alternative) in alternatives.enumerated() {
+                    auditIntegerBounds(
+                        alternative,
+                        path: "\(path).\(keyword)[\(index)]",
                         failures: &failures
                     )
                 }

@@ -29,6 +29,7 @@ yours; the host records the source class and exact bytes.
 - Read (paths relative to the project data root):
   `treatment/current.md`, `brief.yaml`,
   `production_design/production_design.yaml`, `storyboard/current.yaml`.
+- If `brief.director_pattern` is set, load it with `get_pattern`.
 - Optionally user reference uploads under `import/characters/<id>/` and
   `import/locations/<id>/`.
 
@@ -175,6 +176,13 @@ look:
   ...
 ```
 
+For a selected director pattern, merge `lighting.description` into
+`look.lighting`, `color.description` into `look.palette`, and each
+`craft_signature` directive bound to `bible_look` or `bible_lighting` into
+the matching field. Preserve its `basis` and source in your review summary;
+never present an inferred directive as documented or measured. These are
+positive directives, not image anchors.
+
 Refs from `production_design/refs/` are NOT carried over as
 `Location.sheets` or `Character.sheets` — they are inspiration, not a
 consistency anchor. The `production_design/lighting_anchor.png` may be
@@ -189,7 +197,8 @@ reference on every sheet generation.
   demanded canonical view, copy it with
   `copy_project_file(from: "import/characters/<id>/<name>",
   to: "bible/<id>/<view>.png")` and put it in `sheets`; the copy preserves the
-  confirmation receipt. Other selected images remain supporting
+  original confirmation unchanged and records a separate exact source/target
+  adoption proof. Other selected images remain supporting
   `reference_images` under `bible/refs/`.
 - If there are no user refs: skip — the `sheets` must provide the
   anchor.
@@ -230,6 +239,10 @@ canonical sheet path with exact prompt/model/hash provenance.
    model is present in `models`; never guess key presence. If
    unavailable: quote the reason and offer a registered alternative
    model.
+   If GPT Image 2.5 is selected, use Flare for ordinary sheets and drafts.
+   Use Sunburst only for precision-critical identity, fine-detail, or strict
+   edit work. Choose the matching edit route whenever anchors or a mask are
+   supplied; never send references to a text-to-image route.
 3. **Anchor images.** When you have user uploads or a prior sheet to
    anchor against, first `import_media(source={path: <abs path to the
    anchor PNG>})` to get a `mediaRef`, then pass those mediaRefs in
@@ -246,6 +259,9 @@ canonical sheet path with exact prompt/model/hash provenance.
 6. **Stage:** `copy_project_file(media=<completed asset id>,
    to="bible/<id>/<view>.png")`. The host records exact generated-media
    provenance. Only then record that path in `sheets[<view>]`.
+
+Provider completion does not approve a sheet. Inspect the generated image and
+apply the Bible identity/view audit before staging it as canonical.
 
 #### Cross-sheet anchor chain (MANDATORY for multi-view sets)
 

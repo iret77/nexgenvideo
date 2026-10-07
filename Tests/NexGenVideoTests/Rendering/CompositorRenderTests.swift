@@ -130,6 +130,42 @@ extension CompositorRenderTests {
         #expect(!isBlack(f.at(300, 90)), "right side should still show content: \(f.at(300, 90))")
     }
 
+    @Test func staticCropUsesSourceSpaceBeforeKeyframedPlacement() async throws {
+        var clip = CompositorFixtures.patternClip()
+        clip.crop = Crop(left: 0.5, top: 0, right: 0, bottom: 0.5)
+        clip.positionTrack = KeyframeTrack(keyframes: [
+            Keyframe(frame: 0, value: AnimPair(a: 0.25, b: 0.25)),
+        ])
+        clip.scaleTrack = KeyframeTrack(keyframes: [
+            Keyframe(frame: 0, value: AnimPair(a: 0.5, b: 0.5)),
+        ])
+
+        let frame = try await Self.render(
+            Self.timelineWith(Fixtures.videoTrack(clips: [clip])),
+            frame: 15
+        )
+
+        #expect(isBlack(frame.at(100, 60)), "cropped source does not stretch to fill the transform box")
+        #expect(isGreen(frame.at(200, 70)), "the source top-right remains at its transformed source position")
+        #expect(isBlack(frame.at(200, 120)), "the source bottom half is cropped before placement")
+    }
+
+    @Test func staticCropPrecedesHorizontalFlip() async throws {
+        var clip = CompositorFixtures.patternClip()
+        clip.crop = Crop(left: 0.5)
+        clip.transform = Transform(flipHorizontal: true)
+
+        let frame = try await Self.render(
+            Self.timelineWith(Fixtures.videoTrack(clips: [clip])),
+            frame: 15
+        )
+
+        #expect(isGreen(frame.tl), "the retained source-right top quadrant flips to canvas-left")
+        #expect(isWhite(frame.bl), "the retained source-right bottom quadrant flips to canvas-left")
+        #expect(isBlack(frame.tr), "the cropped source-left becomes empty canvas-right")
+        #expect(isBlack(frame.br), "the cropped source-left becomes empty canvas-right")
+    }
+
     @Test func opacityHalfOverBlack() async throws {
         var clip = CompositorFixtures.patternClip()
         clip.opacity = 0.5

@@ -1,6 +1,14 @@
+import CoreFoundation
 import Foundation
 import NexGenEngine
 import UniformTypeIdentifiers
+
+struct AgentDialogDraft: Codable, Equatable {
+    var toggles: [String: Bool] = [:]
+    var direction = ""
+    var customValues: [String: String] = [:]
+    var fileURLs: [URL] = []
+}
 
 /// The user's structured answer to a presented dialog.
 struct AgentDialogResult: Sendable, Equatable {
@@ -13,6 +21,10 @@ struct AgentDialogResult: Sendable, Equatable {
     /// Files the user dropped or picked in a `fileIntake` dialog. The host imports each as a media
     /// asset and hands the agent an @mention — the user never types, and no path travels as prose.
     var fileURLs: [URL] = []
+    /// Exact option identities selected by the card, independent of their display labels.
+    var selectedOptionIDs: [String: Set<String>] = [:]
+    /// Host-resolved filenames for selected media options, keyed by section then option id.
+    var selectedMediaFilenames: [String: [String: String]] = [:]
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
@@ -81,22 +93,124 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
     }
 }
 
+struct AgentHostStateRecord: Codable, Equatable, Sendable {
+    enum State: String, Codable, Equatable, Sendable {
+        case draft
+        case writeBlocked
+        case writeRejected
+        case writeOutcomeUnavailable
+        case persisted
+        case persistedPhaseRecordFailed
+        case checked
+        case approved
+        case approvalFailed
+    }
+
+    enum Action: String, Codable, Equatable, Sendable {
+        case none
+        case agentCorrection
+        case reviewChangedSource
+        case reviewForApproval
+        case reopenProject
+        case retryAfterHostRecovery
+    }
+
+    enum ByteComparison: String, Codable, Equatable, Sendable {
+        case created
+        case unchanged
+        case changed
+        case unavailable
+    }
+
+    let id: UUID
+    let toolUseID: String?
+    let state: State
+    let phase: String
+    let toolName: String
+    let action: Action
+    let artifactPath: String?
+    let byteComparison: ByteComparison?
+    let previousSHA256: String?
+    let currentSHA256: String?
+
+    init(
+        id: UUID = UUID(),
+        toolUseID: String? = nil,
+        state: State,
+        phase: String,
+        toolName: String,
+        action: Action,
+        artifactPath: String?,
+        byteComparison: ByteComparison?,
+        previousSHA256: String?,
+        currentSHA256: String?
+    ) {
+        self.id = id
+        self.toolUseID = toolUseID
+        self.state = state
+        self.phase = phase
+        self.toolName = toolName
+        self.action = action
+        self.artifactPath = artifactPath
+        self.byteComparison = byteComparison
+        self.previousSHA256 = previousSHA256
+        self.currentSHA256 = currentSHA256
+    }
+
+    func associated(with toolUseID: String?, retaining id: UUID? = nil) -> Self {
+        Self(
+            id: id ?? self.id,
+            toolUseID: toolUseID ?? self.toolUseID,
+            state: state,
+            phase: phase,
+            toolName: toolName,
+            action: action,
+            artifactPath: artifactPath,
+            byteComparison: byteComparison,
+            previousSHA256: previousSHA256,
+            currentSHA256: currentSHA256
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, toolUseID, state, phase, toolName, action, artifactPath
+        case byteComparison, previousSHA256, currentSHA256
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        toolUseID = try container.decodeIfPresent(String.self, forKey: .toolUseID)
+        state = try container.decode(State.self, forKey: .state)
+        phase = try container.decode(String.self, forKey: .phase)
+        toolName = try container.decode(String.self, forKey: .toolName)
+        action = try container.decode(Action.self, forKey: .action)
+        artifactPath = try container.decodeIfPresent(String.self, forKey: .artifactPath)
+        byteComparison = try container.decodeIfPresent(ByteComparison.self, forKey: .byteComparison)
+        previousSHA256 = try container.decodeIfPresent(String.self, forKey: .previousSHA256)
+        currentSHA256 = try container.decodeIfPresent(String.self, forKey: .currentSHA256)
+    }
+}
+
 struct AgentUserPresentation: Codable, Equatable, Sendable {
     let choiceRecord: AgentChoiceRecord?
     let typedText: String?
     let notice: String?
     let workflowRecord: AgentWorkflowRecord?
+    let hostStateRecord: AgentHostStateRecord?
 
     init(
         choiceRecord: AgentChoiceRecord?,
         typedText: String?,
         notice: String? = nil,
-        workflowRecord: AgentWorkflowRecord? = nil
+        workflowRecord: AgentWorkflowRecord? = nil,
+        hostStateRecord: AgentHostStateRecord? = nil
     ) {
         self.choiceRecord = choiceRecord
         self.typedText = typedText
         self.notice = notice
         self.workflowRecord = workflowRecord
+        self.hostStateRecord = hostStateRecord
     }
 }
 
@@ -136,6 +250,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
         case treatmentPath = "treatment_path"
+        case storyboardMode = "storyboard_mode"
+        case storyboardInput = "storyboard_input"
     }
 
     struct Choice: Identifiable, Equatable, Sendable, Codable {
@@ -145,6 +261,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         let shortLabel: String
         /// SF Symbol name (Workstream B folds in here — every element carries a semantic icon).
         let symbol: String?
+        /// Exact image asset displayed as this choice's selectable thumbnail.
+        let mediaRef: String?
         /// When the choice IS a projected timeline range, its `TimelineRangeCandidate.id` — the card
         /// stays compact and the range is picked on the canvas instead (A3).
         let rangeRef: String?
@@ -154,12 +272,14 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
             label: String,
             shortLabel: String? = nil,
             symbol: String? = nil,
+            mediaRef: String? = nil,
             rangeRef: String? = nil
         ) {
             self.id = id
             self.label = label
             self.shortLabel = Self.compactLabel(shortLabel, fallback: label)
             self.symbol = symbol
+            self.mediaRef = mediaRef
             self.rangeRef = rangeRef
         }
 
@@ -319,6 +439,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         self.workflowDecision = workflowDecision
     }
 
+    func hasSameControls(as other: AgentDialog) -> Bool {
+        AgentDialog(id: other.id, title: title, symbol: symbol, intro: intro,
+            costHint: costHint, confirmLabel: confirmLabel, textField: textField,
+            sections: sections, fileIntake: fileIntake, projection: projection,
+            purpose: purpose, workflowDecision: workflowDecision) == other
+    }
+
     /// Derives a compact label when the dialog omits `shortLabel`.
     static func compactTranscriptLabel(_ label: String) -> String {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -384,10 +511,23 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.
     static func parse(_ args: [String: Any]) throws -> AgentDialog {
-        guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !title.isEmpty else {
+        try validateFields(args, field: "dialog", strings: ["title", "symbol", "intro", "costHint", "confirmLabel", "workflowDecision", "textPlaceholder"],
+            containers: ["sections", "textField", "fileIntake", "projection"])
+        for field in ["textField", "fileIntake", "projection"] {
+            if let value = args[field], !(value is [String: Any]) {
+                throw ToolError("show_dialog: '\(field)' must be an object.")
+            }
+        }
+        if let value = args["workflowDecision"] as? String, WorkflowDecision(rawValue: value) == nil {
+            throw ToolError("show_dialog: unknown workflowDecision '\(value)'. Use a declared decision.")
+        }
+        if let field = args["textField"] as? [String: Any] {
+            try validateFields(field, field: "textField", strings: ["placeholder"], booleans: ["multiline"])
+        }
+        guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
             throw ToolError("show_dialog: 'title' is required.")
         }
-        let rawSections = (args["sections"] as? [[String: Any]]) ?? []
+        let rawSections = try objectArray(args["sections"], field: "sections")
         // GUARDRAIL: a dialog stays a focused decision, not a wall of controls. Overloaded dialogs must
         // be split into sub-steps by the agent — the schema won't render more than this.
         guard rawSections.count <= Self.maxSections else {
@@ -395,25 +535,51 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         }
         var sections: [Section] = []
         for (index, raw) in rawSections.enumerated() {
+            try validateFields(raw, field: "sections[\(index)]", strings: ["id", "label", "shortLabel", "type"],
+                booleans: ["defaultOn", "multiSelect", "allowsCustom"], containers: ["options"])
             let id = (raw["id"] as? String) ?? "section\(index)"
             let label = (raw["label"] as? String) ?? id
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !sections.contains(where: { $0.id == id }) else {
+                throw ToolError("show_dialog: section IDs must be unique and nonempty; labels must be nonempty.")
+            }
             let shortLabel = raw["shortLabel"] as? String
             switch (raw["type"] as? String) ?? "choices" {
             case "toggle":
                 sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .toggle(defaultOn: (raw["defaultOn"] as? Bool) ?? false)))
             case "choices":
-                let options: [Choice] = ((raw["options"] as? [[String: Any]]) ?? []).enumerated().compactMap { i, opt in
-                    guard let optLabel = opt["label"] as? String else { return nil }
-                    return Choice(id: (opt["id"] as? String) ?? "option\(i)",
-                                  label: optLabel,
-                                  shortLabel: opt["shortLabel"] as? String,
-                                  symbol: opt["symbol"] as? String,
-                                  rangeRef: opt["rangeRef"] as? String)
+                let options: [Choice] = try objectArray(raw["options"], field: "sections[\(index)].options").enumerated().map { i, opt in
+                    try validateFields(opt, field: "option[\(i)]", strings: ["id", "label", "shortLabel", "symbol", "mediaRef", "rangeRef"])
+                    let optionID = (opt["id"] as? String) ?? "option\(i)"
+                    guard let optLabel = opt["label"] as? String,
+                          !optLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          !optionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw ToolError("show_dialog: every option needs a nonempty label and ID.")
+                    }
+                    return Choice(id: optionID, label: optLabel, shortLabel: opt["shortLabel"] as? String,
+                        symbol: opt["symbol"] as? String, mediaRef: opt["mediaRef"] as? String,
+                        rangeRef: opt["rangeRef"] as? String)
+                }
+                guard Set(options.map(\.id)).count == options.count else {
+                    throw ToolError("show_dialog: option IDs must be unique within a section.")
                 }
                 // GUARDRAIL: enough to be a choice, few enough to scan. Set allowsCustom for open sets.
                 guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
                     throw ToolError("show_dialog: choices section '\(id)' needs 2…\(Self.maxOptionsPerSection) options (set allowsCustom for an open 'Other…' field).")
+                }
+                let mediaRefs = options.compactMap(\.mediaRef)
+                if !mediaRefs.isEmpty {
+                    guard mediaRefs.count == options.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must give every option a mediaRef.")
+                    }
+                    guard Set(mediaRefs).count == mediaRefs.count else {
+                        throw ToolError("show_dialog: image choices in section '\(id)' must reference distinct media assets.")
+                    }
+                    guard options.allSatisfy({ $0.rangeRef == nil }) else {
+                        throw ToolError("show_dialog: choices in section '\(id)' cannot combine mediaRef with rangeRef.")
+                    }
                 }
                 sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .choices(options: options,
@@ -426,23 +592,92 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         let textField = parseTextField(args)
         let fileIntake = try parseFileIntake(args["fileIntake"] as? [String: Any])
         guard !sections.isEmpty || fileIntake != nil || textField != nil else {
-            throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
+            throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; use a textField for a focused written answer.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
+        let rangeIDs = Set(projection.timelineRanges.map(\.id))
+        for section in sections {
+            if case .choices(let options, _) = section.kind {
+                guard options.allSatisfy({ $0.rangeRef.map(rangeIDs.contains) ?? true }) else {
+                    throw ToolError("show_dialog: rangeRef must name a declared timeline range.")
+                }
+            }
+        }
+        let workflowDecision = (args["workflowDecision"] as? String)
+            .flatMap(WorkflowDecision.init(rawValue:))
+        let display = canonicalWorkflowDisplay(
+            title: title,
+            sections: sections,
+            workflowDecision: workflowDecision
+        )
         return AgentDialog(
             id: UUID().uuidString,
-            title: title,
+            title: display.title,
             symbol: (args["symbol"] as? String) ?? "slider.horizontal.3",
             intro: args["intro"] as? String,
             costHint: args["costHint"] as? String,
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
             textField: textField,
-            sections: sections,
+            sections: display.sections,
             fileIntake: fileIntake,
             projection: projection,
-            workflowDecision: (args["workflowDecision"] as? String)
-                .flatMap(WorkflowDecision.init(rawValue:))
+            workflowDecision: workflowDecision
         )
+    }
+
+    private static func canonicalWorkflowDisplay(
+        title: String,
+        sections: [Section],
+        workflowDecision: WorkflowDecision?
+    ) -> (title: String, sections: [Section]) {
+        guard workflowDecision == .storyboardMode else { return (title, sections) }
+        let canonicalTitle = String(
+            localized: "storyboard.mode.title",
+            defaultValue: "Storyboard setup",
+            comment: "Title for choosing who creates storyboard step sequences"
+        )
+        let canonicalQuestion = String(
+            localized: "storyboard.mode.question",
+            defaultValue: "How should the step sequences be created?",
+            comment: "Question for choosing who creates storyboard step sequences"
+        )
+        let canonicalLabels = [
+            "agent_created": String(
+                localized: "storyboard.mode.agent_created",
+                defaultValue: "Create sequences for me",
+                comment: "Choice asking NexGenVideo to create storyboard step sequences"
+            ),
+            "user_supplied": String(
+                localized: "storyboard.mode.user_supplied",
+                defaultValue: "I'll provide sequences",
+                comment: "Choice indicating the user will provide storyboard step sequences"
+            ),
+        ]
+        let canonicalSections = sections.map { section in
+            guard section.id == "storyboard_mode",
+                  case .choices(let options, let multiSelect) = section.kind else {
+                return section
+            }
+            let canonicalOptions = options.map { option in
+                guard let label = canonicalLabels[option.id] else { return option }
+                return Choice(
+                    id: option.id,
+                    label: label,
+                    shortLabel: label,
+                    symbol: option.symbol,
+                    mediaRef: option.mediaRef,
+                    rangeRef: option.rangeRef
+                )
+            }
+            return Section(
+                id: section.id,
+                label: canonicalQuestion,
+                shortLabel: section.shortLabel,
+                kind: .choices(options: canonicalOptions, multiSelect: multiSelect),
+                allowsCustom: section.allowsCustom
+            )
+        }
+        return (canonicalTitle, canonicalSections)
     }
 
     /// GUARDRAILS for agent-generated dialogs — the vocabulary is fixed and bounded so a card can never
@@ -467,6 +702,11 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     private static func parseFileIntake(_ raw: [String: Any]?) throws -> FileIntake? {
         guard let raw else { return nil }
+        try validateFields(raw, field: "fileIntake", strings: ["prompt", "attachAs", "namePrompt"],
+            booleans: ["multiple", "required"], containers: ["accept"])
+        if let value = raw["accept"], !(value is [String]) {
+            throw ToolError("show_dialog: fileIntake.accept must contain only strings.")
+        }
         let accept = ((raw["accept"] as? [Any]) ?? [])
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -490,16 +730,23 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
 
     private static func parseProjection(_ raw: [String: Any]?) throws -> Projection {
         guard let raw else { return Projection() }
+        try validateFields(raw, field: "projection", strings: ["reviewShot"], containers: ["timelineRanges"])
         var ranges: [TimelineRangeCandidate] = []
-        for (i, r) in ((raw["timelineRanges"] as? [[String: Any]]) ?? []).enumerated() {
+        for (i, r) in try objectArray(raw["timelineRanges"], field: "projection.timelineRanges").enumerated() {
+            try validateFields(r, field: "timelineRanges[\(i)]", strings: ["id", "label"], containers: ["startFrame", "endFrame"])
             guard let start = intValue(r["startFrame"]), let end = intValue(r["endFrame"]) else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs integer 'startFrame' and 'endFrame'.")
             }
-            guard end > start else {
+            guard start >= 0, end > start else {
                 throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs endFrame > startFrame.")
             }
+            let id = (r["id"] as? String) ?? "range\(i)"
+            guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !ranges.contains(where: { $0.id == id }) else {
+                throw ToolError("show_dialog: timeline range IDs must be nonempty and unique.")
+            }
             ranges.append(TimelineRangeCandidate(
-                id: (r["id"] as? String) ?? "range\(i)",
+                id: id,
                 label: (r["label"] as? String) ?? "Range \(i + 1)",
                 startFrame: start,
                 endFrame: end
@@ -511,10 +758,36 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
     }
 
     private static func intValue(_ any: Any?) -> Int? {
-        if let i = any as? Int { return i }
-        if let d = any as? Double { return Int(d) }
-        return nil
+        guard let any else { return nil }
+        return ToolIntegerArgument.exact(any, in: ToolIntegerArgument.frameBounds)
     }
+
+    private static func objectArray(_ value: Any?, field: String) throws -> [[String: Any]] {
+        guard let value else { return [] }
+        guard let objects = value as? [[String: Any]] else {
+            throw ToolError("show_dialog: '\(field)' must be an array of objects.")
+        }
+        return objects
+
+    }
+
+    private static func validateFields(_ object: [String: Any], field: String,
+                                      strings: Set<String> = [], booleans: Set<String> = [],
+                                      containers: Set<String> = []) throws {
+        let allowed = strings.union(booleans).union(containers)
+        guard Set(object.keys).isSubset(of: allowed) else {
+            throw ToolError("show_dialog: unsupported field in '\(field)'. Use the declared dialog schema.")
+        }
+        for name in strings where object[name] != nil {
+            guard object[name] is String else { throw ToolError("show_dialog: '\(field).\(name)' must be a string.") }
+        }
+        for name in booleans where object[name] != nil {
+            guard let number = object[name] as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw ToolError("show_dialog: '\(field).\(name)' must be a boolean.")
+            }
+        }
+    }
+
 }
 
 extension AgentDialog.FileIntake {

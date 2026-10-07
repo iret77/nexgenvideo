@@ -45,6 +45,37 @@ struct SnapEngineTests {
         #expect(frames == [100, 180])
     }
 
+    @Test func collectTargetsIncludesMarkerEndpoints() {
+        let targets = SnapEngine.collectTargets(tracks: [], markerFrames: [20, 45])
+
+        #expect(targets.map(\.frame) == [20, 45])
+        #expect(targets.allSatisfy { $0.kind == .marker })
+    }
+
+    @Test func markerUsesThePreciseClipEdgeThreshold() {
+        let targets = [SnapEngine.SnapTarget(frame: 50, kind: .marker)]
+        var state = SnapEngine.SnapState()
+
+        let inside = SnapEngine.findSnap(
+            position: 48,
+            targets: targets,
+            state: &state,
+            baseThreshold: basePx,
+            pixelsPerFrame: pxPerFrame
+        )
+        #expect(inside?.frame == 50)
+
+        state = SnapEngine.SnapState()
+        let outside = SnapEngine.findSnap(
+            position: 47,
+            targets: targets,
+            state: &state,
+            baseThreshold: basePx,
+            pixelsPerFrame: pxPerFrame
+        )
+        #expect(outside == nil)
+    }
+
     // MARK: - findSnap (basic threshold)
 
     @Test func findSnapReturnsNilWhenNoTargets() {

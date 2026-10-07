@@ -6,10 +6,12 @@ enum DragState {
     case moveClip(MoveClipDrag)
     case trimLeft(TrimDrag)
     case trimRight(TrimDrag)
+    case slip(SlipDrag)
     case audioVolumeKf(AudioVolumeKfDrag)
     case fadeKnee(FadeKneeDrag)
     case marquee(MarqueeDrag)
     case timelineRange(TimelineRangeDrag)
+    case timelineMarker(TimelineMarkerDrag)
 
     struct AudioVolumeKfDrag {
         let clipId: String
@@ -80,6 +82,16 @@ enum DragState {
         let hasNoSourceMedia: Bool
         /// When true, trim applies to link-group partners too.
         let propagateToLinked: Bool
+        let isRipple: Bool
+        var deltaFrames: Int = 0
+    }
+
+    struct SlipDrag {
+        let clipId: String
+        let grabFrame: Int
+        let maxRightDelta: Int
+        let maxLeftDelta: Int
+        let propagateToLinked: Bool
         var deltaFrames: Int = 0
     }
 
@@ -91,5 +103,12 @@ enum DragState {
 
     struct TimelineRangeDrag {
         let anchorFrame: Int
+    }
+
+    struct TimelineMarkerDrag {
+        let original: TimelineMarker
+        let grabOffsetFrames: Int
+        let resizesEnd: Bool
+        var current: TimelineMarker
     }
 }

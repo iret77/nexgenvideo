@@ -129,6 +129,40 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
+    @Test("upscale pricing receives the exact duration and target resolution")
+    func upscalePricingReceivesTarget() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        var pricedInput: GenerationPricingInput?
+        let request = GenerationRequest(
+            modality: .upscale,
+            modelId: "bria/video/increase-resolution",
+            intent: "",
+            durationSeconds: 7.25,
+            outputResolution: "8K",
+            placement: .mediaLibrary(folderId: nil),
+            origin: .panel,
+            submission: .upscale(run: { _, _, _, _, _, _ in "upscale-placeholder" })
+        )
+
+        let result = await GenerationController.submit(
+            request,
+            editor: editor,
+            quoteLoader: { _, input in
+                pricedInput = input
+                return money(1)
+            }
+        )
+
+        guard case .success = result else {
+            Issue.record("expected priced upscale submission, got \(result)")
+            return
+        }
+        #expect(pricedInput?.durationSeconds == 7.25)
+        #expect(pricedInput?.resolution == "8K")
+    }
+
     @Test("no explicit stop allows an unpriced request and records the uncertainty")
     func noStopAllowsUnknownPrice() async throws {
         let package = try project(stop: nil)
@@ -224,7 +258,8 @@ struct BudgetStopTests {
             resolution: nil,
             quality: nil,
             promptCharacterCount: 5,
-            generateAudio: true
+            generateAudio: true,
+            referenceCount: 0
         )
 
         _ = try await GenerationBudgetGuard.authorize(
@@ -259,7 +294,8 @@ struct BudgetStopTests {
             resolution: nil,
             quality: nil,
             promptCharacterCount: 5,
-            generateAudio: true
+            generateAudio: true,
+            referenceCount: 0
         )
         let (quoteStarted, startedContinuation) = AsyncStream<Void>.makeStream()
         var resumeQuote: CheckedContinuation<Void, Never>?
@@ -332,6 +368,114 @@ struct BudgetStopTests {
         }
 
         #expect(editor.mediaAssets.count == beforeAssets)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test("a trimmed upscale rerun prices and replays the recorded source range")
+    func trimmedUpscaleRerunUsesRecordedRange() async throws {
+        let package = try project(stop: 5)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        let source = MediaAsset(
+            id: "project-video",
+            url: package.appendingPathComponent("source.mp4"),
+            type: .video,
+            name: "Source",
+            duration: 60
+        )
+        editor.mediaAssets.append(source)
+        var input = GenerationInput(
+            prompt: "",
+            model: "fal-ai/topaz/upscale/video",
+            duration: 10,
+            aspectRatio: "",
+            resolution: nil
+        )
+        input.sourceVideoAssetId = source.id
+        input.sourceRange = GenerationSourceRange(trim: GenerationSourceTrim(
+            trimStartFrame: 240,
+            trimEndFrame: 960,
+            sourceFramesConsumed: 240,
+            fps: 24
+        ))
+        let upscaled = MediaAsset(
+            url: package.appendingPathComponent("upscaled.mp4"),
+            type: .video,
+            name: "Upscaled",
+            duration: 10,
+            generationInput: input
+        )
+        var pricedDuration: Double?
+
+        do {
+            _ = try await EditSubmitter.rerun(
+                asset: upscaled,
+                editor: editor,
+                quoteLoader: { _, pricing in
+                    pricedDuration = pricing.durationSeconds
+                    return money(6)
+                }
+            )
+            Issue.record("expected the rerun budget guard to block")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .budget = error else {
+                Issue.record("expected budget failure, got \(error)")
+                return
+            }
+        }
+
+        #expect(pricedDuration == 10)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test("an upscale without a recorded source range never substitutes the project source")
+    func unrecordedTrimmedUpscaleRerunIsRefused() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        let source = MediaAsset(
+            id: "project-video",
+            url: package.appendingPathComponent("source.mp4"),
+            type: .video,
+            name: "Source",
+            duration: 60
+        )
+        editor.mediaAssets.append(source)
+        var input = GenerationInput(
+            prompt: "",
+            model: "fal-ai/topaz/upscale/video",
+            duration: 10,
+            aspectRatio: "",
+            resolution: nil
+        )
+        input.sourceVideoAssetId = source.id
+        let upscaled = MediaAsset(
+            url: package.appendingPathComponent("upscaled.mp4"),
+            type: .video,
+            name: "Upscaled",
+            duration: 10,
+            generationInput: input
+        )
+        var quoted = false
+
+        do {
+            _ = try await EditSubmitter.rerun(
+                asset: upscaled,
+                editor: editor,
+                quoteLoader: { _, _ in
+                    quoted = true
+                    return money(1)
+                }
+            )
+            Issue.record("expected the rerun without a recorded range or upload to be refused")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .missingSource = error else {
+                Issue.record("expected a missing source, got \(error)")
+                return
+            }
+        }
+
+        #expect(quoted == false)
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
