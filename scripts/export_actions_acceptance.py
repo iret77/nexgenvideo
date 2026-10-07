@@ -6,6 +6,13 @@ import subprocess
 from pathlib import Path
 
 
+def _decoded(output: bytes | str | None) -> str:
+    # POSIX subprocess hands back partial output as bytes even in text mode.
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output or ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
@@ -21,14 +28,20 @@ def main() -> int:
         "NGV_EXPORT_ACTIONS_SELFTEST": "1",
         "NGV_EXPORT_ACTIONS_SELFTEST_OUTPUT": str(args.output.resolve()),
     }
-    completed = subprocess.run(
-        [str(executable)],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(executable)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SystemExit(
+            f"native export actions timed out after {error.timeout} seconds\n"
+            f"stdout:\n{_decoded(error.stdout)}\nstderr:\n{_decoded(error.stderr)}"
+        )
     if completed.returncode != 0:
         raise SystemExit(
             f"native export actions failed ({completed.returncode})\n"

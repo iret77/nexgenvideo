@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import os
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,7 @@ enum ExportActionsSelfTest {
     }
 
     private(set) static var revealedURL: URL?
+    nonisolated private static let stage = OSAllocatedUnfairLock(initialState: "launch")
 
     static func recordReveal(_ url: URL) {
         guard isRequested else { return }
@@ -20,7 +22,20 @@ enum ExportActionsSelfTest {
         do {
             try await run()
         } catch {
-            fail(error.localizedDescription)
+            fail("\(error.localizedDescription) (during \(stage.withLock { $0 }))")
+        }
+    }
+
+    private static func enter(_ name: String) {
+        stage.withLock { $0 = name }
+    }
+
+    // Fires off the main thread so a blocked main actor still reports where it stopped.
+    nonisolated static func armWatchdog() {
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .seconds(80)) {
+            let current = stage.withLock { $0 }
+            FileHandle.standardError.write(Data("SELFTEST_EXPORT_ACTIONS_FAIL timed out during \(current)\n".utf8))
+            _exit(1)
         }
     }
 
@@ -48,6 +63,7 @@ enum ExportActionsSelfTest {
         )
         _ = try ProjectIdentity.uuid(for: package)
 
+        enter("project-open")
         let editor = EditorViewModel()
         editor.projectURL = package
         guard let ownerKey = editor.openWorkingCopyKey else {
@@ -55,24 +71,35 @@ enum ExportActionsSelfTest {
         }
         let queue = ExportQueue.shared
         let completedURL = root.appendingPathComponent("completed.xml")
+        enter("completed-job-enqueue")
         let completed = try await queue.enqueueInterchange(
             editor: editor,
             format: .xml,
             outputURL: completedURL,
             projectName: "Actions"
         )
-        let completedResult = await queue.waitForCompletion(jobID: completed.id)
-        guard completedResult?.status == .completed else {
-            throw ToolError("The native export self-test could not prepare a completed job.")
+        enter("completed-job-run")
+        guard await waitUntil(timeout: .seconds(30), { completed.status.isTerminal }),
+              completed.status == .completed else {
+            throw ToolError(
+                "The native export self-test could not prepare a completed job (\(completed.status.rawValue))."
+            )
         }
 
-        await ExportCoordinator.acquireExport()
+        enter("export-gate")
+        let gateDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        do {
+            try await ExportCoordinator.acquireExport(isCancelled: { ContinuousClock.now >= gateDeadline })
+        } catch {
+            throw ToolError("The export gate stayed busy after the completed job.")
+        }
         var gateHeld = true
         defer {
             if gateHeld { ExportCoordinator.endExport() }
             queue.cancelAll(ownerKey: ownerKey)
             editor.releaseWorkingCopy()
         }
+        enter("pending-job-enqueue")
         let cancellable = try await queue.enqueueInterchange(
             editor: editor,
             format: .xml,
@@ -80,6 +107,7 @@ enum ExportActionsSelfTest {
             projectName: "Actions"
         )
 
+        enter("export-window")
         let host = NSHostingController(rootView: ExportView().environment(editor))
         let window = NSWindow(contentViewController: host)
         window.setContentSize(AppTheme.ComponentSize.exportWindow)
@@ -87,6 +115,7 @@ enum ExportActionsSelfTest {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        enter("hidden-and-offscreen-actions")
         let visibilityAction = "reveal"
         let visibilityIdentifier = "export.job.\(completed.id).\(visibilityAction)"
         try await prepareAction(job: completed, action: visibilityAction, window: window)
@@ -116,8 +145,10 @@ enum ExportActionsSelfTest {
         }
         try await prepareAction(job: completed, action: visibilityAction, window: window)
 
+        enter("initial-actions")
         _ = try await verifyActions(for: [completed, cancellable], window: window)
 
+        enter("disabled-actions")
         let initialCount = queue.jobs(ownerKey: ownerKey).count
         var disabledActionChecks = 0
         if try await click(job: completed, action: "cancel", window: window) == false {
@@ -143,6 +174,7 @@ enum ExportActionsSelfTest {
               revealedURL == nil else {
             throw ToolError("Pending-job disabled actions changed queue state.")
         }
+        enter("cancel-action")
         _ = try await click(job: cancellable, action: "cancel", window: window)
         guard await waitUntil(timeout: .seconds(2), { cancellable.status == .cancelled }) else {
             throw ToolError("The visible Cancel action did not cancel its bound job.")
@@ -161,6 +193,7 @@ enum ExportActionsSelfTest {
             throw ToolError("Cancelled-job disabled actions changed queue state.")
         }
 
+        enter("reveal-action")
         _ = try await click(job: completed, action: "reveal", window: window)
         guard await waitUntil(timeout: .seconds(2), {
             revealedURL == completedURL.standardizedFileURL
@@ -175,6 +208,7 @@ enum ExportActionsSelfTest {
             throw ToolError("The export window did not reacquire key status after Finder Reveal.")
         }
 
+        enter("retry-action")
         _ = try await click(job: cancellable, action: "retry", window: window)
         guard await waitUntil(timeout: .seconds(2), {
             queue.jobs(ownerKey: ownerKey).count == initialCount + 1
@@ -183,18 +217,25 @@ enum ExportActionsSelfTest {
         }), retried.status == .pending else {
             throw ToolError("The visible Retry action did not enqueue its bound source.")
         }
+        enter("final-actions")
         let finalActionChecks = try await verifyActions(
             for: [completed, cancellable, retried],
             window: window
         )
 
+        enter("retried-cancel-action")
         _ = try await click(job: retried, action: "cancel", window: window)
         guard await waitUntil(timeout: .seconds(2), { retried.status == .cancelled }) else {
             throw ToolError("The visible Cancel action did not cancel the retried job.")
         }
         ExportCoordinator.endExport()
         gateHeld = false
-        await queue.waitUntilIdle(ownerKey: ownerKey)
+        enter("queue-idle")
+        guard await waitUntil(timeout: .seconds(30), {
+            queue.jobs(ownerKey: ownerKey).allSatisfy { $0.status.isTerminal }
+        }) else {
+            throw ToolError("The export queue did not become idle.")
+        }
         window.orderOut(nil)
 
         let evidence: [String: Any] = [

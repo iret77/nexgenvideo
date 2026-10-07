@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isSelfTest: isRelaunchSelfTest || ExportActionsSelfTest.isRequested
         )
         if ExportActionsSelfTest.isRequested {
+            ExportActionsSelfTest.armWatchdog()
             Task { @MainActor in
                 await Task.yield()
                 await ExportActionsSelfTest.runIfRequested()

@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 enum HangDiagnosticUI {
     @MainActor
     static func launch() {
-        guard !AppRelaunchSelfTest.isRequested else { return }
+        guard !AppRelaunchSelfTest.isRequested, !ExportActionsSelfTest.isRequested else { return }
         if HangDiagnosticSelfTest.requested {
             HangDiagnosticSelfTest.start()
             return
@@ -23,7 +23,8 @@ enum HangDiagnosticUI {
 
     @MainActor
     static func notifySaved() {
-        guard !HangDiagnosticSelfTest.requested, !AppRelaunchSelfTest.isRequested else { return }
+        guard !HangDiagnosticSelfTest.requested, !AppRelaunchSelfTest.isRequested,
+              !ExportActionsSelfTest.isRequested else { return }
         guard let folders = try? FileManager.default.contentsOfDirectory(at: HangDiagnosticRecorder.root,
             includingPropertiesForKeys: nil) else { return }
         let requests = folders.compactMap { folder -> String? in
