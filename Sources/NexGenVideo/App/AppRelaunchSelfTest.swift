@@ -349,11 +349,32 @@ enum AppRelaunchSelfTest {
         }
         guard probe.window === window else { return "the control probe belonged to another window" }
         guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
-        _ = probe.scrollToVisible(probe.bounds)
+        for clipView in clipViews(enclosing: probe) {
+            let frame = probe.convert(probe.bounds, to: clipView)
+            let visible = clipView.bounds
+            guard !visible.contains(frame) else { continue }
+            let document = clipView.documentRect
+            var origin = visible.origin
+            if frame.minX < visible.minX || frame.width > visible.width {
+                origin.x = frame.minX
+            } else if frame.maxX > visible.maxX {
+                origin.x = frame.maxX - visible.width
+            }
+            if frame.minY < visible.minY || frame.height > visible.height {
+                origin.y = frame.minY
+            } else if frame.maxY > visible.maxY {
+                origin.y = frame.maxY - visible.height
+            }
+            origin.x = min(max(origin.x, document.minX), max(document.minX, document.maxX - visible.width))
+            origin.y = min(max(origin.y, document.minY), max(document.minY, document.maxY - visible.height))
+            clipView.scroll(to: origin)
+            clipView.enclosingScrollView?.reflectScrolledClipView(clipView)
+        }
         window.displayIfNeeded()
         return nil
     }
 
+    // Partly clipped is enough: the click guard requires full containment in every clip view.
     static func scrollClickProbeOutOfVisibleArea(
         identifier: String,
         in window: NSWindow?
@@ -364,27 +385,39 @@ enum AppRelaunchSelfTest {
             return "the control geometry probe was absent"
         }
         guard probe.window === window else { return "the control probe belonged to another window" }
-        var ancestor = probe.superview
-        while let current = ancestor {
-            if let clipView = current as? NSClipView {
-                let documentRect = clipView.documentRect
-                let maximumX = max(documentRect.minX, documentRect.maxX - clipView.bounds.width)
-                let maximumY = max(documentRect.minY, documentRect.maxY - clipView.bounds.height)
-                let origins = [
-                    NSPoint(x: documentRect.minX, y: documentRect.minY),
-                    NSPoint(x: maximumX, y: maximumY),
-                ]
-                for origin in origins {
-                    clipView.scroll(to: origin)
-                    clipView.enclosingScrollView?.reflectScrolledClipView(clipView)
-                    window.displayIfNeeded()
-                    let frameInClipView = probe.convert(probe.bounds, to: clipView)
-                    if !clipView.bounds.intersects(frameInClipView) { return nil }
-                }
+        let enclosingClipViews = clipViews(enclosing: probe)
+        var geometry: [String] = []
+        for clipView in enclosingClipViews {
+            let documentRect = clipView.documentRect
+            let maximumX = max(documentRect.minX, documentRect.maxX - clipView.bounds.width)
+            let maximumY = max(documentRect.minY, documentRect.maxY - clipView.bounds.height)
+            let origins = [
+                NSPoint(x: documentRect.minX, y: documentRect.minY),
+                NSPoint(x: maximumX, y: maximumY),
+            ]
+            for origin in origins {
+                clipView.scroll(to: origin)
+                clipView.enclosingScrollView?.reflectScrolledClipView(clipView)
+                window.displayIfNeeded()
+                let frameInClipView = probe.convert(probe.bounds, to: clipView)
+                if !clipView.bounds.contains(frameInClipView) { return nil }
+                geometry.append(
+                    "document \(describe(documentRect)) visible \(describe(clipView.bounds)) probe \(describe(frameInClipView))"
+                )
             }
+        }
+        return "the control probe could not be scrolled even partly outside its \(enclosingClipViews.count) clip views "
+            + "(\(geometry.joined(separator: "; ")))"
+    }
+
+    private static func clipViews(enclosing view: NSView) -> [NSClipView] {
+        var result: [NSClipView] = []
+        var ancestor = view.superview
+        while let current = ancestor {
+            if let clipView = current as? NSClipView { result.append(clipView) }
             ancestor = current.superview
         }
-        return "the control probe could not be moved outside its clip views"
+        return result
     }
 
     private enum ClickTarget {
