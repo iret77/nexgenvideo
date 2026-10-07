@@ -157,6 +157,7 @@ struct ClaudeCodeLocatorTests {
         #expect(paths.first == "/Users/x/.claude/local/claude")
         #expect(paths.contains("/usr/bin/claude"))
         #expect(paths.contains("/bin/claude"))
+        #expect(paths.contains("/Users/x/.local/bin/claude"))
         #expect(paths.contains("/opt/homebrew/bin/claude"))
         #expect(paths.contains("/usr/local/bin/claude"))
     }
@@ -164,7 +165,56 @@ struct ClaudeCodeLocatorTests {
     @Test func candidatePathsToleratesNilPath() {
         let paths = ClaudeCodeLocator.candidatePaths(home: "/Users/x", path: nil)
         #expect(paths.first == "/Users/x/.claude/local/claude")
+        #expect(paths.contains("/Users/x/.local/bin/claude"))
         #expect(paths.contains("/opt/homebrew/bin/claude"))
+    }
+
+    @Test("the native installer's launcher wins over a leftover Homebrew or npm shim")
+    func nativeInstallerPrecedesHomebrew() throws {
+        let paths = ClaudeCodeLocator.candidatePaths(home: "/Users/x", path: "/usr/bin:/bin")
+        let native = try #require(paths.firstIndex(of: "/Users/x/.local/bin/claude"))
+        let homebrew = try #require(paths.firstIndex(of: "/opt/homebrew/bin/claude"))
+        #expect(native < homebrew)
+    }
+
+    @Test("a Finder-launched PATH still finds the native installer's symlinked launcher")
+    func locateOnlyFindsNativeInstallerOutsideAppPath() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("claude-home-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let versions = home.appendingPathComponent(".local/share/claude/versions", isDirectory: true)
+        let bin = home.appendingPathComponent(".local/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: versions, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let binary = versions.appendingPathComponent("2.1.300")
+        FileManager.default.createFile(
+            atPath: binary.path,
+            contents: Data("#!/bin/sh\n".utf8),
+            attributes: [.posixPermissions: 0o755]
+        )
+        let launcher = bin.appendingPathComponent("claude")
+        try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: binary)
+
+        let found = ClaudeCodeLocator.locateOnly(
+            environment: ["HOME": home.path, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+        )
+        #expect(found?.path == launcher.path)
+    }
+
+    @Test func runtimePathAppendsInstallDirectoriesOnce() {
+        let path = ClaudeCodeLocator.runtimePath(existing: "/usr/bin:/opt/homebrew/bin::/bin", home: "/Users/x")
+        #expect(path == "/usr/bin:/opt/homebrew/bin:/bin:/Users/x/.local/bin:/usr/local/bin")
+        #expect(ClaudeCodeLocator.runtimePath(existing: nil, home: "/Users/x")
+            == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/local/bin")
+    }
+
+    @Test("the runtime PATH and the status check search the same directories")
+    func runtimePathMatchesLocatorCandidates() {
+        let path = ClaudeCodeLocator.runtimePath(existing: "/usr/bin:/bin", home: "/Users/x")
+        let candidates = ClaudeCodeLocator.candidatePaths(home: "/Users/x", path: "/usr/bin:/bin")
+        for dir in path.split(separator: ":") {
+            #expect(candidates.contains("\(dir)/claude"))
+        }
     }
 
     @Test func parseVersionExtractsSemver() {

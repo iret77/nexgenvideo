@@ -19,7 +19,12 @@ struct ClaudeCodeLocator {
         var found: Bool { executableURL != nil }
     }
 
-    /// Candidate locations in priority order: explicit local install, PATH entries, Homebrew prefixes.
+    /// Install directories a Finder-launched app's PATH misses: the native installer, then Homebrew.
+    static func installDirectories(home: String) -> [String] {
+        ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    }
+
+    /// Candidate locations in priority order: legacy local install, PATH entries, install directories.
     static func candidatePaths(home: String, path: String?) -> [String] {
         var out: [String] = ["\(home)/.claude/local/claude"]
         if let path {
@@ -27,9 +32,16 @@ struct ClaudeCodeLocator {
                 out.append("\(dir)/claude")
             }
         }
-        out.append("/opt/homebrew/bin/claude")
-        out.append("/usr/local/bin/claude")
+        out += installDirectories(home: home).map { "\($0)/claude" }
         return out
+    }
+
+    /// PATH for the spawned runtime: the app's own entries, then the same install directories.
+    static func runtimePath(existing: String?, home: String) -> String {
+        var seen = Set<String>()
+        return ((existing ?? "").split(separator: ":").map(String.init) + installDirectories(home: home))
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .joined(separator: ":")
     }
 
     /// Parse `claude --version` output, e.g. "2.1.191 (Claude Code)" → "2.1.191".

@@ -303,17 +303,7 @@ final class ClaudeCodeRuntime {
     /// inject the BYO provider keys the pipeline's render step reads (e.g. FAL_KEY).
     private static func childEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        let extra = [
-            "/opt/homebrew/bin", "/usr/local/bin",
-            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin"),
-        ]
-        var seen = Set<String>()
-        var ordered: [String] = []
-        for path in (env["PATH"] ?? "").split(separator: ":").map(String.init) + extra
-        where !path.isEmpty && seen.insert(path).inserted {
-            ordered.append(path)
-        }
-        env["PATH"] = ordered.joined(separator: ":")
+        env["PATH"] = ClaudeCodeLocator.runtimePath(existing: env["PATH"], home: NSHomeDirectory())
         for (provider, name) in providerEnvNames {
             if let key = ProviderKeychain.load(provider) { env[name] = key }
         }
