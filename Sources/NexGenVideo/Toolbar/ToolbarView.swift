@@ -6,15 +6,12 @@ struct ToolbarView: View {
 
     var body: some View {
         @Bindable var editor = editor
-        HStack(spacing: AppTheme.Spacing.md) {
+        WrapLayout(spacing: AppTheme.Spacing.xl, trailingLastItem: true) {
             // Undo / Redo
             HStack(spacing: AppTheme.Spacing.md) {
                 toolbarButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: undo)
                 toolbarButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: redo)
             }
-
-            AppDivider()
-                .frame(height: AppTheme.Spacing.xl)
 
             // Tool mode
             HStack(spacing: AppTheme.Spacing.md) {
@@ -23,18 +20,12 @@ struct ToolbarView: View {
                 toolModeButton("arrow.left.and.right", mode: .slip, help: "Slip (T)")
             }
 
-            AppDivider()
-                .frame(height: AppTheme.Spacing.xl)
-
             // Split, trim buttons — trim is edit-only chrome (docs/UI_UX_CONCEPT.md §3)
             HStack(spacing: AppTheme.Spacing.md) {
                 toolbarButton("square.split.2x1", help: "Split at Playhead (⌘K)", action: editor.splitAtPlayhead)
                 bracketButton("[", help: "Trim Start to Playhead (Q)", isDisabled: !editor.allowsTimelineEditChrome, action: editor.trimStartToPlayhead)
                 bracketButton("]", help: "Trim End to Playhead (W)", isDisabled: !editor.allowsTimelineEditChrome, action: editor.trimEndToPlayhead)
             }
-
-            AppDivider()
-                .frame(height: AppTheme.Spacing.xl)
 
             // Add content
             HStack(spacing: AppTheme.Spacing.md) {
@@ -43,19 +34,14 @@ struct ToolbarView: View {
                     editor.markerPanelPresented = true
                 } label: {
                     Label("Markers", systemImage: "bookmark")
-                        .interfaceFont(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .padding(.horizontal, AppTheme.Spacing.sm)
-                        .frame(height: AppTheme.Control.iconTarget)
-                        .hoverHighlight(isActive: editor.markerPanelPresented)
+                        .interfaceFont(size: AppTheme.Typography.action, weight: AppTheme.FontWeight.medium)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle(isSelected: editor.markerPanelPresented, hasLabel: true))
                 .popover(isPresented: $editor.markerPanelPresented, arrowEdge: .bottom) {
                     MarkerPanelView()
                 }
             }
-
-            Spacer()
 
             // Zoom
             HStack(spacing: AppTheme.Spacing.xs) {
@@ -83,7 +69,9 @@ struct ToolbarView: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.md)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, AppTheme.Spacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: AppTheme.Layout.toolbarHeight)
     }
 
     private func toolbarButton(_ systemName: String, help: String, isDisabled: Bool = false, action: @escaping () -> Void) -> some View {

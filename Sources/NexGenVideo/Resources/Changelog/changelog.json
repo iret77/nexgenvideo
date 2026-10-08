@@ -10,7 +10,8 @@
           "items": [
             "Task selection groups its heading and actions with a clear primary start action and keeps task switching in one place.",
             "Media, Production and Review share empty-state typography and controls. Media folders use an opaque workspace surface; New Folder and Organize are separate actions.",
-            "Edit and Postproduction reuse neutral agent menus and shared generation controls. Disabled timeline tools are clearly distinguished. Review headers and export settings adapt to narrow layouts and larger text; Export uses shared typography and buttons."
+            "Edit and Postproduction reuse neutral agent menus and shared generation controls. Disabled timeline tools are clearly distinguished. Review headers and export settings adapt to narrow layouts and larger text; Export uses shared typography and buttons.",
+            "Inspector fields, markers and approval cards follow the project typography and colors. Numeric values remain readable, keyframe controls have larger targets, and timeline track actions support keyboard and accessibility navigation."
           ]
         }
       ]

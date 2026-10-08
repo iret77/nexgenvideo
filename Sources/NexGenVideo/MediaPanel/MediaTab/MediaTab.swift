@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.projectPalette) private var palette
     let workspace: EditorViewModel.WorkspaceFocus
 
     var browserState: MediaBrowserState { editor.mediaBrowserState(for: workspace) }
@@ -161,6 +162,12 @@ struct MediaTab: View {
             if workspace == .media {
                 KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp)
             }
+        }
+        .onChange(of: browserState.pendingRenameFolderID, initial: true) { _, id in
+            guard workspace == editor.workspaceFocus, let id, editor.folder(id: id) != nil else { return }
+            pendingFolderFocusId = id
+            renamingFolderId = id
+            browserState.pendingRenameFolderID = nil
         }
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
         .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
@@ -342,7 +349,9 @@ struct MediaTab: View {
         toolbarButton(title: "Import", systemImage: "plus", action: importMedia)
             .help("Copy media into the project")
             .tourAnchor(.importButton)
-        toolbarButton(title: "Generate", systemImage: "sparkles", action: toggleGenerationPanel)
+        toolbarButton(title: "Generate", systemImage: "sparkles", isSelected: editor.showGenerationPanel, action: toggleGenerationPanel)
+            .help(editor.showGenerationPanel ? "Hide generator" : "Open generator")
+            .accessibilityValue(editor.showGenerationPanel ? "Shown" : "Hidden")
             .tourAnchor(.generateButton)
     }
 
@@ -399,7 +408,7 @@ struct MediaTab: View {
 
             itemCountText
         }
-        .frame(height: AppTheme.MediaPanel.contextRowHeight)
+        .interfaceControlHeight()
     }
 
     @ViewBuilder
@@ -469,7 +478,8 @@ struct MediaTab: View {
         toolbarMenuIcon(
             systemName: "line.3.horizontal.decrease",
             title: "Filter",
-            foregroundStyle: hasActiveFilters ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor
+            foregroundStyle: hasActiveFilters ? palette.accent : AppTheme.Text.tertiaryColor,
+            isActive: hasActiveFilters
         ) {
             ForEach(Self.filterableTypes, id: \.self) { type in
                 Button { toggleFilter(type) } label: {
@@ -616,6 +626,7 @@ struct MediaTab: View {
     private func toolbarButton(
         title: String,
         systemImage: String,
+        isSelected: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -624,7 +635,7 @@ struct MediaTab: View {
                 Text(title)
             }
         }
-        .buttonStyle(.capsule(.secondary))
+        .buttonStyle(.capsule(.secondary, isSelected: isSelected))
         .fixedSize(horizontal: true, vertical: false)
         .help(title)
     }
@@ -665,7 +676,8 @@ struct MediaTab: View {
         systemName: String,
         title: String,
         showsTitle: Bool = false,
-        foregroundStyle: some ShapeStyle = AppTheme.Text.tertiaryColor,
+        foregroundStyle: Color = AppTheme.Text.tertiaryColor,
+        isActive: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
         Menu(content: content) {
@@ -682,16 +694,16 @@ struct MediaTab: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .focusable(false)
-        .hoverHighlight()
+        .tint(foregroundStyle)
+        .hoverHighlight(isActive: isActive)
+        .accessibilityValue(isActive ? "Active" : "")
     }
 
     // MARK: - Folder commands
 
     private func createNewFolderInCurrent() {
         let id = editor.createFolder(name: "New Folder", in: currentFolderId)
-        pendingFolderFocusId = id
-        renamingFolderId = id
+        editor.requestMediaFolderRename(id, workspace: workspace)
     }
 
     private func navigateUp() {

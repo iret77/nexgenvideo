@@ -18,19 +18,18 @@ enum CockpitStateView {
         activePack: InstalledPack? = nil,
         startProduction: (() -> Void)? = nil,
         isStarting: Bool = false,
+        hasProduction: Bool = false,
         retry: @escaping () -> Void
     ) -> some View {
-        // `.notInitialized` is a normal guidance state, not a failure — calm copy, neutral icon. Only
-        // genuinely transient errors get "Retry"; retrying a not-initialized project just re-reads the
-        // same absent `project.yaml`, so it offers no Retry.
+        // Retry an existing pipeline; offer setup only when production has not been initialized.
         let icon: String
         let headline: String
         let detail: String
         switch error {
         case .notInitialized:
-            icon = "wand.and.stars"
-            headline = isStarting ? "Setting up production…" : "No production pipeline"
-            detail = isStarting
+            icon = hasProduction ? "exclamationmark.triangle" : "wand.and.stars"
+            headline = hasProduction ? title : (isStarting ? "Setting up production…" : "No production pipeline")
+            detail = hasProduction ? "Production could not be loaded. Try again." : isStarting
                 ? "Complete the required setup in the Tasks panel."
                 : "This project isn't set up for AI production yet."
         default:
@@ -39,14 +38,14 @@ enum CockpitStateView {
             detail = error.message
         }
         // Lead with the pack's own identity when one is active and the project isn't set up yet.
-        let showPackHero = (error == .notInitialized) && activePack != nil
+        let showPackHero = (error == .notInitialized) && !hasProduction && activePack != nil
         return WorkspaceStateView(
             title: showPackHero ? (activePack?.headline ?? activePack?.displayName) : headline,
             message: showPackHero ? activePack?.benefit : detail,
             systemImage: icon,
             banner: showPackHero ? activePack?.headerImage() : nil
         ) {
-            if error == .notInitialized {
+            if error == .notInitialized && !hasProduction {
                 // The generic workflow is never plugin-gated: production is one action away.
                 if let startProduction {
                     if isStarting {

@@ -61,7 +61,6 @@ private struct AgentHostStateView: View {
                     editor.revealCockpit(cockpitTab(for: state.record.phase))
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
             }
             if hasDiagnostics {
                 DisclosureGroup(isExpanded: $showsDiagnostics) {

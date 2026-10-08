@@ -127,4 +127,26 @@ struct WrapLayoutGeometryTests {
         #expect(result.size.width <= AppTheme.Layout.safeDimensionCeiling)
         #expect(result.size.height <= AppTheme.Layout.safeDimensionCeiling)
     }
+    @Test func toolbarKeepsEveryGroupInsideNarrowAndWidePanes() {
+        let sizes = [68.0, 108, 108, 150, 164].map { CGSize(width: $0, height: 28) }
+        for width in [400.0, 600, 1000] {
+            let result = WrapLayoutGeometry.arrange(
+                sizes: sizes, maxWidth: width, spacing: AppTheme.Spacing.xl, trailingLastItem: true
+            )
+            let frames = zip(result.origins, result.subviewSizes).map { CGRect(origin: $0.0, size: $0.1) }
+            #expect(frames.allSatisfy { $0.minX >= 0 && $0.maxX <= width && $0.maxY <= result.size.height })
+            for first in frames.indices {
+                for second in frames.indices where second > first {
+                    #expect(!frames[first].intersects(frames[second]))
+                }
+            }
+            if width == 1000 {
+                #expect(frames.last?.maxX == width)
+                #expect(result.size.height == 28)
+            } else {
+                #expect(result.size.height > 28)
+            }
+        }
+    }
+
 }

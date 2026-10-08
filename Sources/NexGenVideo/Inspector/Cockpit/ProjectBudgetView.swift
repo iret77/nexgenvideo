@@ -133,7 +133,7 @@ private struct ProjectBudgetCard: View {
                 .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
             Spacer()
             Text(String(format: "€%.2f", amount))
-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+                .interfaceFont(size: AppTheme.Typography.ui,
                                weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
                 .monospacedDigit()
                 .foregroundStyle(color)
@@ -149,7 +149,7 @@ private struct ProjectBudgetCard: View {
                 .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
             Spacer()
             Text(value)
-                .interfaceFont(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+                .interfaceFont(size: AppTheme.Typography.ui,
                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
                 .foregroundStyle(color)
                 .textSelection(.enabled)

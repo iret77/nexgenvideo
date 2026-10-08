@@ -135,10 +135,6 @@ struct InspectorFormLayoutTests {
             AppTheme.Layout.inspectorDefault - AppTheme.Spacing.lg * 2,
             AppTheme.Layout.inspectorDefault * 2 - AppTheme.Spacing.lg * 2,
         ]
-        let wideLayoutMinimumWidth = AppTheme.Timeline.keyframeLaneLabelWidth
-            + AppTheme.Spacing.sm
-            + AppTheme.Timeline.keyframeLaneMinimumTrackWidth
-
         for panelWidth in panelWidths {
             for scale in [1.0, 1.3, 1.5] {
                 for (clip, properties) in [
@@ -168,13 +164,14 @@ struct InspectorFormLayoutTests {
                     #expect(isContained(rulerOverlay, in: ruler))
                     #expect(abs(rulerOverlay.minX - ruler.minX) < 1)
                     #expect(abs(rulerOverlay.maxX - ruler.maxX) < 1)
-                    let usesLabelsAboveTracks = panelWidth < wideLayoutMinimumWidth
+                    let usesLabelsAboveTracks = panelWidth < AppTheme.Timeline.keyframeLaneLabelWidth * scale
+                        + AppTheme.Spacing.sm + AppTheme.Timeline.keyframeLaneMinimumTrackWidth
                     if usesLabelsAboveTracks {
                         #expect(abs(ruler.minX - panel.minX) < 1)
                         #expect(abs(ruler.maxX - panel.maxX) < 1)
                     } else {
                         #expect(abs(ruler.width - (panel.width
-                            - AppTheme.Timeline.keyframeLaneLabelWidth
+                            - AppTheme.Timeline.keyframeLaneLabelWidth * scale
                             - AppTheme.Spacing.sm)) < 1)
                     }
 
@@ -418,7 +415,7 @@ private struct InspectorAxisFixture: View {
             format: "%.2f",
             valueSuffix: suffix,
             accessibilityName: "Geometry value",
-            fieldWidth: 56
+            fieldWidth: AppTheme.ComponentSize.scrubFieldWide
         ) { _ in }
     }
 
@@ -427,7 +424,7 @@ private struct InspectorAxisFixture: View {
             value: 0.5,
             range: -10...10,
             accessibilityName: "Position \(axis)",
-            fieldWidth: 36,
+            fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
             trailingLabel: axis
         ) { _ in }
     }
@@ -444,7 +441,7 @@ private struct InspectorAxisFixture: View {
     private func keyframeButton(systemName: String, width: CGFloat) -> some View {
         Button {} label: {
             Image(systemName: systemName)
-                .frame(width: width, height: AppTheme.Timeline.keyframeRulerHeight)
+                .frame(width: width, height: AppTheme.Control.iconTarget)
         }
         .buttonStyle(.plain)
     }
@@ -466,7 +463,7 @@ private struct InspectorRowsWithoutAccessories: View {
                     value: nil,
                     range: 0...1,
                     accessibilityName: "Mixed opacity",
-                    fieldWidth: 56
+                    fieldWidth: AppTheme.ComponentSize.scrubFieldWide
                 ) { _ in }
                 .background(InspectorGeometryProbe(name: "mixed-value"))
             } accessory: {

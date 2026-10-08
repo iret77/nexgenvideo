@@ -202,6 +202,7 @@ enum AppTheme {
         static let balanced: Double = 0.50
         static let strong: Double = 0.55
         static let disabled: Double = 0.60
+        static let disabledControl: Double = 0.45
         static let scrim: Double = 0.70
         static let prominent: Double = 0.80
         static let emphasis: Double = 0.85
@@ -317,6 +318,11 @@ enum AppTheme {
     }
 
     enum ComponentSize {
+        static let scrubFieldStandard: CGFloat = 50
+        static let scrubFieldWide: CGFloat = 56
+        static let sheetTileMinWidth: CGFloat = 88
+        static let sheetTileHeight: CGFloat = 64
+        static let cardHoverScale: CGFloat = 1.03
         static let statusDotDiameter: CGFloat = 8
         static let thinkingDotDiameter: CGFloat = 5
         static let segmentedTabMarkerDiameter: CGFloat = 6
@@ -469,7 +475,7 @@ enum AppTheme {
         static let titleBarProjectNameMaxWidth: CGFloat = 180
         static let titleBarFormatStatusMaxWidth: CGFloat = 150
         static let panelGap: CGFloat = 5
-        static let timelineMinHeight: CGFloat = 100
+        static let timelineMinHeight: CGFloat = produceTimelineStripHeight
         static let timelineMaxHeight: CGFloat = 700
         static let produceTimelineStripHeight: CGFloat = 180
         static let produceTimelineStripDefault: CGFloat = 280
@@ -518,8 +524,8 @@ enum AppTheme {
         static let keyframeRowHeight: CGFloat = 22
         static let keyframeLaneLabelWidth: CGFloat = 72
         static let keyframeLaneMinimumTrackWidth: CGFloat = 96
-        static let keyframeStampButtonWidth: CGFloat = 22
-        static let keyframeNavigationButtonWidth: CGFloat = 6
+        static let keyframeStampButtonWidth: CGFloat = Control.iconTarget
+        static let keyframeNavigationButtonWidth: CGFloat = Control.iconTarget
         static let keyframeControlsColumnWidth: CGFloat =
             keyframeNavigationButtonWidth * 2 + keyframeStampButtonWidth
         static let keyframeDiamondSize: CGFloat = 8

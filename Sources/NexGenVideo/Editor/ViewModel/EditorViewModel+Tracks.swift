@@ -92,7 +92,7 @@ extension EditorViewModel {
         return reorderTrack(id: id, to: toIndex)
     }
 
-    private func trackReorderDestination(from index: Int, requested: Int) -> Int {
+    func trackReorderDestination(from index: Int, requested: Int) -> Int {
         let zone = zones
         let isAudio = timeline.tracks[index].type == .audio
         let lower = isAudio ? zone.firstAudioIndex : 0

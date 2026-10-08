@@ -796,7 +796,9 @@ enum WorkspaceUIAcceptance {
                 PipelinePanelView(presentation: .phaseDock, viewedPhase: "analysis")
                 AgentPanelView()
             }
-        }.interfaceStyle().environment(editor).frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height))
+        }.interfaceStyle(palette: editor.projectPalette).environment(editor)
+            .frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height)
+            .background(AppTheme.Background.surfaceColor))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -1160,7 +1162,9 @@ enum WorkspaceUIAcceptance {
         let editor = document.editorViewModel
         var unavailable = false
         let host = NSHostingView(rootView: DeclarativePackSurfaceView(surface: surface,
-            onUnavailable: { unavailable = true }).interfaceStyle().environment(editor))
+            onUnavailable: { unavailable = true }).interfaceStyle(palette: editor.projectPalette).environment(editor)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppTheme.Background.surfaceColor))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 950),
             styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

@@ -751,8 +751,9 @@ private struct TimelinePanel: View {
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            ToolbarView().frame(height: AppTheme.Layout.toolbarHeight)
+            ToolbarView().fixedSize(horizontal: false, vertical: true)
             TimelineContainerView()
+                .tourAnchor(.timelineRuler)
         }
     }
 }

@@ -108,7 +108,7 @@ struct SettingsWindowShell<Sidebar: View, Detail: View>: View {
 
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
+                .background(AppTheme.Background.surfaceColor)
         }
         .frame(
             minWidth: AppTheme.Window.settingsMin.width,
@@ -185,7 +185,6 @@ private struct SettingsDetail: View {
             }
         }
         .buttonStyle(.capsule(.secondary, size: .regular))
-        .controlSize(.small)
     }
 }
 
@@ -484,8 +483,8 @@ final class SettingsWindowController: NSWindowController {
         window.title = "Settings"
         window.setFrameAutosaveName("NexGenVideoSettings-v2")
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(AppTheme.Opacity.settingsWindow)
-        window.isOpaque = false
+        window.backgroundColor = AppTheme.Background.surface
+        window.isOpaque = true
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true

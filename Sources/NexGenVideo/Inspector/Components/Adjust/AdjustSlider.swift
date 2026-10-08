@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AdjustSlider: View {
+    @Environment(\.projectPalette) private var palette
     let value: Double?
     let range: ClosedRange<Double>
     var gradient: [Color]? = nil
@@ -30,7 +31,7 @@ struct AdjustSlider: View {
                 track(width: w)
                 if fraction != nil {
                     Circle()
-                        .fill(AppTheme.Accent.primary)
+                        .fill(palette.accent)
                         .frame(width: AppTheme.Slider.thumbSize, height: AppTheme.Slider.thumbSize)
                         .overlay(Circle().strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.thin))
                         .shadow(AppTheme.Shadow.sm)
@@ -47,7 +48,7 @@ struct AdjustSlider: View {
         }
         .frame(height: AppTheme.Slider.thumbSize)
         .allowsHitTesting(isEnabled)
-        .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
+        .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabledControl)
         .accessibilityLabel(accessibilityName ?? "Adjustment")
         .accessibilityValue(value.map { String($0) } ?? "Mixed values")
     }

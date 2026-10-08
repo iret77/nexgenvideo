@@ -5,6 +5,7 @@ import SwiftUI
 /// SwiftUI-qualified — the app's own `Layout` constants enum shadows the protocol name.
 struct WrapLayout: SwiftUI.Layout {
     var spacing: CGFloat
+    var trailingLastItem = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: LayoutSubviews, cache: inout ()) -> CGSize {
         arrangement(
@@ -52,9 +53,14 @@ struct WrapLayout: SwiftUI.Layout {
         subviews: LayoutSubviews
     ) -> (origins: [CGPoint], subviewSizes: [CGSize], size: CGSize) {
         let result = WrapLayoutGeometry.arrange(
-            sizes: subviews.map { $0.sizeThatFits(.unspecified) },
+            sizes: subviews.map { subview in
+                let ideal = subview.sizeThatFits(.unspecified)
+                guard let maxWidth, ideal.width > maxWidth else { return ideal }
+                return subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+            },
             maxWidth: maxWidth,
-            spacing: spacing
+            spacing: spacing,
+            trailingLastItem: trailingLastItem
         )
         return (result.origins, result.subviewSizes, result.size)
     }
@@ -78,7 +84,8 @@ enum WrapLayoutGeometry {
     static func arrange(
         sizes: [CGSize],
         maxWidth: CGFloat?,
-        spacing: CGFloat
+        spacing: CGFloat,
+        trailingLastItem: Bool = false
     ) -> Arrangement {
         let availableWidth = maxWidth.flatMap {
             $0.isFinite
@@ -110,6 +117,11 @@ enum WrapLayoutGeometry {
             rowHeight = max(rowHeight, size.height)
             width = max(width, finiteSum(x, size.width))
             x = finiteSum(x, finiteSum(size.width, safeSpacing))
+        }
+        if trailingLastItem, let availableWidth, width <= availableWidth,
+           origins.count > 1, origins.allSatisfy({ $0.y == 0 }), let lastSize = subviewSizes.last {
+            origins[origins.count - 1].x = availableWidth - lastSize.width
+            width = availableWidth
         }
         return Arrangement(
             origins: origins,

@@ -35,8 +35,7 @@ enum TourTarget: Equatable {
     }
 }
 
-/// Pinpointable controls. Add a case + its `hostPanel`, then tag the view with
-/// `.tourAnchor(_:)`. `timelineRuler` is derived (the AppKit ruler has no SwiftUI view).
+// Register each control with tourAnchor; the ruler uses the timeline container's top band.
 enum TourAnchorID: Hashable {
     case importButton
     case generateButton

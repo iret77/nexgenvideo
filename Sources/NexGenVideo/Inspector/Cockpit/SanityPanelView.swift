@@ -5,6 +5,7 @@ import SwiftUI
 // maps the engine's "no shotlist" case to a gentle placeholder. No mutations.
 
 struct SanityPanelView: View {
+    @Environment(\.projectPalette) private var palette
     @Environment(EditorViewModel.self) private var editor
 
     private enum LoadState: Equatable {
@@ -36,7 +37,7 @@ struct SanityPanelView: View {
                                    subject: "the sanity report",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "checklist.unchecked", title: "Nothing to check",
                                    message: "Sanity runs once this project has a shotlist.")
@@ -131,7 +132,7 @@ struct SanityPanelView: View {
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                 .strokeBorder(
-                    isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : AppTheme.Border.subtleColor,
+                    isInspected ? palette.accent.opacity(AppTheme.Opacity.medium) : AppTheme.Border.subtleColor,
                     lineWidth: isInspected ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline
                 )
         )

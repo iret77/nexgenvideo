@@ -39,15 +39,8 @@ extension MediaTab {
     }
 
     private func statusButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: AppTheme.Spacing.xxs) {
-                Image(systemName: icon)
-                Text(label)
-            }
-            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-            .foregroundStyle(AppTheme.Text.secondaryColor)
-        }
-        .buttonStyle(.plain)
+        Button(label, systemImage: icon, action: action)
+            .buttonStyle(.capsule(.secondary))
     }
 
     private func statusIndicator(_ label: String, help: String, progress: Double? = nil) -> some View {

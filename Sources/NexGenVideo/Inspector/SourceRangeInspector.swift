@@ -49,17 +49,17 @@ struct SourceRangeInspector: View {
                 }
                 .labelsHidden()
             }
-            HStack(spacing: AppTheme.Spacing.md) {
+            WrapLayout(spacing: AppTheme.Spacing.md) {
                 Button("Insert") { place(.insert) }
-                    .buttonStyle(.inlineAction(.pack))
+                    .buttonStyle(.capsule(.prominent, size: .regular))
                 Button("Overwrite") { place(.overwrite) }
-                    .buttonStyle(.inlineAction(.pack))
+                    .buttonStyle(.capsule(.secondary, size: .regular))
             }
             .disabled(editor.sourceEditUnavailableReason(for: asset) != nil)
             if let reason = editor.sourceEditUnavailableReason(for: asset) {
                 Text(reason)
-                    .interfaceFont(size: AppTheme.Typography.metadata)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

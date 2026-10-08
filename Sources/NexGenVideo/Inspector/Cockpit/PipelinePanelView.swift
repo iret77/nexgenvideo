@@ -197,7 +197,7 @@ struct PipelinePanelView: View {
                     Text("Current phase: \(PhaseDisplay.label(phase.phase))")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .background { acceptanceProbe("current", text: phase.phase) }
-                    HStack(spacing: AppTheme.Spacing.md) {
+                    WrapLayout(spacing: AppTheme.Spacing.md) {
                         surfaceIcon(for: phase.phase)
                         approveButton(phase, enabled: approvalIsEnabled(for: phase.phase,
                             isNext: true, runningPhase: runningPhase))
@@ -207,12 +207,16 @@ struct PipelinePanelView: View {
                     } else {
                         Text(nextActionDescription(for: phase.phase))
                     }
-                    if editor.agentService.isComposerBlocked || !approvalReadiness.isReady {
+                    if (editor.agentService.isComposerBlocked || !approvalReadiness.isReady),
+                       PipelineSurfaceRouting.route(
+                           for: phase.phase, contract: editor.uiContract,
+                           availablePackSurfaces: editor.availableCockpitPackSurfaces
+                       )?.destination != .chat {
                         Button("Open Current Controls") {
                             editor.agentPanelVisible = true
                             editor.focusedPanel = .agent
                         }
-                        .buttonStyle(.inlineAction())
+                        .buttonStyle(.capsule(.secondary))
                     }
                 } else {
                     Text(data.isComplete ? "All phases complete" : "Current phase unavailable.")
@@ -236,7 +240,7 @@ struct PipelinePanelView: View {
                                    subject: "the pipeline",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
                                    message: "This project has no phase state.")
@@ -465,14 +469,17 @@ struct PipelinePanelView: View {
                 actionLayout {
                     surfaceIcon(for: phase.phase)
                         .frame(width: AppTheme.ComponentSize.pipelineSurfaceWidth * interfaceScale, alignment: .leading)
-                    ZStack {
-                        AppTheme.Background.clearColor
+                    Group {
                         if isNext && !isRunning {
                             approveButton(phase, enabled: approvalEnabled)
+                        } else {
+                            AppTheme.Background.clearColor
+                                .frame(height: AppTheme.Control.compactHeight * interfaceScale)
                         }
                     }
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale, height: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
+                    .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale)
+                    .frame(minHeight: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
                     phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
                         .frame(width: AppTheme.Control.iconTarget * interfaceScale)
                     gateMenu(
@@ -544,6 +551,7 @@ struct PipelinePanelView: View {
             }
         } label: {
             Text("Approve")
+                .fixedSize(horizontal: false, vertical: true)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .frame(minHeight: AppTheme.IconSize.smMd)
         }
@@ -703,17 +711,16 @@ struct PipelinePanelView: View {
                 gateError = nil
             } label: {
                 Text("Ask the agent")
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Accent.timecodeColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.inlineAction(.pack))
             .help("Hand this refusal to the agent so it can resolve it")
             Button { gateError = nil } label: {
                 Image(systemName: "xmark")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ToolbarIconButtonStyle())
+            .accessibilityLabel("Dismiss")
             .help("Dismiss")
         }
         .padding(AppTheme.Spacing.sm)
@@ -761,7 +768,8 @@ struct PipelinePanelView: View {
                     Text(route.label)
                 }
                 .interfaceFont(size: AppTheme.Typography.ui)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
                 .padding(.horizontal, AppTheme.Spacing.xs)
                 .frame(maxWidth: .infinity, minHeight: AppTheme.IconSize.smMd, alignment: .leading)
             }

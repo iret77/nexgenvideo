@@ -341,9 +341,7 @@ struct AgentDialogCard: View {
             Button { presentFilePanel(intake) } label: {
                 Text("Choose…").fontWeight(AppTheme.FontWeight.semibold)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(accent)
-            .controlSize(.regular)
+            .buttonStyle(.capsule(.prominent, size: .regular))
             .focused($focusedControl, equals: .filePicker)
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -396,8 +394,7 @@ struct AgentDialogCard: View {
 
     private func chooseButton(_ intake: AgentDialog.FileIntake, label: String) -> some View {
         Button(label) { presentFilePanel(intake) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.capsule(.secondary, size: .regular))
             .focused($focusedControl, equals: .filePicker)
     }
 
@@ -446,13 +443,12 @@ struct AgentDialogCard: View {
     }
 
     private var footerRow: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
+        WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
             if let cost = dialog.costHint {
                 Text(cost)
                     .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
-            Spacer()
             if isSubmitting {
                 ProgressView()
                     .controlSize(.small)
@@ -461,11 +457,9 @@ struct AgentDialogCard: View {
                 if hasRepeatableDraft {
                     Button("Clear item", action: clearRepeatableDraft)
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                 }
                 Button(completionLabel, action: onComplete)
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
                     .disabled(!dialog.permitsCompletion(
                         hasFiles: !pickedFiles.isEmpty,
                         direction: direction,
@@ -474,7 +468,6 @@ struct AgentDialogCard: View {
             }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .disabled(!canSubmit)
                 .focused($focusedControl, equals: .primaryAction)
                 .accessibilityHint(canSubmit ? "" : "Complete the required fields first")

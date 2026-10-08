@@ -41,7 +41,7 @@ struct HomeView: View {
                 .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
         }
         .frame(minWidth: AppTheme.Window.homeMin.width, minHeight: AppTheme.Window.homeMin.height)
-        .background(.ultraThinMaterial)
+        .background(AppTheme.Background.surfaceColor)
         .focusEffectDisabled()
         .sheet(isPresented: $showFormatSheet) {
             NewProjectFormatSheet { format in AppState.shared.createNewProject(format: format) }
@@ -167,7 +167,7 @@ private struct NewProjectCard: View {
                 )
         )
         .shadow(isHovered ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
-        .scaleEffect(isHovered ? 1.03 : 1.0)
+        .scaleEffect(isHovered ? AppTheme.ComponentSize.cardHoverScale : 1.0)
         .padding(AppTheme.Spacing.sm)
         .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
         .onHover { isHovered = $0 }
@@ -232,7 +232,6 @@ private struct HomeUpdateNotices: View {
                     PluginUpdateCenter.shared.restartToApplyUpdates()
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .accessibilityIdentifier("home.restart-format-packs")
                 .background {
                     if AppRelaunchSelfTest.isRequested {
@@ -254,7 +253,6 @@ private struct HomeUpdateNotices: View {
                     SettingsWindowController.shared.show(tab: .plugins)
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .help("Open Format Packs to install the available update.")
             }
         }
@@ -274,13 +272,11 @@ private struct HomeUpdateNotices: View {
                     Updater.shared.dismissUpdate()
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
                 .help("Dismiss this update notice.")
                 Button("Install Update…") {
                     Updater.shared.checkForUpdates(nil)
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .help("Install the available NexGenVideo update.")
             }
         }
@@ -565,8 +561,8 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(AppTheme.Opacity.settingsWindow)
-        window.isOpaque = false
+        window.backgroundColor = AppTheme.Background.surface
+        window.isOpaque = true
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true

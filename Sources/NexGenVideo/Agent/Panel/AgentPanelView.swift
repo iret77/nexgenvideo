@@ -254,20 +254,19 @@ struct AgentPanelView: View {
     }
 
     private var taskBar: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             HStack {
                 Text("Tasks")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Spacer(minLength: AppTheme.Spacing.sm)
                 utilityButton(iconOnly: false)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
-                    .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
-            }
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .panelHeaderBar()
+            WrapLayout(spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AppTheme.Spacing.md)
         }
-        .padding(AppTheme.Spacing.md)
         .popover(isPresented: Binding(get: { editor.agentConversationHistoryPresented },
             set: { editor.agentConversationHistoryPresented = $0 })) {
             sessionHistory
@@ -294,12 +293,16 @@ struct AgentPanelView: View {
                             .allowsHitTesting(false)
                     }
                 }
-            Menu("Sessions") {
+            Menu {
                 Button("Resume Session") { editor.agentConversationHistoryPresented = true }
                 Button("New Session") { service.startNewConversation() }
                     .disabled(!service.canStartNewConversation)
+            } label: {
+                ActionMenuLabel(title: "Sessions")
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.capsule(.secondary, size: .small))
         }
     }
 
@@ -344,7 +347,6 @@ struct AgentPanelView: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
-        .controlSize(.small)
         .background {
             if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                 AppRelaunchClickProbe(
@@ -432,6 +434,7 @@ struct AgentPanelView: View {
                 }
             }
             .menuStyle(.borderlessButton)
+            .tint(AppTheme.Text.secondaryColor)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Model for this conversation · Anthropic API key")
@@ -545,7 +548,6 @@ struct AgentPanelView: View {
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     }
                     .buttonStyle(.capsule(.secondary))
-                    .controlSize(.small)
                 }
             }
         }
@@ -646,7 +648,6 @@ struct AgentPanelView: View {
                 Text("Open Agent Settings")
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .controlSize(.small)
         }
         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .padding(.horizontal, AppTheme.Spacing.mdLg)

@@ -951,33 +951,33 @@ struct GenerationView: View {
                         .padding(AppTheme.Spacing.md)
                 }
                 .frame(maxHeight: AppTheme.ComponentSize.agentAssetPickerHeight)
-                HStack {
+                WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
                     Button("Discard Review") { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil }
-                        .buttonStyle(.inlineAction())
-                    Spacer(minLength: AppTheme.Spacing.sm)
+                        .buttonStyle(.capsule(.secondary, size: .regular))
                     Button(isSubmittingReview ? "Submitting…" : "Approve and Generate") { submitReviewedGeneration() }
-                        .buttonStyle(.capsule(.prominent))
+                        .buttonStyle(.capsule(.prominent, size: .regular))
                         .disabled(isSubmittingReview || isPreparingReview || !canSubmit)
                 }
                 .padding(AppTheme.Spacing.md)
             }
-            HStack(spacing: AppTheme.Spacing.sm) {
+            WrapLayout(
+                spacing: AppTheme.Spacing.sm,
+                trailingLastItem: reviewedGeneration == nil || reviewedDraft != reviewDraft
+            ) {
                 modelPicker
                 if selectedType == .audio, audioModel.voices != nil {
                     voicePicker
                 }
                 if hasAnySettings { settingsButton }
 
-                Spacer(minLength: AppTheme.Spacing.xs)
-
                 if workspace == .media {
                     Text("New project medium")
                         .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
-                submitButton
+                if reviewedGeneration == nil || reviewedDraft != reviewDraft { submitButton }
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.vertical, AppTheme.Spacing.sm)
         }
@@ -1008,6 +1008,7 @@ struct GenerationView: View {
             .padding(.vertical, AppTheme.Spacing.xs)
         }
         .menuStyle(.borderlessButton)
+        .tint(AppTheme.Text.secondaryColor)
         .menuIndicator(.hidden)
         .hoverHighlight()
     }
@@ -1467,7 +1468,7 @@ struct GenerationView: View {
 
     private var submitButton: some View {
         Button(isPreparingReview ? "Preparing…" : "Review Request") { prepareGenerationReview() }
-            .buttonStyle(.capsule(.secondary))
+            .buttonStyle(.capsule(.prominent, size: .regular))
             .disabled(!canSubmit || isPreparingReview || isSubmittingReview)
             .help("Compile the request and review its inputs and estimated cost before generating.")
     }
@@ -1488,7 +1489,8 @@ struct GenerationView: View {
                     Image(systemName: type.icon)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: selectedType == type ? .semibold : .medium)
                         .foregroundStyle(selectedType == type ? type.accentColor : AppTheme.Text.tertiaryColor)
-                        .frame(width: AppTheme.IconSize.xl + AppTheme.Spacing.lg, height: AppTheme.IconSize.md)
+                        .frame(width: AppTheme.IconSize.xl + AppTheme.Spacing.lg)
+                        .interfaceControlHeight()
                     .background(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.concentric(outer: AppTheme.Radius.sm, padding: AppTheme.Spacing.xxs))
                             .fill(selectedType == type ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
@@ -1556,6 +1558,7 @@ struct GenerationView: View {
             .padding(.vertical, AppTheme.Spacing.xxs)
         }
         .menuStyle(.borderlessButton)
+        .tint(AppTheme.Text.secondaryColor)
         .menuIndicator(.hidden)
         .hoverHighlight()
         .help("Model — you decide. Changing it changes what this render costs and runs on.")

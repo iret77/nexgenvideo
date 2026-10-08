@@ -52,7 +52,7 @@ struct InlineActionButtonStyle: ButtonStyle {
         }
 
         private var opacity: Double {
-            guard isEnabled else { return AppTheme.Opacity.disabled }
+            guard isEnabled else { return AppTheme.Opacity.disabledControl }
             return configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque
         }
     }

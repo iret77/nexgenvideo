@@ -50,7 +50,7 @@ struct FeedbackView: View {
         .padding(.horizontal, AppTheme.Spacing.xlXxl)
         .padding(.vertical, AppTheme.Spacing.xlXxl)
         .frame(minWidth: AppTheme.ComponentSize.feedbackWindowMin.width, idealWidth: AppTheme.ComponentSize.feedbackWindowIdeal.width, minHeight: AppTheme.ComponentSize.feedbackWindowMin.height, idealHeight: AppTheme.ComponentSize.feedbackWindowIdeal.height)
-        .background(.ultraThinMaterial)
+        .background(AppTheme.Background.surfaceColor)
         .focusEffectDisabled()
     }
 
@@ -293,8 +293,8 @@ final class FeedbackWindowController: NSWindowController {
         )
         window.title = "Send feedback"
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(AppTheme.Opacity.settingsWindow)
-        window.isOpaque = false
+        window.backgroundColor = AppTheme.Background.surface
+        window.isOpaque = true
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true

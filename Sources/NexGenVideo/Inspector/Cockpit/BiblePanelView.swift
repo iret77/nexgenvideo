@@ -7,6 +7,7 @@ import SwiftUI
 // engine-not-ready states. No mutations.
 
 struct BiblePanelView: View {
+    @Environment(\.projectPalette) private var palette
     @Environment(EditorViewModel.self) private var editor
 
     enum Section: String, CaseIterable, Hashable {
@@ -48,7 +49,7 @@ struct BiblePanelView: View {
                                    subject: "the Bible",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
             emptyState(
                 icon: "book.closed",
@@ -108,7 +109,7 @@ struct BiblePanelView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                             .strokeBorder(
-                                isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : AppTheme.Background.clearColor,
+                                isInspected ? palette.accent.opacity(AppTheme.Opacity.medium) : AppTheme.Background.clearColor,
                                 lineWidth: AppTheme.BorderWidth.medium
                             )
                     )
@@ -144,7 +145,7 @@ struct BiblePanelView: View {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                     .strokeBorder(
                         editor.inspectedObject == .look
-                            ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium)
+                            ? palette.accent.opacity(AppTheme.Opacity.medium)
                             : AppTheme.Border.subtleColor,
                         lineWidth: editor.inspectedObject == .look ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline
                     )
@@ -172,21 +173,7 @@ struct BiblePanelView: View {
     // MARK: - States
 
     private func emptyState(icon: String, title: String, message: String) -> some View {
-        VStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: icon)
-                .interfaceFont(size: AppTheme.Typography.title)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            Text(title)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text(message)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(AppTheme.Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        WorkspaceStateView(title: title, message: message, systemImage: icon) {}
     }
 
     private func centered<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -319,7 +306,7 @@ struct BibleEntityCard: View {
 
     private func sheetGrid(_ sheets: [BibleSheet]) -> some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 88), spacing: AppTheme.Spacing.sm)],
+            columns: [GridItem(.adaptive(minimum: AppTheme.ComponentSize.sheetTileMinWidth), spacing: AppTheme.Spacing.sm)],
             alignment: .leading,
             spacing: AppTheme.Spacing.sm
         ) {
@@ -352,7 +339,7 @@ struct SheetThumbnailView: View {
     let label: String
     let path: String
     let projectDir: URL?
-    var tileHeight: CGFloat = 64
+    var tileHeight: CGFloat = AppTheme.ComponentSize.sheetTileHeight
 
     @State private var image: NSImage?
     @State private var didAttempt = false

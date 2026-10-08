@@ -60,7 +60,7 @@ struct UpdateOverlay: View {
         .padding(AppTheme.Spacing.xxl)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.mdLg, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(AppTheme.Background.raisedColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.mdLg, style: .continuous)
                         .strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.hairline)

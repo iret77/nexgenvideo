@@ -12,7 +12,7 @@ struct FinishReviewPane: View {
             // SEAM — the AI-enhance ops (issues #153-157: reframe, background removal, inpaint, LUT,
             // upscale) will slot in here as a per-shot/per-clip action row over the reviewed frames.
             // Not built yet: Finish reuses Review + Export only, and adds no generation.
-            ReviewPanelView()
+            ReviewPanelView(offersProductionSetup: false)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

@@ -88,7 +88,7 @@ struct FontPickerField: View {
         if name == current {
             item.state = .on
         }
-        if let family = previewFamily, let font = NSFont(name: family, size: 13) {
+        if let family = previewFamily, let font = NSFont(name: family, size: AppTheme.Typography.ui) {
             item.attributedTitle = NSAttributedString(string: name, attributes: [.font: font])
         }
         return item

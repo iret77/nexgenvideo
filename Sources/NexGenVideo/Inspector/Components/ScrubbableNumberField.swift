@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Scrubbable number: drag the value horizontally to change it,
-/// click to type. A subtle warm accent color marks it as interactive.
+// Drag horizontally to scrub; click to type.
 struct ScrubbableNumberField: View {
     let value: Double?
     let range: ClosedRange<Double>
@@ -12,7 +11,7 @@ struct ScrubbableNumberField: View {
     var accessibilityName: String? = nil
     /// Display units changed per pixel of horizontal drag.
     var dragSensitivity: Double = 1
-    var fieldWidth: CGFloat = 50
+    var fieldWidth: CGFloat = AppTheme.ComponentSize.scrubFieldStandard
     var trailingLabel: String? = nil
     var displayTextOverride: ((Double) -> String?)? = nil
     var onChanged: ((Double) -> Void)? = nil
@@ -26,6 +25,7 @@ struct ScrubbableNumberField: View {
     @State private var isDragging = false
     @State private var dragStartValue: Double = 0
     @State private var liveValue: Double = 0
+    @Environment(\.projectPalette) private var palette
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.interfaceScale) private var interfaceScale
 
@@ -40,6 +40,15 @@ struct ScrubbableNumberField: View {
     }
     private var editingText: String {
         isMixed ? "" : String(format: format, displayValue)
+    }
+
+    private var measuredFieldWidth: CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: AppTheme.Typography.ui * interfaceScale, weight: AppTheme.AppKitFontWeight.medium
+        )
+        let samples = [displayText, editingText]
+        let measured = samples.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return max(fieldWidth * interfaceScale, ceil(measured))
     }
 
     var body: some View {
@@ -61,12 +70,12 @@ struct ScrubbableNumberField: View {
                 } else {
                     Text(displayText)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
-                        .foregroundStyle(isMixed ? AppTheme.Text.tertiaryColor : ScrubbableTheme.accent)
+                        .foregroundStyle(isMixed ? AppTheme.Text.tertiaryColor : palette.accent)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .lineLimit(1)
                 }
             }
-            .frame(width: fieldWidth * CGFloat(interfaceScale), alignment: .trailing)
+            .frame(width: measuredFieldWidth, alignment: .trailing)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
             .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)
@@ -152,10 +161,6 @@ struct ScrubbableNumberField: View {
         liveValue = raw
         onCommit(raw)
     }
-}
-
-enum ScrubbableTheme {
-    static let accent = AppTheme.Accent.primary
 }
 
 /// AppKit mouse-tracking area for the scrubbable field.

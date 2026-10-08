@@ -210,10 +210,10 @@ struct MarkdownText: View {
 
     private static func headingSize(_ level: Int) -> CGFloat {
         switch level {
-        case 1: return 19
-        case 2: return 16
-        case 3: return 14
-        default: return 13
+        case 1: return AppTheme.Typography.title
+        case 2: return AppTheme.Typography.section
+        case 3: return AppTheme.Typography.reading
+        default: return AppTheme.Typography.ui
         }
     }
 

@@ -269,6 +269,7 @@ struct PreviewContainerView: View {
             badgeLabel(label)
         }
         .menuStyle(.borderlessButton)
+        .tint(AppTheme.Text.secondaryColor)
         .menuIndicator(.hidden)
         .fixedSize()
         .background {
@@ -515,26 +516,10 @@ struct PreviewContainerView: View {
                 .frame(maxWidth: AppTheme.ComponentSize.previewErrorMaxWidth, maxHeight: AppTheme.ComponentSize.previewErrorMaxHeight)
                 .fixedSize(horizontal: false, vertical: true)
                 if let asset = activeMediaAsset, asset.pendingDownloadURL != nil {
-                    Button {
+                    Button("Retry Download", systemImage: "arrow.clockwise") {
                         editor.generationService.retryDownload(asset: asset, editor: editor)
-                    } label: {
-                        HStack(spacing: AppTheme.Spacing.xs) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Retry Download")
-                        }
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                        .padding(.horizontal, AppTheme.Spacing.md)
-                        .padding(.vertical, AppTheme.Spacing.sm)
                     }
-                    .buttonStyle(.plain)
-                    .background(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft), in: .capsule)
-                    .overlay(
-                        Capsule().strokeBorder(
-                            AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted),
-                            lineWidth: AppTheme.BorderWidth.hairline
-                        )
-                    )
+                    .buttonStyle(.capsule(.secondary, size: .regular))
                 }
             }
             .padding(AppTheme.Spacing.xl)
@@ -546,7 +531,9 @@ struct PreviewContainerView: View {
     private var previewHeader: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(isTimeline ? "Film Preview" : "Media Preview")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             if let asset = activeMediaAsset {
                 Text(asset.userFacingFilename)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -565,6 +552,8 @@ struct PreviewContainerView: View {
             Text(isTimeline ? "Timeline Clip" : "Original Media")
                 .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
         }
         .contextMenu {
             Button("Previous Preview") { editor.goBackPreviewTab() }

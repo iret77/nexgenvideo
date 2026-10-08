@@ -47,4 +47,28 @@ struct MediaBrowserStateTests {
         #expect(editor.sourceFrameRange(for: source)?.lowerBound == 90)
         #expect(editor.timeline == timeline)
     }
+    @Test("folder rename reveals its parent without changing the edit browser or timeline")
+    func folderRenameTargetsMediaBrowser() {
+        let editor = EditorViewModel(agentService: AgentService(refreshBackendStatusOnInit: false))
+        let parent = editor.createFolder(name: "Parent")
+        let child = editor.createFolder(name: "Child", in: parent)
+        let media = editor.mediaBrowserState(for: .media)
+        media.viewMode = .list
+        media.searchQuery = "unrelated search"
+        let edit = editor.mediaBrowserState(for: .edit)
+        edit.searchQuery = "edit search"
+        let timeline = editor.timeline
+
+        editor.requestMediaFolderRename(child)
+
+        #expect(media.currentFolderId == parent)
+        #expect(media.pendingRenameFolderID == child)
+        #expect(media.viewMode == .folder)
+        #expect(media.searchQuery.isEmpty)
+        #expect(edit.searchQuery == "edit search")
+        #expect(edit.pendingRenameFolderID == nil)
+        #expect(editor.timeline == timeline)
+        #expect(editor.folder(id: child)?.name == "Child")
+    }
+
 }
