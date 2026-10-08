@@ -11,7 +11,7 @@ struct LibraryAssetPickerButton: View {
 
     var body: some View {
         Button(title, systemImage: "photo.on.rectangle") { isPresented = true }
-            .buttonStyle(.inlineAction())
+            .buttonStyle(.capsule(.secondary, size: .regular))
             .popover(isPresented: $isPresented) {
                 LibraryAssetPicker(
                     assets: editor.agentPickableMediaAssets.filter {

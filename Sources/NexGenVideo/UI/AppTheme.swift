@@ -676,7 +676,7 @@ extension View {
     }
 
     func panelHeaderBar() -> some View {
-        frame(maxWidth: .infinity)
+        frame(maxWidth: .infinity, alignment: .leading)
             .workspaceHeaderContent()
             .background(AppTheme.Background.raisedColor)
             .overlay(alignment: .bottom) {

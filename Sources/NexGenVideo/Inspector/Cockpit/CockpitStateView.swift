@@ -31,7 +31,7 @@ enum CockpitStateView {
             icon = "wand.and.stars"
             headline = isStarting ? "Setting up production…" : "No production pipeline"
             detail = isStarting
-                ? "The agent is scaffolding the pipeline and will ask about your video's direction. Watch the Agent panel."
+                ? "Complete the required setup in the Tasks panel."
                 : "This project isn't set up for AI production yet."
         default:
             icon = "exclamationmark.triangle"
@@ -40,22 +40,12 @@ enum CockpitStateView {
         }
         // Lead with the pack's own identity when one is active and the project isn't set up yet.
         let showPackHero = (error == .notInitialized) && activePack != nil
-        return VStack(spacing: AppTheme.Spacing.md) {
-            if showPackHero, let pack = activePack {
-                packHero(pack)
-            } else {
-                Image(systemName: icon)
-                    .interfaceFont(size: AppTheme.Typography.title)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                Text(headline)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Text(detail)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        return WorkspaceStateView(
+            title: showPackHero ? (activePack?.headline ?? activePack?.displayName) : headline,
+            message: showPackHero ? activePack?.benefit : detail,
+            systemImage: icon,
+            banner: showPackHero ? activePack?.headerImage() : nil
+        ) {
             if error == .notInitialized {
                 // The generic workflow is never plugin-gated: production is one action away.
                 if let startProduction {
@@ -76,61 +66,13 @@ enum CockpitStateView {
                 }
             } else {
                 Button("Retry", action: retry)
-                    .buttonStyle(.plain)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Accent.primary)
+                    .buttonStyle(.capsule(.secondary, size: .regular))
                     .padding(.top, AppTheme.Spacing.xs)
             }
         }
-        .padding(AppTheme.Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Empty / placeholder state.
     static func empty(icon: String, title: String, message: String) -> some View {
-        VStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: icon)
-                .interfaceFont(size: AppTheme.Typography.title)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            Text(title)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text(message)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(AppTheme.Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// The active pack's identity for the not-yet-set-up workspace: its badge art, its bold pitch, and
-    /// the benefit line. Makes the empty Produce area read as "you're in the <pack> pipeline" rather than
-    /// a generic placeholder. Badge falls back to nothing (the pitch text still carries it).
-    @ViewBuilder
-    private static func packHero(_ pack: InstalledPack) -> some View {
-        if let badge = pack.headerImage() {
-            // The banner is a wide (~3.77:1) designed image — show it at its own aspect (no letterbox
-            // box) and without an extra border; a fixed 150pt height + stroke made it read as a grey frame.
-            Image(nsImage: badge)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: AppTheme.ComponentSize.cockpitMessageMaxWidth)
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
-                .padding(.bottom, AppTheme.Spacing.sm)
-        }
-        Text(pack.headline ?? pack.displayName)
-            .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-            .foregroundStyle(AppTheme.Text.primaryColor)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
-        if let benefit = pack.benefit {
-            Text(benefit)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        WorkspaceStateView(title: title, message: message, systemImage: icon) {}
     }
 }

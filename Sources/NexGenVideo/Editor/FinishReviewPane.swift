@@ -18,41 +18,35 @@ struct FinishReviewPane: View {
     }
 
     private var header: some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                Text("Review and deliver")
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("Check the cut, then export the deliverable.")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-            Spacer(minLength: AppTheme.Spacing.md)
-            LibraryAssetPickerButton(
-                purpose: .workspace(.postproduction),
-                acceptedTypes: Set(ClipType.allCases.filter { $0 != .text }),
-                title: "Preview Media"
-            ) { editor.selectMediaAsset($0) }
-            .labelStyle(.iconOnly)
-            .help("Preview original media")
-            Button { editor.showExportDialog = true } label: {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Image(systemName: "square.and.arrow.up")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                    Text("Export")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                }
-            }
-            .buttonStyle(.capsule(.prominent, size: .regular))
-            .controlSize(.small)
-            .help("Export the deliverable")
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Text("Review")
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .panelHeaderBar()
+            Text("Check the cut, then export the deliverable.")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+            WrapLayout(spacing: AppTheme.Spacing.sm) { reviewActions }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.bottom, AppTheme.Spacing.sm)
         }
-        .padding(.horizontal, AppTheme.Spacing.lg)
-        .frame(maxWidth: .infinity)
-        .frame(height: AppTheme.Layout.toolbarHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppTheme.Background.raisedColor)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)
-        }
+    }
+
+    @ViewBuilder
+    private var reviewActions: some View {
+        LibraryAssetPickerButton(
+            purpose: .workspace(.postproduction),
+            acceptedTypes: Set(ClipType.allCases.filter { $0 != .text }),
+            title: "Preview Media"
+        ) { editor.selectMediaAsset($0) }
+        .help("Preview original media")
+        Button("Export", systemImage: "square.and.arrow.up") { editor.showExportDialog = true }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .help("Export the deliverable")
     }
 }

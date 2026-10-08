@@ -90,13 +90,9 @@ struct ToolbarView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .disabled(isDisabled)
-        .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -110,11 +106,8 @@ struct ToolbarView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(isDisabled ? AppTheme.Text.mutedColor : AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .disabled(isDisabled)
         .help(help)
         .accessibilityLabel(help)
@@ -147,13 +140,9 @@ struct ToolbarView: View {
         return Button { editor.toolMode = mode } label: {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
-                .hoverHighlight(isActive: isActive)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle(isSelected: isActive))
         .disabled(disabled)
-        .opacity(disabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -162,11 +151,8 @@ struct ToolbarView: View {
         Button(action: action) {
             Text(glyph)
                 .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.bold, design: .serif)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .help(help)
         .accessibilityLabel(help)
     }
@@ -175,13 +161,9 @@ struct ToolbarView: View {
         Button(action: action) {
             Text(bracket)
                 .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold, design: .monospaced)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .disabled(isDisabled)
-        .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
         .accessibilityLabel(help)
     }

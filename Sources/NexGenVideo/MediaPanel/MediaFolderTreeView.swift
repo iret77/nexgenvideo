@@ -14,12 +14,9 @@ struct MediaFolderTreeView: View {
                 Text("Folders")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 Spacer(minLength: AppTheme.Spacing.sm)
-                Button("New Folder", systemImage: "folder.badge.plus") { createFolder(in: selection) }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.inlineAction())
-                    .help("New Folder")
             }
-            .padding(AppTheme.Spacing.sm)
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .panelHeaderBar()
             Button("Library", systemImage: "photo.on.rectangle") { navigate(nil) }
                 .buttonStyle(.inlineAction())
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -44,7 +41,9 @@ struct MediaFolderTreeView: View {
                         .contextMenu { folderMenu(node.folder) }
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.Background.surfaceColor)
             .onDeleteCommand {
                 if let selection { editor.deleteFolders(ids: [selection]) }
             }
@@ -57,6 +56,8 @@ struct MediaFolderTreeView: View {
                 selection = value
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AppTheme.Background.surfaceColor)
         .alert("Rename Folder", isPresented: $showsRename) {
             TextField("Name", text: $renameDraft)
             Button("Rename") {

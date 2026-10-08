@@ -34,10 +34,7 @@ struct ExportView: View {
             bottomBar
         }
         .frame(width: AppTheme.ComponentSize.exportWindow.width, height: AppTheme.ComponentSize.exportWindow.height)
-        .presentationBackground {
-            AppTheme.Background.surfaceColor.opacity(AppTheme.Opacity.emphasis)
-                .background(.ultraThinMaterial)
-        }
+        .presentationBackground(AppTheme.Background.surfaceColor)
         .task {
             await loadPreview()
             ngvSummary = computeNGVSummary()
@@ -63,8 +60,7 @@ struct ExportView: View {
 
     private func panelHeader(_ title: String) -> some View {
         Text(title)
-            .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
-            .tracking(AppTheme.Tracking.tight)
+            .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, AppTheme.Spacing.xl)
@@ -385,8 +381,7 @@ struct ExportView: View {
             .disabled(activeJob != nil && activeJob?.canCancel != true)
             .keyboardShortcut(.cancelAction)
             Button("Export") { startExport() }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
+                .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(preparingDelivery || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
                 .keyboardShortcut(.defaultAction)
         }
@@ -510,14 +505,25 @@ struct ExportView: View {
     // MARK: - Helpers
 
     private func settingRow<Control: View>(label: String, @ViewBuilder control: () -> Control) -> some View {
-        HStack {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Spacer()
-            control()
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                settingLabel(label)
+                Spacer(minLength: AppTheme.Spacing.sm)
+                control().fixedSize()
+            }
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                settingLabel(label)
+                control()
+            }
         }
         .padding(.vertical, AppTheme.Spacing.sm)
+    }
+
+    private func settingLabel(_ label: String) -> some View {
+        Text(label)
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(AppTheme.Text.secondaryColor)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var estimatedFileSize: String {

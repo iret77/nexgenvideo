@@ -114,7 +114,12 @@ struct ProjectInterface<Content: View>: View {
     @Environment(EditorViewModel.self) private var editor
     let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
-    var body: some View { content.interfaceStyle(palette: editor.projectPalette) }
+    var body: some View {
+        content
+            .interfaceStyle(palette: editor.projectPalette)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppTheme.Background.surfaceColor)
+    }
 }
 
 extension View {

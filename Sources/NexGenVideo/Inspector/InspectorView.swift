@@ -603,19 +603,7 @@ struct InspectorView: View {
     }
 
     private var emptyInspectorState: some View {
-        VStack(spacing: AppTheme.Spacing.sm) {
-            Spacer()
-            Image(systemName: "cursorarrow.rays")
-                .interfaceFont(size: AppTheme.Typography.title)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            Text("Select a clip or asset to inspect it")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(AppTheme.Spacing.lg)
+        WorkspaceStateView(message: "Select a clip or asset to inspect it", systemImage: "cursorarrow.rays") {}
     }
 
     /// Entity/shot/look objects are worked on in the Project cockpit; the Inspector offers the jump.

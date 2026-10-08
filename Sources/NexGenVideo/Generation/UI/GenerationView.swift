@@ -520,10 +520,10 @@ struct GenerationView: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: AppTheme.GenerationPanel.loadingHeight)
+        .frame(minHeight: AppTheme.GenerationPanel.loadingHeight)
         .background {
             RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
-                .fill(AppTheme.aiGradientDark)
+                .fill(AppTheme.Background.raisedColor)
                 .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg))
@@ -533,30 +533,19 @@ struct GenerationView: View {
     }
 
     private var emptyCatalogView: some View {
-        VStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: "square.stack.3d.up.slash")
-                .interfaceFont(size: AppTheme.Typography.title)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Text("No models available")
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text("Add a provider API key to get started.")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
+        WorkspaceStateView(
+            title: "No models available",
+            message: "Add a provider API key to get started.",
+            systemImage: "square.stack.3d.up.slash",
+            fillsSpace: false
+        ) {
             Button("Open Providers…") {
                 SettingsWindowController.shared.show(tab: .providers)
             }
-            .controlSize(.small)
+            .buttonStyle(.capsule(.prominent, size: .regular))
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: AppTheme.GenerationPanel.loadingHeight)
-        .background {
-            RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
-                .fill(AppTheme.aiGradientDark)
-                .allowsHitTesting(false)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg))
-        .shadow(AppTheme.Shadow.sm)
+        .frame(minHeight: AppTheme.GenerationPanel.loadingHeight)
+        .background(AppTheme.Background.raisedColor, in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg))
         .padding(.horizontal, AppTheme.Spacing.sm)
         .padding(.bottom, AppTheme.Spacing.sm)
     }
@@ -650,12 +639,12 @@ struct GenerationView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredPanelHeight = $0 }
         .background {
             RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
-                .fill(AppTheme.aiGradientDark)
+                .fill(AppTheme.Background.raisedColor)
                 .allowsHitTesting(false)
         }
         .overlay {
             RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
-                .strokeBorder(AppTheme.aiGradientDark, lineWidth: AppTheme.BorderWidth.medium)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
                 .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg))

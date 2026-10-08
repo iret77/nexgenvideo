@@ -11,11 +11,7 @@ struct ExportWorkspaceSidebar: View {
                 .padding(.horizontal, AppTheme.Spacing.md)
                 .panelHeaderBar()
 
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                Image(systemName: "square.and.arrow.up")
-                    .interfaceFont(size: AppTheme.FontSize.title1, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(editor.projectPalette.accent)
-                    .accessibilityHidden(true)
+            ActionSection(title: "Prepare delivery") {
                 Text("Prepare the current film for delivery.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -33,5 +29,6 @@ struct ExportWorkspaceSidebar: View {
             Spacer(minLength: AppTheme.Spacing.none)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AppTheme.Background.surfaceColor)
     }
 }
