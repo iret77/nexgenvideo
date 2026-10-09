@@ -303,6 +303,7 @@ enum ExampleAudioAnalysisSelfTest {
         }
         guard let runner = registry.phases["analysis"],
               let artifactGate = registry.artifactWriteRequirements["analysis"],
+              registry.artifactCandidateRequirements["analysis"] != nil,
               let lineageProvider = registry.phaseLineageProviders["analysis"] else {
             throw Failure("loaded musicvideo pack has no complete analysis contract")
         }

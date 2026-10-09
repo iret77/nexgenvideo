@@ -4396,10 +4396,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation rejects wrong lyric labels without changing bytes, then accepts correction")
     func analysisInterpretationRejectsWrongLabelsThenRecovers() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runGateOK("approve_gate", args: [
+            "project_dir": dataRoot.path, "phase": "project_init",
+        ])
         let before = try Data(contentsOf: analysisURL)
         let lineageURL = dataRoot.appendingPathComponent(PipelineLayout.lineageFile)
         let lineageBefore = try Data(contentsOf: lineageURL)
@@ -4430,10 +4433,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation repairs a previously persisted wrong label without reanalysis")
     func analysisInterpretationRepairsPersistedWrongLabel() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runGateOK("approve_gate", args: [
+            "project_dir": dataRoot.path, "phase": "project_init",
+        ])
         var broken = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any]
         )

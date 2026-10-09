@@ -193,6 +193,8 @@ extension ToolExecutor {
             output.append(0x0A)
             try registry.artifactCandidateRequirements["analysis"]?(root, output)
             try output.write(to: analysisURL, options: .atomic)
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
         } catch {
             throw ToolError(
                 "Couldn't persist the analysis interpretation: \(error)"
