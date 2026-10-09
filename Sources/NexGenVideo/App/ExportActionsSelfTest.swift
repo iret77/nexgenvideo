@@ -86,6 +86,18 @@ enum ExportActionsSelfTest {
             )
         }
 
+        enter("queue-history-fixture")
+        let history = try await queue.enqueueInterchange(
+            editor: editor,
+            format: .xml,
+            outputURL: root.appendingPathComponent("history.xml"),
+            projectName: "Actions"
+        )
+        guard await waitUntil(timeout: .seconds(30), { history.status.isTerminal }),
+              history.status == .completed else {
+            throw ToolError("The native export self-test could not prepare its scrollable queue history.")
+        }
+
         enter("export-gate")
         let gateDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         do {
