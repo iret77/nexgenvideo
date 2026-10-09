@@ -45,7 +45,7 @@ struct TextContentField: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = nsView.documentView as? NSTextView else { return }
-        let size = AppTheme.Typography.ui * interfaceScale
+        let size = CGFloat(AppTheme.Typography.ui * interfaceScale)
         if textView.font?.pointSize != size { textView.font = .systemFont(ofSize: size) }
         // Don't stomp the insertion point mid-type.
         guard textView.window?.firstResponder !== textView else { return }
