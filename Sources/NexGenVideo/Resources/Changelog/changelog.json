@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.6.1",
-      "date": "2026-10-08",
+      "date": "2026-10-09",
       "sections": [
         {
           "heading": "Interface",
@@ -12,6 +12,12 @@
             "Media, Production and Review share empty-state typography and controls. Media folders use an opaque workspace surface; New Folder and Organize are separate actions.",
             "Edit and Postproduction reuse neutral agent menus and shared generation controls. Disabled timeline tools are clearly distinguished. Review headers and export settings adapt to narrow layouts and larger text; Export uses shared typography and buttons.",
             "Inspector fields, markers and approval cards follow the project typography and colors. Numeric values remain readable, keyframe controls have larger targets, and timeline track actions support keyboard and accessibility navigation."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.11 accompanies the interface fixes and requires NexGenVideo 1.6.1. Existing projects retain their pinned pack until explicitly upgraded."
           ]
         }
       ]
