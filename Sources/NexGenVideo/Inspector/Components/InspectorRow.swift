@@ -307,7 +307,7 @@ private struct InspectorFormLayout: Layout {
         let fitsInline = !stacked && canUseColumns && inlineControl.width <= controlWidth
         let control = fitsInline
             ? inlineControl
-            : subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            : subviews[1].sizeThatFits(ProposedViewSize(width: canUseColumns ? contentWidth : width, height: nil))
         let label = subviews[0].sizeThatFits(ProposedViewSize(width: fitsInline ? labelWidth : width, height: nil))
         let accessory = accessoryColumn && subviews.count > 2
             ? subviews[2].sizeThatFits(ProposedViewSize(width: accessoryWidth, height: nil))
