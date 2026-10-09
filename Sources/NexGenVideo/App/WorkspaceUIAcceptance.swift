@@ -877,17 +877,24 @@ enum WorkspaceUIAcceptance {
         let actionFont = NSFont.systemFont(ofSize: AppTheme.Typography.action * CGFloat(scale), weight: AppTheme.AppKitFontWeight.medium)
         let singleLineHeight = ceil(actionFont.ascender - actionFont.descender + actionFont.leading)
         for phase in ["project_init", "production_design"] {
-            guard let action = findProbe(in: host, identifier: "pipeline.overview.surface.\(phase)"),
+            let identifier = "pipeline.overview.surface.\(phase)"
+            guard let action = findProbe(in: host, identifier: identifier),
                   let identity = findProbe(in: host, identifier: "pipeline.overview.phase.\(phase)"),
-                  action.window === window, !action.isHiddenOrHasHiddenAncestor,
+                  let row = findProbe(in: host, identifier: "pipeline.overview.row.\(phase)") else {
+                reject("Pipeline surface control or row is missing: \(phase)")
+            }
+            guard action.window === window, !action.isHiddenOrHasHiddenAncestor,
                   action.bounds.width > 0, action.bounds.height > 0,
                   action.bounds.height <= singleLineHeight + AppTheme.BorderWidth.thin else {
-                reject("Pipeline action label wraps: \(phase)")
+                reject("Pipeline action label wraps or is not visible: \(phase)")
             }
             let actionFrame = action.convert(action.bounds, to: host)
             let identityFrame = identity.convert(identity.bounds, to: host)
-            guard host.bounds.contains(actionFrame), !actionFrame.intersects(identityFrame) else {
-                reject("Pipeline action overlaps its phase or leaves the viewport: \(phase)")
+            let rowFrame = row.convert(row.bounds, to: host)
+            guard host.bounds.contains(actionFrame), rowFrame.contains(actionFrame),
+                  !actionFrame.intersects(identityFrame),
+                  probeState(identifier: identifier, in: window) == (phase == "project_init") else {
+                reject("Pipeline surface action has incorrect geometry or enabled state: \(phase)")
             }
         }
         guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }

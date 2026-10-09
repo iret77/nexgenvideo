@@ -252,44 +252,41 @@ struct PipelinePanelView: View {
     @ViewBuilder
     private func loadedBody(_ data: ProjectStateData) -> some View {
         let activeRunningPhase = runningPhase
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                    summaryHeader(data)
-                    if let gateError {
-                        gateErrorBanner(gateError)
-                    }
-                    if let recovery = data.confirmedIdentityRecovery {
-                        confirmedIdentityRecoveryCard(recovery)
-                    }
-                    if data.phases.isEmpty {
-                        CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
-                                               message: "This project has no defined phases.")
-                    } else {
-                        VStack(spacing: AppTheme.Spacing.none) {
-                            ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
-                                phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
-                                         isLast: index == data.phases.count - 1,
-                                         runningPhase: activeRunningPhase,
-                                         compact: geometry.size.width < AppTheme.ComponentSize.pipelineCompactWidth * interfaceScale)
-                            }
-                        }
-                        .padding(AppTheme.Spacing.xs)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                                .fill(AppTheme.Background.raisedColor)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-                        )
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                summaryHeader(data)
+                if let gateError {
+                    gateErrorBanner(gateError)
                 }
-                .padding(.horizontal, AppTheme.Spacing.lg)
-                .padding(.vertical, AppTheme.Spacing.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                if let recovery = data.confirmedIdentityRecovery {
+                    confirmedIdentityRecoveryCard(recovery)
+                }
+                if data.phases.isEmpty {
+                    CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
+                                           message: "This project has no defined phases.")
+                } else {
+                    VStack(spacing: AppTheme.Spacing.none) {
+                        ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
+                            phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
+                                     isLast: index == data.phases.count - 1,
+                                     runningPhase: activeRunningPhase)
+                        }
+                    }
+                    .padding(AppTheme.Spacing.xs)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                            .fill(AppTheme.Background.raisedColor)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                            .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                    )
+                }
             }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -444,8 +441,7 @@ struct PipelinePanelView: View {
         _ phase: ProjectPhase,
         isNext: Bool,
         isLast: Bool,
-        runningPhase: String?,
-        compact: Bool
+        runningPhase: String?
     ) -> some View {
         let isRunning = runningPhase == phase.phase
         let pipelineIsRunning = runningPhase != nil
@@ -454,45 +450,55 @@ struct PipelinePanelView: View {
             ? approvalReadiness
             : .blocked("This phase is not current.")
         let approvalEnabled = approvalIsEnabled(for: phase.phase, isNext: isNext, runningPhase: runningPhase)
-        VStack(spacing: AppTheme.Spacing.none) {
-            let layout = compact
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
-                : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
-            layout {
-                phaseIdentity(phase, isNext: isNext)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                WrapLayout(spacing: AppTheme.Spacing.sm) {
-                    surfaceIcon(for: phase.phase)
-                        .fixedSize(horizontal: !compact, vertical: true)
-                        .frame(minWidth: AppTheme.ComponentSize.pipelineSurfaceMinWidth * interfaceScale, alignment: .leading)
-                    Group {
-                        if isNext && !isRunning {
-                            approveButton(phase, enabled: approvalEnabled)
-                        } else {
-                            AppTheme.Background.clearColor
-                                .frame(height: AppTheme.Control.compactHeight * interfaceScale)
-                        }
-                    }
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale)
-                    .frame(minHeight: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
-                    phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
-                        .frame(width: AppTheme.Control.iconTarget * interfaceScale)
-                    gateMenu(
-                        phase,
-                        isNext: isNext,
-                        canApprove: approvalEnabled,
-                        controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
-                        pipelineIsRunning: pipelineIsRunning
-                    )
-                    .frame(width: AppTheme.IconSize.md)
+        let actionHeight = (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale
+        let actions = Group {
+            surfaceIcon(for: phase.phase)
+                .frame(minWidth: AppTheme.ComponentSize.pipelineSurfaceMinWidth * interfaceScale,
+                       minHeight: actionHeight, alignment: .leading)
+            Group {
+                if isNext && !isRunning {
+                    approveButton(phase, enabled: approvalEnabled)
+                } else {
+                    AppTheme.Background.clearColor
+                        .frame(height: AppTheme.Control.compactHeight * interfaceScale)
                 }
-                .fixedSize(horizontal: !compact, vertical: true)
-                .frame(maxWidth: compact ? .infinity : nil, alignment: .trailing)
+            }
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+            .frame(minWidth: AppTheme.ComponentSize.pipelineApprovalMinWidth * interfaceScale,
+                   minHeight: actionHeight)
+            phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
+                .frame(width: AppTheme.Control.iconTarget * interfaceScale)
+                .frame(minHeight: actionHeight)
+            gateMenu(
+                phase,
+                isNext: isNext,
+                canApprove: approvalEnabled,
+                controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
+                pipelineIsRunning: pipelineIsRunning
+            )
+            .frame(width: AppTheme.IconSize.md)
+            .frame(minHeight: actionHeight)
+        }
+        VStack(spacing: AppTheme.Spacing.none) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    phaseIdentity(phase, isNext: isNext)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: AppTheme.Spacing.sm) { actions }
+                        .fixedSize(horizontal: true, vertical: true)
+                }
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                    phaseIdentity(phase, isNext: isNext)
+                    WrapLayout(spacing: AppTheme.Spacing.sm) { actions }
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.smMd)
             .frame(minHeight: AppTheme.ComponentSize.pipelineRowMinHeight)
+            .background { acceptanceProbe("row.\(phase.phase)") }
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .fill(isNext
@@ -760,7 +766,7 @@ struct PipelinePanelView: View {
                 }
             } label: {
                 ActionLabel(title: route.label, systemImage: route.icon)
-                    .background { acceptanceProbe("surface.\(phase)", text: route.label) }
+                    .background { acceptanceProbe("surface.\(phase)", enabled: isEnabled, text: route.label) }
             }
             .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)

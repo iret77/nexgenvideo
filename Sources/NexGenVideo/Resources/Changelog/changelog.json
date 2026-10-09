@@ -8,7 +8,7 @@
         {
           "heading": "Interface",
           "items": [
-            "Pipeline actions reserve the width of their complete labels before the phase name receives the remaining space. Narrow panes wrap whole actions without splitting button labels."
+            "Pipeline actions use their full label width instead of a fixed narrow column. Step names use the remaining space, and rows adapt to the available pane width."
           ]
         }
       ]

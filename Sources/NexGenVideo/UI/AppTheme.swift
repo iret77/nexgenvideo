@@ -385,10 +385,9 @@ enum AppTheme {
         static let shortcutsWindow = CGSize(width: 700, height: 520)
         static let shortcutKeyColumnWidth: CGFloat = 118
         static let storyboardReviewWidth: CGFloat = 900
-        static let pipelineCompactWidth: CGFloat = 380
         static let pipelineRowMinHeight: CGFloat = 40
         static let pipelineSurfaceMinWidth: CGFloat = 76
-        static let pipelineApprovalWidth: CGFloat = 62
+        static let pipelineApprovalMinWidth: CGFloat = 62
         static let cockpitLabelWidth: CGFloat = 76
         static let cockpitMessageMaxWidth: CGFloat = 320
         static let packSurfaceRowHeight: CGFloat = 68
