@@ -359,7 +359,7 @@ final class TimelineHeaderView: NSView {
         let menu = NSMenu()
         menu.autoenablesItems = false
         func add(_ title: String, _ command: TrackCommand, enabled: Bool = true) {
-            let item = NSMenuItem(title: title, action: #selector(performTrackCommand(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: title, action: #selector(performTrackMenuCommand(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = TrackCommandTarget(id: id, command: command)
             item.isEnabled = enabled
@@ -381,7 +381,7 @@ final class TimelineHeaderView: NSView {
         return menu
     }
 
-    @objc private func performTrackCommand(_ sender: NSMenuItem) {
+    @objc private func performTrackMenuCommand(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? TrackCommandTarget else { return }
         performTrackCommand(target)
     }
