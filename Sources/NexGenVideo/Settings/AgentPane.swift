@@ -431,7 +431,6 @@ struct AgentPane: View {
                     ) {
                         Button("Add Server") { beginAddingExternalMcpServer() }
                             .buttonStyle(.capsule(.prominent, size: .regular))
-                            .controlSize(.small)
                     }
                 } else {
                     ForEach(Array(externalMcpServers.enumerated()), id: \.element.id) { index, server in
@@ -449,7 +448,6 @@ struct AgentPane: View {
                         HStack {
                             Button("Add Server") { beginAddingExternalMcpServer() }
                                 .buttonStyle(.capsule(.secondary, size: .regular))
-                                .controlSize(.small)
                             Spacer(minLength: AppTheme.Spacing.lg)
                         }
                         .padding(.horizontal, AppTheme.Spacing.lgXl)
@@ -476,13 +474,11 @@ struct AgentPane: View {
                 }
                 Button(externalMcpEditLabel(entry)) { beginEditingExternalMcpServer(entry) }
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
                     .disabled(externalMcpEditor.isPresented)
                 Button("Remove", role: .destructive) {
                     pendingExternalMcpRemoval = entry.name
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
                 .disabled(externalMcpEditor.isPresented)
                 .help("Remove \(entry.name)")
             }
@@ -573,12 +569,10 @@ struct AgentPane: View {
                 Spacer(minLength: AppTheme.Spacing.lg)
                 Button("Cancel") { cancelExternalMcpEditor() }
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
                 Button(externalMcpEditor.importsMultipleServers ? "Import" : "Save") {
                     saveExternalMcpServer()
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .disabled(
                     externalMcpValidationMessage != nil
                         || externalMcpOperation == nil
@@ -692,11 +686,9 @@ struct AgentPane: View {
         if !trimmed.isEmpty {
             Button("Save", action: saveKey)
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
         } else if hasKey {
             Button("Remove", role: .destructive, action: removeKey)
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .controlSize(.small)
             .help("Remove Anthropic API key")
         }
     }

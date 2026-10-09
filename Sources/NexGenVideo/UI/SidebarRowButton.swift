@@ -27,11 +27,24 @@ struct SidebarRowButton: View {
             }
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.sm)
-            .frame(minHeight: AppTheme.Control.regularHeight)
-            .foregroundStyle(AppTheme.Text.primaryColor)
-            .hoverHighlight(cornerRadius: AppTheme.Radius.sm, isActive: isSelected)
+            .interfaceControlHeight(AppTheme.Control.regularHeight)
+
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarRowButtonStyle(isSelected: isSelected))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct SidebarRowButtonStyle: ButtonStyle {
+    let isSelected: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(AppTheme.Text.primaryColor)
+            .hoverHighlight(isActive: isEnabled && isSelected)
+            .opacity(isEnabled
+                ? (configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
+                : AppTheme.Opacity.disabledControl)
     }
 }

@@ -274,15 +274,10 @@ struct MusicTab: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
                     Text(generateLabel)
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Background.baseColor)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, AppTheme.Spacing.smMd)
-                        .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Accent.primary))
-                        .opacity(canGenerate ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
                 }
-                .buttonStyle(.plain).focusable(false)
+                .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canGenerate)
 
                 agentMenu
@@ -327,20 +322,11 @@ struct MusicTab: View {
             } label: { Label("Revise timeline music…", systemImage: "music.note") }
             .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Text("Agent Mode")
-                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.ui)
-            }
-            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-            .foregroundStyle(AppTheme.aiGradient)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.smMd)
-            .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Background.raisedColor))
-            .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(AppTheme.aiGradient.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
+            ActionMenuLabel(title: "Agent Mode")
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).focusable(false)
+        .menuStyle(.button)
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .menuIndicator(.hidden)
         .help("Let Agent generate music for you. Choose a starter, or ask Agent in the chat.")
     }
 

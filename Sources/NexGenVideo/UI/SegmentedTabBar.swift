@@ -10,8 +10,7 @@ struct SegmentedTabBar: View {
     let titles: [String]
     let selected: String?
     var raisedBackground: Bool = false
-    /// Titles rendered with an accent — declared by the caller, never inferred here. By default the AI
-    /// accent gradient; `accentColor` overrides it with a solid color (e.g. a pack-scoped tab).
+    // Selected accented titles may supply their own project-scoped color.
     var accentedTitles: Set<String> = []
     /// Titles with an explicit scope marker. Marking is caller-owned and independent of accenting.
     var markedTitles: Set<String> = []
@@ -36,19 +35,9 @@ struct SegmentedTabBar: View {
             ForEach(titles, id: \.self) { title in
                 let isActive = selected == title
                 let isAccented = accentedTitles.contains(title)
-                let foreground: AnyShapeStyle = {
-                    if isAccented {
-                        if let accentColor {
-                            return AnyShapeStyle(accentColor.opacity(
-                                isActive ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled
-                            ))
-                        }
-                        return AnyShapeStyle(AppTheme.aiGradient.opacity(
-                            isActive ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled
-                        ))
-                    }
-                    return AnyShapeStyle(isActive ? palette.accent : AppTheme.Text.tertiaryColor)
-                }()
+                let foreground = AnyShapeStyle(isActive
+                    ? (isAccented ? (accentColor ?? palette.accent) : palette.accent)
+                    : AppTheme.Text.tertiaryColor)
                 Button {
                     onSelect(title)
                 } label: {

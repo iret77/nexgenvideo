@@ -5,6 +5,7 @@ import SwiftUI
 // Explicit loading / empty / error / engine-not-ready states. No mutations.
 
 struct ShotlistPanelView: View {
+    @Environment(\.projectPalette) private var palette
     @Environment(EditorViewModel.self) private var editor
 
     private enum LoadState: Equatable {
@@ -38,7 +39,7 @@ struct ShotlistPanelView: View {
                                    subject: "the shotlist",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "film.stack", title: "No shotlist yet",
                                    message: "This project doesn't have a shotlist.")
@@ -151,7 +152,7 @@ struct ShotlistPanelView: View {
             RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                 .strokeBorder(
                     editor.inspectedObject == .shot(shot.id)
-                        ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium)
+                        ? palette.accent.opacity(AppTheme.Opacity.medium)
                         : AppTheme.Border.subtleColor,
                     lineWidth: editor.inspectedObject == .shot(shot.id)
                         ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline

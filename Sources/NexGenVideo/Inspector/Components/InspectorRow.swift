@@ -165,6 +165,7 @@ struct InspectorCropAspectLabel: View {
 }
 
 private struct InspectorControlChrome: ViewModifier {
+    @Environment(\.projectPalette) private var palette
     var focused = false
     var mixed = false
     var error = false
@@ -182,7 +183,7 @@ private struct InspectorControlChrome: ViewModifier {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.xsSm)
                     .strokeBorder(border, lineWidth: AppTheme.BorderWidth.thin)
             )
-            .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
+            .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabledControl)
             .onHover { hovered = isEnabled && $0 }
             .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: hovered)
     }
@@ -190,7 +191,7 @@ private struct InspectorControlChrome: ViewModifier {
     private var border: Color {
         guard isEnabled else { return AppTheme.Border.subtleColor }
         if error { return AppTheme.Status.errorColor }
-        if focused { return AppTheme.Accent.primary }
+        if focused { return palette.accent }
         if mixed { return AppTheme.Border.primaryColor }
         return hovered ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor
     }

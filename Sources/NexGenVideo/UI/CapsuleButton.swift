@@ -7,9 +7,10 @@ struct CapsuleButtonStyle: ButtonStyle {
     var variant: Variant = .secondary
     var size: Size = .small
     var fill: AnyShapeStyle?
+    var isSelected = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Chrome(configuration: configuration, variant: variant, size: size, fill: fill)
+        Chrome(configuration: configuration, variant: variant, size: size, fill: fill, isSelected: isSelected)
     }
 
     private struct Chrome: View {
@@ -17,6 +18,7 @@ struct CapsuleButtonStyle: ButtonStyle {
         let variant: Variant
         let size: Size
         let fill: AnyShapeStyle?
+        let isSelected: Bool
         @State private var hovered = false
         @Environment(\.isEnabled) private var isEnabled
         @Environment(\.projectPalette) private var palette
@@ -29,15 +31,17 @@ struct CapsuleButtonStyle: ButtonStyle {
 
         private var foreground: AnyShapeStyle {
             guard isEnabled else { return AnyShapeStyle(AppTheme.Text.disabledControlColor) }
+            if configuration.role == .destructive { return AnyShapeStyle(AppTheme.Status.errorColor) }
             return variant == .prominent
                 ? AnyShapeStyle(palette.onAccent)
-                : AnyShapeStyle(AppTheme.Text.secondaryColor)
+                : AnyShapeStyle(isSelected ? palette.accent : AppTheme.Text.secondaryColor)
         }
         private var background: AnyShapeStyle {
-            guard isEnabled else { return AnyShapeStyle(AppTheme.Background.prominentColor) }
+            guard isEnabled else { return AnyShapeStyle(AppTheme.Background.raisedColor) }
+            if configuration.role == .destructive { return AnyShapeStyle(AppTheme.Background.prominentColor) }
             return variant == .prominent
                 ? (fill ?? AnyShapeStyle(palette.accent))
-                : AnyShapeStyle(AppTheme.Background.prominentColor)
+                : AnyShapeStyle(isSelected ? palette.accent.opacity(AppTheme.Opacity.selection) : AppTheme.Background.prominentColor)
         }
 
         var body: some View {
@@ -55,6 +59,7 @@ struct CapsuleButtonStyle: ButtonStyle {
                         )
                     )
                 )
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .opacity(opacity)
                 .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
                 .onHover { hovered = isEnabled && $0 }
@@ -63,7 +68,7 @@ struct CapsuleButtonStyle: ButtonStyle {
         }
 
         private var opacity: Double {
-            guard isEnabled else { return AppTheme.Opacity.disabled }
+            guard isEnabled else { return AppTheme.Opacity.disabledControl }
             return configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque
         }
     }
@@ -73,7 +78,8 @@ extension ButtonStyle where Self == CapsuleButtonStyle {
     static var capsule: CapsuleButtonStyle { .init() }
     static func capsule(_ variant: CapsuleButtonStyle.Variant = .secondary,
                         size: CapsuleButtonStyle.Size = .small,
-                        fill: AnyShapeStyle? = nil) -> CapsuleButtonStyle {
-        .init(variant: variant, size: size, fill: fill)
+                        fill: AnyShapeStyle? = nil,
+                        isSelected: Bool = false) -> CapsuleButtonStyle {
+        .init(variant: variant, size: size, fill: fill, isSelected: isSelected)
     }
 }

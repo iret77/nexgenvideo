@@ -26,7 +26,6 @@ struct HueCurveEditorView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .controlSize(.small)
             .fixedSize()
 
             GeometryReader { geo in

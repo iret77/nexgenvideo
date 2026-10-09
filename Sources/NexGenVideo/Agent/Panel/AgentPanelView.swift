@@ -254,20 +254,19 @@ struct AgentPanelView: View {
     }
 
     private var taskBar: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             HStack {
                 Text("Tasks")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Spacer(minLength: AppTheme.Spacing.sm)
                 utilityButton(iconOnly: false)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
-                    .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
-            }
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .panelHeaderBar()
+            WrapLayout(spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AppTheme.Spacing.md)
         }
-        .padding(AppTheme.Spacing.md)
         .popover(isPresented: Binding(get: { editor.agentConversationHistoryPresented },
             set: { editor.agentConversationHistoryPresented = $0 })) {
             sessionHistory
@@ -294,12 +293,16 @@ struct AgentPanelView: View {
                             .allowsHitTesting(false)
                     }
                 }
-            Menu("Sessions") {
+            Menu {
                 Button("Resume Session") { editor.agentConversationHistoryPresented = true }
                 Button("New Session") { service.startNewConversation() }
                     .disabled(!service.canStartNewConversation)
+            } label: {
+                ActionMenuLabel(title: "Sessions")
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.capsule(.secondary, size: .small))
         }
     }
 
@@ -344,7 +347,6 @@ struct AgentPanelView: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
-        .controlSize(.small)
         .background {
             if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                 AppRelaunchClickProbe(
@@ -432,6 +434,7 @@ struct AgentPanelView: View {
                 }
             }
             .menuStyle(.borderlessButton)
+            .tint(AppTheme.Text.secondaryColor)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Model for this conversation · Anthropic API key")
@@ -462,13 +465,22 @@ struct AgentPanelView: View {
         return false
     }
 
-    private var taskResult: some View {
-        let results = transcriptTurns.reversed().lazy.map { turn in
+    private var taskResults: [AgentMessage] {
+        transcriptTurns.reversed().lazy.map { turn in
             turn.items.compactMap { item -> AgentMessage? in
                 guard case .assistantResult(let message) = item else { return nil }
                 return message
             }
         }.first(where: { !$0.isEmpty }) ?? []
+    }
+
+    private var showsTaskChoices: Bool {
+        taskResults.isEmpty && !service.isStreaming && !service.isComposerBlocked
+            && service.canStream && service.pendingFunction == nil
+    }
+
+    private var taskResult: some View {
+        let results = taskResults
         return ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 if !results.isEmpty {
@@ -482,7 +494,7 @@ struct AgentPanelView: View {
                             .buttonStyle(.capsule(.secondary, size: .small))
                             .disabled(service.isStreaming || service.isComposerBlocked)
                     }
-                } else if !service.isStreaming {
+                } else if showsTaskChoices {
                     emptyState
                 }
                 errorBanner
@@ -536,7 +548,6 @@ struct AgentPanelView: View {
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     }
                     .buttonStyle(.capsule(.secondary))
-                    .controlSize(.small)
                 }
             }
         }
@@ -581,23 +592,20 @@ struct AgentPanelView: View {
         if service.isComposerBlocked {
             EmptyView()
         } else if service.canStream {
-            VStack(spacing: AppTheme.Spacing.smMd) {
-                Text("Choose a task:")
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .multilineTextAlignment(.center)
+            ActionSection(title: "Choose a task") {
                 VStack(spacing: AppTheme.Spacing.xs) {
                     if showPackStarters {
                         // A pack is active → its own starters replace the generic chips.
-                        ForEach(entryCommands) { command in
+                        if let command = entryCommands.first {
                             let starter = AgentStarterPrompt(
                                 title: command.description ?? command.title,
                                 systemImage: "puzzlepiece.extension",
                                 prompt: command.command
                             )
-                            AgentStarterPromptButton(starterPrompt: starter) {
+                            AgentStarterPromptButton(starterPrompt: starter, prominent: true) {
                                 editor.runActivePackStarter()
                             }
+                            .disabled(editor.productionStarting)
                         }
                     } else {
                         ForEach(Self.starterPrompts) { starterPrompt in
@@ -606,6 +614,12 @@ struct AgentPanelView: View {
                             }
                         }
                     }
+                }
+                if showPackStarters {
+                    taskMenu(title: "Other tasks")
+                } else if let task = editor.selectedObjectRevisionTask {
+                    Button("Revise Selected Object") { service.stageTask(task) }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
                 }
             }
             .onAppear { refreshDiscoveredPlugins() }
@@ -634,7 +648,6 @@ struct AgentPanelView: View {
                 Text("Open Agent Settings")
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .controlSize(.small)
         }
         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -714,17 +727,10 @@ struct AgentPanelView: View {
     private var footer: some View {
         @Bindable var service = editor.agentService
         let sessionID = service.currentSessionId
-        return VStack(spacing: AppTheme.Spacing.sm) {
-            Menu("Choose Task") {
-                ForEach(Self.starterPrompts) { starter in
-                    Button(starter.title) { runStarter(starter) }
-                }
-                if let task = editor.selectedObjectRevisionTask {
-                    Button("Revise Selected Object") { service.stageTask(task) }
-                }
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if !showsTaskChoices {
+                taskMenu(title: service.pendingFunction == nil ? "Choose a task" : "Change task")
             }
-            .menuStyle(.borderlessButton)
-            .disabled(service.isStreaming || service.isComposerBlocked)
             if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
@@ -749,8 +755,8 @@ struct AgentPanelView: View {
                 }
                 .id(sessionID)
             } else {
-                if !service.isStreaming {
-                    Text(service.draft.isEmpty ? "Choose a task to continue." : "Choose a task to use the saved instructions.")
+                if !service.isStreaming && !service.draft.isEmpty {
+                    Text("Choose a task to use the saved instructions.")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -770,6 +776,23 @@ struct AgentPanelView: View {
         .padding(.top, AppTheme.Spacing.xs)
         .frame(maxWidth: AppTheme.Layout.chatColumnMax)
         .frame(maxWidth: .infinity)
+    }
+
+    private func taskMenu(title: String) -> some View {
+        Menu {
+            ForEach(Self.starterPrompts) { starter in
+                Button(starter.title) { runStarter(starter) }
+            }
+            if let task = editor.selectedObjectRevisionTask {
+                Button("Revise Selected Object") { service.stageTask(task) }
+            }
+        } label: {
+            ActionMenuLabel(title: title)
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .disabled(service.isStreaming || service.isComposerBlocked)
     }
 
     private func submit() {
@@ -797,36 +820,14 @@ private struct AgentStarterPrompt: Identifiable {
 
 private struct AgentStarterPromptButton: View {
     let starterPrompt: AgentStarterPrompt
+    var prominent = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Image(systemName: starterPrompt.systemImage)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
-                Text(starterPrompt.title)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, AppTheme.Spacing.md)
-            .padding(.vertical, AppTheme.Spacing.xs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    .fill(AppTheme.Background.raisedColor)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-            )
+            ActionLabel(title: starterPrompt.title, systemImage: starterPrompt.systemImage)
         }
-        .buttonStyle(.plain)
-        .help("Add function")
+        .buttonStyle(.capsule(prominent ? .prominent : .secondary, size: .regular))
     }
 }
 

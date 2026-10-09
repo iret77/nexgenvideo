@@ -295,7 +295,7 @@ struct KeyframesPanel: View {
     private var tint: Color { Color(nsColor: clip.sourceClipType.themeColor) }
     private var span: Int { max(1, clip.endFrame - clip.startFrame) }
     private var timelineLeadingInset: CGFloat {
-        AppTheme.Timeline.keyframeLaneLabelWidth + AppTheme.Spacing.sm
+        AppTheme.Timeline.keyframeLaneLabelWidth * interfaceScale + AppTheme.Spacing.sm
     }
     private var wideLayoutMinimumWidth: CGFloat {
         timelineLeadingInset + AppTheme.Timeline.keyframeLaneMinimumTrackWidth
@@ -329,7 +329,7 @@ struct KeyframesPanel: View {
         } else {
             HStack(spacing: AppTheme.Spacing.sm) {
                 AppTheme.Background.clearColor
-                    .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth)
+                    .frame(width: AppTheme.Timeline.keyframeLaneLabelWidth * interfaceScale)
                 ruler
             }
         }
@@ -376,10 +376,8 @@ struct KeyframesPanel: View {
             )
             .foregroundStyle(AppTheme.Text.secondaryColor)
             .lineLimit(1)
-            .minimumScaleFactor(CGFloat(1 / max(1, interfaceScale)))
-            .allowsTightening(true)
             .frame(
-                width: fixedWidth ? AppTheme.Timeline.keyframeLaneLabelWidth : nil,
+                width: fixedWidth ? AppTheme.Timeline.keyframeLaneLabelWidth * interfaceScale : nil,
                 alignment: alignment
             )
             .allowsHitTesting(false)

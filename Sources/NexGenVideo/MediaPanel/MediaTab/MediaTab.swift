@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.projectPalette) private var palette
     let workspace: EditorViewModel.WorkspaceFocus
 
     var browserState: MediaBrowserState { editor.mediaBrowserState(for: workspace) }
@@ -161,6 +162,12 @@ struct MediaTab: View {
             if workspace == .media {
                 KeyCommandSink(onNewFolder: createNewFolderInCurrent, onNavigateUp: navigateUp)
             }
+        }
+        .onChange(of: browserState.pendingRenameFolderID, initial: true) { _, id in
+            guard workspace == editor.workspaceFocus, let id, editor.folder(id: id) != nil else { return }
+            pendingFolderFocusId = id
+            renamingFolderId = id
+            browserState.pendingRenameFolderID = nil
         }
         .onChange(of: editor.folders.map(\.id)) { _, _ in pruneStaleFolderState() }
         .onChange(of: editor.mediaPanelRevealAssetId, initial: true) { _, target in
@@ -328,29 +335,42 @@ struct MediaTab: View {
     }
 
     private var actionsRow: some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            toolbarButton(title: "Import", systemImage: "plus", action: importMedia)
-                .help("Copy media into the project")
-                .tourAnchor(.importButton)
-            toolbarButton(title: "Generate", systemImage: "sparkles", filled: true, accentStyle: AnyShapeStyle(AppTheme.aiGradient), action: toggleGenerationPanel)
-                .tourAnchor(.generateButton)
-
-            if workspace == .media {
-                overflowMenu
-            } else {
-                toolbarButton(title: "Media", systemImage: "folder") {
-                    editor.revealMediaTools()
-                    editor.setWorkspaceFocus(.media)
-                }
-                .help("Organize in Media")
-            }
-
-            Spacer(minLength: 0)
-
-            searchIndexStatus
-                .tourAnchor(.smartSearch)
+        WrapLayout(spacing: AppTheme.Spacing.xs) {
+            creationActions
+            organizationActions
+            searchIndexStatus.tourAnchor(.smartSearch)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
+    }
+
+    @ViewBuilder
+    private var creationActions: some View {
+        toolbarButton(title: "Import", systemImage: "plus", action: importMedia)
+            .help("Copy media into the project")
+            .tourAnchor(.importButton)
+        toolbarButton(title: "Generate", systemImage: "sparkles", isSelected: editor.showGenerationPanel, action: toggleGenerationPanel)
+            .help(editor.showGenerationPanel ? "Hide generator" : "Open generator")
+            .accessibilityValue(editor.showGenerationPanel ? "Shown" : "Hidden")
+            .tourAnchor(.generateButton)
+    }
+
+    @ViewBuilder
+    private var organizationActions: some View {
+        if workspace == .media {
+            toolbarButton(title: "New Folder", systemImage: "folder.badge.plus", action: createNewFolderInCurrent)
+            if !editor.mediaAssets.isEmpty {
+                toolbarButton(title: "Organize", systemImage: "folder.badge.gearshape", action: organizeWithAgent)
+                    .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
+                    .help("Organize media with Agent")
+            }
+        } else {
+            toolbarButton(title: "Media", systemImage: "folder") {
+                editor.revealMediaTools()
+                editor.setWorkspaceFocus(.media)
+            }
+            .help("Organize in Media")
+        }
     }
 
     private var searchControlsRow: some View {
@@ -388,7 +408,7 @@ struct MediaTab: View {
 
             itemCountText
         }
-        .frame(height: AppTheme.MediaPanel.contextRowHeight)
+        .interfaceControlHeight()
     }
 
     @ViewBuilder
@@ -458,7 +478,8 @@ struct MediaTab: View {
         toolbarMenuIcon(
             systemName: "line.3.horizontal.decrease",
             title: "Filter",
-            foregroundStyle: hasActiveFilters ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor
+            foregroundStyle: hasActiveFilters ? palette.accent : AppTheme.Text.tertiaryColor,
+            isActive: hasActiveFilters
         ) {
             ForEach(Self.filterableTypes, id: \.self) { type in
                 Button { toggleFilter(type) } label: {
@@ -605,8 +626,7 @@ struct MediaTab: View {
     private func toolbarButton(
         title: String,
         systemImage: String,
-        filled: Bool = false,
-        accentStyle: AnyShapeStyle? = nil,
+        isSelected: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -615,8 +635,8 @@ struct MediaTab: View {
                 Text(title)
             }
         }
-        .buttonStyle(.capsule(filled ? .prominent : .secondary, fill: accentStyle))
-        .focusable(false)
+        .buttonStyle(.capsule(.secondary, isSelected: isSelected))
+        .fixedSize(horizontal: true, vertical: false)
         .help(title)
     }
 
@@ -632,21 +652,6 @@ struct MediaTab: View {
     private func toggleGenerationPanel() {
         withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
             editor.showGenerationPanel.toggle()
-        }
-    }
-
-    private var overflowMenu: some View {
-        let canOrganize = !editor.mediaAssets.isEmpty
-        return toolbarMenuIcon(systemName: "folder.badge.gearshape", title: "Organize", showsTitle: true) {
-            Button(action: createNewFolderInCurrent) {
-                Label("New Folder", systemImage: "folder.badge.plus")
-            }
-            if canOrganize {
-                Button(action: organizeWithAgent) {
-                    Label("Organize with Agent", systemImage: "wand.and.stars")
-                }
-                .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
-            }
         }
     }
 
@@ -671,7 +676,8 @@ struct MediaTab: View {
         systemName: String,
         title: String,
         showsTitle: Bool = false,
-        foregroundStyle: some ShapeStyle = AppTheme.Text.tertiaryColor,
+        foregroundStyle: Color = AppTheme.Text.tertiaryColor,
+        isActive: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
         Menu(content: content) {
@@ -688,16 +694,16 @@ struct MediaTab: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .focusable(false)
-        .hoverHighlight()
+        .tint(foregroundStyle)
+        .hoverHighlight(isActive: isActive)
+        .accessibilityValue(isActive ? "Active" : "")
     }
 
     // MARK: - Folder commands
 
     private func createNewFolderInCurrent() {
         let id = editor.createFolder(name: "New Folder", in: currentFolderId)
-        pendingFolderFocusId = id
-        renamingFolderId = id
+        editor.requestMediaFolderRename(id, workspace: workspace)
     }
 
     private func navigateUp() {
@@ -783,27 +789,14 @@ struct MediaTab: View {
     // MARK: - Empty state + drop highlight
 
     private var emptyStateView: some View {
-        VStack(spacing: AppTheme.Spacing.lg) {
-            Spacer()
-
-            Image(systemName: "photo.on.rectangle.angled")
-                .interfaceFont(size: AppTheme.Typography.hero, weight: AppTheme.FontWeight.light)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-
-            VStack(spacing: AppTheme.Spacing.xs) {
-                Text("No media yet")
-                    .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.light)
-                    .tracking(AppTheme.Tracking.tight)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-
-                Text("Drop files here or copy them into the project")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-
-            Spacer()
+        WorkspaceStateView(
+            title: "No media yet",
+            message: "Drop files here or import them into the project.",
+            systemImage: "photo.on.rectangle.angled"
+        ) {
+            Button("Import Media", action: importMedia)
+                .buttonStyle(.capsule(.prominent, size: .regular))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var dropHighlight: some View {

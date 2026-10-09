@@ -62,8 +62,7 @@ struct StatRow: View {
                     Text(tile.value)
                         .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(tile.muted ? AppTheme.Text.mutedColor : AppTheme.Text.primaryColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .fixedSize(horizontal: false, vertical: true)
                         .monospacedDigit()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

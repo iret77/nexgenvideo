@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 @testable import NexGenVideo
 
@@ -100,6 +100,34 @@ struct TrackReorderTests {
         #expect(decoded.tracks[1].hidden)
         #expect(decoded.tracks[1].syncLocked == false)
         #expect(decoded.tracks[1].clips.map(\.id) == ["clip-1"])
+    }
+
+    @Test("accessible track actions use stable identities and preserve routing zones")
+    func accessibleTrackActions() throws {
+        let editor = trackReorderEditor([
+            Fixtures.videoTrack(id: "v1"), Fixtures.videoTrack(id: "v2"),
+            Fixtures.audioTrack(id: "a1"),
+        ])
+        editor.workspaceFocus = .edit
+        let header = TimelineHeaderView(editor: editor)
+        let actions = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
+        let repeated = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
+        #expect(actions.count == repeated.count)
+        #expect(zip(actions, repeated).allSatisfy { $0.0 === $0.1 })
+        let labels = actions.compactMap { $0.accessibilityLabel() }
+        #expect(!labels.contains("Move Track A1 Up"))
+        #expect(!labels.contains("Move Track V1 Down"))
+        let hide = try #require(actions.first { $0.accessibilityLabel() == "Hide Track V2" })
+        let move = try #require(actions.first { $0.accessibilityLabel() == "Move Track V2 Down" })
+        #expect(move.accessibilityPerformPress())
+        #expect(editor.timeline.tracks.map(\.id) == ["v2", "v1", "a1"])
+        #expect(hide.accessibilityPerformPress())
+        #expect(editor.timeline.tracks.first { $0.id == "v1" }?.hidden == true)
+        #expect(editor.timeline.tracks.first { $0.id == "v2" }?.hidden == false)
+
+        editor.workspaceFocus = .production
+        let compactActions = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
+        #expect(compactActions.allSatisfy { !($0.accessibilityLabel() ?? "").hasPrefix("Move Track") })
     }
 
     @Test("missing and same-position requests are no-ops")

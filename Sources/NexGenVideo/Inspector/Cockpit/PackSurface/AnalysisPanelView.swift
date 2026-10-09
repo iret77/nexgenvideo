@@ -111,7 +111,7 @@ struct DeclarativePackSurfaceView: View {
                                    subject: "the pack surface",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(let loaded):
             loadedPanel(loaded)
         }

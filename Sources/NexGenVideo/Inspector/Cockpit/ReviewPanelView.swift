@@ -6,6 +6,8 @@ import SwiftUI
 // work and the Agent tab opens to show it. Read-only against `read frames`; no state is invented.
 
 struct ReviewPanelView: View {
+    @Environment(\.projectPalette) private var palette
+    var offersProductionSetup = true
     @Environment(EditorViewModel.self) private var editor
 
     private enum LoadState: Equatable {
@@ -84,12 +86,18 @@ struct ReviewPanelView: View {
         case .idle, .loading:
             VStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(.notInitialized) where !offersProductionSetup && !editor.hasProductionPipeline:
+            WorkspaceStateView(
+                title: "Review the film",
+                message: "Use the preview and timeline to check the cut. Production reviews appear here when available.",
+                systemImage: "film"
+            ) {}
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load frames",
                                    subject: "the frames",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarted) { Task { await load() } }
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(let data):
             if let data, !data.shots.isEmpty {
                 loadedBody(data)
@@ -189,7 +197,7 @@ struct ReviewPanelView: View {
                 if isPicked {
                     Image(systemName: "checkmark.circle.fill")
                         .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Accent.primary)
+                        .foregroundStyle(palette.accent)
                         .padding(AppTheme.Spacing.xxs)
                 }
             }

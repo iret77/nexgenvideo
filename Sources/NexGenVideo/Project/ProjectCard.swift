@@ -48,7 +48,6 @@ struct ProjectCard: View {
                 removeButton
             }
         }
-        .opacity(entry.isAccessible ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
         .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
@@ -58,7 +57,7 @@ struct ProjectCard: View {
                 )
         )
         .shadow(showsActiveHover ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
-        .scaleEffect(showsActiveHover ? 1.03 : 1.0)
+        .scaleEffect(showsActiveHover ? AppTheme.ComponentSize.cardHoverScale : 1.0)
         .padding(AppTheme.Spacing.sm)
         .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
         .onHover { isHovered = $0 }
@@ -137,7 +136,7 @@ struct ProjectCard: View {
                     } else if entry.isAccessible {
                         Image(systemName: "film")
                             .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
-                            .foregroundStyle(AppTheme.Text.mutedColor)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                 }
                 .overlay {
@@ -168,14 +167,14 @@ struct ProjectCard: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(entry.name)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.regular)
-                    .foregroundStyle(entry.isAccessible ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
+                    .foregroundStyle(entry.isAccessible ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
                     .background { acceptanceProbe("name") }
 
                 if !entry.isAccessible {
                     Text("Moved or deleted")
                         .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
                         .background { acceptanceProbe("unavailable-status") }
                 }
@@ -188,7 +187,7 @@ struct ProjectCard: View {
                 }
                 Text(Self.relativeString(for: entry.createdDate))
                     .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.medium))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.bottom, AppTheme.Spacing.smMd)

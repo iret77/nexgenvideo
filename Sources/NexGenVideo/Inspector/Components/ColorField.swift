@@ -19,9 +19,8 @@ struct ColorField: View {
                         .stroke(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .focused($isFocused)
-        .inspectorControlChrome(focused: isFocused)
         .accessibilityLabel("Color")
         .accessibilityValue(colorAccessibilityValue)
     }

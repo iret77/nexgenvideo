@@ -195,7 +195,7 @@ struct ProvidersPane: View {
                     ProviderMCP.setEndpoint(on ? provider.mcpCapability?.defaultURL.absoluteString : nil, for: provider)
                     refresh()
                 }))
-                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .labelsHidden().toggleStyle(.switch).controlSize(.regular)
         }
     }
 
@@ -231,11 +231,10 @@ struct ProvidersPane: View {
     private func trailingControl(_ provider: GenerationProvider) -> some View {
         let trimmed = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
-            Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular)).controlSize(.small)
+            Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular))
         } else if connectionState(provider).hasKey {
             Button("Remove", systemImage: "trash") { remove(provider) }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
         }
     }
 

@@ -37,9 +37,20 @@ final class MediaBrowserState {
     var collapsedGroupedKeys: Set<String> = []
     var scrollAssetID: String?
     var sourceRanges: [String: SourcePreviewState] = [:]
+    var pendingRenameFolderID: String?
 }
 
 extension EditorViewModel {
+    func requestMediaFolderRename(_ id: String, workspace: WorkspaceFocus = .media) {
+        guard let folder = folder(id: id) else { return }
+        setMediaPanelTab(.assets, for: workspace)
+        let state = mediaBrowserState(for: workspace)
+        state.currentFolderId = folder.parentFolderId
+        state.searchQuery = ""
+        state.viewMode = .folder
+        state.pendingRenameFolderID = id
+    }
+
     func mediaBrowserState(for workspace: WorkspaceFocus) -> MediaBrowserState {
         if let state = mediaBrowserStates[workspace] { return state }
         let state = MediaBrowserState()

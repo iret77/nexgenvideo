@@ -8,6 +8,7 @@ import SwiftUI
 /// build offers `Update`. A catalog fetch failure is offline, not an error: installed
 /// packs still show and stay usable.
 struct PluginPickerView: View {
+    @Environment(\.projectPalette) private var palette
     let editor: EditorViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var manager = PluginManager()
@@ -41,7 +42,6 @@ struct PluginPickerView: View {
             Spacer()
             Button("Close") { dismiss() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
                 .keyboardShortcut(.cancelAction)
         }
     }
@@ -138,7 +138,7 @@ struct PluginPickerView: View {
         case .updatePendingRestart:
             Label("Update ready — restart to finish. A plugin's code can't be swapped while the app runs.", systemImage: "arrow.clockwise.circle")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Accent.primary)
+                .foregroundStyle(palette.accent)
                 .fixedSize(horizontal: false, vertical: true)
         default:
             EmptyView()
@@ -166,22 +166,19 @@ struct PluginPickerView: View {
                     }
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
 
             case .installed(let active, let update):
                 if active {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         Label("Active", systemImage: "checkmark.circle.fill")
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                            .foregroundStyle(AppTheme.Accent.primary)
+                            .foregroundStyle(palette.accent)
                         if let update {
                             Button("Update") { Task { await manager.install(update) } }
                                 .buttonStyle(.capsule(.secondary, size: .regular))
-                                .controlSize(.small)
                         }
                         Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                             .buttonStyle(.capsule(.secondary, size: .regular))
-                            .controlSize(.small)
                             .help("Back to the generic workflow. Pipeline data stays in the project.")
                     }
                 } else {
@@ -191,11 +188,9 @@ struct PluginPickerView: View {
                             dismiss()
                         }
                         .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
                         if let update {
                             Button("Update") { Task { await manager.install(update) } }
                                 .buttonStyle(.capsule(.secondary, size: .regular))
-                                .controlSize(.small)
                         }
                     }
                 }
@@ -204,7 +199,6 @@ struct PluginPickerView: View {
                 if let reinstall {
                     Button("Update") { Task { await manager.install(reinstall) } }
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                 }
 
             case .updatePendingRestart:
@@ -221,7 +215,6 @@ struct PluginPickerView: View {
                     }
                 }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
                     .disabled(!canApplyUpdate)
                     .help("Relaunch NexGenVideo to activate the updated plugin.")
 

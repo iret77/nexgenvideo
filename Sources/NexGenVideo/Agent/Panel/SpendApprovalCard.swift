@@ -132,21 +132,21 @@ struct SpendApprovalCard: View {
             }
             if !availableOptions.isEmpty {
                 Text("Only connected models compatible with this request are shown.")
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             ForEach(providerIssues, id: \.self) { message in
                 Text(message)
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.warningColor)
             }
             if let message = approvalError ?? error {
                 Text(message)
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
             } else if availableOptions.isEmpty {
                 Text("No valid provider and model combination is currently available.")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
             }
         }
@@ -155,18 +155,18 @@ struct SpendApprovalCard: View {
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "creditcard")
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Accent.primary)
             Text("Approve spend")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button(action: onDecline) {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ToolbarIconButtonStyle())
+            .accessibilityLabel("Decline")
             .keyboardShortcut(.cancelAction)
             .help("Decline (Esc)")
             .disabled(isWorking)
@@ -176,25 +176,25 @@ struct SpendApprovalCard: View {
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
             Text("\(approval.actionLabel) with \(selectedOption.map { displayName($0) } ?? "Unavailable model")")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .help(selectedOption?.modelName ?? "")
             if let selectedOption {
                 Text("via \(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
             }
         }
     }
 
     private var selectionControls: some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("PROVIDER")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                 NativeChoicePicker(
                     label: "Provider",
                     options: availableProviders.map {
@@ -209,9 +209,9 @@ struct SpendApprovalCard: View {
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("MODEL")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                 NativeChoicePicker(
                     label: "Model",
                     options: modelOptions.map {
@@ -242,19 +242,16 @@ struct SpendApprovalCard: View {
     }
 
     private var footerRow: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
+        WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
             Button("Decline") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
                 .disabled(isWorking)
-            Spacer()
             Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
                 guard let selectedOption else { return }
                 approvalError = nil
                 onApprove(selectedOption)
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
-            .controlSize(.small)
             .disabled(selectedOption == nil || isWorking
                 || (approval.requiresGenerationPackage == true && selectedOption?.generationPackage == nil))
             .focused($focusedControl, equals: .approve)

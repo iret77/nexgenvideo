@@ -114,14 +114,12 @@ struct PluginsPane: View {
         if !installedVersion.isPresentOnDisk {
             Button("Restart now") { AppRelaunch.now() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
         } else {
             Button("Remove", role: .destructive) {
                 removalError = nil
                 pendingRemoval = installedVersion
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
-            .controlSize(.small)
             .disabled(!presentation.canRemove)
             .help(presentation.help)
         }
@@ -216,7 +214,6 @@ struct PluginsPane: View {
                     }
                 }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
                     .disabled(!canApplyUpdate)
                     .help(
                         isActiveProjectPack
@@ -227,7 +224,6 @@ struct PluginsPane: View {
                 if let update {
                     Button("Update") { Task { _ = await manager.install(update); await manager.refresh() } }
                         .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
                 } else {
                     Text("Up to date")
                         .interfaceFont(size: AppTheme.Typography.ui)
@@ -237,7 +233,6 @@ struct PluginsPane: View {
                 if let reinstall {
                     Button("Update") { Task { _ = await manager.install(reinstall); await manager.refresh() } }
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                 } else {
                     Text(reason)
                         .interfaceFont(size: AppTheme.Typography.ui)

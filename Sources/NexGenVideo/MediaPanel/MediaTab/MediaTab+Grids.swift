@@ -458,8 +458,7 @@ extension MediaTab {
             Button("New Folder") {
                 let id = editor.createFolder(name: "New Folder", in: currentFolderId)
                 editor.moveAssetsToFolder(assetIds: targetIds, folderId: id)
-                pendingFolderFocusId = id
-                renamingFolderId = id
+                editor.requestMediaFolderRename(id, workspace: workspace)
             }
             if currentFolderId != nil || targetIds.contains(where: { id in editor.mediaAssets.first(where: { $0.id == id })?.folderId != nil }) {
                 Button("Library") {

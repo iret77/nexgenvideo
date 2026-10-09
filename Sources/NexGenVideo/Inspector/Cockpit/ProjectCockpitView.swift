@@ -205,13 +205,11 @@ struct ProjectSettingsView: View {
             WrapLayout(spacing: AppTheme.Spacing.sm) {
                 Button("Open Plugins…") { showsPluginPicker = true }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
                 // Once production has started the format is locked — the recovery path is to install
                 // the missing plugin, not to strand the pipeline by dropping to generic.
                 if editor.canChangeFormat {
                     Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                         .help("Back to the generic workflow. Pipeline data stays in the project.")
                 }
             }
@@ -229,7 +227,6 @@ struct ProjectSettingsView: View {
             if editor.canChangeFormat {
                 Button("Choose Plugin…") { showsPluginPicker = true }
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
             }
         }
     }
@@ -258,7 +255,6 @@ struct ProjectSettingsView: View {
                         editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
                 } else if editor.productionStarting {
                     // Genuine in-flight scaffold — a spinner, not a re-tappable button.
                     HStack(spacing: AppTheme.Spacing.xs) {
@@ -277,20 +273,16 @@ struct ProjectSettingsView: View {
                         editor.setWorkspaceFocus(.production)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
                 } else {
                     Button("Start production") { editor.startProduction() }
                         .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
                 }
                 // Format is locked once production starts — its artifacts are format-specific.
                 if editor.canChangeFormat {
                     Button("Switch…") { showsPluginPicker = true }
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                     Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                         .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
                         .help("Back to the generic workflow. Pipeline data stays in the project.")
                 }
             }
@@ -347,7 +339,7 @@ struct ProjectSettingsView: View {
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 .padding(.horizontal, AppTheme.Spacing.xs)
-                .frame(height: AppTheme.IconSize.md)
+                .interfaceControlHeight()
                 .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
             }
             .menuStyle(.button)

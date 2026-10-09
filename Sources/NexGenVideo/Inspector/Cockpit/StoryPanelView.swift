@@ -41,7 +41,7 @@ struct StoryPanelView: View {
                     .notInitialized, title: "Story", subject: "the story",
                     activePack: InstalledPack.named(editor.activePluginName),
                     startProduction: { editor.startProduction() },
-                    isStarting: editor.productionStarted,
+                    isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline,
                     retry: { Task { await editor.refreshEngineState() } }
                 )
             } else {
@@ -269,7 +269,7 @@ struct StoryPanelView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             TextField(label, text: text)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .labelsHidden()
@@ -294,7 +294,7 @@ struct StoryPanelView: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            .menuStyle(.button).buttonStyle(.capsule(.secondary)).menuIndicator(.hidden)
             Spacer(minLength: 0)
         }
     }
@@ -307,7 +307,6 @@ struct StoryPanelView: View {
                 editor.agentPanelVisible = true
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
-            .controlSize(.small)
         }
     }
 
@@ -379,11 +378,7 @@ struct StoryPanelView: View {
                 Text("v\(data.version)")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.mutedColor)
-                Text(data.bodyMarkdown)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                MarkdownText(text: data.bodyMarkdown)
             }
             .padding(AppTheme.Spacing.mdLg)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -442,7 +437,8 @@ struct StoryPanelView: View {
                 Image(systemName: "arrow.up.circle.fill")
                     .interfaceFont(size: AppTheme.Typography.section)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ToolbarIconButtonStyle())
+            .accessibilityLabel(action)
             .disabled(!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }

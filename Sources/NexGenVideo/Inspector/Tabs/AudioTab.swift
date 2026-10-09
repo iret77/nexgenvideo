@@ -57,7 +57,7 @@ extension InspectorView {
                 valueSuffix: " dB",
                 accessibilityName: "Volume",
                 dragSensitivity: 0.3,
-                fieldWidth: 56,
+                fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
                 displayTextOverride: { db in db <= VolumeScale.floorDb ? "-∞ dB" : nil },
                 onChanged: { db in
                     for c in audios { editor.applyVolume(clipId: c.id, valueDb: db) }
@@ -86,7 +86,7 @@ extension InspectorView {
                 valueSuffix: " s",
                 accessibilityName: label,
                 dragSensitivity: 0.02,
-                fieldWidth: 56,
+                fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
                 onChanged: { seconds in
                     let frames = Int((seconds * fps).rounded())
                     for c in clips { editor.applyFade(clipId: c.id, edge: edge, frames: frames) }

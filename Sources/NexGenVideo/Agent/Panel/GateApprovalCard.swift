@@ -179,7 +179,6 @@ struct GateApprovalCard: View {
         return layout {
             Button("Not yet") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
                 .disabled(isWorking || isBlocked)
             if horizontal { Spacer() }
             Button {
@@ -196,7 +195,6 @@ struct GateApprovalCard: View {
                 }
             }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .controlSize(.small)
                 .disabled(isWorking || isBlocked || !review.isReady)
                 .focused($approveFocused)
                 .accessibilityHint(

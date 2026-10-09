@@ -110,14 +110,32 @@ private struct WorkspaceHeaderContent: ViewModifier {
     }
 }
 
+private struct InterfaceControlHeight: ViewModifier {
+    let minimum: CGFloat
+    @Environment(\.interfaceScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.frame(minHeight: minimum * scale)
+    }
+}
+
 struct ProjectInterface<Content: View>: View {
     @Environment(EditorViewModel.self) private var editor
     let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
-    var body: some View { content.interfaceStyle(palette: editor.projectPalette) }
+    var body: some View {
+        content
+            .interfaceStyle(palette: editor.projectPalette)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppTheme.Background.surfaceColor)
+    }
 }
 
 extension View {
+    func interfaceControlHeight(_ minimum: CGFloat = AppTheme.Control.compactHeight) -> some View {
+        modifier(InterfaceControlHeight(minimum: minimum))
+    }
+
     func workspaceHeaderContent() -> some View {
         modifier(WorkspaceHeaderContent())
     }

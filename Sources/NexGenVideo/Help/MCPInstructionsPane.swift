@@ -156,7 +156,6 @@ struct MCPInstructionsPane: View {
             SettingsRow(title: title, subtitle: subtitle) {
                 Button(buttonLabel, action: action)
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
             }
             SettingsDivider()
             ManualFallback(intro: manualIntro, code: manualCode)
@@ -204,7 +203,7 @@ private struct CodeBlockView: View {
         .padding(.vertical, AppTheme.Spacing.md)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(AppTheme.Background.raisedColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
@@ -231,7 +230,7 @@ private struct ManualFallback: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.inlineAction())
 
             if expanded {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -265,7 +264,6 @@ private struct CopyButton: View {
                 .foregroundStyle(copied ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
         }
         .buttonStyle(.capsule(.secondary, size: .regular))
-        .controlSize(.small)
         .onDisappear {
             resetTask?.cancel()
             resetTask = nil

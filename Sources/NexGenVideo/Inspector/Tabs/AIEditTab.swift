@@ -168,7 +168,7 @@ struct AIEditTab: View {
         InspectorFormRow(label: label, icon: icon, labelHelp: help) {
             Toggle(label, isOn: isOn)
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.regular)
                 .labelsHidden()
                 .accessibilityLabel(label)
         }
@@ -267,7 +267,7 @@ struct AIEditTab: View {
     private func actionTrigger(action: EditAction, title: String, isEnabled: Bool) -> some View {
         switch action {
         case .upscale:
-            Menu(title) {
+            Menu {
                 ForEach(UpscaleModelConfig.selections(
                     for: asset,
                     effectiveDuration: effectiveDurationForAvailability
@@ -278,28 +278,27 @@ struct AIEditTab: View {
                         Text(upscaleLabel(for: selection))
                     }
                 }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .controlSize(.small)
+            } label: { ActionMenuLabel(title: title) }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.capsule(.secondary))
             .disabled(!isEnabled)
         case .createVideo:
-            Menu(title) {
+            Menu {
                 Button("Set as first frame") { sendToVideo(asReference: false) }
                     .disabled(EditSubmitter.createVideoSeed(for: asset, asReference: false) == nil)
                 Button("Set as reference") { sendToVideo(asReference: true) }
                     .disabled(EditSubmitter.createVideoSeed(for: asset, asReference: true) == nil)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .controlSize(.small)
+            } label: { ActionMenuLabel(title: title) }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.capsule(.secondary))
             .disabled(!isEnabled)
         case .edit, .generateMusic, .generateSFX, .rerun:
             Button(title) {
                 present(action)
             }
             .buttonStyle(.capsule(.secondary))
-            .controlSize(.small)
             .disabled(!isEnabled)
         }
     }

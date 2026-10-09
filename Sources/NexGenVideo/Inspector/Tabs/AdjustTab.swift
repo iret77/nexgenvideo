@@ -368,11 +368,7 @@ extension InspectorView {
     }
 
     private func lutFileRow(path: String?, clips: [Clip]) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text("File")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
+        InspectorFormRow(label: "File") {
             Button { chooseLUT(clips: clips) } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "square.stack.3d.up")
@@ -415,7 +411,7 @@ extension InspectorView {
                 ScrubbableNumberField(
                     value: value, range: range, displayMultiplier: 100, format: "%.0f",
                     valueSuffix: "%", accessibilityName: "LUT intensity",
-                    dragSensitivity: 0.5, fieldWidth: 50,
+                    dragSensitivity: 0.5, fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                     onChanged: { setLUTIntensity($0, clips: clips, commit: false) }
                 ) { setLUTIntensity($0, clips: clips, commit: true) }
             }
@@ -500,7 +496,7 @@ extension InspectorView {
                         valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
                         accessibilityName: label,
                         dragSensitivity: effectParamSensitivity(spec),
-                        fieldWidth: 50,
+                        fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                         onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
                     ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
                 }

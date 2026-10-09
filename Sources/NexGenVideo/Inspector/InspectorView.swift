@@ -128,7 +128,7 @@ struct InspectorView: View {
                         entityEditPrompt = entity.visualPrompt
                         entityEditTarget = entity.id
                     }
-                    .controlSize(.small)
+                    .buttonStyle(.capsule(.secondary))
                     .popover(isPresented: Binding(
                         get: { entityEditTarget == entity.id },
                         set: { if !$0 { entityEditTarget = nil } }
@@ -261,9 +261,10 @@ struct InspectorView: View {
                 .fixedSize()
             }
             .menuStyle(.borderlessButton)
+            .tint(AppTheme.Text.secondaryColor)
             .fixedSize()
         }
-        .frame(height: AppTheme.IconSize.md)
+        .interfaceControlHeight()
         .task(id: "\(shot.id)|\(shot.sourceMode)|\(editor.pipelinePhaseRunCoordinator.hasRunningJobs)") {
             shotSourceModeAvailableID = nil
             if await editor.canSetShotSourceMode(
@@ -325,23 +326,17 @@ struct InspectorView: View {
 
     /// A wrapping row of navigable object chips (label → inspect target).
     private func chipRow(_ items: [(String, InspectedObject)]) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading, spacing: AppTheme.Spacing.xs) {
+        WrapLayout(spacing: AppTheme.Spacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Button {
                     if case .clip(let id) = item.1 { editor.selectedClipIds = [id] }
                     editor.inspectedObject = item.1
                 } label: {
                     Text(item.0)
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .lineLimit(1)
-                        .padding(.horizontal, AppTheme.Spacing.sm)
-                        .padding(.vertical, AppTheme.Spacing.xxs)
-                        .background { Capsule().fill(AppTheme.Background.raisedColor) }
-                        .overlay(Capsule().strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline))
-                        .contentShape(Capsule())
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.capsule(.secondary))
             }
         }
     }
@@ -402,7 +397,7 @@ struct InspectorView: View {
                 requiresDirection: true
             ))
         }
-        .controlSize(.small)
+        .buttonStyle(.capsule(.secondary))
         .disabled(editor.inspectedObject == nil || editor.agentService.isStreaming
             || editor.agentService.isComposerBlocked)
         .help("Prepare an object-specific revision task")
@@ -425,6 +420,7 @@ struct InspectorView: View {
             HStack {
                 Spacer()
                 Button("Apply via Agent") { applyEntityEdit(entity) }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
                     .keyboardShortcut(.defaultAction)
                     .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             }
@@ -463,7 +459,7 @@ struct InspectorView: View {
         Button("Open in Project") {
             editor.revealCockpit(tab)
         }
-        .controlSize(.small)
+        .buttonStyle(.capsule(.secondary))
     }
 
     // MARK: - Contextual one-shot prose (ladder rung 3 — docs/UI_UX_CONCEPT.md §4)
@@ -603,19 +599,7 @@ struct InspectorView: View {
     }
 
     private var emptyInspectorState: some View {
-        VStack(spacing: AppTheme.Spacing.sm) {
-            Spacer()
-            Image(systemName: "cursorarrow.rays")
-                .interfaceFont(size: AppTheme.Typography.title)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            Text("Select a clip or asset to inspect it")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(AppTheme.Spacing.lg)
+        WorkspaceStateView(message: "Select a clip or asset to inspect it", systemImage: "cursorarrow.rays") {}
     }
 
     /// Entity/shot/look objects are worked on in the Project cockpit; the Inspector offers the jump.
@@ -634,7 +618,7 @@ struct InspectorView: View {
             Button("Open in Project") {
                 editor.revealCockpit(target)
             }
-            .controlSize(.small)
+            .buttonStyle(.capsule(.secondary))
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -850,14 +834,9 @@ struct InspectorView: View {
                     Text("Keyframes")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 }
-                .foregroundStyle(on ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                .padding(.horizontal, AppTheme.Spacing.smMd)
-                .padding(.vertical, AppTheme.Spacing.xs)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.capsule(.secondary, isSelected: on))
             .disabled(!enabled)
-            .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
             .help(enabled ? (on ? "Hide keyframe timeline" : "Show keyframe timeline") : "Select a single clip to enable")
             .background {
                 AppRelaunchClickProbe(
@@ -881,7 +860,7 @@ struct InspectorView: View {
                         valueSuffix: "x",
                         accessibilityName: "Speed",
                         dragSensitivity: 0.01,
-                        fieldWidth: 50,
+                        fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                         onChanged: { newVal in
                             for c in clips { editor.applyClipSpeed(clipId: c.id, newSpeed: newVal) }
                         }
@@ -966,13 +945,10 @@ struct InspectorView: View {
             } label: {
                 Image(systemName: onKeyframe ? "diamond.fill" : "diamond")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(onKeyframe ? AppTheme.Accent.timecodeColor : AppTheme.Text.tertiaryColor)
-                    .frame(width: AppTheme.Timeline.keyframeStampButtonWidth, height: AppTheme.Timeline.keyframeRulerHeight)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ToolbarIconButtonStyle(isSelected: onKeyframe))
             .disabled(!inRange)
-            .opacity(inRange ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
+            .accessibilityLabel(onKeyframe ? "Remove keyframe" : "Add keyframe")
             .help(!inRange ? "Move playhead inside the clip"
                   : onKeyframe ? "Remove keyframe at playhead"
                   : "Add keyframe at playhead")
@@ -991,13 +967,10 @@ struct InspectorView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.Timeline.keyframeNavigationButtonWidth, height: AppTheme.Timeline.keyframeRulerHeight)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle())
         .disabled(!enabled)
-        .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.shadow)
+        .accessibilityLabel(help)
         .help(help)
     }
 
@@ -1038,7 +1011,7 @@ struct InspectorView: View {
             format: "%.0f",
             valueSuffix: "%",
             accessibilityName: "Scale",
-            fieldWidth: 50,
+            fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
             onChanged: { newVal in
                 for c in clips { editor.applyScale(clipId: c.id, newScale: newVal) }
             }
@@ -1059,7 +1032,7 @@ struct InspectorView: View {
             format: "%.0f",
             valueSuffix: "°",
             accessibilityName: "Rotation",
-            fieldWidth: 50,
+            fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
             onChanged: { newVal in
                 for c in clips { editor.applyRotation(clipId: c.id, valueDeg: newVal) }
             }
@@ -1080,7 +1053,7 @@ struct InspectorView: View {
             format: "%.0f",
             valueSuffix: "%",
             accessibilityName: "Opacity",
-            fieldWidth: 50,
+            fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
             onChanged: { newVal in
                 for c in clips { editor.applyOpacity(clipId: c.id, value: newVal) }
             }
@@ -1174,19 +1147,9 @@ struct InspectorView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(isOn ? AppTheme.Accent.primary : AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(
-                            AppTheme.Text.primaryColor.opacity(
-                                isOn ? AppTheme.Opacity.subtle : AppTheme.Opacity.transparent
-                            )
-                        )
-                )
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarIconButtonStyle(isSelected: isOn))
+        .accessibilityLabel(help)
         .help(help)
     }
 
@@ -1216,7 +1179,6 @@ struct InspectorView: View {
                 keyframeControls(clipId: cid, property: .crop)
             }
         }
-        .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
     }
 
     @ViewBuilder
@@ -1238,6 +1200,7 @@ struct InspectorView: View {
             InspectorCropAspectLabel(label: active.label)
         }
         .menuStyle(.borderlessButton)
+        .tint(AppTheme.Text.secondaryColor)
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(single == nil)

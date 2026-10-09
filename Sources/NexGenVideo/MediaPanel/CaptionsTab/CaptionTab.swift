@@ -248,20 +248,11 @@ struct CaptionTab: View {
             } label: { Label("Translate", systemImage: "globe") }
             .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Text("Agent Mode")
-                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.ui)
-            }
-            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-            .foregroundStyle(AppTheme.aiGradient)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.smMd)
-            .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Background.raisedColor))
-            .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(AppTheme.aiGradient.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
+            ActionMenuLabel(title: "Agent Mode")
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).focusable(false)
+        .menuStyle(.button)
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .menuIndicator(.hidden)
         .help("Let Agent create captions for you. Choose a task and review its instructions before running.")
     }
 

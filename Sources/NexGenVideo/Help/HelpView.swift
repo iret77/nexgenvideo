@@ -76,8 +76,8 @@ final class HelpWindowController: NSWindowController {
         window.title = "Help"
         window.setFrameAutosaveName("NexGenVideoHelp-v2")
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(AppTheme.Opacity.settingsWindow)
-        window.isOpaque = false
+        window.backgroundColor = AppTheme.Background.surface
+        window.isOpaque = true
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true

@@ -35,7 +35,13 @@ enum TimelineMarkerRenderer {
                 height: AppTheme.Timeline.markerFlagHeight
             )
             context.setFillColor(color.cgColor)
-            context.fill(flag)
+            context.move(to: CGPoint(x: flag.minX, y: flag.minY))
+            context.addLine(to: CGPoint(x: flag.maxX, y: flag.minY))
+            context.addLine(to: CGPoint(x: flag.maxX - flag.width / 3, y: flag.midY))
+            context.addLine(to: CGPoint(x: flag.maxX, y: flag.maxY))
+            context.addLine(to: CGPoint(x: flag.minX, y: flag.maxY))
+            context.closePath()
+            context.fillPath()
 
             if marker.durationFrames > 0 {
                 context.fill(CGRect(

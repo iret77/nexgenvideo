@@ -24,6 +24,9 @@ final class TimelineHeaderView: NSView {
     init(editor: EditorViewModel) {
         self.editor = editor
         super.init(frame: .zero)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Track controls")
+        setAccessibilityHelp("Use Up and Down to choose a track, then Return to open its actions.")
         wantsLayer = true
         layer?.backgroundColor = Self.headerBg
         NotificationCenter.default.addObserver(
@@ -85,6 +88,14 @@ final class TimelineHeaderView: NSView {
             if reorderDrag?.id == track.id {
                 ctx.setFillColor(AppTheme.Background.prominent.cgColor)
                 ctx.fill(NSRect(x: AppTheme.Spacing.none, y: y, width: headerWidth, height: h))
+            }
+
+            if showsKeyboardFocus && window?.firstResponder === self && i == keyboardTrackIndex {
+                ctx.setStrokeColor(AppTheme.Border.primary.cgColor)
+                ctx.setLineWidth(AppTheme.BorderWidth.medium)
+                ctx.stroke(NSRect(x: bounds.minX, y: y, width: headerWidth, height: h).insetBy(
+                    dx: AppTheme.BorderWidth.thin, dy: AppTheme.BorderWidth.thin
+                ))
             }
 
             // Color-coded left border strip
@@ -191,7 +202,7 @@ final class TimelineHeaderView: NSView {
         let rect = NSRect(x: x, y: y, width: size, height: size)
         let tint = active
             ? AppTheme.Text.secondary
-            : AppTheme.Text.secondary.withAlphaComponent(AppTheme.Opacity.shadow)
+            : AppTheme.Text.tertiary
         drawSymbol(active ? onSymbol : offSymbol, in: rect, tint: tint, config: config, context: context)
         return rect.insetBy(dx: -AppTheme.Spacing.xs, dy: -AppTheme.Spacing.xs)
     }
@@ -212,6 +223,89 @@ final class TimelineHeaderView: NSView {
 
     // MARK: - Input handling
 
+    private var keyboardTrackIndex = 0
+    private var showsKeyboardFocus = false
+    private struct ActionKey: Hashable { let trackID: String; let kind: String }
+    private var accessibleActions: [ActionKey: TrackActionElement] = [:]
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        showsKeyboardFocus = accepted
+        needsDisplay = true
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { showsKeyboardFocus = false }
+        needsDisplay = true
+        return accepted
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard !editor.timeline.tracks.isEmpty else { super.keyDown(with: event); return }
+        switch event.keyCode {
+        case 125, 126:
+            showsKeyboardFocus = true
+            keyboardTrackIndex = min(editor.timeline.tracks.count - 1,
+                                     max(0, keyboardTrackIndex + (event.keyCode == 125 ? 1 : -1)))
+            needsDisplay = true
+        case 36:
+            let index = min(keyboardTrackIndex, editor.timeline.tracks.count - 1)
+            let geometry = TimelineGeometry(editor: editor, bounds: bounds)
+            trackContextMenu(id: editor.timeline.tracks[index].id)?.popUp(
+                positioning: nil,
+                at: NSPoint(x: bounds.midX, y: geometry.trackY(at: index)),
+                in: self
+            )
+        default: super.keyDown(with: event)
+        }
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        let geometry = TimelineGeometry(editor: editor, bounds: bounds)
+        var currentKeys: Set<ActionKey> = []
+        let children = editor.timeline.tracks.enumerated().flatMap { index, track -> [TrackActionElement] in
+            let label = editor.timelineTrackDisplayLabel(at: index)
+            var actions: [(String, TrackCommand)] = [
+                ("\(track.syncLocked ? "Unlock Sync" : "Sync Lock") Track \(label)", .syncLock(!track.syncLocked))
+            ]
+            actions.append(track.type == .audio
+                ? ("\(track.muted ? "Unmute" : "Mute") Track \(label)", .mute(!track.muted))
+                : ("\(track.hidden ? "Show" : "Hide") Track \(label)", .visibility(!track.hidden)))
+            if editor.allowsTimelineEditChrome {
+                if editor.trackReorderDestination(from: index, requested: index - 1) != index { actions.append(("Move Track \(label) Up", .move(-1))) }
+                if editor.trackReorderDestination(from: index, requested: index + 1) != index { actions.append(("Move Track \(label) Down", .move(1))) }
+            }
+            return actions.map { title, command in
+                let key = ActionKey(trackID: track.id, kind: command.accessibilityKey)
+                currentKeys.insert(key)
+                let element = accessibleActions[key] ?? TrackActionElement()
+                accessibleActions[key] = element
+                element.setAccessibilityRole(.button)
+                element.setAccessibilityLabel(title)
+                element.setAccessibilityParent(self)
+                element.setAccessibilityFrameInParentSpace(NSRect(
+                    x: bounds.minX, y: geometry.trackY(at: index),
+                    width: bounds.width, height: geometry.trackHeight(at: index)
+                ))
+                element.press = { [weak self] in
+                    self?.performTrackCommand(TrackCommandTarget(id: track.id, command: command))
+                    return self != nil
+                }
+                return element
+            }
+        }
+        accessibleActions = accessibleActions.filter { currentKeys.contains($0.key) }
+        return children
+    }
+
+    private final class TrackActionElement: NSAccessibilityElement {
+        var press: (() -> Bool)?
+        override func accessibilityPerformPress() -> Bool { press?() ?? false }
+    }
+
     private var resizeDrag: (trackIndex: Int, originalHeight: CGFloat)?
     private var reorderDrag: (id: String, before: Timeline)?
 
@@ -227,7 +321,17 @@ final class TimelineHeaderView: NSView {
     }
 
     private enum TrackCommand {
-        case mute(Bool), visibility(Bool), syncLock(Bool), remove(Track)
+        case mute(Bool), visibility(Bool), syncLock(Bool), move(Int), remove(Track)
+
+        var accessibilityKey: String {
+            switch self {
+            case .mute: "mute"
+            case .visibility: "visibility"
+            case .syncLock: "syncLock"
+            case .move(let offset): "move\(offset)"
+            case .remove: "remove"
+            }
+        }
     }
 
     private struct TrackCommandTarget {
@@ -268,6 +372,8 @@ final class TimelineHeaderView: NSView {
         }
         add("\(track.syncLocked ? "Unlock Sync for" : "Sync Lock") Track \(label)", .syncLock(!track.syncLocked))
         menu.addItem(.separator())
+        add("Move Track Up", .move(-1), enabled: editor.allowsTimelineEditChrome && editor.trackReorderDestination(from: index, requested: index - 1) != index)
+        add("Move Track Down", .move(1), enabled: editor.allowsTimelineEditChrome && editor.trackReorderDestination(from: index, requested: index + 1) != index)
         let contents = track.clips.count == 1 ? "1 Clip" : "\(track.clips.count) Clips"
         let removal = track.clips.isEmpty ? "Remove Empty Track \(label)"
             : "Remove Track \(label) and \(contents)"
@@ -276,8 +382,12 @@ final class TimelineHeaderView: NSView {
     }
 
     @objc private func performTrackCommand(_ sender: NSMenuItem) {
-        guard let target = sender.representedObject as? TrackCommandTarget,
-              let index = editor.timeline.tracks.firstIndex(where: { $0.id == target.id }) else { return }
+        guard let target = sender.representedObject as? TrackCommandTarget else { return }
+        performTrackCommand(target)
+    }
+
+    private func performTrackCommand(_ target: TrackCommandTarget) {
+        guard let index = editor.timeline.tracks.firstIndex(where: { $0.id == target.id }) else { return }
         switch target.command {
         case .mute(let value):
             guard editor.timeline.tracks[index].muted != value else { return }
@@ -288,6 +398,10 @@ final class TimelineHeaderView: NSView {
         case .syncLock(let value):
             guard editor.timeline.tracks[index].syncLocked != value else { return }
             editor.toggleTrackSyncLock(trackIndex: index)
+        case .move(let offset):
+            guard editor.allowsTimelineEditChrome else { return }
+            editor.reorderTrack(id: target.id, to: index + offset)
+            requestCanvasRedraw?()
         case .remove(let expected):
             guard editor.allowsTimelineEditChrome else { return }
             guard editor.timeline.tracks[index] == expected else {
@@ -300,7 +414,12 @@ final class TimelineHeaderView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        showsKeyboardFocus = false
+        needsDisplay = true
         let point = convert(event.locationInWindow, from: nil)
+        let geometry = TimelineGeometry(editor: editor, bounds: bounds)
+        keyboardTrackIndex = max(0, min(editor.timeline.tracks.count - 1, geometry.trackAt(y: Double(point.y))))
 
         for (ti, rect) in muteButtonRects {
             if rect.contains(point) {

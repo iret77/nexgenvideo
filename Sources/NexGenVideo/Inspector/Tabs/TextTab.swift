@@ -80,7 +80,7 @@ struct TextTab: View {
                 format: "%.0f",
                 valueSuffix: " pt",
                 accessibilityName: "Text size",
-                fieldWidth: 50,
+                fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                 onChanged: { newVal in
                     editor.applyTextStyle(clipId: clip.id) { $0.fontSize = newVal }
                     editor.fitTextClipToContent(clipId: clip.id)
@@ -101,7 +101,7 @@ struct TextTab: View {
                 format: "%.0f",
                 valueSuffix: "%",
                 accessibilityName: "Text opacity",
-                fieldWidth: 50,
+                fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                 onChanged: { newVal in
                     editor.applyClipProperty(clipId: clip.id) { $0.opacity = newVal }
                 }
@@ -190,8 +190,7 @@ struct TextTab: View {
                 )
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
-                .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
+                .controlSize(.regular)
                 .accessibilityLabel(label)
             }
             InspectorFormRow(label: "Color") {

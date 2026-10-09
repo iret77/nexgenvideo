@@ -3,6 +3,7 @@ import SwiftUI
 
 /// NSTextView-backed — SwiftUI `TextEditor`'s binding drops keystrokes when the parent re-renders per-apply.
 struct TextContentField: NSViewRepresentable {
+    @Environment(\.interfaceScale) private var interfaceScale
     @Binding var text: String
     let onCommit: (String) -> Void
 
@@ -20,7 +21,7 @@ struct TextContentField: NSViewRepresentable {
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = false
-        textView.font = .systemFont(ofSize: AppTheme.FontSize.md)
+        textView.font = .systemFont(ofSize: AppTheme.Typography.ui * interfaceScale)
         textView.textColor = AppTheme.Text.primary
         textView.insertionPointColor = AppTheme.Text.primary
         textView.backgroundColor = .clear
@@ -44,6 +45,8 @@ struct TextContentField: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = nsView.documentView as? NSTextView else { return }
+        let size = AppTheme.Typography.ui * interfaceScale
+        if textView.font?.pointSize != size { textView.font = .systemFont(ofSize: size) }
         // Don't stomp the insertion point mid-type.
         guard textView.window?.firstResponder !== textView else { return }
         if textView.string != text {

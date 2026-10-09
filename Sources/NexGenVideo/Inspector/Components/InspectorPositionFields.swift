@@ -30,7 +30,7 @@ struct InspectorPositionFields: View {
             displayMultiplier: displayMultiplier,
             format: "%.0f",
             accessibilityName: "Position \(axis.rawValue)",
-            fieldWidth: 36,
+            fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
             trailingLabel: axis.rawValue,
             onChanged: { newValue in
                 apply(
