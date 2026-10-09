@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.2",
+      "date": "2026-10-09",
+      "sections": [
+        {
+          "heading": "Interface",
+          "items": [
+            "Pipeline actions reserve the width of their complete labels before the phase name receives the remaining space. Narrow panes wrap whole actions without splitting button labels."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.6.1",
       "date": "2026-10-09",
       "sections": [

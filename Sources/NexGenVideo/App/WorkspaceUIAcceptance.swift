@@ -874,6 +874,22 @@ enum WorkspaceUIAcceptance {
                 && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
                 && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
         }) else { reject("Musicvideo phase controls or Track card did not render") }
+        let actionFont = NSFont.systemFont(ofSize: AppTheme.Typography.action * CGFloat(scale), weight: AppTheme.AppKitFontWeight.medium)
+        let singleLineHeight = ceil(actionFont.ascender - actionFont.descender + actionFont.leading)
+        for phase in ["project_init", "production_design"] {
+            guard let action = findProbe(in: host, identifier: "pipeline.overview.surface.\(phase)"),
+                  let identity = findProbe(in: host, identifier: "pipeline.overview.phase.\(phase)"),
+                  action.window === window, !action.isHiddenOrHasHiddenAncestor,
+                  action.bounds.width > 0, action.bounds.height > 0,
+                  action.bounds.height <= singleLineHeight + AppTheme.BorderWidth.thin else {
+                reject("Pipeline action label wraps: \(phase)")
+            }
+            let actionFrame = action.convert(action.bounds, to: host)
+            let identityFrame = identity.convert(identity.bounds, to: host)
+            guard host.bounds.contains(actionFrame), !actionFrame.intersects(identityFrame) else {
+                reject("Pipeline action overlaps its phase or leaves the viewport: \(phase)")
+            }
+        }
         guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }
         guard await waitUntil(timeout: .seconds(5), {
             guard let owner = editor.agentService.currentSessionId,
@@ -920,7 +936,7 @@ enum WorkspaceUIAcceptance {
         emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
             "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
             "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
-            "disabledApprovalDidNotMutate": true, "screenshots": [initial, final]])
+            "disabledApprovalDidNotMutate": true, "surfaceActionsSingleLine": true, "screenshots": [initial, final]])
     }
 
     private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {

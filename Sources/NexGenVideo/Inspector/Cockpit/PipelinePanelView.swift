@@ -271,8 +271,7 @@ struct PipelinePanelView: View {
                                 phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
                                          isLast: index == data.phases.count - 1,
                                          runningPhase: activeRunningPhase,
-                                         compact: geometry.size.width < AppTheme.ComponentSize.pipelineCompactWidth * interfaceScale,
-                                         stackedActions: geometry.size.width < AppTheme.ComponentSize.pipelineActionFitWidth * interfaceScale)
+                                         compact: geometry.size.width < AppTheme.ComponentSize.pipelineCompactWidth * interfaceScale)
                             }
                         }
                         .padding(AppTheme.Spacing.xs)
@@ -446,8 +445,7 @@ struct PipelinePanelView: View {
         isNext: Bool,
         isLast: Bool,
         runningPhase: String?,
-        compact: Bool,
-        stackedActions: Bool
+        compact: Bool
     ) -> some View {
         let isRunning = runningPhase == phase.phase
         let pipelineIsRunning = runningPhase != nil
@@ -463,12 +461,10 @@ struct PipelinePanelView: View {
             layout {
                 phaseIdentity(phase, isNext: isNext)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                let actionLayout = stackedActions
-                    ? AnyLayout(VStackLayout(alignment: .trailing, spacing: AppTheme.Spacing.sm))
-                    : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
-                actionLayout {
+                WrapLayout(spacing: AppTheme.Spacing.sm) {
                     surfaceIcon(for: phase.phase)
-                        .frame(width: AppTheme.ComponentSize.pipelineSurfaceWidth * interfaceScale, alignment: .leading)
+                        .fixedSize(horizontal: !compact, vertical: true)
+                        .frame(minWidth: AppTheme.ComponentSize.pipelineSurfaceMinWidth * interfaceScale, alignment: .leading)
                     Group {
                         if isNext && !isRunning {
                             approveButton(phase, enabled: approvalEnabled)
@@ -491,6 +487,7 @@ struct PipelinePanelView: View {
                     )
                     .frame(width: AppTheme.IconSize.md)
                 }
+                .fixedSize(horizontal: !compact, vertical: true)
                 .frame(maxWidth: compact ? .infinity : nil, alignment: .trailing)
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
@@ -763,6 +760,7 @@ struct PipelinePanelView: View {
                 }
             } label: {
                 ActionLabel(title: route.label, systemImage: route.icon)
+                    .background { acceptanceProbe("surface.\(phase)", text: route.label) }
             }
             .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)
