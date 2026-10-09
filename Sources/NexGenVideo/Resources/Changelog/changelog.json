@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.2",
+      "date": "2026-10-09",
+      "sections": [
+        {
+          "heading": "Interface",
+          "items": [
+            "Pipeline actions use their full label width instead of a fixed narrow column. Step names use the remaining space, and rows adapt to the available pane width."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.6.1",
       "date": "2026-10-09",
       "sections": [

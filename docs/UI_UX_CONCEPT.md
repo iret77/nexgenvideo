@@ -45,6 +45,11 @@ It supports two genuinely different kinds of work:
    This is not a UI detail; it is the foundation the layout (Phase A) and the ledger (Phase C) both
    stand on. Build it first (Phase 0).
 
+Action columns reserve their content's intrinsic width before flexible descriptive columns consume
+remaining row space. Column tokens are minimums, not caps on action labels. Compact rows reuse
+`WrapLayout` to wrap complete controls and reserve the resulting height; an individual control wider
+than the entire pane may wrap its own label within that pane.
+
 ## 3. Information architecture (layout)
 
 **Focus toggle: `Edit` ↔ `Produce`.** A workspace *focus*, not a page — "the same room rearranged,"
