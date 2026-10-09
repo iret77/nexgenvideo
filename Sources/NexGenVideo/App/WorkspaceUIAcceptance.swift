@@ -685,7 +685,7 @@ enum WorkspaceUIAcceptance {
                       let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
                     fail("inspector \(item.family) split geometry was unavailable", scale: scale)
                 }
-                let wideInspectorWidth = max(originalInspectorFrame.width, AppTheme.Layout.inspectorDefault * scale)
+                let wideInspectorWidth = max(originalInspectorFrame.width, AppTheme.Layout.inspectorDefault * CGFloat(scale))
                 splitState.splitView.setPosition(
                     splitState.splitView.bounds.maxX - wideInspectorWidth - splitState.splitView.dividerThickness,
                     ofDividerAt: splitState.dividerIndex
@@ -711,7 +711,7 @@ enum WorkspaceUIAcceptance {
                     scale: scale
                 )
                 splitState.splitView.setPosition(
-                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin - splitState.splitView.dividerThickness,
                     ofDividerAt: splitState.dividerIndex
                 )
                 guard await waitUntil(timeout: .seconds(5), {
