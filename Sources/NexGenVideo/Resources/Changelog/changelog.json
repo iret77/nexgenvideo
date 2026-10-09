@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.2",
+      "date": "2026-10-09",
+      "sections": [
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.12 validates new analysis labels before saving and permits correction of previously saved incorrect labels without rerunning audio analysis.",
+            "Measured timing, source verification and approval checks remain enforced. The updated pack requires NexGenVideo 1.6.2; existing projects retain their pinned pack until explicitly upgraded."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.6.1",
       "date": "2026-10-09",
       "sections": [

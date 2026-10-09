@@ -918,6 +918,9 @@ struct GateGuardTests {
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
         }
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: root)
+        }
 
         tampered = object
         var sections = try #require(tampered["sections"] as? [[String: Any]])
@@ -927,6 +930,16 @@ struct GateGuardTests {
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
         }
+        try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: root)
+        let before = try Data(contentsOf: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireAnalysisCandidate(dataRoot: root, data: before)
+        }
+        try MusicvideoGateChecks.requireAnalysisCandidate(
+            dataRoot: root,
+            data: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(try Data(contentsOf: url) == before)
     }
 
     @Test("native analysis gate preserves an opening lyric marker label")

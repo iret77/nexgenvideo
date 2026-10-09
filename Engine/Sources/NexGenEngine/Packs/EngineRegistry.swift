@@ -119,6 +119,11 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public private(set) var frameReferencePlanProvider: (any FrameReferencePlanProviding)?
 
+    // Validate replacement bytes before changing the canonical artifact.
+    public private(set) var artifactCandidateRequirements: [String: ArtifactCandidateRequirement] = [:]
+
+    public typealias ArtifactCandidateRequirement = @Sendable (URL, Data) throws -> Void
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -241,6 +246,13 @@ public final class EngineRegistry: @unchecked Sendable {
         _ check: @escaping GateRequirement
     ) {
         artifactWriteRequirements[phase] = check
+    }
+
+    public func registerArtifactCandidateRequirement(
+        _ phase: String,
+        _ check: @escaping ArtifactCandidateRequirement
+    ) {
+        artifactCandidateRequirements[phase] = check
     }
 
     public func registerPhaseLineageProvider(

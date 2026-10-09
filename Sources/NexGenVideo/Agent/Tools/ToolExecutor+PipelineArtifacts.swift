@@ -191,6 +191,7 @@ extension ToolExecutor {
                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             )
             output.append(0x0A)
+            try registry.artifactCandidateRequirements["analysis"]?(root, output)
             try output.write(to: analysisURL, options: .atomic)
         } catch {
             throw ToolError(
