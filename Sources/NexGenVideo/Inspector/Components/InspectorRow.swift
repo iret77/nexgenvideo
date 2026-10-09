@@ -231,9 +231,10 @@ private struct InspectorFormLayout: Layout {
             return
         }
         let sizes = measuredSizes(width: bounds.width, subviews: subviews)
+        let trailingEdge = bounds.maxX.rounded(.down)
         let controlMaxX = sizes.accessoryAlongside
-            ? bounds.maxX - accessoryWidth - accessoryGap
-            : bounds.maxX
+            ? trailingEdge - accessoryWidth - accessoryGap
+            : trailingEdge
         if sizes.inline {
             let height = max(sizes.label.height, max(sizes.control.height, sizes.accessory.height))
             subviews[0].place(
@@ -278,7 +279,7 @@ private struct InspectorFormLayout: Layout {
             } else if sizes.accessoryPresent {
                 subviews[2].place(
                     at: CGPoint(
-                        x: max(bounds.minX, bounds.maxX - accessoryWidth),
+                        x: max(bounds.minX, trailingEdge - accessoryWidth),
                         y: controlLineY + sizes.control.height + gap
                     ),
                     proposal: ProposedViewSize(width: min(accessoryWidth, bounds.width), height: sizes.accessory.height)
@@ -348,7 +349,7 @@ private struct InspectorFormLayout: Layout {
     ) {
         guard accessoryColumn, subviews.count > 2 else { return }
         subviews[2].place(
-            at: CGPoint(x: bounds.maxX - accessoryWidth, y: lineY + (lineHeight - size.height) / 2),
+            at: CGPoint(x: bounds.maxX.rounded(.down) - accessoryWidth, y: lineY + (lineHeight - size.height) / 2),
             proposal: ProposedViewSize(width: accessoryWidth, height: size.height)
         )
     }
