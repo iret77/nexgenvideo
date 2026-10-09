@@ -10,6 +10,13 @@
           "items": [
             "Pipeline actions use their full label width instead of a fixed narrow column. Step names use the remaining space, and rows adapt to the available pane width."
           ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.12 validates new analysis labels before saving and permits correction of previously saved incorrect labels without rerunning audio analysis.",
+            "Measured timing, source verification and approval checks remain enforced. The updated pack requires NexGenVideo 1.6.2; existing projects retain their pinned pack until explicitly upgraded."
+          ]
         }
       ]
     },

@@ -700,6 +700,10 @@ enum MusicvideoGateChecks {
 
     private static func measuredSections(dataRoot: URL, phase: String) throws -> [MeasuredSection] {
         let object = try analysisObject(dataRoot: dataRoot, phase: phase)
+        return try measuredSections(object: object, phase: phase)
+    }
+
+    private static func measuredSections(object: [String: Any], phase: String) throws -> [MeasuredSection] {
         let sections = object["sections"] as? [[String: Any]] ?? []
         let labels = (object["interpretation"] as? [String: Any])?["section_labels"]
             as? [[String: Any]] ?? []
@@ -965,6 +969,13 @@ enum MusicvideoGateChecks {
         try requireAnalysis(dataRoot: dataRoot, requiresInterpretation: false)
     }
 
+    static func requireAnalysisCandidate(dataRoot: URL, data: Data) throws {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GateBlocked("The analysis interpretation must be a JSON object.")
+        }
+        try requireAnalysis(object: object, dataRoot: dataRoot, requiresInterpretation: true)
+    }
+
     private static func requireAnalysis(
         dataRoot: URL,
         requiresInterpretation: Bool
@@ -982,6 +993,14 @@ enum MusicvideoGateChecks {
                     + "decodes the song and writes real beats/downbeats. Never describe the song's "
                     + "structure from listening; it must be measured.")
         }
+        try requireAnalysis(object: obj, dataRoot: dataRoot, requiresInterpretation: requiresInterpretation)
+    }
+
+    private static func requireAnalysis(
+        object obj: [String: Any],
+        dataRoot: URL,
+        requiresInterpretation: Bool
+    ) throws {
         let beats = (obj["beats"] as? [Any])?.count ?? 0
         let downbeats = (obj["downbeats"] as? [Any])?.count ?? 0
         let duration = (obj["duration_s"] as? NSNumber)?.doubleValue ?? 0
@@ -1083,7 +1102,8 @@ enum MusicvideoGateChecks {
                 object: obj,
                 duration: duration,
                 downbeats: downbeatValues,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                requiresInterpretation: requiresInterpretation
             )
             if requiresInterpretation {
                 try requireAnalysisInterpretation(
@@ -1320,12 +1340,11 @@ enum MusicvideoGateChecks {
                     + "Re-run run_phase(\"analysis\")."
             )
         }
-        try requireLyricMarkerLabels(
-            sections: sections,
-            markers: recordedLyricEvidence.map { ($0.key, $0.value) }
-        )
-
         if requiresInterpretation {
+            try requireLyricMarkerLabels(
+                sections: sections,
+                markers: recordedLyricEvidence.map { ($0.key, $0.value) }
+            )
             try requireAnalysisInterpretation(
                 object: obj,
                 duration: duration,
@@ -1338,7 +1357,8 @@ enum MusicvideoGateChecks {
         object: [String: Any],
         duration: Double,
         downbeats: [Double],
-        dataRoot: URL
+        dataRoot: URL,
+        requiresInterpretation: Bool
     ) throws {
         guard let source = object["downbeat_source"] as? String,
               Analysis.DownbeatSource(rawValue: source) != nil else {
@@ -1623,10 +1643,12 @@ enum MusicvideoGateChecks {
                 "Can't approve \"analysis\": lyric-selected boundaries no longer match reliable alignment evidence."
             )
         }
-        try requireLyricMarkerLabels(
-            sections: sections,
-            markers: reconstructedMarkers.map { ($0.key, $0.value) }
-        )
+        if requiresInterpretation {
+            try requireLyricMarkerLabels(
+                sections: sections,
+                markers: reconstructedMarkers.map { ($0.key, $0.value) }
+            )
+        }
 
         let allMarkersResolved = alignmentIsReliable
             && markerCount == resolvedMarkerCount
@@ -1762,7 +1784,7 @@ enum MusicvideoGateChecks {
                 "Can't approve \"analysis\": overall_character is missing from the persisted interpretation."
             )
         }
-        let timeline = try measuredSections(dataRoot: dataRoot, phase: "analysis")
+        let timeline = try measuredSections(object: object, phase: "analysis")
         let tolerance = 0.5
         guard let first = timeline.first,
               let last = timeline.last,

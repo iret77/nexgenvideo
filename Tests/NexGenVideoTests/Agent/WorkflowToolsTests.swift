@@ -4344,14 +4344,14 @@ struct WorkflowToolsTests {
                     ],
                     [
                         "index": 1,
-                        "label": "chorus1",
+                        "label": "verse",
                         "confidence": 0.9,
                     ],
                 ],
                 "anomalies": [[
                     "kind": "low_label_confidence",
                     "time": 4.0,
-                    "detail": "No lyrics were supplied.",
+                    "detail": "Uncertain delivery within the measured verse.",
                 ]],
                 "overall_character": "Half-time pulse with a restrained opening and a broad release.",
             ]
@@ -4370,7 +4370,7 @@ struct WorkflowToolsTests {
         #expect(sections[0]["end"] as? Double == 4)
         #expect(sections[0]["label"] as? String == "intro")
         #expect(sections[0]["confidence"] as? Double == 0.95)
-        #expect(sections[1]["label"] as? String == "chorus1")
+        #expect(sections[1]["label"] as? String == "verse")
         #expect(sections[1]["confidence"] as? Double == 0.95)
         let interpretation = try #require(
             persisted["interpretation"] as? [String: Any]
@@ -4392,6 +4392,97 @@ struct WorkflowToolsTests {
         #expect(encoded.last == 0x0A)
         #expect(String(decoding: encoded, as: UTF8.self).contains("audio/song.wav"))
         #expect(!String(decoding: encoded, as: UTF8.self).contains(#"audio\/song.wav"#))
+    }
+
+    @Test("analysis interpretation rejects wrong lyric labels without changing bytes, then accepts correction")
+    func analysisInterpretationRejectsWrongLabelsThenRecovers() async throws {
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runGateOK("approve_gate", args: [
+            "project_dir": dataRoot.path, "phase": "project_init",
+        ])
+        let before = try Data(contentsOf: analysisURL)
+        let lineageURL = dataRoot.appendingPathComponent(PipelineLayout.lineageFile)
+        let lineageBefore = try Data(contentsOf: lineageURL)
+        var arguments: [String: Any] = [
+            "project_dir": dataRoot.path,
+            "tempo_multiplier": 0.5,
+            "section_labels": [
+                ["index": 0, "label": "intro", "confidence": 0.8],
+                ["index": 1, "label": "verse1", "confidence": 0.9],
+            ],
+            "anomalies": [],
+            "overall_character": "Half-time interpretation of the measured song.",
+        ]
+        let rejected = await h.runRaw("write_analysis_interpretation", args: arguments)
+        #expect(rejected.isError)
+        #expect(ToolHarness.textOf(rejected).contains("must be labelled exactly"))
+        #expect(try Data(contentsOf: analysisURL) == before)
+        #expect(try Data(contentsOf: lineageURL) == lineageBefore)
+
+        arguments["section_labels"] = [
+            ["index": 0, "label": "intro", "confidence": 0.8],
+            ["index": 1, "label": "verse", "confidence": 0.9],
+        ]
+        _ = try await h.runOK("write_analysis_interpretation", args: arguments)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: dataRoot)
+        try MusicvideoPipelineLineage.requireCurrent(phase: "analysis", dataRoot: dataRoot)
+    }
+
+    @Test("analysis interpretation repairs a previously persisted wrong label without reanalysis")
+    func analysisInterpretationRepairsPersistedWrongLabel() async throws {
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runGateOK("approve_gate", args: [
+            "project_dir": dataRoot.path, "phase": "project_init",
+        ])
+        var broken = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any]
+        )
+        var sections = try #require(broken["sections"] as? [[String: Any]])
+        sections[1]["label"] = "verse1"
+        broken["sections"] = sections
+        broken["tempo_multiplier"] = 0.5
+        broken["interpretation"] = [
+            "section_labels": [
+                ["index": "0", "label": "intro", "confidence": "0.8"],
+                ["index": "1", "label": "verse1", "confidence": "0.9"],
+            ],
+            "anomalies": [],
+            "overall_character": "Previously saved interpretation.",
+        ]
+        try JSONSerialization.data(withJSONObject: broken).write(to: analysisURL)
+        try recordAnalysisLineage(dataRoot: dataRoot)
+        let proofURL = try #require(AnalysisMeasurementProofStore.url(dataRoot: dataRoot))
+        let proofBefore = try Data(contentsOf: proofURL)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: dataRoot)
+        }
+
+        _ = try await h.runOK("write_analysis_interpretation", args: [
+            "project_dir": dataRoot.path,
+            "tempo_multiplier": 0.5,
+            "section_labels": [
+                ["index": 0, "label": "intro", "confidence": 0.8],
+                ["index": 1, "label": "verse", "confidence": 0.9],
+            ],
+            "anomalies": [],
+            "overall_character": "Corrected labels, unchanged measurements.",
+        ])
+        let repaired = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any]
+        )
+        sections[1]["label"] = "verse"
+        broken["sections"] = sections
+        broken["interpretation"] = repaired["interpretation"]
+        #expect(NSDictionary(dictionary: repaired).isEqual(to: broken))
+        #expect(try Data(contentsOf: proofURL) == proofBefore)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: dataRoot)
+        try MusicvideoPipelineLineage.requireCurrent(phase: "analysis", dataRoot: dataRoot)
     }
 
     @Test("write_analysis_interpretation requires the exact measured alignment source")
