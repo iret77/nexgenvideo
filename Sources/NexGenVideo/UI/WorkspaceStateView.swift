@@ -65,12 +65,24 @@ struct ActionSection<Content: View>: View {
 struct ActionLabel: View {
     let title: String
     let systemImage: String
+    var acceptanceTextIdentifier: String? = nil
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        Label {
+            Text(title)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested, let acceptanceTextIdentifier {
+                        AppRelaunchClickProbe(identifier: acceptanceTextIdentifier)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
+        } icon: {
+            Image(systemName: systemImage)
+        }
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

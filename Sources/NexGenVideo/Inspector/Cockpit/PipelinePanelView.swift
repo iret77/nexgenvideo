@@ -765,7 +765,8 @@ struct PipelinePanelView: View {
                     editor.focusedPanel = .agent
                 }
             } label: {
-                ActionLabel(title: route.label, systemImage: route.icon)
+                ActionLabel(title: route.label, systemImage: route.icon,
+                    acceptanceTextIdentifier: "pipeline.\(presentation == .overview ? "overview" : "dock").surfaceText.\(phase)")
                     .background { acceptanceProbe("surface.\(phase)", enabled: isEnabled, text: route.label) }
             }
             .buttonStyle(.inlineAction(.neutral))
