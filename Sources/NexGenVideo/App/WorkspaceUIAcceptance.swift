@@ -874,6 +874,41 @@ enum WorkspaceUIAcceptance {
                 && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
                 && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
         }) else { reject("Musicvideo phase controls or Track card did not render") }
+        func visibleProbe(_ identifier: String, in view: NSView) -> NSView? {
+            guard view.window === window, !view.isHiddenOrHasHiddenAncestor else { return nil }
+            if view.identifier?.rawValue == identifier,
+               view.bounds.width > 0, view.bounds.height > 0 {
+                return view
+            }
+            for child in view.subviews {
+                if let match = visibleProbe(identifier, in: child) { return match }
+            }
+            return nil
+        }
+        let actionFont = NSFont.systemFont(ofSize: AppTheme.Typography.action * CGFloat(scale), weight: AppTheme.AppKitFontWeight.medium)
+        let singleLineHeight = ceil(actionFont.ascender - actionFont.descender + actionFont.leading)
+        for phase in ["project_init", "production_design"] {
+            let identifier = "pipeline.overview.surface.\(phase)"
+            guard let action = visibleProbe(identifier, in: host) as? AppRelaunchClickProbeView,
+                  let title = visibleProbe("pipeline.overview.surfaceText.\(phase)", in: host),
+                  let identity = visibleProbe("pipeline.overview.phase.\(phase)", in: host),
+                  let row = visibleProbe("pipeline.overview.row.\(phase)", in: host) else {
+                reject("Pipeline surface control or row is missing: \(phase)")
+            }
+            guard action.window === window, !action.isHiddenOrHasHiddenAncestor,
+                  action.bounds.width > 0, action.bounds.height > 0,
+                  title.bounds.height <= singleLineHeight + AppTheme.BorderWidth.thin else {
+                reject("Pipeline action label wraps or is not visible: \(phase)")
+            }
+            let actionFrame = action.convert(action.bounds, to: host)
+            let identityFrame = identity.convert(identity.bounds, to: host)
+            let rowFrame = row.convert(row.bounds, to: host)
+            guard host.bounds.contains(actionFrame), rowFrame.contains(actionFrame),
+                  !actionFrame.intersects(identityFrame),
+                  action.acceptanceState == (phase == "project_init") else {
+                reject("Pipeline surface action has incorrect geometry or enabled state: \(phase)")
+            }
+        }
         guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }
         guard await waitUntil(timeout: .seconds(5), {
             guard let owner = editor.agentService.currentSessionId,
@@ -920,7 +955,7 @@ enum WorkspaceUIAcceptance {
         emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
             "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
             "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
-            "disabledApprovalDidNotMutate": true, "screenshots": [initial, final]])
+            "disabledApprovalDidNotMutate": true, "surfaceActionsSingleLine": true, "screenshots": [initial, final]])
     }
 
     private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {

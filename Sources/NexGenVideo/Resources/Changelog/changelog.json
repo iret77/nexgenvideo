@@ -6,6 +6,12 @@
       "date": "2026-10-09",
       "sections": [
         {
+          "heading": "Interface",
+          "items": [
+            "Pipeline actions use their full label width instead of a fixed narrow column. Step names use the remaining space, and rows adapt to the available pane width."
+          ]
+        },
+        {
           "heading": "Music Video",
           "items": [
             "Music Video 0.5.12 validates new analysis labels before saving and permits correction of previously saved incorrect labels without rerunning audio analysis.",
