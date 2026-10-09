@@ -86,6 +86,7 @@ enum ExportActionsSelfTest {
             )
         }
 
+        // Keep the completed action scrollable beyond the viewport.
         enter("queue-history-fixture")
         let history = try await queue.enqueueInterchange(
             editor: editor,
