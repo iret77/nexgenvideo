@@ -108,7 +108,7 @@ struct TrackReorderTests {
             Fixtures.videoTrack(id: "v1"), Fixtures.videoTrack(id: "v2"),
             Fixtures.audioTrack(id: "a1"),
         ])
-        editor.workspaceFocus = .edit
+        editor.setWorkspaceFocus(.edit)
         let header = TimelineHeaderView(editor: editor)
         let actions = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
         let repeated = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
@@ -125,7 +125,7 @@ struct TrackReorderTests {
         #expect(editor.timeline.tracks.first { $0.id == "v1" }?.hidden == true)
         #expect(editor.timeline.tracks.first { $0.id == "v2" }?.hidden == false)
 
-        editor.workspaceFocus = .production
+        editor.setWorkspaceFocus(.production)
         let compactActions = try #require(header.accessibilityChildren() as? [NSAccessibilityElement])
         #expect(compactActions.allSatisfy { !($0.accessibilityLabel() ?? "").hasPrefix("Move Track") })
     }

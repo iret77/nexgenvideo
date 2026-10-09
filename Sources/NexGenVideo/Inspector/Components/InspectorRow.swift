@@ -414,7 +414,7 @@ struct InspectorFormRow<Trailing: View, Accessory: View>: View {
                 Image(systemName: icon)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .frame(width: AppTheme.IconSize.md, alignment: .leading)
+                    .frame(minWidth: AppTheme.IconSize.md * interfaceScale, alignment: .leading)
                     .accessibilityHidden(true)
             }
             Text(label)
@@ -425,7 +425,7 @@ struct InspectorFormRow<Trailing: View, Accessory: View>: View {
                 Image(systemName: "info.circle")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                    .frame(minWidth: AppTheme.IconSize.sm * interfaceScale, minHeight: AppTheme.IconSize.sm * interfaceScale)
                     .help(labelHelp)
                     .accessibilityLabel(labelHelp)
             }
