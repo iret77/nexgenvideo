@@ -3,6 +3,7 @@ import SwiftUI
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
     @Environment(\.projectPalette) private var palette
+    @Environment(\.interfaceScale) private var interfaceScale
     let workspace: EditorViewModel.WorkspaceFocus
 
     var browserState: MediaBrowserState { editor.mediaBrowserState(for: workspace) }
@@ -695,7 +696,7 @@ struct MediaTab: View {
         Menu(content: content) {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: systemName)
-                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                    .frame(minWidth: AppTheme.IconSize.sm * interfaceScale, minHeight: AppTheme.IconSize.sm * interfaceScale)
                 if showsTitle { Text(title) }
             }
             .interfaceFont(size: AppTheme.Typography.ui)

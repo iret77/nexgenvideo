@@ -160,6 +160,8 @@ enum WorkspaceUIAcceptance {
                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
                         && previewTimecodeIsSingleLine(in: window, scale: scale)
                         && (workspace != .production || agentControlsAreContained(in: window))
+                        && (!(workspace == .media || workspace == .edit)
+                            || mediaToolbarIsContained(in: window, workspace: workspace))
                 }) else {
                     let diagnosticName = "scale-\(scaleLabel(scale))-\(workspace.rawValue)-failed"
                     _ = snapshot(
@@ -474,6 +476,7 @@ enum WorkspaceUIAcceptance {
                       && state.currentFolderId == "fixture-nested"
                       && findProbe(in: host, identifier: "media.search-result.fixture-498") != nil
                       && defaultPanelWidthsAreValid(workspace: .media, frames: visiblePanelFrames(in: host))
+                      && mediaToolbarIsContained(in: window, workspace: .media)
                       && editor.activePreviewTab.clipType == .image
                       && visiblePanelFrames(in: host)["previewPanel"].map {
                           visibleProbe(identifier: "preview.zoom", in: window, containedBy: $0)
@@ -643,7 +646,20 @@ enum WorkspaceUIAcceptance {
                 }
             }
             try? await Task.sleep(for: .milliseconds(300))
-            host.layoutSubtreeIfNeeded()
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return previewHeaderIsContained(in: window)
+                    && mediaToolbarIsContained(in: window, workspace: .edit)
+            }) else {
+                emit("preview-header-diagnostic", scale: scale, fields: [
+                    "family": item.family,
+                    "panels": visiblePanelFrames(in: host).mapValues { frameDescription($0) },
+                    "titleFrames": probes(in: host, identifier: "preview.header.title").map {
+                        frameDescription($0.convert($0.bounds, to: host))
+                    },
+                ])
+                fail("preview header or media toolbar escaped after selecting \(item.family)", scale: scale)
+            }
             let name = "scale-\(scaleLabel(scale))-inspector-\(item.family).png"
             guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
                 fail("could not capture inspector \(item.family)", scale: scale)
@@ -764,6 +780,12 @@ enum WorkspaceUIAcceptance {
         editor.selectedClipIds = originalClipIDs
         editor.inspectedObject = originalObject
         editor.mediaAssets = originalAssets
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return mediaToolbarIsContained(in: window, workspace: .edit)
+        }) else {
+            fail("media toolbar did not restore after the inspector tab round trip", scale: scale)
+        }
     }
 
     private static func captureMusicvideoStartup(evidenceURL: URL, scale: Double) async {
@@ -1631,6 +1653,15 @@ enum WorkspaceUIAcceptance {
         }
         return timecodeFits
             && visibleProbe(identifier: "preview.zoom", in: window, containedBy: transportBounds)
+    }
+
+    private static func previewHeaderIsContained(in window: NSWindow) -> Bool {
+        guard let root = window.contentView,
+              let panel = visiblePanelFrames(in: root)["previewPanel"],
+              let title = visibleGeometryProbe(identifier: "preview.header.title", in: window, containedBy: panel) else {
+            return false
+        }
+        return panel.contains(title.convert(title.bounds, to: root))
     }
 
     private static func mediaToolbarIsContained(
