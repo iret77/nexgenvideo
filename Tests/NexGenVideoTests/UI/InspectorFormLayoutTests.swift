@@ -49,7 +49,10 @@ struct InspectorFormLayoutTests {
 
                     let expectedAxis = controls[0].maxX
                     for control in controls.dropFirst() {
-                        #expect(abs(control.maxX - expectedAxis) < 1)
+                        #expect(
+                            abs(control.maxX - expectedAxis) < 1,
+                            "width=\(totalWidth), scale=\(scale), keyframes=\(keyframesPanelVisible), control=\(control), axis=\(expectedAxis)"
+                        )
                     }
                     let accessories = [positionKeyframe, volumeKeyframe, cropKeyframe]
                     let expectedAccessoryAxis = accessories[0].maxX

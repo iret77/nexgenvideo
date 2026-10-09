@@ -681,6 +681,24 @@ enum WorkspaceUIAcceptance {
                 guard let root = window.contentView else {
                     fail("inspector \(item.family) window content was unavailable", scale: scale)
                 }
+                guard let splitState = inspectorSplitState(in: root),
+                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
+                }
+                let wideInspectorWidth = max(originalInspectorFrame.width, AppTheme.Layout.inspectorDefault * CGFloat(scale))
+                splitState.splitView.setPosition(
+                    splitState.splitView.bounds.maxX - wideInspectorWidth - splitState.splitView.dividerThickness,
+                    ofDividerAt: splitState.dividerIndex
+                )
+                guard await waitUntil(timeout: .seconds(5), {
+                    host.layoutSubtreeIfNeeded()
+                    guard let frame = visiblePanelFrames(in: host)["inspectorPanel"] else {
+                        return false
+                    }
+                    return abs(frame.width - wideInspectorWidth) <= AppTheme.BorderWidth.thin
+                }) else {
+                    fail("inspector \(item.family) did not reach wide layout width", scale: scale)
+                }
                 let openName = "scale-\(scaleLabel(scale))-inspector-\(item.family)-keyframes-open.png"
                 let sideEvidence = await captureKeyframeLayoutEvidence(
                     family: item.family,
@@ -692,12 +710,8 @@ enum WorkspaceUIAcceptance {
                     inspectorWidthTarget: nil,
                     scale: scale
                 )
-                guard let splitState = inspectorSplitState(in: root),
-                      let originalInspectorFrame = visiblePanelFrames(in: host)["inspectorPanel"] else {
-                    fail("inspector \(item.family) split geometry was unavailable", scale: scale)
-                }
                 splitState.splitView.setPosition(
-                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin,
+                    splitState.splitView.bounds.maxX - AppTheme.Layout.inspectorMin - splitState.splitView.dividerThickness,
                     ofDividerAt: splitState.dividerIndex
                 )
                 guard await waitUntil(timeout: .seconds(5), {
