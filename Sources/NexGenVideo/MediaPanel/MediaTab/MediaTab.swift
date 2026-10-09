@@ -3,6 +3,7 @@ import SwiftUI
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
     @Environment(\.projectPalette) private var palette
+    @Environment(\.interfaceScale) private var interfaceScale
     let workspace: EditorViewModel.WorkspaceFocus
 
     var browserState: MediaBrowserState { editor.mediaBrowserState(for: workspace) }
@@ -331,6 +332,7 @@ struct MediaTab: View {
         .padding(.horizontal, AppTheme.Spacing.sm)
         .padding(.top, AppTheme.Spacing.sm)
         .padding(.bottom, AppTheme.Spacing.xs)
+        .fixedSize(horizontal: false, vertical: true)
         .background(AppTheme.Background.surfaceColor)
     }
 
@@ -339,9 +341,11 @@ struct MediaTab: View {
             creationActions
             organizationActions
             searchIndexStatus.tourAnchor(.smartSearch)
+                .background { toolbarProbe("media.action.smartSearch") }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
+        .background { toolbarProbe("media.actions") }
     }
 
     @ViewBuilder
@@ -381,6 +385,7 @@ struct MediaTab: View {
             displayControls
         }
         .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
+        .background { toolbarProbe("media.searchControls") }
     }
 
     // MARK: - Context bar (breadcrumb + count)
@@ -637,7 +642,15 @@ struct MediaTab: View {
         }
         .buttonStyle(.capsule(.secondary, isSelected: isSelected))
         .fixedSize(horizontal: true, vertical: false)
+        .background { toolbarProbe("media.action.\(title)") }
         .help(title)
+    }
+
+    @ViewBuilder
+    private func toolbarProbe(_ identifier: String) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: identifier).allowsHitTesting(false)
+        }
     }
 
     private var mediaAreaCollapsed: Bool {
@@ -683,7 +696,7 @@ struct MediaTab: View {
         Menu(content: content) {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: systemName)
-                    .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                    .frame(minWidth: AppTheme.IconSize.sm * interfaceScale, minHeight: AppTheme.IconSize.sm * interfaceScale)
                 if showsTitle { Text(title) }
             }
             .interfaceFont(size: AppTheme.Typography.ui)

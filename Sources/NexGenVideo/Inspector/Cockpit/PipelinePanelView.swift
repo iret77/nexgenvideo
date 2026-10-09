@@ -762,16 +762,7 @@ struct PipelinePanelView: View {
                     editor.focusedPanel = .agent
                 }
             } label: {
-                HStack(spacing: AppTheme.Spacing.xxs) {
-                    Image(systemName: route.icon)
-                        .frame(width: AppTheme.IconSize.xs)
-                    Text(route.label)
-                }
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
-                .padding(.horizontal, AppTheme.Spacing.xs)
-                .frame(maxWidth: .infinity, minHeight: AppTheme.IconSize.smMd, alignment: .leading)
+                ActionLabel(title: route.label, systemImage: route.icon)
             }
             .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)

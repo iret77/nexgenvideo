@@ -129,7 +129,7 @@ struct WrapLayoutGeometryTests {
     }
     @Test func toolbarKeepsEveryGroupInsideNarrowAndWidePanes() {
         let sizes = [68.0, 108, 108, 150, 164].map { CGSize(width: $0, height: 28) }
-        for width in [400.0, 600, 1000] {
+        for width in [CGFloat(400), 600, 1000] {
             let result = WrapLayoutGeometry.arrange(
                 sizes: sizes, maxWidth: width, spacing: AppTheme.Spacing.xl, trailingLastItem: true
             )

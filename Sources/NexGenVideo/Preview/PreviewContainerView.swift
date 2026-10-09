@@ -534,6 +534,12 @@ struct PreviewContainerView: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
+                .background {
+                    if WorkspaceUIAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "preview.header.title")
+                            .allowsHitTesting(false)
+                    }
+                }
             if let asset = activeMediaAsset {
                 Text(asset.userFacingFilename)
                     .interfaceFont(size: AppTheme.Typography.ui)
