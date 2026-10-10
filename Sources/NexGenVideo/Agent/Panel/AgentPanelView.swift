@@ -322,6 +322,7 @@ struct AgentPanelView: View {
 
     @State private var showDecisionHistory = false
     @State private var showDiagnostics = false
+    @State private var messageScrollPosition = ScrollPosition(idType: String.self)
     @State private var showUtilities = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
@@ -465,42 +466,65 @@ struct AgentPanelView: View {
         return false
     }
 
-    private var taskResults: [AgentMessage] {
-        transcriptTurns.reversed().lazy.map { turn in
-            turn.items.compactMap { item -> AgentMessage? in
-                guard case .assistantResult(let message) = item else { return nil }
-                return message
-            }
-        }.first(where: { !$0.isEmpty }) ?? []
+    private var taskItems: [AgentTranscriptItem] {
+        AgentTranscriptProjection.taskItems(messages: service.messages, isStreaming: service.isStreaming)
     }
 
     private var showsTaskChoices: Bool {
-        taskResults.isEmpty && !service.isStreaming && !service.isComposerBlocked
+        taskItems.isEmpty && !service.isStreaming && !service.isComposerBlocked
             && service.canStream && service.pendingFunction == nil
     }
 
     private var taskResult: some View {
-        let results = taskResults
-        return ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                if !results.isEmpty {
-                    Text("Task Result")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    ForEach(results) { message in
-                        AgentMessageView(message: message, toolResults: toolResults)
+        let items = taskItems
+        let latestMessage = items.compactMap { item -> AgentMessage? in
+            guard case .assistantResult(let message) = item else { return nil }
+            return message
+        }.last
+        return VStack(spacing: AppTheme.Spacing.sm) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    if !items.isEmpty {
+                        Text("Messages")
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        ForEach(items) { item in
+                            Group {
+                                switch item {
+                                case .assistantResult(let message):
+                                    AgentMessageView(message: message, toolResults: toolResults)
+                                case .notice(let notice):
+                                    Text(notice.text).textSelection(.enabled)
+                                        .interfaceFont(size: AppTheme.Typography.ui)
+                                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                                default: EmptyView()
+                                }
+                            }
+                            .id(item.id)
+                        }
+                    } else if showsTaskChoices {
+                        emptyState
                     }
-                    if let message = results.last {
-                        Button("Reply to Agent") { service.stageReply(to: message.id) }
+                    errorBanner
+                }
+                .padding(AppTheme.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
+            }
+            .scrollPosition($messageScrollPosition)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            if let last = items.last {
+                WrapLayout(spacing: AppTheme.Spacing.sm) {
+                    Button("Latest message") { messageScrollPosition.scrollTo(id: last.id, anchor: .bottom) }
+                        .buttonStyle(.capsule(.secondary, size: .small))
+                    if let latestMessage {
+                        Button("Reply to Agent") { service.stageReply(to: latestMessage.id) }
                             .buttonStyle(.capsule(.secondary, size: .small))
                             .disabled(service.isStreaming || service.isComposerBlocked)
                     }
-                } else if showsTaskChoices {
-                    emptyState
                 }
-                errorBanner
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.bottom, AppTheme.Spacing.sm)
             }
-            .padding(AppTheme.Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
