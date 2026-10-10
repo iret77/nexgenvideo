@@ -4,7 +4,6 @@ import SwiftUI
 struct GateApprovalCard: View {
     let approval: GateApproval
     let error: String?
-    let surface: String?
     let isWorking: Bool
     var isBlocked: Bool = false
     let onApprove: () -> Void
@@ -15,15 +14,13 @@ struct GateApprovalCard: View {
     @State private var showsStoryboard = false
     @State private var showsDiagnostics = false
 
-    private var reviewHint: String? {
-        if approval.phase == "analysis" {
-            return "Review the exact measured sections in Analysis first."
-        }
-        switch surface ?? "" {
-        case "review": return "Read it in the Review tab first."
-        case "prose": return "Read it in the Story tab first."
-        default: return nil
-        }
+    private var reviewRoute: PipelineSurfaceRouting.Route? {
+        PipelineSurfaceRouting.route(for: approval.phase, contract: editor.uiContract,
+            availablePackSurfaces: editor.availableCockpitPackSurfaces)
+    }
+
+    private var reviewHint: String {
+        "Review in \(reviewRoute?.destinationLabel ?? "Pipeline"), then respond here in Tasks."
     }
 
     var body: some View {
@@ -34,7 +31,7 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            if approval.phase == "storyboard" {
+            if reviewRoute?.destination == .storyboard {
                 Button("Open Storyboard") {
                     Task {
                         await review.refresh(approval: approval, editor: editor)
@@ -44,8 +41,17 @@ struct GateApprovalCard: View {
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
             } else {
-                Button("Review \(approval.phaseLabel)") {
-                    editor.revealCockpit(reviewDestination)
+                Button("Open \(reviewRoute?.destinationLabel ?? "Pipeline")") {
+                    switch reviewRoute?.destination {
+                    case .tab(let tab): editor.revealCockpit(tab)
+                    case .pack(let id):
+                        editor.revealCockpit(.pipeline)
+                        editor.cockpitPackSurfaceID = id
+                    case .chat:
+                        editor.agentPanelVisible = true
+                        editor.focusedPanel = .agent
+                    default: editor.revealCockpit(.pipeline)
+                    }
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
@@ -119,7 +125,9 @@ struct GateApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("\(approval.phaseLabel) passed host checks. Review it before approval.")
+            Text(isBlocked ? "\(approval.phaseLabel) is still being processed. Approval is not available yet."
+                 : review.isReady ? "Review \(approval.phaseLabel), then approve here to continue."
+                 : "Checking whether \(approval.phaseLabel) can be approved…")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -136,11 +144,9 @@ struct GateApprovalCard: View {
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
-            if let reviewHint {
-                Text(reviewHint)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
+            Text(reviewHint)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -153,16 +159,6 @@ struct GateApprovalCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.warningColor)
             }
-        }
-    }
-
-    private var reviewDestination: CockpitTab {
-        switch approval.phase {
-        case "brief", "production_design", "treatment", "storyboard": .story
-        case "bible": .bible
-        case "shotlist": .shotlist
-        case "frames", "sanity", "render", "finish": .review
-        default: .pipeline
         }
     }
 

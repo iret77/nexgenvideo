@@ -305,6 +305,13 @@ struct PackSurfaceTests {
             contract: reviewContract, availablePackSurfaces: []))
         #expect(unavailable.destination == .chat)
         #expect(unavailable.label == "Tasks")
+        #expect(unavailable.destinationLabel == "Tasks")
+        #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
+            availablePackSurfaces: [])?.destinationLabel == "Bible")
+        #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,
+            availablePackSurfaces: [])?.destinationLabel == "Shotlist")
+        #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
+            availablePackSurfaces: [])?.destinationLabel == "Review")
 
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)

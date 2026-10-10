@@ -1329,6 +1329,8 @@ extension EditorViewModel {
         let frame: Int
         let nameBase: String
         switch tab {
+        case .referenceImage:
+            return
         case .timeline:
             isTimelineTab = true
             frame = currentFrame

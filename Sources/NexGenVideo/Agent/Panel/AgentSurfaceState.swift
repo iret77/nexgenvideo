@@ -11,6 +11,8 @@ struct AgentSurfaceState: Equatable {
 
     enum StatusOwner: Equatable {
         case spendRun
+        case batchRun
+        case decisionWorking
         case phaseRun
         case phaseFailure
         case actionRequired
@@ -25,8 +27,12 @@ struct AgentSurfaceState: Equatable {
     struct Input: Equatable {
         var hasSpendApproval = false
         var hasGateApproval = false
+        var gateApprovalBlocked = false
+        var gateApprovalIsWriting = false
+        var spendApprovalIsRunning = false
         var hasDialog = false
         var hasSpendRun = false
+        var hasBatchRun = false
         var phaseIsRunning = false
         var phaseHasTranscriptActivity = false
         var phaseHasFailed = false
@@ -59,14 +65,18 @@ struct AgentSurfaceState: Equatable {
         let statusOwner: StatusOwner
         if input.hasSpendRun {
             statusOwner = .spendRun
-        } else if input.phaseIsRunning {
+        } else if input.hasBatchRun {
+            statusOwner = .batchRun
+        } else if (dockOwner == .gateApproval && input.gateApprovalIsWriting)
+                    || (dockOwner == .spendApproval && input.spendApprovalIsRunning) {
+            statusOwner = .decisionWorking
+        } else if dockOwner == .spendApproval || dockOwner == .dialog
+                    || (dockOwner == .gateApproval && !input.gateApprovalBlocked) {
+            statusOwner = .actionRequired
+        } else if input.phaseIsRunning || input.gateApprovalBlocked {
             statusOwner = .phaseRun
         } else if input.phaseHasFailed {
             statusOwner = .phaseFailure
-        } else if dockOwner == .spendApproval
-                    || dockOwner == .gateApproval
-                    || dockOwner == .dialog {
-            statusOwner = .actionRequired
         } else if input.isStreaming {
             statusOwner = .stream
         } else if input.hasTurnFailure {

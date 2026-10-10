@@ -285,6 +285,10 @@ struct GateApprovalTests {
         #expect(result.isError == false)
         #expect(result.turnDisposition == .suspendTurn)
         #expect(payload?["status"] as? String == "approval_pending")
+        #expect(payload?["approval_surface"] as? String == "Tasks")
+        let route = PipelineSurfaceRouting.route(for: "project_init", contract: h.editor.uiContract,
+            availablePackSurfaces: h.editor.availableCockpitPackSurfaces)
+        #expect(payload?["review_surface"] as? String == (route?.destinationLabel ?? "Pipeline"))
         #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
 
         let state = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path]) as? [String: Any]

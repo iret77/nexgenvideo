@@ -31,6 +31,21 @@ struct AgentSurfaceStateTests {
         )).statusOwner == .actionRequired)
     }
 
+    @Test func decisionsReflectWhetherTheUserCanActuallyAct() {
+        #expect(AgentSurfaceState.resolve(.init(hasGateApproval: true, isStreaming: true)).statusOwner == .actionRequired)
+        #expect(AgentSurfaceState.resolve(.init(hasSpendApproval: true, phaseIsRunning: true, isStreaming: true)).statusOwner == .actionRequired)
+        #expect(AgentSurfaceState.resolve(.init(hasGateApproval: true, gateApprovalBlocked: true,
+            phaseIsRunning: true, isStreaming: true)).statusOwner == .phaseRun)
+        #expect(AgentSurfaceState.resolve(.init(hasGateApproval: true, gateApprovalIsWriting: true)).statusOwner == .decisionWorking)
+        #expect(AgentSurfaceState.resolve(.init(hasSpendApproval: true, spendApprovalIsRunning: true)).statusOwner == .decisionWorking)
+        #expect(AgentSurfaceState.resolve(.init(hasSpendApproval: true, hasSpendRun: true)).statusOwner == .spendRun)
+        #expect(AgentSurfaceState.resolve(.init(hasBatchRun: true)).statusOwner == .batchRun)
+        #expect(AgentSurfaceState.resolve(.init(hasSpendRun: true, hasBatchRun: true)).statusOwner == .spendRun)
+        #expect(AgentSurfaceState.resolve(.init(phaseHasFailed: true)).statusOwner == .phaseFailure)
+        #expect(AgentSurfaceState.resolve(.init(isStreaming: true)).statusOwner == .stream)
+        #expect(AgentSurfaceState.resolve(.init()).statusOwner == .ready)
+    }
+
     @Test func transcriptActivityKeepsTheLandmarkWithoutADuplicateSpinner() {
         let phase = AgentSurfaceState.resolve(.init(
             phaseIsRunning: true,
@@ -67,7 +82,7 @@ struct AgentSurfaceStateTests {
             hasTurnFailure: true,
             isCheckingBackend: true,
             needsBackendRecovery: true
-        )).statusOwner == .phaseRun)
+        )).statusOwner == .actionRequired)
         #expect(AgentSurfaceState.resolve(.init(
             hasDialog: true,
             phaseHasFailed: true,
@@ -76,7 +91,7 @@ struct AgentSurfaceStateTests {
             hasTurnFailure: true,
             isCheckingBackend: true,
             needsBackendRecovery: true
-        )).statusOwner == .phaseFailure)
+        )).statusOwner == .actionRequired)
         #expect(AgentSurfaceState.resolve(.init(
             hasDialog: true,
             hasHostFollowUp: true,

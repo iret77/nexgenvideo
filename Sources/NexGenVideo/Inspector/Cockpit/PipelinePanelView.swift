@@ -30,6 +30,15 @@ enum PipelineSurfaceRouting {
         let label: String
         let taskClass: String
         let destination: Destination
+
+        var destinationLabel: String {
+            switch destination {
+            case .tab(let tab): tab.rawValue
+            case .pack: label
+            case .storyboard: "Storyboard"
+            case .chat: "Tasks"
+            }
+        }
     }
 
     static func route(

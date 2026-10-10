@@ -54,6 +54,7 @@ final class GenerationBatchCoordinator {
     @ObservationIgnored private var readID = UUID()
     @ObservationIgnored private var recoveries: [String: GenerationBatchRecovery] = [:]
     private(set) var recoveringItemIDs: Set<String> = []
+    private(set) var activeBatchID: String?
 
     var isRecovering: Bool { !recoveringItemIDs.isEmpty }
     var canRetryPricing: Bool {
@@ -235,11 +236,13 @@ final class GenerationBatchCoordinator {
     func start(batchID: String, editor: EditorViewModel, resumeBlocked: Bool = false,
                remainingBatchIDs: [String] = []) {
         guard jobs.isEmpty, let home = editor.workingRoot else { return }
+        activeBatchID = batchID
         jobs[batchID] = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             var settled = false
             defer {
                 self.jobs.removeValue(forKey: batchID)
+                self.activeBatchID = nil
                 if editor.workingRoot == home {
                     if let next = remainingBatchIDs.first {
                         self.start(batchID: next, editor: editor, resumeBlocked: resumeBlocked,

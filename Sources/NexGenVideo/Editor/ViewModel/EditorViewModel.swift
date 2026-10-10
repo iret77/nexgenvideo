@@ -186,6 +186,8 @@ final class EditorViewModel {
     /// shows a summary or panel content, never a half-inspected object). Consumed by the Inspector.
     var selectionInspectedObject: InspectedObject? {
         switch activePreviewTab {
+        case .referenceImage(let image):
+            return .entity(image.entity)
         case .timeline:
             return InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
@@ -340,6 +342,7 @@ final class EditorViewModel {
             // copy, caches, and telemetry all key off the same stable id.
             projectId = nextProjectId
             prepareWorkingCopy()
+            discardForeignReferencePreviews()
         }
     }
     private(set) var projectId: String?

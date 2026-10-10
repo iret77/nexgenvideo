@@ -11,7 +11,9 @@
             "Project-wide status and approval controls stay in Pipeline. Story, Bible, Shotlist, Review and pack artifact tabs no longer show controls for an unrelated current step.",
             "Pipeline names Tasks as the destination for pending input and decisions.",
             "Generation reviews show readable requests and compact details. When pricing is unavailable, explicitly approve the exact batch without an estimate or ask the agent to revise it; unknown costs are recorded as unknown.",
-            "Agent messages and notices remain in the main history when tools run or a later response arrives. Latest message returns to the newest entry without moving your reading position automatically."
+            "Agent messages and notices remain in the main history when tools run or a later response arrives. Latest message returns to the newest entry without moving your reading position automatically.",
+            "Bible reference images resolve from the project data root and open in the shared Preview. Visual Bible cards and object details have distinct roles instead of repeating the full card.",
+            "Tasks shows the authoritative activity or decision status above messages, with a direct Pipeline entry and explicit guidance when no approval request is open."
           ]
         }
       ]

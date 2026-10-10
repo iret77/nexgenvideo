@@ -105,7 +105,7 @@ struct AgentTranscriptLayoutPolicyTests {
             #expect(!implementation.contains(forbidden))
         }
         #expect(implementation.range(
-            of: #"taskBar\s+taskResult"#,
+            of: #"taskBar\s+AgentLiveStatusView"#,
             options: .regularExpression
         ) != nil)
     }
@@ -126,7 +126,9 @@ struct AgentTranscriptLayoutPolicyTests {
             of: "composerDock",
             range: status.upperBound..<implementation.endIndex
         ))
-        #expect(status.lowerBound < dock.lowerBound)
+        let messages = try #require(implementation.range(of: "taskResult", range: status.upperBound..<implementation.endIndex))
+        #expect(status.lowerBound < messages.lowerBound)
+        #expect(messages.lowerBound < dock.lowerBound)
 
         let dockStart = try #require(source.range(of: "private var composerDock"))
         let dockEnd = try #require(source.range(

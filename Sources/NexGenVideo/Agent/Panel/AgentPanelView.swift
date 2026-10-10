@@ -80,11 +80,12 @@ struct AgentPanelView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             taskBar
-            taskResult
             AgentLiveStatusView(
                 status: liveStatus,
-                onCancel: { service.cancelRunningSpend() }
+                onCancel: { service.cancelRunningSpend() },
+                onOpenPipeline: editor.hasProductionPipeline ? { editor.revealCockpit(.pipeline) } : nil
             )
+            taskResult
             composerDock
             GenerationBatchProgressView(editor: editor)
         }
@@ -160,8 +161,13 @@ struct AgentPanelView: View {
         return AgentSurfaceState.resolve(.init(
             hasSpendApproval: service.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil,
             hasGateApproval: service.pendingGateApproval != nil,
+            gateApprovalBlocked: pendingGateIsBlockedByPhaseRun,
+            gateApprovalIsWriting: service.gateApprovalIsWriting,
+            spendApprovalIsRunning: service.spendApprovalIsRunning
+                || editor.generationBatchCoordinator.approving || editor.generationBatchCoordinator.isRecovering,
             hasDialog: service.pendingDialog != nil,
             hasSpendRun: service.currentSpendRun != nil,
+            hasBatchRun: editor.generationBatchCoordinator.activeBatchID != nil,
             phaseIsRunning: snapshot?.isRunning == true,
             phaseHasTranscriptActivity: activityVisible,
             phaseHasFailed: {
@@ -193,12 +199,16 @@ struct AgentPanelView: View {
                 canCancel: true,
                 cancellationRequested: run.cancellationRequested
             )
+        case .batchRun:
+            return AgentLiveStatus(state: .working, title: "Generation batch in progress",
+                detail: "View progress and controls in Generation batches below.")
+        case .decisionWorking:
+            return AgentLiveStatus(state: .working,
+                title: surfaceState.dockOwner == .gateApproval ? "Recording approval" : "Preparing generation options")
         case .phaseRun:
-            guard let snapshot = editor.pipelinePhaseExecution.snapshot else {
-                return AgentLiveStatus(state: .working, title: "Working")
-            }
-            if surfaceState.statusHasTranscriptActivity {
-                return AgentLiveStatus(state: .streaming, title: "Working")
+            guard let snapshot = editor.pipelinePhaseExecution.snapshot, snapshot.isRunning else {
+                return AgentLiveStatus(state: .working, title: "Finishing the current phase",
+                    detail: "Approval is unavailable until this operation finishes.")
             }
             let presentation = PipelinePhaseProgressPresentation(
                 stageID: snapshot.stageID
@@ -209,7 +219,9 @@ struct AgentPanelView: View {
             return AgentLiveStatus(
                 state: .working,
                 title: presentation.title,
-                detail: "\(PhaseDisplay.label(snapshot.phase))\(count)"
+                detail: pendingGateIsBlockedByPhaseRun
+                    ? "\(PhaseDisplay.label(snapshot.phase))\(count) · Approval is unavailable until this operation finishes."
+                    : "\(PhaseDisplay.label(snapshot.phase))\(count)"
             )
         case .phaseFailure:
             return AgentLiveStatus(
@@ -217,20 +229,21 @@ struct AgentPanelView: View {
                 title: "Stopped"
             )
         case .actionRequired:
-            return AgentLiveStatus(state: .waiting, title: "Action required")
+            if surfaceState.dockOwner == .gateApproval, let gate = service.pendingGateApproval {
+                return AgentLiveStatus(state: .waiting, title: "\(gate.phaseLabel): approval requested",
+                    detail: "Review and respond in the approval card below.")
+            }
+            return AgentLiveStatus(state: .waiting,
+                title: surfaceState.dockOwner == .spendApproval ? "Generation approval requested" : "Your response is needed",
+                detail: "Respond in the decision card below.")
         case .hostFollowUp:
             return AgentLiveStatus(
                 state: .working,
                 title: "Resuming agent"
             )
         case .stream:
-            if surfaceState.statusHasTranscriptActivity {
-                return AgentLiveStatus(state: .streaming, title: "Working")
-            }
-            return AgentLiveStatus(
-                state: .working,
-                title: "Agent is working"
-            )
+            return AgentLiveStatus(state: .working, title: "Agent is working",
+                detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for phase status." : nil)
         case .turnFailure:
             return AgentLiveStatus(state: .failed, title: "Stopped")
         case .backendChecking:
@@ -238,7 +251,8 @@ struct AgentPanelView: View {
         case .backendUnavailable:
             return AgentLiveStatus(state: .unavailable, title: "Agent unavailable")
         case .ready:
-            return AgentLiveStatus(state: .ready, title: "Ready")
+            return AgentLiveStatus(state: .ready, title: "No task running",
+                detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for the next step." : nil)
         }
     }
 
@@ -705,7 +719,6 @@ struct AgentPanelView: View {
                 GateApprovalCard(
                     approval: gate,
                     error: service.gateApprovalError,
-                    surface: editor.uiContract?.phases[gate.phase]?.surface,
                     isWorking: service.gateApprovalIsWriting,
                     isBlocked: pendingGateIsBlockedByPhaseRun,
                     onApprove: {

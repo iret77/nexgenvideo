@@ -151,11 +151,9 @@ struct InspectorView: View {
     private func lookInspectorContent(_ look: BibleLook) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                metadataSection(title: "Look") {
-                    ForEach(look.fields, id: \.label) { field in
-                        plainMetadataRow(label: field.label, value: field.value)
-                    }
-                }
+                Text("Review the look guide in Bible. Saved decisions appear below.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                 ledgerSection(for: .look)
                 openInProjectLink(.bible)
             }

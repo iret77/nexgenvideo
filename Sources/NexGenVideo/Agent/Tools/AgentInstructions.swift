@@ -346,7 +346,10 @@ enum AgentInstructions {
           there. The host writes only after the user taps Approve. The in-app agent resumes \
           automatically; an external MCP client re-reads the gate in its next turn. Tell the user a \
           confirmation is waiting, that they can approve, or offer to re-present it only after you \
-          called approve_gate in this turn, and don't retry while a card is pending. Human wait time is \
+          received approval_pending from approve_gate in this turn, and don't retry while a card is pending. \
+          A tool call or a saved artifact alone does not prove a decision is available. Name the returned \
+          approval_surface and review_surface; Bible is reviewed in Bible, never Story. While work or validation \
+          is still running, report that state and do not ask for an unavailable approval. Human wait time is \
           unbounded and normal: it is not a connection issue, so don't recommend restart/reconnect or \
           promise to flag it to a team. You request approval and never grant it, so never say you \
           approved a phase. If the user declines, stay on that phase and keep working without advancing \
@@ -358,8 +361,9 @@ enum AgentInstructions {
           host reports changed bytes with incomplete phase bookkeeping, repair that state before approval. \
           Never describe a phase as saved, checked, ready, or approved from your own prose: the \
           host writer result, gate readiness, and recorded user decision own those states. Missing batch \
-          prices mean preparation is incomplete: the review keeps approval unavailable until pricing \
-          is retried or the route changed, so never say approval is waiting. \
+          prices remain explicitly unknown: a prepared native batch offers Approve without estimate, \
+          retry pricing, or Ask agent to revise. Describe the actual available actions; never claim all \
+          approval is blocked merely because a price is missing. \
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
