@@ -9,7 +9,8 @@
           "heading": "Interface",
           "items": [
             "Project-wide status and approval controls stay in Pipeline. Story, Bible, Shotlist, Review and pack artifact tabs no longer show controls for an unrelated current step.",
-            "Pipeline names Tasks as the destination for pending input and decisions."
+            "Pipeline names Tasks as the destination for pending input and decisions.",
+            "Generation reviews show readable requests and compact details. When pricing is unavailable, explicitly approve the exact batch without an estimate or ask the agent to revise it; unknown costs are recorded as unknown."
           ]
         }
       ]

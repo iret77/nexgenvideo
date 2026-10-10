@@ -207,13 +207,13 @@ struct AgentTool: @unchecked Sendable {
 enum ToolDefinitions {
     static let all: [AgentTool] = base + [
         AgentTool(name: .prepareGenerationBatch,
-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, the review opens with approval unavailable and offers pricing retry or an explicit route change for the affected items; never describe it as ready to approve. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            description: "Prepare multiple image/video requests for one native Approve X requests decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If prices are unavailable, the native review offers explicit Approve without estimate, Ask agent to revise, pricing retry and optional model change. Only the user can accept unknown costs. Briefly explain what outputs the user will receive and their purpose; always give a constructive next action when blocked. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
             inputSchema: objectSchema(properties: [
                 "requestID": ["type": "string"],
                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
                     objectSchema(properties: [
                         "tool": ["type": "string", "enum": [tool.rawValue]],
-                        "purpose": ["type": "string", "minLength": 1],
+                        "purpose": ["type": "string", "minLength": 1, "maxLength": 160, "description": "Brief user-facing output name and purpose in the interface language. No API paths, model IDs or internal artifact keys."],
                         "request": base.first(where: { $0.name == tool })!.inputSchema,
                     ], required: ["tool", "purpose", "request"])
                 }]],

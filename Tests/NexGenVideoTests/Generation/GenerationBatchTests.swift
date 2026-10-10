@@ -25,9 +25,18 @@ struct GenerationBatchTests {
         )
     }
 
-    private func fixture() async throws -> (URL, EditorViewModel, GenerationBatch) {
+    private func fixture(stop: Double? = nil) async throws -> (URL, EditorViewModel, GenerationBatch) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-batch-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: root)
+        if let stop {
+            let dataRoot = root.appendingPathComponent("pipeline")
+            try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+            try Data("project: demo\nmode: beat\n".utf8).write(to: dataRoot.appendingPathComponent(PipelineLayout.projectFile))
+            let brief = try Brief(project: "demo", generated: "2026-10-10", mission: .demo,
+                targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", budgetStopEur: stop,
+                conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored)
+            try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+        }
         let editor = EditorViewModel()
         editor.projectURL = root
         let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor)
@@ -301,6 +310,137 @@ struct GenerationBatchTests {
             isBusy: false
         )
         #expect(!controls.canApprove)
+        #expect(controls.canApproveWithoutEstimate)
+    }
+
+    private func unpricedBatch(_ original: GenerationBatch, editor: EditorViewModel) async throws -> GenerationBatch {
+        let item = original.payload.items[0]
+        let package = try item.package.replacingPricing(estimate: nil, failure: .init(
+            reason: .unsupportedCombination, provider: item.package.payload.target.provider,
+            endpoint: item.package.payload.target.endpoint, detail: "No supported estimate"))
+        let inputs = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+        try await GenerationPackageInputs.persist(package: package, snapshot: inputs, editor: editor)
+        return try original.replacingPackage(itemID: item.id, with: package)
+    }
+
+    @Test func unknownCostApprovalPersistsExactItemsAndCannotMoveToAnotherManifest() async throws {
+        let (root, editor, original) = try await fixture()
+        defer { cleanup(root) }
+        let batch = try await unpricedBatch(original, editor: editor)
+        await #expect(throws: (any Error).self) {
+            try await GenerationBatchStore.approve(batch, editor: editor)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, approval: .acceptUnknownPrices)
+        #expect(approved.journal.pricingOverrideItemIDs == [batch.payload.items[0].id])
+        #expect(approved.batch.totalEUR == nil)
+        #expect(approved.batch.payload.items[0].package.payload.estimate == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        let reopened = try GenerationBatchStore.load(id: batch.id, home: #require(editor.workingRoot))
+        #expect(reopened == approved)
+        let restored = try JSONDecoder().decode(GenerationBatchJournal.self,
+            from: GenerationPackageV1.canonicalData(approved.journal))
+        try restored.validate(batch: batch)
+        #expect(throws: (any Error).self) { try restored.validate(batch: original) }
+        let changed = try batch.removing(itemIDs: [batch.payload.items[2].id])
+        #expect(throws: (any Error).self) { try restored.validate(batch: changed) }
+        var json = try #require(JSONSerialization.jsonObject(with: GenerationPackageV1.canonicalData(restored)) as? [String: Any])
+        json["pricingOverrideItemIDs"] = [batch.payload.items[1].id]
+        let tampered = try JSONDecoder().decode(GenerationBatchJournal.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(throws: (any Error).self) { try tampered.validate(batch: batch) }
+        let legacy = try GenerationBatchJournal(approving: original, authorityID: "legacy")
+        let legacyData = try GenerationPackageV1.canonicalData(legacy)
+        #expect(!String(decoding: legacyData, as: UTF8.self).contains("pricingOverrideItemIDs"))
+        try JSONDecoder().decode(GenerationBatchJournal.self, from: legacyData).validate(batch: original)
+    }
+
+    @Test func explicitUnknownCostApprovalReservesUnknownMoneyWithoutDisablingFutureBudgetChecks() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        let batch = try await unpricedBatch(original, editor: editor)
+        _ = try await GenerationBatchStore.approve(batch, editor: editor, approval: .acceptUnknownPrices)
+        let item = batch.payload.items[0]
+        let authorization = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: authorization, quoteLoader: { _, _ in
+                throw GenerationBudgetError.blocked("Pricing unavailable")
+            })
+        #expect(reserved.transactionId != nil)
+        #expect(reserved.estimate == nil)
+        let event = try #require(editor.generationLog.spendEvents.first)
+        #expect(event.kind == .reserved && event.money == nil)
+        #expect(event.note?.contains("explicitly approved") == true)
+        #expect(editor.mediaAssets.isEmpty)
+        let known = batch.payload.items[1]
+        let sibling = GenerationBatchAuthorization(batchID: batch.id, itemID: known.id)
+        _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+            target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+            requiresVerifiedCeiling: true, batchItem: sibling,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+                target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+                requiresVerifiedCeiling: true, batchItem: sibling,
+                quoteLoader: { _, _ in GenerationPackageFixture.money(0.50) })
+        }
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+                target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+                quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        }
+        #expect(editor.generationLog.spendEvents.count == 2)
+        let dataRoot = try #require(editor.workingRoot).appendingPathComponent("pipeline")
+        let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+        #expect(brief.budgetStopEur == 1)
+        await #expect(throws: CancellationError.self) {
+            try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+                target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+                requiresVerifiedCeiling: true, batchItem: authorization,
+                quoteLoader: { _, _ in throw CancellationError() })
+        }
+        #expect(editor.generationLog.spendEvents.count == 2)
+        let home = try #require(editor.workingRoot)
+        let current = try GenerationBatchStore.load(id: batch.id, home: home)
+        let transaction = try #require(reserved.transactionId)
+        let outputEntries = placeholders(item, transaction: transaction)
+        let consumed = try GenerationBatchStore.update(current, editor: editor, addingSpendEvents: [event]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: outputEntries, batch: batch)
+        }
+        let reloaded = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(reloaded == consumed)
+        #expect(reloaded.authoritySpendEvents.first?.money == nil)
+        #expect(reloaded.journal.executions[0].state == .submitting)
+        #expect(throws: (any Error).self) {
+            try GenerationBatchStore.update(reloaded, editor: editor) {
+                try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                    placeholders: outputEntries, batch: batch)
+            }
+        }
+    }
+
+    @Test func overrideDoesNotReuseCanceledExecutionOrAChangedReview() async throws {
+        let (root, editor, original) = try await fixture()
+        defer { cleanup(root) }
+        let batch = try await unpricedBatch(original, editor: editor)
+        let stored = try await GenerationBatchStore.approve(batch, editor: editor, approval: .acceptUnknownPrices)
+        _ = try GenerationBatchStore.update(stored, editor: editor) { $0.cancelRemaining() }
+        let item = batch.payload.items[0]
+        #expect(throws: (any Error).self) {
+            try GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+                .pricingOverride(package: item.package, editor: editor)
+        }
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        try editor.generationBatchCoordinator.present(batch, recoveries: recoveries)
+        await editor.generationBatchCoordinator.approve(editor: editor,
+            expectedBatchID: original.id, approval: .acceptUnknownPrices)
+        #expect(editor.generationBatchCoordinator.pending == batch)
+        editor.generationBatchCoordinator.requestRevision(editor: editor)
+        #expect(editor.generationBatchCoordinator.pending == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
     }
 
     @Test func thirteenGeminiRequestsHaveOneExactReviewTotalAndApproval() async throws {

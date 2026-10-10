@@ -98,12 +98,25 @@ final class GenerationBatchCoordinator {
         editor.agentService.completeGenerationBatch(pending.id, message: "The user declined the generation batch. No batch item was submitted.")
     }
 
-    func approve(editor: EditorViewModel) async {
-        guard let manifest = pending, !approving, !isRecovering, manifest.totalEUR != nil else { return }
+    func requestRevision(editor: EditorViewModel) {
+        guard !approving, !isRecovering, let pending else { return }
+        let failures = pending.payload.items.filter { $0.package.payload.estimate == nil }.map {
+            "\($0.purpose): \($0.package.payload.target.modelId) — \($0.package.payload.pricingFailure?.detail ?? "No pricing record")"
+        }.joined(separator: "\n")
+        self.pending = nil; error = nil; recoveries = [:]
+        editor.agentService.completeGenerationBatch(pending.id, message:
+            "The user requests a revised generation proposal. Nothing was submitted. Explain the intended outputs briefly, "
+            + "then offer a concrete next step. Preserve the user's chosen model; ask before substituting it. "
+            + "Do not re-present the same unresolved proposal. Pricing diagnostics:\n" + failures)
+    }
+
+    func approve(editor: EditorViewModel, expectedBatchID: String, approval: GenerationBatchApproval = .verifiedPrices) async {
+        guard let manifest = pending, manifest.id == expectedBatchID, !approving, !isRecovering,
+              manifest.totalEUR != nil || approval == .acceptUnknownPrices else { return }
         approving = true
         defer { approving = false }
         do {
-            _ = try await GenerationBatchStore.approve(manifest, editor: editor)
+            _ = try await GenerationBatchStore.approve(manifest, editor: editor, approval: approval)
             pending = nil
             recoveries = [:]
             error = nil

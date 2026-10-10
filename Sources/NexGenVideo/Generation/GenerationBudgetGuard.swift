@@ -32,14 +32,22 @@ enum GenerationBudgetGuard {
         editor: EditorViewModel,
         approvedPackage: GenerationPackageV1? = nil,
         requiresVerifiedCeiling: Bool = false,
+        batchItem: GenerationBatchAuthorization? = nil,
         quoteLoader: QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> GenerationAuthorization {
+        let acceptsUnknownPrice: Bool
+        if let batchItem {
+            guard let approvedPackage else {
+                throw GenerationBudgetError.blocked("Batch approval requires its exact generation package.")
+            }
+            acceptsUnknownPrice = try batchItem.pricingOverride(package: approvedPackage, editor: editor)
+        } else { acceptsUnknownPrice = false }
         if let approvedPackage {
             try approvedPackage.validate()
             guard approvedPackage.payload.target == target, approvedPackage.payload.outputCount == input.outputCount else {
                 throw GenerationBudgetError.blocked("The priced request differs from its generation package.")
             }
-            guard !requiresVerifiedCeiling || approvedPackage.payload.estimate != nil else {
+            guard !requiresVerifiedCeiling || approvedPackage.payload.estimate != nil || acceptsUnknownPrice else {
                 throw GenerationBudgetError.blocked(
                     "This request has no verified monetary ceiling. Retry pricing or choose another route before approval."
                 )
@@ -74,7 +82,10 @@ enum GenerationBudgetGuard {
             try validate(quoted)
             estimate = quoted
             pricingFailure = nil
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             estimate = nil
             pricingFailure = .classified(error, provider: target.provider, endpoint: target.endpoint)
         }
@@ -96,10 +107,11 @@ enum GenerationBudgetGuard {
         let existingSpend = try verifiedSpend(
             log: log,
             generatedAssets: editor.mediaAssets,
-            requireCompleteMoney: stop != nil
+            requireCompleteMoney: stop != nil && !acceptsUnknownPrice
+                && !(try batchItem?.hasPricingOverride(editor: editor) ?? false)
         )
 
-        if let stop {
+        if let stop, !acceptsUnknownPrice {
             guard let estimate else {
                 throw GenerationBudgetError.blocked(
                     "Budget stop: \(target.provider.displayName) did not provide a verified monetary "
@@ -117,6 +129,7 @@ enum GenerationBudgetGuard {
             }
         }
 
+        try Task.checkCancellation()
         let transactionId = UUID().uuidString
         editor.generationLog = log
         let authorization = GenerationAuthorization(
@@ -129,7 +142,9 @@ enum GenerationBudgetGuard {
             authorization: authorization,
             kind: .reserved,
             money: estimate,
-            note: pricingFailure?.detail
+            note: acceptsUnknownPrice
+                ? "User explicitly approved this exact batch item without a cost estimate. " + (pricingFailure?.detail ?? "")
+                : pricingFailure?.detail
         )
         return authorization
     }
@@ -452,7 +467,7 @@ enum LiveGenerationPricing {
                         reason: .unsupportedCombination,
                         provider: .fal,
                         endpoint: target.endpoint,
-                        detail: "GPT Image 2.5 has no published billed price for this size, quality, or edit input set."
+                        detail: "NexGenVideo cannot estimate this GPT Image 2.5 size, quality, or reference-image combination."
                     )
                 }
                 return try await ProviderMoneyClient.shared.normalize(
