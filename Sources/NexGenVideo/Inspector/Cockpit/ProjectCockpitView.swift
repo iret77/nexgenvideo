@@ -38,7 +38,8 @@ struct ProjectCockpitView: View {
             HStack(spacing: AppTheme.Spacing.none) {
                 SegmentedTabBar(
                     titles: titles,
-                    selected: selectedTitle
+                    selected: selectedTitle,
+                    acceptanceProbePrefix: WorkspaceUIAcceptance.isRequested ? "cockpit.tab" : nil
                 ) { title in
                     if let surface = packSurfaces.first(where: { $0.title == title }) {
                         editor.cockpitPackSurfaceID = surface.id
@@ -66,11 +67,6 @@ struct ProjectCockpitView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()  // a panel may never paint over the cockpit tab bar
-            if editor.uiContract != nil, selectedSurface != nil || editor.cockpitTab != .pipeline {
-                AppDivider()
-                PipelinePanelView(presentation: .phaseDock, viewedPhase: selectedSurface?.phase)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .task(id: editor.projectURL) {
             applyPackSurfaces([])

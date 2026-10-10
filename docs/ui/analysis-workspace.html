@@ -20,12 +20,14 @@ Play revalidates the assigned track's exact digest before starting. A visible Pl
 listening-position slider share the playhead across all lanes. Leaving the view, replacing the source,
 or starting editor playback stops analysis listening. A changed analysis clears a selection whose
 measured range is no longer present.</p>
-<p>The central artifact surface keeps a persistent phase dock below it. The dock names the single
-current execution phase separately from a previously viewed pack phase. Approval uses the same
-readiness calculation and click-time writer as the Pipeline overview. Inspecting older artifacts
-never makes their phase executable. Open Current Controls reveals the active host interaction.
-The next-action reason names a pending intake or decision when present. Structural blockers use a
-host-authored explanation of the failed canonical check; raw gate diagnostics remain separate.</p>
+<p>Analysis is an artifact surface: it shows the selected analysis and its listening controls only.
+Project-wide current-step status, readiness, approval and rewind controls live in the Pipeline tab.
+No global phase dock appears below Analysis or any other artifact tab, even when the active step
+matches the selected artifact. Opening an older artifact never changes the executable phase.
+Pending host interactions remain in Tasks, reachable from Pipeline by the explicitly named action.
+Approval retains the shared readiness calculation and click-time validation. Next-action reasons
+name pending intake or decisions; structural blockers use host-authored explanations, with raw gate
+diagnostics kept separate.</p>
 <p>Track → optional Lyrics → Project Init → approved Audio Analysis → optional existing material →
 story development remains the independent acceptance sequence. Media-library import does not assign
 intake. Beatless and unresolved measurements retain their existing explicit status.</p>
@@ -43,4 +45,4 @@ tracks. Additional evidence layers must use declared actual measurements.</p></s
 <p>Measured energy · normalized RMS</p>
 <svg preserveAspectRatio="none" viewBox="0 0 1000 70" width="100%" height="70" role="img" aria-label="Illustrative measured energy"><path d="M0 60 L100 50 L200 12 L300 40 L400 20 L500 40 L600 10 L700 30 L800 20 L900 50 L1000 60" fill="none" stroke="#e6ad45" stroke-width="2"/></svg>
 </div><p>Verse · 0:30.000 – 2:00.000</p><p>Intro · 0:00.000 – 0:30.000</p>
-<p class="selected-row">Verse · 0:30.000 – 2:00.000</p><p>Current phase: Audio Analysis · <button>Open Current Controls</button> <button disabled>Approve</button></p><small>Illustrative fixture; not native runtime evidence.</small></article></html>
+<p class="selected-row">Verse · 0:30.000 – 2:00.000</p><small>Illustrative fixture; not native runtime evidence.</small></article></html>

@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.3",
+      "date": "2026-10-10",
+      "sections": [
+        {
+          "heading": "Interface",
+          "items": [
+            "Project-wide status and approval controls stay in Pipeline. Story, Bible, Shotlist, Review and pack artifact tabs no longer show controls for an unrelated current step.",
+            "Pipeline names Tasks as the destination for pending input and decisions."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.6.2",
       "date": "2026-10-09",
       "sections": [
