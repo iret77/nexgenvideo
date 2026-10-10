@@ -78,6 +78,32 @@ struct AgentTranscriptTurn: Identifiable {
 }
 
 enum AgentTranscriptProjection {
+    static func taskItems(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptItem] {
+        let streamingID = isStreaming ? messages.last(where: { $0.role == .assistant })?.id : nil
+        return messages.flatMap { message -> [AgentTranscriptItem] in
+            if message.role == .assistant, !message.hidden {
+                var visible = message
+                visible.blocks = message.blocks.filter { block in
+                    if case .text(let text) = block {
+                        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    return !message.isIncompleteAPIResponse && isPersistentTool(block)
+                }
+                var items: [AgentTranscriptItem] = visible.blocks.isEmpty ? [] : [.assistantResult(visible)]
+                if message.isIncompleteAPIResponse, message.id != streamingID {
+                    items.append(.notice(.init(id: message.id, text: String(localized:
+                        "Response interrupted. This partial answer is not included in the agent’s context. Send a new request to continue."))))
+                }
+                return items
+            }
+            if let notice = message.userPresentation?.notice?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !notice.isEmpty {
+                return [.notice(.init(id: message.id, text: notice))]
+            }
+            return []
+        }
+    }
+
     static func turns(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptTurn] {
         HangDiagnosticSelfTest.injectReplayControl(messages)
         let diagnosticID = HangDiagnosticRecorder.shared.record(.projection, values: [Double(messages.count)])

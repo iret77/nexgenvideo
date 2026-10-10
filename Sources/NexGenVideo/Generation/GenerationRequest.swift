@@ -520,7 +520,8 @@ enum GenerationController {
             let priced = try await GenerationBudgetGuard.authorize(
                 input: pricingInput(request, prepared: prepared, compiledPrompt: generation.compiledPrompt),
                 target: target, editor: editor, approvedPackage: generation.reviewedPackage,
-                requiresVerifiedCeiling: generation.batchItem != nil, quoteLoader: quoteLoader)
+                requiresVerifiedCeiling: generation.batchItem != nil, batchItem: generation.batchItem,
+                quoteLoader: quoteLoader)
             do {
                 let package = try generation.reviewedPackage ?? makePackage(generation, estimate: priced.estimate)
                 try package?.persist(editor: editor)

@@ -4,6 +4,18 @@ import Testing
 
 @Suite("Agent transcript layout policy")
 struct AgentTranscriptLayoutPolicyTests {
+    @Test func messageHistoryScrollActionsUseStateWithoutCapturingTheScrollView() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(of: "private var taskResult: some View"))
+        let end = try #require(source.range(of: "private var diagnosticTranscript", range: start.upperBound..<source.endIndex))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+        #expect(implementation.contains(".scrollPosition($messageScrollPosition)"))
+        #expect(implementation.contains("messageScrollPosition.scrollTo(id: last.id"))
+        for forbidden in ["ScrollViewReader", "ZStack", ".overlay", ".onScrollGeometryChange", "withAnimation", ".onChange"] {
+            #expect(!implementation.contains(forbidden))
+        }
+    }
+
     @Test func transcriptTurnContainerUsesFiniteLayout() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(

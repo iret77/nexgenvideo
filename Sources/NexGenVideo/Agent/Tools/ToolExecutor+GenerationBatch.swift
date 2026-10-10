@@ -80,7 +80,7 @@ extension ToolExecutor {
             for entry in entries {
                 guard let toolName = entry["tool"] as? String, let tool = ToolName(rawValue: toolName),
                       [.generateImage, .generateVideo].contains(tool), let purpose = entry["purpose"] as? String,
-                      !purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, purpose.count <= 160,
                       let rawRequest = entry["request"] as? [String: Any] else { throw ToolError("A batch item is incomplete.") }
                 if let root = DataRootResolver.dataRoot(of: home) {
                     let actualPhase = try currentPhaseIfEnforced(tool: tool, editor: editor, dataRoot: root)

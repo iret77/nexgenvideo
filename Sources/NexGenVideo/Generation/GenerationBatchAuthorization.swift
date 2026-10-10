@@ -14,19 +14,46 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
     }
 
     @MainActor
+    func pricingOverride(package: GenerationPackageV1, editor: EditorViewModel) throws -> Bool {
+        let snapshot = try approvedSnapshot(package: package, editor: editor)
+        guard snapshot.authorityAvailable,
+              snapshot.journal.executions.first(where: { $0.itemID == itemID })?.state == .queued else {
+            throw GenerationRequestError.gate("This batch item has no unused approval on this Mac.")
+        }
+        return snapshot.journal.pricingOverrideItemIDs?.contains(itemID) == true
+    }
+
+    @MainActor
+    func hasPricingOverride(editor: EditorViewModel) throws -> Bool {
+        guard let home = editor.workingRoot else { return false }
+        let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
+        guard snapshot.authorityAvailable, snapshot.batch.payload.projectKey == editor.projectId,
+              let overrideIDs = snapshot.journal.pricingOverrideItemIDs else { return false }
+        return !overrideIDs.isEmpty && snapshot.batch.payload.items.contains { $0.id == itemID }
+    }
+
+    @MainActor
     func consume(authorization: GenerationAuthorization, editor: EditorViewModel) throws {
         guard let package = authorization.generationPackage, let transactionID = authorization.transactionId,
-              let quote = authorization.estimate, let ceiling = package.payload.estimate,
-              quote.eurAmount <= ceiling.eurAmount, authorization.target == package.payload.target else {
-            throw GenerationRequestError.gate("A batch submission needs its exact package, monetary ceiling and budget reservation.")
+              authorization.target == package.payload.target else {
+            throw GenerationRequestError.gate("A batch submission needs its exact package and spend reservation.")
         }
         try authorization.projectMutationScope?.requireCurrent(editor: editor)
         let snapshot = try current(package: package, editor: editor)
+        if let ceiling = package.payload.estimate {
+            guard let quote = authorization.estimate, quote.eurAmount <= ceiling.eurAmount else {
+                throw GenerationRequestError.gate("The batch submission exceeds its reviewed price.")
+            }
+        } else {
+            guard snapshot.journal.pricingOverrideItemIDs?.contains(itemID) == true else {
+                throw GenerationRequestError.gate("This batch item has no explicit unknown-price approval.")
+            }
+        }
         let events = editor.generationLog.spendEvents.filter { $0.transactionId == transactionID }
         guard events.count == 1, let reservation = events.first, reservation.kind == .reserved,
               reservation.model == authorization.target.modelId, reservation.provider == authorization.target.provider,
               reservation.transport == authorization.target.transport, reservation.endpoint == authorization.target.endpoint,
-              reservation.money == quote else {
+              reservation.money == authorization.estimate else {
             throw GenerationRequestError.gate("The batch item's central spend reservation is missing or already consumed.")
         }
         let placeholders = editor.mediaAssets.filter {
@@ -96,13 +123,20 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
     }
 
     @MainActor
-    private func current(package: GenerationPackageV1, editor: EditorViewModel) throws -> GenerationBatchStore.Snapshot {
+    private func approvedSnapshot(package: GenerationPackageV1, editor: EditorViewModel) throws -> GenerationBatchStore.Snapshot {
         guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
         let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
-        guard snapshot.batch.payload.projectKey == editor.projectId,
+        guard snapshot.authorityAvailable, snapshot.batch.payload.projectKey == editor.projectId,
               snapshot.batch.payload.items.first(where: { $0.id == itemID })?.package == package else {
             throw GenerationRequestError.gate("The generation request is not part of this project's approved batch.")
         }
+        return snapshot
+    }
+
+    @MainActor
+    private func current(package: GenerationPackageV1, editor: EditorViewModel) throws -> GenerationBatchStore.Snapshot {
+        let snapshot = try approvedSnapshot(package: package, editor: editor)
+        guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
         let option = SpendOption(modelId: package.payload.target.modelId, modelName: package.payload.target.modelId,
             target: package.payload.target, credits: nil, requiresCatalogAvailability: true)
         guard option.isCurrentlyAvailable else {

@@ -304,7 +304,7 @@ struct PackSurfaceTests {
         let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
             contract: reviewContract, availablePackSurfaces: []))
         #expect(unavailable.destination == .chat)
-        #expect(unavailable.label == "Open Controls")
+        #expect(unavailable.label == "Tasks")
 
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)

@@ -184,6 +184,7 @@ struct GenerationExecutionAuthorityStore: Sendable {
         }
         try validate(updated)
         guard updated.journal.approvedAt == current.journal.approvedAt,
+              updated.journal.pricingOverrideItemIDs == current.journal.pricingOverrideItemIDs,
               updated.journal.revision >= current.journal.revision,
               updated.journal.revision > current.journal.revision || updated.spendEvents.count > current.spendEvents.count else {
             throw GenerationRequestError.gate("The approved generation execution cannot rewind or replace its history.")

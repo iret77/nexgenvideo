@@ -255,8 +255,9 @@ def run_scale(executable, output, scale):
         and all(musicvideo[0].get(key) is True for key in (
             "externalPackLoaded", "exactBinding", "libraryDidNotAssignTrack",
             "viewingDidNotAdvance", "disabledApprovalDidNotMutate", "intakeCheckpointSettled",
+            "artifactTabsExcludeWorkflowControls", "pipelineRestored", "tasksReachable",
         ))
-        and len(musicvideo[0].get("screenshots", [])) == 2
+        and len(musicvideo[0].get("screenshots", [])) == 3
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -268,7 +269,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 21 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 22 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

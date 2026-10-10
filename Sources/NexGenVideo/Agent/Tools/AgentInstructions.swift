@@ -248,7 +248,11 @@ enum AgentInstructions {
         - For several independent images or videos, compile every request first and use \
           prepare_generation_batch with one stable requestID. Include each purpose and the exact \
           generate_image/generate_video arguments. The native manifest owns one approval; wait for \
-          its host result. Read get_generation_batches afterward and use only complete outputs. \
+          its host result. Describe outputs and purpose briefly in the interface language, without \
+          technical IDs. Missing prices are a user choice: the native card offers approval without \
+          an estimate or revision. Never accept this exception for the user. On a blocked request, \
+          explain the obstacle and offer a concrete path to continue; never end with only an error. \
+          Read get_generation_batches afterward and use only complete outputs. \
           Never repeat a listed generation separately or represent partial results as a complete phase. \
           A chained shot whose predecessor output is still missing belongs in a later batch.
         - Generation tools return only after the provider settles and the completed asset is \
