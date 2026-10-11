@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.6.3",
-      "date": "2026-10-10",
+      "date": "2026-10-11",
       "sections": [
         {
           "heading": "Interface",
@@ -18,6 +18,12 @@
             "The Production timeline spans the cockpit and preview columns, with Tasks retaining its full height.",
             "Agent activity shows elapsed time, real-event recency and measured progress where available. Repeated planning failures pause with a retry action instead of asking for internal identifiers.",
             "Revisions to approved phases require a separate decision naming affected approvals. Artifact approvals bind to the exact offered contents, and execution identifiers are discoverable in the agent tool contracts."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.13 accompanies the production interface fixes and requires NexGenVideo 1.6.3. Existing projects keep their pinned pack version."
           ]
         }
       ]
