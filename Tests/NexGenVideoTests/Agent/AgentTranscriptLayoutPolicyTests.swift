@@ -141,7 +141,8 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(dockImplementation.contains("case .gateApproval:"))
         #expect(dockImplementation.contains("case .dialog:"))
         #expect(dockImplementation.contains("case .backendRecovery:"))
-        #expect(dockImplementation.contains("case .composer:\n            footer"))
+        #expect(dockImplementation.contains("case .composer:"))
+        #expect(dockImplementation.contains("pipelineRepairRecovery } else { footer }"))
 
         let statusSource = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
@@ -162,7 +163,16 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(panel.contains("phaseHasTranscriptActivity: activityVisible"))
         #expect(state.contains("case .phaseRun: input.phaseHasTranscriptActivity"))
         #expect(state.contains("case .stream: input.streamHasTranscriptActivity"))
-        #expect(panel.contains("surfaceState.statusHasTranscriptActivity"))
+        let statusStart = try #require(panel.range(of: "private var liveStatus:"))
+        let streamStart = try #require(panel.range(
+            of: "case .stream:", range: statusStart.upperBound..<panel.endIndex
+        ))
+        let streamEnd = try #require(panel.range(
+            of: "case .turnFailure:", range: streamStart.upperBound..<panel.endIndex
+        ))
+        let streamStatus = panel[streamStart.upperBound..<streamEnd.lowerBound]
+        #expect(streamStatus.contains("AgentLiveStatus(state: .working"))
+        #expect(streamStatus.contains("service.activityEvents.last"))
         #expect(!panel.contains("detail: \"Current operation appears in the transcript\""))
 
         let statusSource = try sourceFile(
@@ -229,7 +239,11 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(dock.contains("SpendApprovalCard("))
         #expect(dock.contains("GateApprovalCard("))
         #expect(dock.contains("AgentDialogCard("))
-        #expect(dock.contains("case .composer:\n            footer"))
+        let composerStart = try #require(dock.range(of: "case .composer:"))
+        #expect(!dock[dock.startIndex..<composerStart.lowerBound].contains("footer"))
+        let composer = dock[composerStart.upperBound..<dock.endIndex]
+        #expect(composer.contains("service.currentPipelineRepairFailure != nil"))
+        #expect(composer.contains("pipelineRepairRecovery } else { footer }"))
         #expect(!input.contains("blockedHint"))
         #expect(!input.contains(".disabled(blocked)"))
         #expect(input.contains("onFocusChange(value)"))
@@ -318,7 +332,12 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
         #expect(message.contains("Previous fingerprint"))
         #expect(message.contains("editor.revealCockpit"))
-        #expect(batch.contains("Cost estimates are missing. Approval is unavailable"))
+        #expect(batch.contains("Approve without estimate"))
+        #expect(batch.contains("Provider charges apply. The project budget cannot be guaranteed for this batch."))
+        #expect(batch.contains("expectedBatchID: batch.id"))
+        #expect(batch.contains(".acceptUnknownPrices : .verifiedPrices"))
+        #expect(batch.contains(".disabled(!controls.canApprove && !controls.canApproveWithoutEstimate)"))
+        #expect(!batch.contains("Cost estimates are missing. Approval is unavailable"))
         #expect(!batch.contains("Waiting for cost estimates"))
         #expect(batch.contains("batch.totalEUR == nil"))
     }
