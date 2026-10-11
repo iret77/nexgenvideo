@@ -8,12 +8,16 @@
         {
           "heading": "Interface",
           "items": [
-            "Project-wide status and approval controls stay in Pipeline. Story, Bible, Shotlist, Review and pack artifact tabs no longer show controls for an unrelated current step.",
+            "Project-wide status and approval controls stay in Pipeline. Project Brief, Treatment, Storyboard, Bible, Shotlist, Review and pack artifact tabs no longer show controls for an unrelated current step.",
             "Pipeline names Tasks as the destination for pending input and decisions.",
             "Generation reviews show readable requests and compact details. When pricing is unavailable, explicitly approve the exact batch without an estimate or ask the agent to revise it; unknown costs are recorded as unknown.",
             "Agent messages and notices remain in the main history when tools run or a later response arrives. Latest message returns to the newest entry without moving your reading position automatically.",
             "Bible reference images resolve from the project data root and open in the shared Preview. Visual Bible cards and object details have distinct roles instead of repeating the full card.",
-            "Tasks shows the authoritative activity or decision status above messages, with a direct Pipeline entry and explicit guidance when no approval request is open."
+            "Tasks shows the authoritative activity or decision status above messages, with a direct Pipeline entry and explicit guidance when no approval request is open.",
+            "Project Brief, Treatment and Storyboard have separate cockpit tabs. Review shortcuts open those tabs; new-review markers clear when visited or resolved.",
+            "The Production timeline spans the cockpit and preview columns, with Tasks retaining its full height.",
+            "Agent activity shows elapsed time, real-event recency and measured progress where available. Repeated planning failures pause with a retry action instead of asking for internal identifiers.",
+            "Revisions to approved phases require a separate decision naming affected approvals. Artifact approvals bind to the exact offered contents, and execution identifiers are discoverable in the agent tool contracts."
           ]
         }
       ]

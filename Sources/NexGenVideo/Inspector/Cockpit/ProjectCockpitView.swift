@@ -1,28 +1,29 @@
 import AppKit
 import SwiftUI
 
-/// Tabs of the Project cockpit. Pipeline (status + gates + budget) is the control room and leads as the
-/// default landing tab; the rest follow the production timeline left→right — Story (brief + treatment),
-/// Bible, Shotlist, Review (frames + sanity findings). `project` is the settings view, reached via the
-/// trailing gear, never a peer tab.
 enum CockpitTab: String, Hashable, CaseIterable {
     case pipeline = "Pipeline"
-    case story = "Story"
+    case story = "Project Brief"
+    case treatment = "Treatment"
+    case storyboard = "Storyboard"
     case bible = "Bible"
     case shotlist = "Shotlist"
     case review = "Review"
     case project = "Project"
 
-    // Tab budget stays ≤5 (Fable's width math): sanity findings live inside Review — both are
-    // quality-control surfaces over the same shots. Order: the control room first, then the artifacts
-    // in phase order (brief/treatment → bible → shotlist → frames/sanity).
-    static let visibleTabs: [CockpitTab] = [.pipeline, .story, .bible, .shotlist, .review]
+    static let visibleTabs: [CockpitTab] = [.pipeline, .story, .treatment, .storyboard, .bible, .shotlist, .review]
 }
 
-/// The Project cockpit — the canonical home for project-level artifacts (the engine-read Bible /
-/// Pipeline / Shotlist / Sanity panels + settings behind the gear). It lives under the left sidebar's
-/// Project tab, reachable in both focuses, and is never crammed into the selection Inspector
-/// (docs/UI_UX_CONCEPT.md §3). The Bible keeps its board layout and needs surface area here.
+enum CockpitReviewAttention {
+    static func titles(approval: GateApproval?, acknowledged: Set<String>,
+                       contract: ContractData?, surfaces: [CockpitSurfaceData]) -> Set<String> {
+        guard let approval, !approval.isRewind, !acknowledged.contains(approval.id),
+              let route = PipelineSurfaceRouting.route(for: approval.phase, contract: contract,
+                availablePackSurfaces: surfaces) else { return [] }
+        return [route.destinationLabel]
+    }
+}
+
 struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
 
@@ -39,8 +40,10 @@ struct ProjectCockpitView: View {
                 SegmentedTabBar(
                     titles: titles,
                     selected: selectedTitle,
+                    markedTitles: pendingReviewTitles,
                     acceptanceProbePrefix: WorkspaceUIAcceptance.isRequested ? "cockpit.tab" : nil
                 ) { title in
+                    acknowledgeReview(title: title)
                     if let surface = packSurfaces.first(where: { $0.title == title }) {
                         editor.cockpitPackSurfaceID = surface.id
                     } else if let tab = CockpitTab(rawValue: title) {
@@ -56,7 +59,8 @@ struct ProjectCockpitView: View {
                     packSurfaceView(surface)
                 } else {
                     switch editor.cockpitTab {
-                    case .story: StoryPanelView()
+                    case .story, .treatment: StoryPanelView(document: editor.cockpitTab, drafts: editor.storyPanelDrafts)
+                    case .storyboard: StoryboardPanelView()
                     case .bible: BiblePanelView()
                     case .pipeline: PipelinePanelView()
                     case .shotlist: ShotlistPanelView()
@@ -68,11 +72,23 @@ struct ProjectCockpitView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()  // a panel may never paint over the cockpit tab bar
         }
+        .onChange(of: selectedTitle) { _, title in acknowledgeReview(title: title) }
         .task(id: editor.projectURL) {
             applyPackSurfaces([])
             await resolvePackSurface()
         }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await resolvePackSurface() } }
+    }
+
+    private var pendingReviewTitles: Set<String> {
+        CockpitReviewAttention.titles(approval: editor.agentService.pendingGateApproval,
+            acknowledged: editor.acknowledgedReviewRequests, contract: editor.uiContract,
+            surfaces: editor.availableCockpitPackSurfaces)
+    }
+
+    private func acknowledgeReview(title: String) {
+        guard pendingReviewTitles.contains(title), let approval = editor.agentService.pendingGateApproval else { return }
+        editor.acknowledgedReviewRequests.insert(approval.id)
     }
 
     private func packSurfaceView(_ surface: CockpitSurfaceData) -> some View {

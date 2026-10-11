@@ -292,7 +292,7 @@ struct PackSurfaceTests {
             from: Data(#"{"phases":{"production_design":{"surface":"review","task_class":"review"},"storyboard":{"surface":"review","task_class":"review"},"bible":{"surface":"review","task_class":"review"},"shotlist":{"surface":"review","task_class":"review"},"sanity":{"surface":"review","task_class":"review"},"frames":{"surface":"review","task_class":"review"}}}"#.utf8)
         )
         #expect(PipelineSurfaceRouting.route(for: "storyboard", contract: reviewContract,
-            availablePackSurfaces: [])?.destination == .storyboard)
+            availablePackSurfaces: [])?.destination == .tab(.storyboard))
         #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
             availablePackSurfaces: [])?.destination == .tab(.bible))
         #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,

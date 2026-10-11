@@ -634,6 +634,41 @@ struct GateApprovalTests {
         ) == nil)
     }
 
+    @Test("Reconnected revision requests reuse the pending host decision")
+    func revisionRetryIsIdempotent() throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let origin = ToolCallOrigin.externalMCP(sessionID: UUID())
+        let approval = GateApproval(phase: "storyboard",
+            action: .rewind(gatesSHA256: "unchanged", phases: ["storyboard", "bible"]),
+            sourceToolName: ToolName.rewind.rawValue)
+        let first = try service.requestGateApproval(approval, origin: origin)
+        #expect(service.toolCallBlockReason(tool: .rewind,
+            args: ["target_phase": "storyboard"], origin: origin) == nil)
+        let retry = try service.requestGateApproval(approval, origin: origin)
+        #expect(!retry.isNew)
+        #expect(first.approval.id == retry.approval.id)
+        #expect(service.toolCallBlockReason(tool: .writeShotlist, args: [:], origin: origin) != nil)
+    }
+
+    @Test("External repair recovery stays visible and unblocks only its own origin")
+    func externalRepairRecovery() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let origin = ToolCallOrigin.externalMCP(sessionID: UUID())
+        let other = ToolCallOrigin.externalMCP(sessionID: UUID())
+        service.pausePipelineRepair(tool: "write_shotlist", detail: "invalid input", origin: origin)
+        #expect(service.currentPipelineRepairFailure != nil)
+        #expect(service.toolCallBlockReason(tool: .getProjectState, args: [:], origin: origin) != nil)
+        service.clearPipelineRepair(origin: other)
+        #expect(service.currentPipelineRepairFailure != nil)
+        service.retryPipelineRepair()
+        #expect(service.currentPipelineRepairFailure == nil)
+        #expect(service.toolCallBlockReason(tool: .getProjectState, args: [:], origin: origin) == nil)
+        #expect(!service.hasPendingHostFollowUp)
+    }
+
     // MARK: - Tool outcome (approve writes, decline does not)
 
     private func scaffold() throws -> (ToolHarness, URL, URL) {

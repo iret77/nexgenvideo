@@ -2413,6 +2413,12 @@ extension ToolExecutor {
                 "External MCP sessions cannot own an in-app dialog. Ask in the MCP client or start the request from an in-app chat."
             )
         }
+        if lastPipelineWriteFailed,
+           let data = try? JSONSerialization.data(withJSONObject: args, options: .sortedKeys),
+           let text = String(data: data, encoding: .utf8),
+           ["semantic_job_id", "input_slot_id", "mode_id", "preservation_scope_ids"].contains(where: { text.contains($0) }) {
+            throw ToolError("Internal execution identifiers are not a user decision. Read get_project_state.execution_input_contract and list_models.production_routes; correct the rejected field using host definitions. Do not present a technical recovery questionnaire.")
+        }
         let dialog = try AgentDialog.parse(args)
         try validateDialogMediaChoices(dialog, editor: editor)
         try editor.pipelineAgentHarness.guardAgentDecision(dialog, editor: editor)
@@ -2852,6 +2858,14 @@ extension ToolExecutor {
             "models": out,
             "loaded": modelCatalog.isLoaded,
         ]
+        let routes = productionRouteCandidates(activation).filter {
+            $0.candidate.providerActivated && $0.candidate.liveAvailable && prefs.isEnabled($0.modelID)
+        }.map(\.candidate)
+        if let data = try? JSONEncoder().encode(routes),
+           let encoded = try? JSONSerialization.jsonObject(with: data) {
+            body["production_routes"] = encoded
+        }
+        body["execution_input_contract"] = PipelineExecutionIdentifierContract.discovery
         if out.isEmpty {
             body["note"] = "No usable models yet — activate a provider in Settings → Providers "
                 + "(or re-enable models in Settings → Models). Recommend the user do this rather than guessing."

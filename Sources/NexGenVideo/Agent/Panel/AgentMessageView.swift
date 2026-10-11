@@ -224,7 +224,9 @@ private struct AgentHostStateView: View {
 
     private func cockpitTab(for phase: String) -> CockpitTab {
         switch phase {
-        case "brief", "production_design", "treatment", "storyboard": .story
+        case "brief", "production_design": .story
+        case "treatment": .treatment
+        case "storyboard": .storyboard
         case "bible": .bible
         case "shotlist": .shotlist
         case "frames", "sanity", "render", "finish": .review

@@ -5,7 +5,21 @@ import SwiftUI
 // composes a structured agent command (the engine phases own the writes), so the artifacts stay the
 // single source of truth and nothing lives only in chat.
 
+@Observable
+final class StoryPanelDrafts {
+    var briefDraft = ""
+    var treatmentDraft = ""
+    var editedMission = ""
+    var editedPlatform = ""
+    var editedAspect = ""
+    var editedMode = ""
+    var seededBrief: BriefData?
+    var isSeeded = false
+}
+
 struct StoryPanelView: View {
+    let document: CockpitTab
+    @Bindable var drafts: StoryPanelDrafts
     @Environment(EditorViewModel.self) private var editor
 
     private enum TreatmentState: Equatable {
@@ -16,15 +30,9 @@ struct StoryPanelView: View {
 
     @State private var treatment: TreatmentState = .idle
     @State private var loadToken = 0
-    @State private var briefDraft = ""
-    @State private var treatmentDraft = ""
 
     // Inline-editable structured Brief fields — seeded from `editor.brief` and diffed against it
     // to compose the Apply command (briefEditsCommand), so only changed fields are sent.
-    @State private var editedMission = ""
-    @State private var editedPlatform = ""
-    @State private var editedAspect = ""
-    @State private var editedMode = ""
 
     private static let aspectRatioOptions = [
         "16:9", "9:16", "1:1", "4:5", "5:4", "4:3", "3:4", "21:9", "9:21", "other",
@@ -38,7 +46,7 @@ struct StoryPanelView: View {
                 // No pipeline yet → ONE coherent state with the entry point, instead of the
                 // brief/treatment fragments each reporting their own flavor of "nothing here".
                 CockpitStateView.error(
-                    .notInitialized, title: "Story", subject: "the story",
+                    .notInitialized, title: document.rawValue, subject: document == .treatment ? "the treatment" : "the project brief",
                     activePack: InstalledPack.named(editor.activePluginName),
                     startProduction: { editor.startProduction() },
                     isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline,
@@ -47,13 +55,13 @@ struct StoryPanelView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                        briefSection
-                        treatmentSection
+                        if document == .treatment { treatmentSection } else { briefSection }
                     }
                     .padding(.horizontal, AppTheme.Spacing.lg)
                     .padding(.vertical, AppTheme.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .id(document)
             }
         }
         .task(id: editor.projectURL) { await loadTreatment() }
@@ -77,7 +85,7 @@ struct StoryPanelView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "e.g. migrate the brief to the current schema…",
-                draft: $briefDraft,
+                draft: $drafts.briefDraft,
                 action: "Repair brief",
                 command: { "The project's brief.yaml fails to load. \($0)" }
             )
@@ -102,7 +110,7 @@ struct StoryPanelView: View {
             )
             promptRow(
                 placeholder: "Open-ended direction for the brief…",
-                draft: $briefDraft,
+                draft: $drafts.briefDraft,
                 action: "Update brief",
                 command: { "Update the project brief: \($0). Apply it via the brief phase and show the diff." }
             )
@@ -112,7 +120,7 @@ struct StoryPanelView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "Describe the video you want…",
-                draft: $briefDraft,
+                draft: $drafts.briefDraft,
                 action: "Draft brief",
                 command: { "Draft the project brief from this direction, then walk me through the open choices: \($0)" }
             )
@@ -184,11 +192,11 @@ struct StoryPanelView: View {
     }
 
     private func deliveryRows(_ brief: BriefData) -> [BriefRow] {
-        var rows: [BriefRow] = [.editableText("Mission", $editedMission)]
+        var rows: [BriefRow] = [.editableText("Mission", $drafts.editedMission)]
         Self.add(&rows, "Mission detail", brief.missionOther)
-        rows.append(.editableText("Platform", $editedPlatform))
+        rows.append(.editableText("Platform", $drafts.editedPlatform))
         Self.add(&rows, "Audience", brief.targetAudience)
-        rows.append(.editableMenu("Aspect", $editedAspect, Self.aspectRatioOptions))
+        rows.append(.editableMenu("Aspect", $drafts.editedAspect, Self.aspectRatioOptions))
         Self.add(&rows, "Aspect detail", brief.aspectRatioOther)
         Self.add(&rows, "Length", brief.lengthMode)
         Self.add(&rows, "Cut handles", brief.cutHandlesMode)
@@ -196,7 +204,7 @@ struct StoryPanelView: View {
     }
 
     private func productionRows(_ brief: BriefData) -> [BriefRow] {
-        var rows: [BriefRow] = [.editableMenu("Mode", $editedMode, Self.projectModeOptions)]
+        var rows: [BriefRow] = [.editableMenu("Mode", $drafts.editedMode, Self.projectModeOptions)]
         Self.add(&rows, "Video model", brief.modelPreference)
         Self.add(&rows, "Model detail", brief.modelPreferenceOther)
         Self.add(&rows, "Frame images", brief.frameImageModel)
@@ -311,24 +319,28 @@ struct StoryPanelView: View {
     }
 
     private func seedBriefEdits(_ brief: BriefData?) {
+        guard !drafts.isSeeded || drafts.seededBrief != brief else { return }
+        guard !drafts.isSeeded || (drafts.seededBrief.map({ briefEditsCommand(against: $0) == nil }) ?? true) else { return }
+        drafts.seededBrief = brief
+        drafts.isSeeded = true
         guard let brief else {
-            editedMission = ""; editedPlatform = ""; editedAspect = ""; editedMode = ""
+            drafts.editedMission = ""; drafts.editedPlatform = ""; drafts.editedAspect = ""; drafts.editedMode = ""
             return
         }
-        editedMission = brief.mission
-        editedPlatform = brief.targetPlatform
-        editedAspect = brief.aspectRatio
-        editedMode = brief.projectMode
+        drafts.editedMission = brief.mission
+        drafts.editedPlatform = brief.targetPlatform
+        drafts.editedAspect = brief.aspectRatio
+        drafts.editedMode = brief.projectMode
     }
 
     /// One structured command per changed field, folded into a single agent message — the visible,
     /// reviewable diff that replaces free-prose guessing. `nil` when nothing changed.
     private func briefEditsCommand(against brief: BriefData) -> String? {
         var clauses: [String] = []
-        if editedMission != brief.mission { clauses.append("mission → \"\(editedMission)\"") }
-        if editedPlatform != brief.targetPlatform { clauses.append("target_platform → \"\(editedPlatform)\"") }
-        if editedAspect != brief.aspectRatio { clauses.append("aspect_ratio → \"\(editedAspect)\"") }
-        if editedMode != brief.projectMode { clauses.append("project_mode → \"\(editedMode)\"") }
+        if drafts.editedMission != brief.mission { clauses.append("mission → \"\(drafts.editedMission)\"") }
+        if drafts.editedPlatform != brief.targetPlatform { clauses.append("target_platform → \"\(drafts.editedPlatform)\"") }
+        if drafts.editedAspect != brief.aspectRatio { clauses.append("aspect_ratio → \"\(drafts.editedAspect)\"") }
+        if drafts.editedMode != brief.projectMode { clauses.append("project_mode → \"\(drafts.editedMode)\"") }
         guard !clauses.isEmpty else { return nil }
         return "Update the project brief: \(clauses.joined(separator: "; ")). Apply it via the brief phase and show the diff."
     }
@@ -364,7 +376,7 @@ struct StoryPanelView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "Direction for the treatment (optional)…",
-                draft: $treatmentDraft,
+                draft: $drafts.treatmentDraft,
                 allowEmpty: true,
                 action: "Draft treatment",
                 command: { note in
@@ -389,7 +401,7 @@ struct StoryPanelView: View {
             )
             promptRow(
                 placeholder: "Revise the treatment…",
-                draft: $treatmentDraft,
+                draft: $drafts.treatmentDraft,
                 action: "Revise treatment",
                 command: { "Revise the treatment (a new version, never overwrite): \($0). Then present it for review." }
             )

@@ -31,6 +31,9 @@ struct PipelinePhaseExecutionSnapshot: Equatable {
     var nextStageID: String?
     var status: PipelinePhaseExecutionStatus
 
+    var startedAt: Date = Date()
+    var lastEventAt: Date = Date()
+
     var isRunning: Bool { status == .running }
 }
 
@@ -63,6 +66,7 @@ final class PipelinePhaseExecutionState {
               current.runID == runID,
               current.status == .running
         else { return }
+        current.lastEventAt = Date()
         current.sourceFilename = progress.sourceFilename ?? current.sourceFilename
         current.stageID = progress.stageID
         current.completedUnitCount = progress.completedUnitCount

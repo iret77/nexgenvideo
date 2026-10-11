@@ -83,8 +83,8 @@ struct AgentLiveStatusView: View {
                     .disabled(status.cancellationRequested)
                     .accessibilityLabel(
                         status.cancellationRequested
-                            ? "Cancelling generation"
-                            : "Cancel generation"
+                            ? "Cancellation requested"
+                            : "Stop current operation"
                     )
                 }
             }

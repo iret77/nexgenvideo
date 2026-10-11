@@ -55,6 +55,7 @@ final class GenerationBatchCoordinator {
     @ObservationIgnored private var recoveries: [String: GenerationBatchRecovery] = [:]
     private(set) var recoveringItemIDs: Set<String> = []
     private(set) var activeBatchID: String?
+    private(set) var lastProgressAt: [String: Date] = [:]
 
     var isRecovering: Bool { !recoveringItemIDs.isEmpty }
     var canRetryPricing: Bool {
@@ -76,6 +77,10 @@ final class GenerationBatchCoordinator {
     }
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
+        if let previous = snapshots.first(where: { $0.batch.id == snapshot.batch.id }),
+           previous.journal.revision != snapshot.journal.revision {
+            lastProgressAt[snapshot.batch.id] = Date()
+        }
         readID = UUID()
         if let index = snapshots.firstIndex(where: { $0.batch.id == snapshot.batch.id }) { snapshots[index] = snapshot }
         else { snapshots.append(snapshot) }

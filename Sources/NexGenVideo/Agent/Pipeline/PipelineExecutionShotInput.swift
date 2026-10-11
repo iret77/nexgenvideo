@@ -4,9 +4,12 @@ import NexGenEngine
 enum PipelineExecutionShotInputValidationError: Error, Sendable, Equatable,
     LocalizedError {
     case invalid(String)
+    case invalidIdentifier(field: String, value: String)
 
     var errorDescription: String? {
         switch self {
+        case .invalidIdentifier(let field, let value):
+            return "Invalid execution identifier at \(field): \(value). Expected a dot-separated namespace, e.g. core.reference-anchor for an image anchor. Entity kinds such as location, character or prop are not semantic job IDs. Read get_project_state.execution_input_contract and list_models.production_routes for exact roles, input slots and modes; correct this field without asking the user for internal IDs."
         case .invalid(let field):
             return "Invalid execution shot input at \(field)."
         }
@@ -1169,9 +1172,9 @@ private enum PipelineExecutionInputValidation {
     }
 
     static func namespaced(_ value: String, field: String) throws {
-        let pattern = #"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"#
+        let pattern = PipelineExecutionIdentifierContract.pattern
         guard value.range(of: pattern, options: .regularExpression) != nil else {
-            throw PipelineExecutionShotInputValidationError.invalid(field)
+            throw PipelineExecutionShotInputValidationError.invalidIdentifier(field: field, value: value)
         }
     }
 

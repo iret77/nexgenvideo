@@ -1,14 +1,35 @@
 import Foundation
 import NexGenEngine
 
+struct GateArtifactFingerprint: Equatable, Sendable {
+    let path: String
+    let sha256: String
+    let lineageSHA256: String?
+    var phase: String? = nil
+
+    func matches(dataRoot: URL) -> Bool {
+        if phase == "shotlist" {
+            guard let version = latestShotlistVersion(dataRoot: dataRoot),
+                  path == PipelineLayout.shotlistVersionFile(version) else { return false }
+        }
+        guard let url = try? ProjectLocalFile.resolve(path, dataRoot: dataRoot),
+              (try? FileDigest.sha256(of: url)) == sha256 else { return false }
+        let lineage = try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.lineageFile, in: dataRoot))
+        return lineage == lineageSHA256
+    }
+}
+
 /// A durable user decision that outlives the requesting gate tool call.
 struct GateApproval: Identifiable, Equatable, Sendable {
     enum Action: Equatable, Sendable {
         case approve
+        case rewind(gatesSHA256: String, phases: [String])
         case setState(GateState)
 
         static func == (lhs: Action, rhs: Action) -> Bool {
             switch (lhs, rhs) {
+            case (.rewind(let a, let ap), .rewind(let b, let bp)):
+                return a == b && ap == bp
             case (.approve, .approve):
                 return true
             case (.setState(let lhsState), .setState(let rhsState)):
@@ -36,6 +57,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let sourceHostTurnReference: AgentHostTurnReference?
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
+    let artifactFingerprint: GateArtifactFingerprint?
 
     init(
         phase: String,
@@ -49,9 +71,11 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         sourceHostStateID: UUID = UUID(),
         sourceHostTurnReference: AgentHostTurnReference? = nil,
         sessionId: UUID? = nil,
+        artifactFingerprint: GateArtifactFingerprint? = nil,
         id: String = UUID().uuidString
     ) {
         self.id = id
+        self.artifactFingerprint = artifactFingerprint
         self.phase = phase
         self.phaseLabel = PhaseDisplay.label(phase)
         self.notes = notes
@@ -66,6 +90,13 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         self.sessionId = sessionId
     }
 
+    var isRewind: Bool {
+        if case .rewind = action { return true }
+        return false
+    }
+
+    var decisionTitle: String { isRewind ? "Revise from \(phaseLabel)" : "Approve \(phaseLabel)" }
+
     func scoped(to sessionId: UUID?) -> GateApproval {
         GateApproval(
             phase: phase,
@@ -79,12 +110,14 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             sourceHostStateID: sourceHostStateID,
             sourceHostTurnReference: sourceHostTurnReference,
             sessionId: sessionId,
+            artifactFingerprint: artifactFingerprint,
             id: id
         )
     }
 
     func matchesRequest(_ other: GateApproval) -> Bool {
-        phase == other.phase
+        artifactFingerprint == other.artifactFingerprint
+            && phase == other.phase
             && notes == other.notes
             && dataRoot == other.dataRoot
             && action == other.action

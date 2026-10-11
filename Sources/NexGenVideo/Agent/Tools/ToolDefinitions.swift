@@ -1360,7 +1360,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement.",
+            description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement. Before authoring execution_shots, read get_project_state.execution_input_contract and list_models.production_routes for exact semantic roles, input slots and compatible modes. Entity kinds (location, character, prop) are not semantic_job_id values. Resolve validation errors from these host contracts, never by guessing synonyms or asking the user for internal identifiers.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
@@ -1406,13 +1406,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .rewind,
-            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Request explicit user consent to revise previously approved work from `target_phase`. Does not reset gates until the user confirms.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns approval_pending; stop and wait. After consent the host resets the displayed phases. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "target_phase": ["type": "string", "description": "The phase to rewind to; it and all following phases reset."],
+                    "target_phase": ["type": "string", "description": "The phase to revise; it and all following phases reset only after user confirmation."],
+                    "reason": ["type": "string", "minLength": 1, "description": "Concrete content change and why it is needed. Name affected content; never claim merely mechanical re-approval."],
                 ],
-                required: ["target_phase"]
+                required: ["target_phase", "reason"]
             )
         ),
         AgentTool(

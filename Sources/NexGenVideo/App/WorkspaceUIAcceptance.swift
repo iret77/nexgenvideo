@@ -120,6 +120,9 @@ enum WorkspaceUIAcceptance {
                 fail("could not prepare large production layout", scale: scale)
             }
             let preparedProductionFrames = visiblePanelFrames(in: host)
+            guard productionTimelineSpansContent(preparedProductionFrames) else {
+                fail("production timeline must span cockpit and preview without covering Tasks", scale: scale)
+            }
             try? await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
             guard visiblePanelFrames(in: host) == preparedProductionFrames else {
@@ -926,7 +929,7 @@ enum WorkspaceUIAcceptance {
         let edited = document.isDocumentEdited
         let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
         guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
-        let artifactTabs: [CockpitTab] = [.story, .bible, .shotlist, .review]
+        let artifactTabs: [CockpitTab] = [.story, .treatment, .storyboard, .bible, .shotlist, .review]
         let story = "scale-\(scaleLabel(scale))-musicvideo-story-context.png"
         for tab in artifactTabs {
             let identifier = "cockpit.tab.\(tab.rawValue)"
@@ -1662,6 +1665,16 @@ enum WorkspaceUIAcceptance {
         }
         visit(root)
         return result
+    }
+
+    private static func productionTimelineSpansContent(_ frames: [String: NSRect]) -> Bool {
+        guard let timeline = frames["timelinePanel"], let cockpit = frames["projectPanel"],
+              let preview = frames["previewPanel"], let tasks = frames["agentPanel"] else { return false }
+        let tolerance = AppTheme.BorderWidth.thin
+        return abs(timeline.minX - cockpit.minX) <= tolerance
+            && abs(timeline.maxX - preview.maxX) <= tolerance
+            && timeline.minX >= tasks.maxX
+            && !timeline.intersects(cockpit) && !timeline.intersects(preview)
     }
 
     private static func defaultPanelWidthsAreValid(

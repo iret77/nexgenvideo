@@ -250,6 +250,21 @@ final class AgentService {
 
     @ObservationIgnored
     private var hostTurnReferences: [UUID: AgentHostTurnReference] = [:]
+    private(set) var activityStartedAt: Date?
+    private(set) var activityLastEventAt: Date?
+    private(set) var activitySessionID: UUID?
+    private(set) var activityEvents: [String] = []
+    private(set) var stoppedAgent = false
+
+    func recordActivity(_ label: String? = nil) {
+        guard activitySessionID == currentSessionId, isStreaming else { return }
+        activityLastEventAt = Date()
+        if let label, activityEvents.last != label {
+            activityEvents.append(label)
+            activityEvents = Array(activityEvents.suffix(8))
+        }
+    }
+
     var isStreaming: Bool = false {
         didSet {
             captureDiagnosticTranscript()
@@ -1542,6 +1557,7 @@ final class AgentService {
     /// only on a targeted instruction the user can't dispatch until the card is answered.
     var isComposerBlocked: Bool {
         pendingDialog != nil
+            || currentPipelineRepairFailure != nil
             || pendingSpendApproval != nil
             || editor?.generationBatchCoordinator.pending != nil
             || currentSpendFollowUp != nil
@@ -1646,6 +1662,7 @@ final class AgentService {
         let modelName: String
         let providerName: String
         var cancellationRequested: Bool
+        var startedAt: Date = Date()
     }
 
     private struct SpendFollowUp {
@@ -2143,6 +2160,42 @@ final class AgentService {
     // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
 
     /// The one gate decision currently waiting in the composer.
+    struct PipelineRepairFailure {
+        let tool: String
+        let detail: String
+        let origin: ToolCallOrigin
+    }
+    private var pipelineRepairFailure: PipelineRepairFailure?
+    var currentPipelineRepairFailure: PipelineRepairFailure? {
+        guard let failure = pipelineRepairFailure,
+              (failure.origin.chatSessionID == nil || failure.origin.chatSessionID == currentSessionId) else { return nil }
+        return failure
+    }
+
+    func pausePipelineRepair(tool: String, detail: String, origin: ToolCallOrigin) {
+        pipelineRepairFailure = .init(tool: tool, detail: detail, origin: origin)
+        suspendToolCalls(from: origin)
+    }
+
+    func clearPipelineRepair(origin: ToolCallOrigin) {
+        guard let failure = pipelineRepairFailure,
+              failure.origin == origin else { return }
+        pipelineRepairFailure = nil
+        resumeToolCalls(from: failure.origin)
+    }
+
+    func retryPipelineRepair() {
+        guard !isStreaming, let failure = currentPipelineRepairFailure else { return }
+        toolExecutor?.resetPipelineRepairAttempts()
+        pipelineRepairFailure = nil
+        if failure.origin.chatSessionID == nil {
+            resumeToolCalls(from: failure.origin)
+            return
+        }
+        enqueueGateFollowUp("Resume the paused \(failure.tool) repair. First read current project state, execution_input_contract and list_models.production_routes. Correct the rejected field using these contracts, preserving approved inputs and existing outputs. Do not regenerate assets or rewind phases to work around a schema error. Previous diagnostic: \(failure.detail)",
+            origin: failure.origin, includeNextPhaseInstructions: true)
+    }
+
     private(set) var pendingGateApproval: GateApproval?
     private(set) var gateApprovalIsWriting = false
     private(set) var gateApprovalError: String?
@@ -2179,7 +2232,8 @@ final class AgentService {
         let requestedState = args.string("state").flatMap {
             GateState(rawValue: $0)
         }
-        let isApprovalRetry = tool == .approveGate
+        let isApprovalRetry = (tool == .rewind && pendingGateApproval?.isRewind == true)
+            || tool == .approveGate
             || (tool == .setGateState
                 && requestedState.map(GateApproval.isApproval) == true)
         if isApprovalRetry,
@@ -2264,7 +2318,7 @@ final class AgentService {
             pendingGateApproval = nil
             pendingGateOrigin = nil
             gateApprovalError = nil
-            let message = "The user chose Not yet for \(approval.phaseLabel). Keep working on this phase. "
+            let message = "The user chose Not yet for \(approval.decisionTitle). Preserve approved artifacts and do not retry this request without new user direction. "
                 + "Do not advance or claim the gate was approved."
             enqueueGateFollowUp(message, origin: origin)
             return .ok("The user did not approve \(approval.phaseLabel).")
@@ -2291,21 +2345,21 @@ final class AgentService {
                         AgentHostStateRecord(
                             id: approval.sourceHostStateID,
                             toolUseID: approval.sourceToolUseID,
-                            state: .approved,
+                            state: approval.isRewind ? .draft : .approved,
                             phase: approval.phase,
                             toolName: approval.sourceToolName,
                             action: .none,
-                            artifactPath: nil,
+                            artifactPath: approval.artifactFingerprint?.path,
                             byteComparison: nil,
                             previousSHA256: nil,
-                            currentSHA256: nil
+                            currentSHA256: approval.artifactFingerprint?.sha256
                         ),
                         origin: origin,
                         toolUseID: approval.sourceToolUseID,
                         turnReference: approval.sourceHostTurnReference
                     )
                     enqueueGateFollowUp(
-                        "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                        "The user confirmed \(approval.decisionTitle), and the host applied this decision: \(payload) "
                             + "Continue from the updated project state; do not request this approval again.",
                         origin: origin,
                         includeNextPhaseInstructions: true
@@ -2452,6 +2506,8 @@ final class AgentService {
     }
 
     private func abandonGateApproval() {
+        pipelineRepairFailure = nil
+        toolExecutor?.resetPipelineRepairAttempts()
         pendingGateApproval = nil
         pendingGateOrigin = nil
         gateApprovalError = nil
@@ -3066,6 +3122,7 @@ final class AgentService {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
         let wasStreaming = isStreaming
+        stoppedAgent = wasStreaming
         if wasStreaming, backend == .anthropicAPI,
            let index = messages.indices.last, messages[index].role == .assistant {
             messages[index].isIncompleteAPIResponse = true
@@ -3346,6 +3403,7 @@ final class AgentService {
                 runtimeContextSignature = nil
             }
         case .text(let messageID, let value, _):
+            recordActivity("Receiving agent response")
             let id = assistantID(
                 providerMessageID: messageID,
                 messageIDs: &messageIDs,
@@ -3362,6 +3420,7 @@ final class AgentService {
                 messages[index].blocks.append(.thinking(block))
             }
         case .toolCall(let messageID, let id, let name, let inputJSON):
+            recordActivity(ToolRunPresentation.label(for: name))
             let assistantID = assistantID(
                 providerMessageID: messageID,
                 messageIDs: &messageIDs,
@@ -3439,6 +3498,11 @@ final class AgentService {
     private func kickOffRuntimeTurn() {
         currentTask?.cancel()
         lastRuntimeUsage = nil
+        activityStartedAt = Date()
+        activityLastEventAt = nil
+        activitySessionID = currentSessionId
+        activityEvents = ["Agent request started"]
+        stoppedAgent = false
         isStreaming = true
         let boundSessionID = currentSessionId
         let transientImages = pendingTurnImages
@@ -3512,6 +3576,7 @@ final class AgentService {
                 guard !Task.isCancelled,
                       currentSessionId == sessionID,
                       fence.accepts(envelope) else { continue }
+                recordActivity()
                 applyRuntimeEvent(
                     envelope.event,
                     sessionID: sessionID,

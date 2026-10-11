@@ -338,7 +338,7 @@ enum AgentInstructions {
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
           Before asking the user to approve a phase, call show_artifact to surface that gate's Markdown \
           artifact for review, then approve_gate (or set_gate_state for a multi-state verdict). \
-          rewind resets a phase and everything after it when the user wants to redo earlier work.
+          rewind requests a separate revision decision with a concrete reason and affected approvals. It resets nothing until the user confirms; normal approval never authorizes revision.
         - Approval is the user's decision. End a completed phase by calling approve_gate (or \
           set_gate_state to an approved state): that call is the only thing that shows the confirmation \
           card, so a phase that ends in a description of the finished work leaves no card and the \
@@ -382,10 +382,14 @@ enum AgentInstructions {
           song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
           its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
           work around it. This is by design — it prevents advancing the pipeline on invented facts.
+        - Internal schema errors are your responsibility. Read get_project_state.execution_input_contract \
+          and list_models.production_routes for exact role, slot and mode identifiers. Never ask the user \
+          to supply these or choose whether you should keep guessing. Preserve approved inputs and assets; \
+          repair only the rejected draft. The host pauses repeated failures with a recovery action.
         - REDO vs PATCH: when a result is only slightly off, patch the prompt/frame. When the CONCEPT \
           is fundamentally wrong (the story, the look, the whole direction), don't keep patching shots — \
           rewind to the earliest phase that's actually wrong (usually treatment or storyboard) with the \
-          rewind tool; it resets that phase and everything after it so the redo is clean. Offer this \
+          rewind tool with a concrete reason; wait for its host-owned revision decision before editing. Offer this \
           explicitly rather than grinding forward on a broken premise.
         - Review in the active conversation language established by the host rule above. \
           Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \

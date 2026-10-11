@@ -21,7 +21,6 @@ enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
         case pack(String)
-        case storyboard
         case chat
     }
 
@@ -35,7 +34,6 @@ enum PipelineSurfaceRouting {
             switch destination {
             case .tab(let tab): tab.rawValue
             case .pack: label
-            case .storyboard: "Storyboard"
             case .chat: "Tasks"
             }
         }
@@ -58,7 +56,7 @@ enum PipelineSurfaceRouting {
         if contract?.cockpitSurfaces.contains(where: { $0.phase == phase }) == true { return nil }
         return switch entry.surface {
         case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
-        case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
+        case "prose": Route(icon: "text.cursor", label: phase == "treatment" ? "Treatment" : "Project Brief", taskClass: entry.taskClass, destination: .tab(phase == "treatment" ? .treatment : .story))
         case "choice": Route(icon: "slider.horizontal.3", label: "Tasks", taskClass: entry.taskClass, destination: .chat)
         default: nil
         }
@@ -67,7 +65,7 @@ enum PipelineSurfaceRouting {
     private static func reviewRoute(for phase: String, taskClass: String) -> Route {
         switch phase {
         case "storyboard":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .storyboard)
+            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.storyboard))
         case "bible":
             Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.bible))
         case "shotlist":
@@ -110,7 +108,6 @@ struct PipelinePanelView: View {
     @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
     )
-    @State private var storyboardReviewRequested = false
     @State private var pendingRewind: RewindRequest?
 
     private struct RewindRequest {
@@ -173,10 +170,7 @@ struct PipelinePanelView: View {
         } message: { request in
             Text("Reset approvals from \(PhaseDisplay.label(request.phase)) onward: \(request.affected.map(PhaseDisplay.label).joined(separator: ", ")). Existing media, takes and timeline clips remain in the project.")
         }
-        .sheet(isPresented: $storyboardReviewRequested) {
-            PipelineStoryboardReviewSheet()
-                .environment(editor)
-        }
+
     }
 
     @ViewBuilder
@@ -368,6 +362,7 @@ struct PipelinePanelView: View {
 
     private func nextActionDescription(for phase: String) -> String {
         if gateWriting { return "Saving the phase decision…" }
+        if editor.agentService.currentPipelineRepairFailure != nil { return "Planning paused after repeated validation failures. Open Tasks to retry with current project state." }
         if let dialog = editor.agentService.pendingDialog {
             return "Complete ‘\(dialog.title)’ in Tasks."
         }
@@ -715,8 +710,6 @@ struct PipelinePanelView: View {
                     editor.cockpitPackSurfaceID = nil
                 case .pack(let id):
                     editor.cockpitPackSurfaceID = id
-                case .storyboard:
-                    storyboardReviewRequested = true
                 case .chat:
                     editor.agentPanelVisible = true
                     editor.focusedPanel = .agent
