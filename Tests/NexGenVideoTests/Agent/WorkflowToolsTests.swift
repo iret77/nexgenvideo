@@ -2905,7 +2905,8 @@ struct WorkflowToolsTests {
             "execution_shots": [generatedExecution],
         ])
         #expect(unanchored.isError)
-        #expect(ToolHarness.textOf(unanchored).contains("required pattern"))
+        #expect(ToolHarness.textOf(unanchored).contains("production_plan.blocking_anchors[0].set_anchor: expected pattern"))
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
 
         var directionOnlyShot = unanchoredShot
         directionOnlyShot["character_blocking"] = [[
@@ -2929,7 +2930,8 @@ struct WorkflowToolsTests {
             "execution_shots": [generatedExecution],
         ])
         #expect(directionOnly.isError)
-        #expect(ToolHarness.textOf(directionOnly).contains("required pattern"))
+        #expect(ToolHarness.textOf(directionOnly).contains("production_plan.blocking_anchors[0].set_anchor: expected pattern"))
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
 
         var disguisedDirectionShot = unanchoredShot
         disguisedDirectionShot["visible_zones"] = ["screen-left edge"]
