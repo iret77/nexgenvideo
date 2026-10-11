@@ -4,6 +4,18 @@ import Testing
 
 @Suite("Agent transcript layout policy")
 struct AgentTranscriptLayoutPolicyTests {
+    @Test func messageHistoryScrollActionsUseStateWithoutCapturingTheScrollView() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(of: "private var taskResult: some View"))
+        let end = try #require(source.range(of: "private var diagnosticTranscript", range: start.upperBound..<source.endIndex))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+        #expect(implementation.contains(".scrollPosition($messageScrollPosition)"))
+        #expect(implementation.contains("messageScrollPosition.scrollTo(id: last.id"))
+        for forbidden in ["ScrollViewReader", "ZStack", ".overlay", ".onScrollGeometryChange", "withAnimation", ".onChange"] {
+            #expect(!implementation.contains(forbidden))
+        }
+    }
+
     @Test func transcriptTurnContainerUsesFiniteLayout() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(
@@ -93,7 +105,7 @@ struct AgentTranscriptLayoutPolicyTests {
             #expect(!implementation.contains(forbidden))
         }
         #expect(implementation.range(
-            of: #"taskBar\s+taskResult"#,
+            of: #"taskBar\s+AgentLiveStatusView"#,
             options: .regularExpression
         ) != nil)
     }
@@ -114,7 +126,9 @@ struct AgentTranscriptLayoutPolicyTests {
             of: "composerDock",
             range: status.upperBound..<implementation.endIndex
         ))
-        #expect(status.lowerBound < dock.lowerBound)
+        let messages = try #require(implementation.range(of: "taskResult", range: status.upperBound..<implementation.endIndex))
+        #expect(status.lowerBound < messages.lowerBound)
+        #expect(messages.lowerBound < dock.lowerBound)
 
         let dockStart = try #require(source.range(of: "private var composerDock"))
         let dockEnd = try #require(source.range(

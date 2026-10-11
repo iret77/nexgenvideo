@@ -32,8 +32,8 @@ enum GenerationBatchRecoverySelfTest {
                 hasRetryablePricingFailure: true,
                 isBusy: false
             )
-            try check(recoverable.canEdit && recoverable.canRetryPricing && !recoverable.canApprove,
-                      "An unpriced batch must remain editable and retryable but not approvable")
+            try check(recoverable.canEdit && recoverable.canRetryPricing && !recoverable.canApprove && recoverable.canApproveWithoutEstimate,
+                      "An unpriced batch must offer explicit unknown-price approval and recovery")
             let verified = GenerationBatchReviewControls(
                 hasVerifiedTotal: true,
                 hasRetryablePricingFailure: false,
@@ -41,6 +41,10 @@ enum GenerationBatchRecoverySelfTest {
             )
             try check(verified.canEdit && !verified.canRetryPricing && verified.canApprove,
                       "A fully priced batch must expose one approval")
+            let busy = GenerationBatchReviewControls(hasVerifiedTotal: false,
+                hasRetryablePricingFailure: true, isBusy: true)
+            try check(!busy.canEdit && !busy.canRetryPricing && !busy.canApproveWithoutEstimate,
+                      "An in-flight preparation cannot approve a stale manifest")
             let unsupported = GenerationPricingFailure(
                 reason: .unsupportedCombination,
                 provider: .runway,

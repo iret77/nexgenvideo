@@ -163,6 +163,11 @@ final class ToolExecutor {
 
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
+    private var pipelineRepairAttempts = PipelineRepairAttempts()
+    private(set) var lastPipelineWriteFailed = false
+
+    func resetPipelineRepairAttempts() { pipelineRepairAttempts.reset() }
+
     let imageObservations = ImageObservationCache()
 
     func requirePhaseIdle(
@@ -572,8 +577,26 @@ final class ToolExecutor {
            tool.isDurableWrite {
             editor.onPipelineChanged?()
         }
+        if tool.isCanonicalArtifactWriter {
+            lastPipelineWriteFailed = result.isError
+            if !result.isError { editor.agentService.clearPipelineRepair(origin: origin) }
+            let scope = "\(editor.workingRoot?.path ?? ""): \(origin.chatSessionID?.uuidString ?? "external"): \(tool.rawValue)"
+            let failure = result.isError ? result.content.compactMap { block -> String? in
+                if case .text(let value) = block { return value }
+                return nil
+            }.joined(separator: " ") : nil
+            if pipelineRepairAttempts.record(scope: scope, failure: failure), let failure {
+                editor.agentService.pausePipelineRepair(tool: tool.rawValue, detail: failure, origin: origin)
+                result = ToolResult(content: [.text("Repeated validation failure without progress. The host paused this repair attempt and preserved the existing artifacts. Do not ask the user for internal identifiers or keep retrying. Read get_project_state.execution_input_contract and list_models.production_routes when explicitly resumed. " + failure)],
+                    isError: true, turnDisposition: .suspendTurn)
+            }
+        }
         feedbackState.record(result, for: tool)
         let elapsed = started.duration(to: .now).seconds
+        if origin.chatSessionID == editor.agentService.currentSessionId {
+            editor.agentService.recordActivity(ToolRunPresentation.label(for: tool.rawValue)
+                + (result.isError ? " · failed" : " · finished"))
+        }
         let telemetry = result.isError ? "Agent tool failed" : "Agent tool finished"
         let payload: Telemetry.Payload = [
             "tool": tool.rawValue,
@@ -928,7 +951,7 @@ final class ToolExecutor {
                 hostStateID: hostStateID,
                 hostTurnReference: hostTurnReference
             )
-        case .rewind:               return try rewindTool(editor, args)
+        case .rewind: return try rewindTool(editor, args, origin: origin, toolUseID: toolUseID, hostStateID: hostStateID, hostTurnReference: hostTurnReference)
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
         case .listProjectFiles:     return try listProjectFilesTool(editor, args)
@@ -1131,7 +1154,7 @@ private func validateToolInput(
         }
         if let pattern = schema["pattern"] as? String,
            string.range(of: pattern, options: .regularExpression) == nil {
-            throw ToolError("\(path): does not match required pattern")
+            throw ToolError("\(path): expected pattern \(pattern). \(schema["description"] as? String ?? "Correct this field using the tool schema.")")
         }
     case "integer":
         guard isJSONNumber(value, integerOnly: true) else {

@@ -207,13 +207,13 @@ struct AgentTool: @unchecked Sendable {
 enum ToolDefinitions {
     static let all: [AgentTool] = base + [
         AgentTool(name: .prepareGenerationBatch,
-            description: "Prepare multiple image/video requests for one native Approve X generations decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If any item lacks a host-verified price, the review opens with approval unavailable and offers pricing retry or an explicit route change for the affected items; never describe it as ready to approve. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
+            description: "Prepare multiple image/video requests for one native Approve X requests decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If prices are unavailable, the native review offers explicit Approve without estimate, Ask agent to revise, pricing retry and optional model change. Only the user can accept unknown costs. Briefly explain what outputs the user will receive and their purpose; always give a constructive next action when blocked. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",
             inputSchema: objectSchema(properties: [
                 "requestID": ["type": "string"],
                 "items": ["type": "array", "minItems": 1, "maxItems": 50, "items": ["anyOf": [ToolName.generateImage, .generateVideo].map { tool in
                     objectSchema(properties: [
                         "tool": ["type": "string", "enum": [tool.rawValue]],
-                        "purpose": ["type": "string", "minLength": 1],
+                        "purpose": ["type": "string", "minLength": 1, "maxLength": 160, "description": "Brief user-facing output name and purpose in the interface language. No API paths, model IDs or internal artifact keys."],
                         "request": base.first(where: { $0.name == tool })!.inputSchema,
                     ], required: ["tool", "purpose", "request"])
                 }]],
@@ -1360,7 +1360,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement.",
+            description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement. Before authoring execution_shots, read get_project_state.execution_input_contract and list_models.production_routes for exact semantic roles, input slots and compatible modes. Entity kinds (location, character, prop) are not semantic_job_id values. Resolve validation errors from these host contracts, never by guessing synonyms or asking the user for internal identifiers.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
@@ -1406,13 +1406,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .rewind,
-            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Request explicit user consent to revise previously approved work from `target_phase`. Does not reset gates until the user confirms.\n\nUse only when an accepted semantic change requires editing that phase. Copying or staging an asset, retrying a host operation, and byte-identical content never justify a rewind. Resets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns approval_pending; stop and wait. After consent the host resets the displayed phases. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "target_phase": ["type": "string", "description": "The phase to rewind to; it and all following phases reset."],
+                    "target_phase": ["type": "string", "description": "The phase to revise; it and all following phases reset only after user confirmation."],
+                    "reason": ["type": "string", "minLength": 1, "description": "Concrete content change and why it is needed. Name affected content; never claim merely mechanical re-approval."],
                 ],
-                required: ["target_phase"]
+                required: ["target_phase", "reason"]
             )
         ),
         AgentTool(

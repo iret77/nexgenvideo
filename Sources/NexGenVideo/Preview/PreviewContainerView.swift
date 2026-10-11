@@ -5,6 +5,11 @@ struct PreviewContainerView: View {
     @Environment(EditorViewModel.self) var editor
 
     private var isTimeline: Bool { editor.activePreviewTab == .timeline }
+    private var referenceImage: ProjectReferenceImage? {
+        guard case .referenceImage(let image) = editor.activePreviewTab,
+              image.projectHome == editor.workingRoot else { return nil }
+        return image
+    }
     private var isImage: Bool { editor.activePreviewTab.clipType == .image }
     private var isSubtitle: Bool { editor.activePreviewTab.clipType == .subtitle }
 
@@ -24,7 +29,9 @@ struct PreviewContainerView: View {
                 let scaledHeight = fitSize.height * editor.canvasZoom
                 ZStack {
                     PreviewView()
-                    if isImage {
+                    if let referenceImage {
+                        ProjectReferenceImageView(projectHome: referenceImage.projectHome, path: referenceImage.path)
+                    } else if isImage {
                         imagePreview
                     }
                     if isSubtitle {
@@ -53,7 +60,8 @@ struct PreviewContainerView: View {
                         SlipTwoUpView(state: slipPreview)
                     }
                 }
-                .frame(width: scaledWidth, height: scaledHeight)
+                .frame(width: referenceImage == nil ? scaledWidth : geo.size.width * editor.canvasZoom,
+                       height: referenceImage == nil ? scaledHeight : geo.size.height * editor.canvasZoom)
                 .overlay(
                     Rectangle()
                         .stroke(
@@ -204,6 +212,10 @@ struct PreviewContainerView: View {
 
     private var imageSettingsBar: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
+            if referenceImage != nil {
+                Button("Film Preview") { editor.selectPreviewTab(id: PreviewTab.timeline.id) }
+                    .buttonStyle(.capsule(.secondary, size: .small))
+            }
             Spacer()
             settingsMenuButton(label: zoomBadgeLabel, help: "Canvas Zoom") { zoomMenuItems }
         }
@@ -530,7 +542,7 @@ struct PreviewContainerView: View {
 
     private var previewHeader: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
-            Text(isTimeline ? "Film Preview" : "Media Preview")
+            Text(referenceImage != nil ? "Reference Preview" : isTimeline ? "Film Preview" : "Media Preview")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
@@ -540,6 +552,13 @@ struct PreviewContainerView: View {
                             .allowsHitTesting(false)
                     }
                 }
+            if let referenceImage {
+                Text(referenceImage.name)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .lineLimit(1)
+                    .help(referenceImage.name)
+            }
             if let asset = activeMediaAsset {
                 Text(asset.userFacingFilename)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -555,7 +574,7 @@ struct PreviewContainerView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: AppTheme.Spacing.sm)
-            Text(isTimeline ? "Timeline Clip" : "Original Media")
+            Text(referenceImage != nil ? "Bible Sheet" : isTimeline ? "Timeline Clip" : "Original Media")
                 .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .fixedSize(horizontal: true, vertical: false)

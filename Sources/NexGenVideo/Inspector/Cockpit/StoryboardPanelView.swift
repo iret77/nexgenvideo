@@ -1,9 +1,8 @@
 import NexGenEngine
 import SwiftUI
 
-struct PipelineStoryboardReviewSheet: View {
+struct StoryboardPanelView: View {
     @Environment(EditorViewModel.self) private var editor
-    @Environment(\.dismiss) private var dismiss
 
     private enum LoadState: Sendable {
         case loading
@@ -20,7 +19,7 @@ struct PipelineStoryboardReviewSheet: View {
             case .loading:
                 statusState(title: "Storyboard", message: nil, isLoading: true)
             case .loaded(let storyboard):
-                StoryboardReviewSheet(storyboard: storyboard)
+                StoryboardDocumentView(storyboard: storyboard)
             case .missing:
                 statusState(
                     title: "No Storyboard",
@@ -35,7 +34,7 @@ struct PipelineStoryboardReviewSheet: View {
                 )
             }
         }
-        .task(id: editor.workingRoot) { await load() }
+        .task(id: "\(editor.workingRoot?.path ?? ""): \(editor.engineStateRevision)") { await load() }
     }
 
     private func load() async {
@@ -55,7 +54,6 @@ struct PipelineStoryboardReviewSheet: View {
         }.value
         guard !Task.isCancelled else { return }
         guard editor.workingRoot == home else {
-            state = .failed("The project changed while the Storyboard was loading. Close this sheet and open it again.")
             return
         }
         state = loaded
@@ -72,15 +70,15 @@ struct PipelineStoryboardReviewSheet: View {
                         .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
                 }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .keyboardShortcut(.cancelAction)
+
             }
             if isLoading {
                 ProgressView("Loading Storyboard…")
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let message {
+                Button("Retry") { Task { await load() } }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
                 Text(message)
                     .interfaceFont(size: AppTheme.Typography.reading)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -88,10 +86,6 @@ struct PipelineStoryboardReviewSheet: View {
             }
         }
         .padding(AppTheme.Spacing.xlXxl)
-        .frame(
-            minWidth: AppTheme.ComponentSize.formatSheetWidth,
-            minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

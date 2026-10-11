@@ -4,7 +4,6 @@ import SwiftUI
 struct GateApprovalCard: View {
     let approval: GateApproval
     let error: String?
-    let surface: String?
     let isWorking: Bool
     var isBlocked: Bool = false
     let onApprove: () -> Void
@@ -12,18 +11,15 @@ struct GateApprovalCard: View {
     @FocusState private var approveFocused: Bool
     @Environment(EditorViewModel.self) private var editor
     @State private var review = GateReviewModel()
-    @State private var showsStoryboard = false
     @State private var showsDiagnostics = false
 
-    private var reviewHint: String? {
-        if approval.phase == "analysis" {
-            return "Review the exact measured sections in Analysis first."
-        }
-        switch surface ?? "" {
-        case "review": return "Read it in the Review tab first."
-        case "prose": return "Read it in the Story tab first."
-        default: return nil
-        }
+    private var reviewRoute: PipelineSurfaceRouting.Route? {
+        PipelineSurfaceRouting.route(for: approval.phase, contract: editor.uiContract,
+            availablePackSurfaces: editor.availableCockpitPackSurfaces)
+    }
+
+    private var reviewHint: String {
+        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewRoute?.destinationLabel ?? "Pipeline"), then respond here in Tasks."
     }
 
     var body: some View {
@@ -34,22 +30,20 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            if approval.phase == "storyboard" {
-                Button("Open Storyboard") {
-                    Task {
-                        await review.refresh(approval: approval, editor: editor)
-                        showsStoryboard = review.storyboard != nil
-                    }
+            Button("Open \(reviewRoute?.destinationLabel ?? "Pipeline")") {
+                switch reviewRoute?.destination {
+                case .tab(let tab): editor.revealCockpit(tab)
+                case .pack(let id):
+                    editor.revealCockpit(.pipeline)
+                    editor.cockpitPackSurfaceID = id
+                case .chat:
+                    editor.agentPanelVisible = true
+                    editor.focusedPanel = .agent
+                default: editor.revealCockpit(.pipeline)
                 }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .disabled(isWorking || isBlocked)
-            } else {
-                Button("Review \(approval.phaseLabel)") {
-                    editor.revealCockpit(reviewDestination)
-                }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .disabled(isWorking || isBlocked)
             }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .disabled(isWorking || isBlocked)
             if let blocker = review.blocker, !isBlocked {
                 Text(blocker)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -74,18 +68,6 @@ struct GateApprovalCard: View {
         .task(id: "\(approval.id):\(editor.engineStateRevision):\(isBlocked)") {
             await review.refresh(approval: approval, editor: editor)
         }
-        .sheet(isPresented: $showsStoryboard) {
-            if let storyboard = review.storyboard {
-                StoryboardReviewSheet(storyboard: storyboard)
-            } else {
-                VStack(spacing: AppTheme.Spacing.lgXl) {
-                    Text(review.blocker ?? "Checking the storyboard…")
-                    Button("Done") { showsStoryboard = false }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                }
-                .padding(AppTheme.Spacing.xlXxl)
-            }
-        }
         .onAppear {
             Task { @MainActor in
                 await Task.yield()
@@ -93,7 +75,7 @@ struct GateApprovalCard: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Approve \(approval.phaseLabel)")
+        .accessibilityLabel(approval.decisionTitle)
     }
 
     private var header: some View {
@@ -101,7 +83,7 @@ struct GateApprovalCard: View {
             Image(systemName: "checkmark.seal")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(editor.projectPalette.accent)
-            Text("Approve \(approval.phaseLabel)")
+            Text(approval.decisionTitle)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
@@ -119,7 +101,20 @@ struct GateApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("\(approval.phaseLabel) passed host checks. Review it before approval.")
+            if case .rewind(_, let phases) = approval.action {
+                Text("The agent proposes revising previously approved work. Continuing will reset these approvals: " + phases.map(PhaseDisplay.label).joined(separator: ", ") + ". Existing artifacts are kept. This does not approve new content or spending.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let reason = approval.notes { Text(reason).fixedSize(horizontal: false, vertical: true) }
+            } else {
+                Text("Approve the current \(approval.phaseLabel) as the basis for the next production step. This does not authorize generation costs.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(approval.isRewind ? (review.isReady ? "Confirm only if you want to revise this approved work." : "Checking whether a revision can start…")
+                 : isBlocked ? "\(approval.phaseLabel) is still being processed. Approval is not available yet."
+                 : review.isReady ? "Review \(approval.phaseLabel), then approve here to continue."
+                 : "Checking whether \(approval.phaseLabel) can be approved…")
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -131,16 +126,14 @@ struct GateApprovalCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 } label: {
-                    Text("Approval notes")
+                    Text(approval.isRewind ? "Revision reason" : "Approval notes")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
-            if let reviewHint {
-                Text(reviewHint)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
+            Text(reviewHint)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -153,16 +146,6 @@ struct GateApprovalCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.warningColor)
             }
-        }
-    }
-
-    private var reviewDestination: CockpitTab {
-        switch approval.phase {
-        case "brief", "production_design", "treatment", "storyboard": .story
-        case "bible": .bible
-        case "shotlist": .shotlist
-        case "frames", "sanity", "render", "finish": .review
-        default: .pipeline
         }
     }
 
@@ -191,7 +174,7 @@ struct GateApprovalCard: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Text("Approve \(approval.phaseLabel)")
+                    Text(approval.decisionTitle)
                 }
             }
                 .buttonStyle(.capsule(.prominent, size: .regular))

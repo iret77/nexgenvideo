@@ -192,7 +192,11 @@ extension ToolExecutor {
     func getProjectState(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let data = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePluginFor(dataRoot: root))
-        return .ok(String(decoding: data, as: UTF8.self))
+        guard var state = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ToolError("Project state could not be read.")
+        }
+        state["execution_input_contract"] = PipelineExecutionIdentifierContract.discovery
+        return try jsonResult(state)
     }
 
     func listPhasesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -1050,6 +1054,7 @@ extension ToolExecutor {
             declaredBinding: declaredBinding,
             editor: editor
         )
+        let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root)
         let request = try editor.agentService.requestGateApproval(
             GateApproval(
                 phase: phase,
@@ -1060,7 +1065,8 @@ extension ToolExecutor {
                 declaredBinding: declaredBinding,
                 sourceToolUseID: toolUseID,
                 sourceHostStateID: hostStateID,
-                sourceHostTurnReference: hostTurnReference
+                sourceHostTurnReference: hostTurnReference,
+                artifactFingerprint: fingerprint
             ),
             origin: origin
         )
@@ -1124,6 +1130,7 @@ extension ToolExecutor {
                 declaredBinding: declaredBinding,
                 editor: editor
             )
+            let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root)
             let request = try editor.agentService.requestGateApproval(
                 GateApproval(
                     phase: phase,
@@ -1135,7 +1142,8 @@ extension ToolExecutor {
                     sourceToolName: ToolName.setGateState.rawValue,
                     sourceToolUseID: toolUseID,
                     sourceHostStateID: hostStateID,
-                    sourceHostTurnReference: hostTurnReference
+                    sourceHostTurnReference: hostTurnReference,
+                    artifactFingerprint: fingerprint
                 ),
                 origin: origin
             )
@@ -1146,7 +1154,10 @@ extension ToolExecutor {
         let current = order.first {
             !existing.get($0).approved
         }
-        guard existing.get(phase).approved || current == phase else {
+        guard !existing.get(phase).approved else {
+            throw ToolError("Changing an approved phase requires rewind with a concrete reason and a user revision decision. A technical repair is not permission to reset approvals.")
+        }
+        guard current == phase else {
             throw ToolError(
                 "Can't mark future phase \"\(phase)\" as \(state.rawValue). "
                     + "Reach it by completing the earlier phases first."
@@ -1183,6 +1194,14 @@ extension ToolExecutor {
         ])
     }
 
+    private func gateArtifactFingerprint(phase: String, root: URL) async throws -> GateArtifactFingerprint? {
+        guard let snapshot = await hostArtifactSnapshot(phase: phase, dataRoot: root) else { return nil }
+        guard snapshot.exists else { return nil }
+        guard let bytes = snapshot.bytes else { throw ToolError("The artifact cannot be bound to this review. Repair it before requesting approval.") }
+        return GateArtifactFingerprint(path: snapshot.path, sha256: FileDigest.sha256(of: bytes),
+            lineageSHA256: try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.lineageFile, in: root)), phase: phase)
+    }
+
     private func gateApprovalPendingResult(
         _ request: GateApprovalRequest,
         requestedPhase: String
@@ -1201,6 +1220,9 @@ extension ToolExecutor {
             "request_id": pending.id,
             "phase": pending.phase,
             "requested_phase": requestedPhase,
+            "approval_surface": "Tasks",
+            "review_surface": PipelineSurfaceRouting.route(for: pending.phase, contract: editor?.uiContract,
+                availablePackSurfaces: editor?.availableCockpitPackSurfaces ?? [])?.destinationLabel ?? "Pipeline",
             "new_request": request.isNew,
             "message": message,
         ])
@@ -1259,6 +1281,25 @@ extension ToolExecutor {
                 kind: .reopenProject
             )
         }
+        if case .rewind(let expectedHash, _) = approval.action {
+            let currentHash = try FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+            guard currentHash == expectedHash else {
+                throw ToolError("The pipeline changed. Request a new revision decision.", kind: .reviewChangedSource)
+            }
+            if let key = editor.openWorkingCopyKey { try ProjectWorkingCopy.markDirty(key: key) }
+            let order = try PhaseContractRuntime.order(activePack: approval.declaredPack)
+            var reset: [String] = []
+            _ = try mutateGates(dataRoot: root, declaredPack: approval.declaredPack,
+                declaredBinding: approval.declaredBinding) {
+                reset = try GatesOperations.rewindTo(&$0, target: approval.phase, order: order)
+            }
+            editor.onPipelineChanged?()
+            let payload = try NativeCockpitReader.serialize(["target": approval.phase, "reset_phases": reset])
+            return String(decoding: payload, as: UTF8.self)
+        }
+        if let fingerprint = approval.artifactFingerprint, !fingerprint.matches(dataRoot: root) {
+            throw ToolError("The artifact changed after this review was requested. Open the updated artifact and request a new approval.", kind: .reviewChangedSource)
+        }
         try await enforceGateRequirement(
             phase: approval.phase,
             dataRoot: root,
@@ -1268,6 +1309,9 @@ extension ToolExecutor {
             mutationID: mutationID,
             failureKind: .approvalStructure
         )
+        if let fingerprint = approval.artifactFingerprint, !fingerprint.matches(dataRoot: root) {
+            throw ToolError("The artifact changed during validation. Request a new approval.", kind: .reviewChangedSource)
+        }
         if let key = editor.openWorkingCopyKey {
             do {
                 try ProjectWorkingCopy.markDirty(key: key)
@@ -1283,6 +1327,7 @@ extension ToolExecutor {
                 declaredBinding: approval.declaredBinding
             ) { gates in
                 switch approval.action {
+                case .rewind: break
                 case .approve:
                     GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
                 case .setState(let state):
@@ -1343,43 +1388,33 @@ extension ToolExecutor {
         }
     }
 
-    func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func rewindTool(
+        _ editor: EditorViewModel, _ args: [String: Any],
+        origin: ToolCallOrigin = .direct, toolUseID: String? = nil,
+        hostStateID: UUID = UUID(), hostTurnReference: AgentHostTurnReference? = nil
+    ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
-        let mutationID = try reservePipelineMutation(
-            label: "Rewind \(target)",
-            dataRoot: root,
-            editor: editor
-        )
-        defer {
-            editor.pipelinePhaseRunCoordinator.endMutation(
-                projectRoot: root,
-                id: mutationID
-            )
+        try requirePhaseIdle(editor, dataRoot: root)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: FrameInventory.projectHome(of: root),
+            declaredPack: declaration.packName, declaredBinding: declaration.binding)
+        let order = try PhaseContractRuntime.order(activePack: declaration.packName)
+        guard let index = order.firstIndex(of: target) else { throw ToolError("Unknown phase: \(target)") }
+        let gates = try readGates(dataRoot: root)
+        let affected = Array(order[index...]).filter { gates.get($0).approved }
+        guard !affected.isEmpty else {
+            return try jsonResult(["target": target, "reset_phases": [], "message": "No approved gates to reset. Continue the current phase without rewriting approved inputs."] as [String: Any])
         }
-        do {
-            _ = try ProjectPackGate.requireLiveMutation(
-                projectURL: FrameInventory.projectHome(of: root),
-                declaredPack: declaration.packName,
-                declaredBinding: declaration.binding
-            )
-        } catch {
-            throw ToolError(error.localizedDescription)
-        }
-        let resolvedPack = declaration.packName
-        // Rewind over the merged order (core + pack, at declared placement) so a pack phase like
-        // `analysis` is a valid target and resets its correct downstream span.
-        let order = try PhaseContractRuntime.order(activePack: resolvedPack)
-        var reset: [String] = []
-        _ = try mutateGates(
-            dataRoot: root,
-            declaredPack: declaration.packName,
-            declaredBinding: declaration.binding
-        ) {
-            reset = try GatesOperations.rewindTo(&$0, target: target, order: order)
-        }
-        return try jsonResult(["target": target, "reset_phases": reset])
+        let hash = try FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+        let request = try editor.agentService.requestGateApproval(GateApproval(
+            phase: target, notes: args.string("reason"), dataRoot: root,
+            action: .rewind(gatesSHA256: hash, phases: affected),
+            declaredPack: declaration.packName, declaredBinding: declaration.binding,
+            sourceToolName: ToolName.rewind.rawValue, sourceToolUseID: toolUseID,
+            sourceHostStateID: hostStateID, sourceHostTurnReference: hostTurnReference
+        ), origin: origin)
+        return try gateApprovalPendingResult(request, requestedPhase: target)
     }
 
     /// Load gates.yaml, apply `body`, save, and return the mutated gates. Same store/layout the

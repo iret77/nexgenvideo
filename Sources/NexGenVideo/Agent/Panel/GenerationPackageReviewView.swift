@@ -4,51 +4,60 @@ import SwiftUI
 struct GenerationPackageReviewView: View {
     let package: GenerationPackageV1
 
+    var showsDetails = true
+
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-            Text(package.renderID).fontWeight(AppTheme.FontWeight.semibold).textSelection(.enabled)
-            Text("\(package.payload.target.provider.displayName) · \(package.payload.target.transport.rawValue.uppercased())")
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("\(ModelRegistry.displayName(for: package.payload.target.modelId)) · \(package.payload.target.provider.displayName)")
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text("Outputs: \(package.payload.outputCount) · \(destinationLabel)")
+            Text("\(outputLabel) · \(destinationLabel)")
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             if let estimate = package.payload.estimate {
                 Text("Estimated cost: €\(estimate.eurAmount, specifier: "%.2f")")
-            } else if let failure = package.payload.pricingFailure {
-                Text(pricingFailureLabel(failure.reason))
-                    .foregroundStyle(AppTheme.Status.warningColor)
-                Text(failure.detail)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
             } else {
-                Text("Pricing record unavailable. Prepare this request again.")
-                    .foregroundStyle(AppTheme.Status.warningColor)
+                Text("Cost unknown").foregroundStyle(AppTheme.Status.warningColor)
             }
+            if showsDetails {
+                DisclosureGroup("Request details") { details }
+            }
+        }
+    }
+
+    var details: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             ForEach(Array(package.payload.references.enumerated()), id: \.offset) { index, reference in
-                Text("\(index + 1). \(roleLabel(package.payload.referenceRoles[index])) · \(reference.displayName ?? String(localized: "Reference"))")
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                Text("\(roleLabel(package.payload.referenceRoles[index])) · \(reference.displayName ?? String(localized: "Reference"))")
             }
-            DisclosureGroup("Request details") {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                    Text(package.payload.prompt).textSelection(.enabled)
-                    Button("Copy provider prompt") { copy(package.payload.prompt) }
-                        .buttonStyle(InlineActionButtonStyle())
-                    Text(package.payload.requestParametersJSON).textSelection(.enabled)
-                    if package.payload.routeReceipt.checks.isEmpty {
-                        Text("Route capabilities come from recorded reference data. No live check is recorded for this offering.")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                    } else {
-                        ForEach(Array(package.payload.routeReceipt.checks.enumerated()), id: \.offset) { _, check in
-                            Text("\(checkLabel(check.scope)): \(check.observedAt) · \(check.source)")
-                                .foregroundStyle(AppTheme.Text.secondaryColor).textSelection(.enabled)
-                        }
-                        Text("Catalog presence and schema checks do not establish output quality.")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                    }
-                    Text("Package: \(package.id)").textSelection(.enabled)
-                    Button("Copy package details") {
-                        if let data = try? GenerationPackageV1.canonicalData(package), let text = String(data: data, encoding: .utf8) { copy(text) }
-                    }.buttonStyle(InlineActionButtonStyle())
-                }
+            if let failure = package.payload.pricingFailure {
+                Text(pricingFailureLabel(failure.reason)).foregroundStyle(AppTheme.Status.warningColor)
+                Text(failure.detail).textSelection(.enabled)
             }
+            Text(package.payload.prompt).textSelection(.enabled)
+            Button("Copy provider prompt") { copy(package.payload.prompt) }
+                .buttonStyle(InlineActionButtonStyle())
+            Text(package.renderID).textSelection(.enabled)
+            Text(package.payload.requestParametersJSON).textSelection(.enabled)
+            if package.payload.routeReceipt.checks.isEmpty {
+                Text("Route capabilities come from reference data. No live check is recorded.")
+            }
+            ForEach(Array(package.payload.routeReceipt.checks.enumerated()), id: \.offset) { _, check in
+                Text("\(checkLabel(check.scope)): \(check.observedAt) · \(check.source)")
+                    .textSelection(.enabled)
+            }
+            Text("Package: \(package.id)").textSelection(.enabled)
+            Button("Copy package details") {
+                if let data = try? GenerationPackageV1.canonicalData(package), let text = String(data: data, encoding: .utf8) { copy(text) }
+            }.buttonStyle(InlineActionButtonStyle())
+        }
+        .foregroundStyle(AppTheme.Text.secondaryColor)
+    }
+
+    private var outputLabel: String {
+        switch package.payload.modality {
+        case "image": package.payload.outputCount == 1 ? String(localized: "1 image") : String(localized: "\(package.payload.outputCount) images")
+        case "video": package.payload.outputCount == 1 ? String(localized: "1 video") : String(localized: "\(package.payload.outputCount) videos")
+        case "audio": String(localized: "\(package.payload.outputCount) audio files")
+        default: String(localized: "\(package.payload.outputCount) outputs")
         }
     }
 

@@ -54,6 +54,8 @@ final class GenerationBatchCoordinator {
     @ObservationIgnored private var readID = UUID()
     @ObservationIgnored private var recoveries: [String: GenerationBatchRecovery] = [:]
     private(set) var recoveringItemIDs: Set<String> = []
+    private(set) var activeBatchID: String?
+    private(set) var lastProgressAt: [String: Date] = [:]
 
     var isRecovering: Bool { !recoveringItemIDs.isEmpty }
     var canRetryPricing: Bool {
@@ -75,6 +77,10 @@ final class GenerationBatchCoordinator {
     }
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
+        if let previous = snapshots.first(where: { $0.batch.id == snapshot.batch.id }),
+           previous.journal.revision != snapshot.journal.revision {
+            lastProgressAt[snapshot.batch.id] = Date()
+        }
         readID = UUID()
         if let index = snapshots.firstIndex(where: { $0.batch.id == snapshot.batch.id }) { snapshots[index] = snapshot }
         else { snapshots.append(snapshot) }
@@ -98,12 +104,25 @@ final class GenerationBatchCoordinator {
         editor.agentService.completeGenerationBatch(pending.id, message: "The user declined the generation batch. No batch item was submitted.")
     }
 
-    func approve(editor: EditorViewModel) async {
-        guard let manifest = pending, !approving, !isRecovering, manifest.totalEUR != nil else { return }
+    func requestRevision(editor: EditorViewModel) {
+        guard !approving, !isRecovering, let pending else { return }
+        let failures = pending.payload.items.filter { $0.package.payload.estimate == nil }.map {
+            "\($0.purpose): \($0.package.payload.target.modelId) — \($0.package.payload.pricingFailure?.detail ?? "No pricing record")"
+        }.joined(separator: "\n")
+        self.pending = nil; error = nil; recoveries = [:]
+        editor.agentService.completeGenerationBatch(pending.id, message:
+            "The user requests a revised generation proposal. Nothing was submitted. Explain the intended outputs briefly, "
+            + "then offer a concrete next step. Preserve the user's chosen model; ask before substituting it. "
+            + "Do not re-present the same unresolved proposal. Pricing diagnostics:\n" + failures)
+    }
+
+    func approve(editor: EditorViewModel, expectedBatchID: String, approval: GenerationBatchApproval = .verifiedPrices) async {
+        guard let manifest = pending, manifest.id == expectedBatchID, !approving, !isRecovering,
+              manifest.totalEUR != nil || approval == .acceptUnknownPrices else { return }
         approving = true
         defer { approving = false }
         do {
-            _ = try await GenerationBatchStore.approve(manifest, editor: editor)
+            _ = try await GenerationBatchStore.approve(manifest, editor: editor, approval: approval)
             pending = nil
             recoveries = [:]
             error = nil
@@ -222,11 +241,13 @@ final class GenerationBatchCoordinator {
     func start(batchID: String, editor: EditorViewModel, resumeBlocked: Bool = false,
                remainingBatchIDs: [String] = []) {
         guard jobs.isEmpty, let home = editor.workingRoot else { return }
+        activeBatchID = batchID
         jobs[batchID] = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             var settled = false
             defer {
                 self.jobs.removeValue(forKey: batchID)
+                self.activeBatchID = nil
                 if editor.workingRoot == home {
                     if let next = remainingBatchIDs.first {
                         self.start(batchID: next, editor: editor, resumeBlocked: resumeBlocked,

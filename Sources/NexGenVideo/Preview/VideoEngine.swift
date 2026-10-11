@@ -107,6 +107,8 @@ final class VideoEngine {
         pause()
 
         switch tab {
+        case .referenceImage:
+            replacePlayerItem(nil, reason: "referencePreview")
         case .timeline:
             rebuild()
         case .mediaAsset(let id, _, let type):

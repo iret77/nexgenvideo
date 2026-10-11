@@ -1237,10 +1237,18 @@ struct WorkflowToolsTests {
         #expect(approved?["phase"] as? String == "brief")
         #expect(approved?["notes"] as? String == "ok")
 
-        // set_gate_state to needs_revision keeps the phase blocked (approved == false). This is NOT an
-        // approval, so it writes straight through with no confirmation — plain runOK.
+        let gatesURL = dataRoot.appendingPathComponent(PipelineLayout.gatesFile)
+        let before = try Data(contentsOf: gatesURL)
+        let refused = await h.runRaw("set_gate_state", args: ["project_dir": dir, "phase": "brief", "state": "needs_revision", "notes": "redo"])
+        #expect(refused.isError)
+        #expect(try Data(contentsOf: gatesURL) == before)
+        let pending = await h.runRaw("rewind", args: ["project_dir": dir, "target_phase": "brief", "reason": "Change the creative direction"])
+        #expect(!pending.isError)
+        #expect(pending.turnDisposition == .suspendTurn)
+        #expect(try Data(contentsOf: gatesURL) == before)
+        #expect(h.editor.agentService.pendingGateApproval?.isRewind == true)
+        _ = await h.editor.agentService.resolveGate(.approved)
         let revised = try await h.runOK("set_gate_state", args: ["project_dir": dir, "phase": "brief", "state": "needs_revision", "notes": "redo"]) as? [String: Any]
-        #expect(revised?["state"] as? String == "needs_revision")
         #expect(revised?["approved"] as? Bool == false)
 
         // Re-approve brief, then approve in order through treatment; rewind to brief resets brief + after.
@@ -1251,7 +1259,7 @@ struct WorkflowToolsTests {
         h.editor.onPipelineChanged = {
             rewindMarkedProjectChanged = true
         }
-        let rewound = try await h.runOK("rewind", args: ["project_dir": dir, "target_phase": "brief"]) as? [String: Any]
+        let rewound = try await h.runGateOK("rewind", args: ["project_dir": dir, "target_phase": "brief", "reason": "Revise the creative brief"]) as? [String: Any]
         #expect(rewound?["target"] as? String == "brief")
         #expect(rewindMarkedProjectChanged)
         let reset = try #require(rewound?["reset_phases"] as? [String])
@@ -1435,6 +1443,7 @@ struct WorkflowToolsTests {
         let rewindBlocked = await h.runRaw("rewind", args: [
             "project_dir": dataRoot.path,
             "target_phase": "project_init",
+            "reason": "Revise the project setup",
         ])
         #expect(rewindBlocked.isError)
         #expect(
@@ -1980,6 +1989,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("rewind", args: [
             "project_dir": workingDataRoot.path,
             "target_phase": "project_init",
+            "reason": "Revise the project setup",
         ])
 
         #expect(result.isError)
@@ -1996,6 +2006,7 @@ struct WorkflowToolsTests {
         let mismatch = await h.runRaw("rewind", args: [
             "project_dir": workingDataRoot.path,
             "target_phase": "project_init",
+            "reason": "Revise the project setup",
         ])
         #expect(mismatch.isError)
         #expect(ToolHarness.textOf(mismatch).contains("musicvideo"))
@@ -2036,6 +2047,7 @@ struct WorkflowToolsTests {
         let agentResult = await h.runRaw("rewind", args: [
             "project_dir": workingDataRoot.path,
             "target_phase": "project_init",
+            "reason": "Revise the project setup",
         ])
         #expect(agentResult.isError)
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
@@ -2134,6 +2146,7 @@ struct WorkflowToolsTests {
         let agentResult = await h.runRaw("rewind", args: [
             "project_dir": workingDataRoot.path,
             "target_phase": "project_init",
+            "reason": "Revise the project setup",
         ])
         #expect(agentResult.isError)
         #expect(ToolHarness.textOf(agentResult).contains("isn't the pack code active"))

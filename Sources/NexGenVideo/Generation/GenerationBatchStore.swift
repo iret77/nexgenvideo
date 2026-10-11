@@ -69,6 +69,7 @@ enum GenerationBatchStore {
     }
 
     static func approve(_ batch: GenerationBatch, editor: EditorViewModel,
+                        approval: GenerationBatchApproval = .verifiedPrices,
                         authority supplied: GenerationExecutionAuthorityStore? = nil) async throws -> Snapshot {
         guard let home = editor.workingRoot else {
             throw GenerationRequestError.storage("Save this project before approving a generation batch.")
@@ -80,7 +81,7 @@ enum GenerationBatchStore {
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let authorityID = try authority.authorityID(projectKey: batch.payload.projectKey, batchID: batch.id)
         let snapshot = Snapshot(batch: batch,
-            journal: try GenerationBatchJournal(approving: batch, authorityID: authorityID), authorityAvailable: true)
+            journal: try GenerationBatchJournal(approving: batch, authorityID: authorityID, approval: approval), authorityAvailable: true)
         for item in batch.payload.items {
             try await item.package.requireCurrentContext(editor: editor)
             _ = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
@@ -127,6 +128,7 @@ enum GenerationBatchStore {
             recoveredOutputs: current.recoveredOutputs)
         try candidate.validate()
         guard updatedJournal.approvedAt == current.journal.approvedAt,
+              updatedJournal.pricingOverrideItemIDs == current.journal.pricingOverrideItemIDs,
               updatedJournal.revision >= current.journal.revision,
               updatedJournal.revision > current.journal.revision || !addingSpendEvents.isEmpty || candidate == current else {
             throw GenerationRequestError.gate("The generation batch cannot replace its approval or rewind execution.")

@@ -67,6 +67,7 @@ struct SegmentedTabBar: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityHint(markedTitles.contains(title) ? "New content awaiting review" : "")
                 .accessibilityAddTraits(isActive ? .isSelected : [])
                 .background {
                     if let acceptanceProbePrefix {

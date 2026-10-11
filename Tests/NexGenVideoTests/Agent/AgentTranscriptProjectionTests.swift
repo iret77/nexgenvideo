@@ -4,6 +4,50 @@ import Testing
 
 @Suite("Agent transcript projection")
 struct AgentTranscriptProjectionTests {
+    @Test("visible task text survives a subsequently streamed tool call and later turns")
+    func taskMessagesNeverDisappearWhenWorkContinues() throws {
+        var first = AgentMessage(role: .assistant, blocks: [.text("Review this reference before generation.")])
+        let before = AgentTranscriptProjection.taskItems(messages: [first], isStreaming: true)
+        first.blocks.append(.toolUse(id: "read", name: "read_file", inputJSON: "{}"))
+        let after = AgentTranscriptProjection.taskItems(messages: [first], isStreaming: true)
+        #expect(before.map(\.id) == after.map(\.id))
+        guard case .assistantResult(let projected)? = after.first else {
+            Issue.record("Appending a tool call removed already visible text")
+            return
+        }
+        #expect(projected.id == first.id)
+        #expect(projected.blocks == [.text("Review this reference before generation.")])
+        let control = AgentMessage(role: .user, blocks: [.text("Continue the workflow.")], hidden: true)
+        let toolResult = AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "read",
+            content: [.text("internal tool output")], isError: false)])
+        let next = AgentMessage(role: .assistant, blocks: [.text("The next step is ready.")])
+        let messages = [first, toolResult, control, next]
+        let reloaded = try JSONDecoder().decode([AgentMessage].self, from: JSONEncoder().encode(messages))
+        for streaming in [true, false] {
+            let visible = AgentTranscriptProjection.taskItems(messages: reloaded, isStreaming: streaming)
+            #expect(visible.map(\.id) == ["result-\(first.id.uuidString)", "result-\(next.id.uuidString)"])
+        }
+    }
+
+    @Test("task notices and rich output retain chronological identity after interruption")
+    func taskNoticeAndPartialMessageRemainReadable() {
+        let notice = AgentMessage(role: .user, blocks: [], hidden: true,
+            userPresentation: .init(choiceRecord: nil, typedText: nil, notice: "A reference needs review."))
+        let rich = AgentMessage(role: .assistant, blocks: [.toolUse(id: "show",
+            name: ToolName.showBlocks.rawValue, inputJSON: #"{"blocks":[{"type":"text","body":"Review the scene."}]}"#)])
+        var partial = AgentMessage(role: .assistant, blocks: [.text("Please check the")])
+        partial.isIncompleteAPIResponse = true
+        let items = AgentTranscriptProjection.taskItems(messages: [notice, rich, partial], isStreaming: false)
+        #expect(items.map(\.id) == ["notice-\(notice.id.uuidString)", "result-\(rich.id.uuidString)",
+            "result-\(partial.id.uuidString)", "notice-\(partial.id.uuidString)"])
+        guard case .assistantResult(let kept) = items[2] else {
+            Issue.record("Interrupted text must remain readable")
+            return
+        }
+        #expect(kept.blocks == partial.blocks)
+        #expect(kept.isIncompleteAPIResponse)
+    }
+
     @Test("a tool loop renders as one replaceable activity row plus the final answer")
     func collapsesToolLoop() {
         let user = AgentMessage(role: .user, blocks: [.text("Review the project.")])

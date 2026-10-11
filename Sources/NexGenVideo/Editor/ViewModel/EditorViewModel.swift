@@ -186,6 +186,8 @@ final class EditorViewModel {
     /// shows a summary or panel content, never a half-inspected object). Consumed by the Inspector.
     var selectionInspectedObject: InspectedObject? {
         switch activePreviewTab {
+        case .referenceImage(let image):
+            return .entity(image.entity)
         case .timeline:
             return InspectedObject.fromSelection(
                 clipIDs: selectedClipIds,
@@ -340,6 +342,7 @@ final class EditorViewModel {
             // copy, caches, and telemetry all key off the same stable id.
             projectId = nextProjectId
             prepareWorkingCopy()
+            discardForeignReferencePreviews()
         }
     }
     private(set) var projectId: String?
@@ -927,6 +930,15 @@ final class EditorViewModel {
     /// Selected tab of the Project cockpit. Kept on the view model (not local `@State`) so the status
     /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
     var cockpitTab: CockpitTab = .pipeline
+    var acknowledgedReviewRequests: Set<String> = []
+    private var storyDraftsByProject: [URL: StoryPanelDrafts] = [:]
+    var storyPanelDrafts: StoryPanelDrafts {
+        let key = workingRoot ?? URL(fileURLWithPath: "/")
+        if let drafts = storyDraftsByProject[key] { return drafts }
+        let drafts = StoryPanelDrafts()
+        storyDraftsByProject[key] = drafts
+        return drafts
+    }
 
     /// When non-nil, a pack-contributed cockpit surface (by id) is the active cockpit view, overriding
     /// `cockpitTab`. Cleared when a generic tab is selected or the surface's data goes away.
@@ -1138,7 +1150,7 @@ final class EditorViewModel {
         hasProductionPipeline = snapshot.pipeline != nil
         setWorkspaceFocus(WorkspaceFocus(persistedValue: snapshot.workspaceFocus))
         if let rawValue = snapshot.cockpitTab,
-           let tab = CockpitTab(rawValue: rawValue) {
+           let tab = CockpitTab(rawValue: rawValue == "Story" ? "Project Brief" : rawValue) {
             cockpitTab = tab
         }
     }

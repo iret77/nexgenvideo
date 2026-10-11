@@ -80,11 +80,15 @@ struct AgentPanelView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             taskBar
-            taskResult
             AgentLiveStatusView(
                 status: liveStatus,
-                onCancel: { service.cancelRunningSpend() }
+                onCancel: {
+                    if service.currentSpendRun != nil { service.cancelRunningSpend() } else { service.cancel() }
+                },
+                onOpenPipeline: editor.hasProductionPipeline ? { editor.revealCockpit(.pipeline) } : nil
             )
+            activityProgress
+            taskResult
             composerDock
             GenerationBatchProgressView(editor: editor)
         }
@@ -160,8 +164,13 @@ struct AgentPanelView: View {
         return AgentSurfaceState.resolve(.init(
             hasSpendApproval: service.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil,
             hasGateApproval: service.pendingGateApproval != nil,
+            gateApprovalBlocked: pendingGateIsBlockedByPhaseRun,
+            gateApprovalIsWriting: service.gateApprovalIsWriting,
+            spendApprovalIsRunning: service.spendApprovalIsRunning
+                || editor.generationBatchCoordinator.approving || editor.generationBatchCoordinator.isRecovering,
             hasDialog: service.pendingDialog != nil,
             hasSpendRun: service.currentSpendRun != nil,
+            hasBatchRun: editor.generationBatchCoordinator.activeBatchID != nil,
             phaseIsRunning: snapshot?.isRunning == true,
             phaseHasTranscriptActivity: activityVisible,
             phaseHasFailed: {
@@ -179,6 +188,10 @@ struct AgentPanelView: View {
     }
 
     private var liveStatus: AgentLiveStatus {
+        if service.currentPipelineRepairFailure != nil {
+            return AgentLiveStatus(state: .failed, title: "Planning needs repair",
+                detail: "Repeated attempts stopped. Review the recovery action below.")
+        }
         switch surfaceState.statusOwner {
         case .spendRun:
             guard let run = service.currentSpendRun else {
@@ -193,12 +206,16 @@ struct AgentPanelView: View {
                 canCancel: true,
                 cancellationRequested: run.cancellationRequested
             )
+        case .batchRun:
+            return AgentLiveStatus(state: .working, title: "Generation batch in progress",
+                detail: "View progress and controls in Generation batches below.")
+        case .decisionWorking:
+            return AgentLiveStatus(state: .working,
+                title: surfaceState.dockOwner == .gateApproval ? "Recording approval" : "Preparing generation options")
         case .phaseRun:
-            guard let snapshot = editor.pipelinePhaseExecution.snapshot else {
-                return AgentLiveStatus(state: .working, title: "Working")
-            }
-            if surfaceState.statusHasTranscriptActivity {
-                return AgentLiveStatus(state: .streaming, title: "Working")
+            guard let snapshot = editor.pipelinePhaseExecution.snapshot, snapshot.isRunning else {
+                return AgentLiveStatus(state: .working, title: "Finishing the current phase",
+                    detail: "Approval is unavailable until this operation finishes.")
             }
             let presentation = PipelinePhaseProgressPresentation(
                 stageID: snapshot.stageID
@@ -209,7 +226,9 @@ struct AgentPanelView: View {
             return AgentLiveStatus(
                 state: .working,
                 title: presentation.title,
-                detail: "\(PhaseDisplay.label(snapshot.phase))\(count)"
+                detail: pendingGateIsBlockedByPhaseRun
+                    ? "\(PhaseDisplay.label(snapshot.phase))\(count) · Approval is unavailable until this operation finishes."
+                    : "\(PhaseDisplay.label(snapshot.phase))\(count)"
             )
         case .phaseFailure:
             return AgentLiveStatus(
@@ -217,20 +236,21 @@ struct AgentPanelView: View {
                 title: "Stopped"
             )
         case .actionRequired:
-            return AgentLiveStatus(state: .waiting, title: "Action required")
+            if surfaceState.dockOwner == .gateApproval, let gate = service.pendingGateApproval {
+                return AgentLiveStatus(state: .waiting, title: gate.isRewind ? "Revision requested: \(gate.phaseLabel)" : "\(gate.phaseLabel): approval requested",
+                    detail: "Review and respond in the approval card below.")
+            }
+            return AgentLiveStatus(state: .waiting,
+                title: surfaceState.dockOwner == .spendApproval ? "Generation approval requested" : "Your response is needed",
+                detail: "Respond in the decision card below.")
         case .hostFollowUp:
             return AgentLiveStatus(
                 state: .working,
                 title: "Resuming agent"
             )
         case .stream:
-            if surfaceState.statusHasTranscriptActivity {
-                return AgentLiveStatus(state: .streaming, title: "Working")
-            }
-            return AgentLiveStatus(
-                state: .working,
-                title: "Agent is working"
-            )
+            return AgentLiveStatus(state: .working, title: service.activityEvents.last ?? "Waiting for agent response",
+                detail: "No approval request is open.", canCancel: true)
         case .turnFailure:
             return AgentLiveStatus(state: .failed, title: "Stopped")
         case .backendChecking:
@@ -238,7 +258,53 @@ struct AgentPanelView: View {
         case .backendUnavailable:
             return AgentLiveStatus(state: .unavailable, title: "Agent unavailable")
         case .ready:
-            return AgentLiveStatus(state: .ready, title: "Ready")
+            return AgentLiveStatus(state: .ready, title: service.stoppedAgent ? "Agent stopped; submitted provider jobs may continue" : "No task running",
+                detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for the next step." : nil)
+        }
+    }
+
+    @ViewBuilder private var pipelineRepairRecovery: some View {
+        if let failure = service.currentPipelineRepairFailure {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                Label("Planning paused after repeated validation failures", systemImage: "exclamationmark.triangle")
+                Text("Existing artifacts are preserved. Retry planning with the current project and tool definitions; no new generation is authorized.")
+                if failure.origin.chatSessionID == nil {
+                    Text("Allow the connected agent to resubmit its corrected plan. This does not start a new in-app task.")
+                }
+                Button(failure.origin.chatSessionID == nil ? "Allow connected agent to retry" : "Retry planning") { service.retryPipelineRepair() }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .disabled(service.isStreaming)
+                DisclosureGroup("Diagnostic details") {
+                    Text(failure.detail).textSelection(.enabled)
+                }
+            }
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(AppTheme.Spacing.mdLg)
+        }
+    }
+
+    @ViewBuilder private var activityProgress: some View {
+        if surfaceState.statusOwner == .spendRun, let run = service.currentSpendRun {
+            AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: nil),
+                completed: 0, total: 0, events: ["Requested \(run.modelName) via \(run.providerName)"])
+        } else if surfaceState.statusOwner == .batchRun,
+           let id = editor.generationBatchCoordinator.activeBatchID,
+           let batch = editor.generationBatchCoordinator.snapshots.first(where: { $0.batch.id == id }) {
+            AgentActivityProgressView(timing: .init(startedAt: batch.journal.approvedAt,
+                lastEventAt: editor.generationBatchCoordinator.lastProgressAt[id]),
+                completed: batch.journal.executions.filter { $0.state == .complete }.count,
+                total: batch.journal.executions.count,
+                events: batch.journal.executions.enumerated().map { "Generation \($0.offset + 1): \($0.element.state.rawValue)" })
+        } else if surfaceState.statusOwner == .phaseRun,
+           let run = editor.pipelinePhaseExecution.snapshot, run.isRunning {
+            AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: run.lastEventAt),
+                completed: run.completedUnitCount, total: run.totalUnitCount,
+                events: [PipelinePhaseProgressPresentation(stageID: run.stageID).title])
+        } else if surfaceState.statusOwner == .stream,
+                  service.activitySessionID == service.currentSessionId, let start = service.activityStartedAt {
+            AgentActivityProgressView(timing: .init(startedAt: start, lastEventAt: service.activityLastEventAt),
+                completed: 0, total: 0, events: service.activityEvents)
         }
     }
 
@@ -322,6 +388,7 @@ struct AgentPanelView: View {
 
     @State private var showDecisionHistory = false
     @State private var showDiagnostics = false
+    @State private var messageScrollPosition = ScrollPosition(idType: String.self)
     @State private var showUtilities = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
@@ -465,42 +532,65 @@ struct AgentPanelView: View {
         return false
     }
 
-    private var taskResults: [AgentMessage] {
-        transcriptTurns.reversed().lazy.map { turn in
-            turn.items.compactMap { item -> AgentMessage? in
-                guard case .assistantResult(let message) = item else { return nil }
-                return message
-            }
-        }.first(where: { !$0.isEmpty }) ?? []
+    private var taskItems: [AgentTranscriptItem] {
+        AgentTranscriptProjection.taskItems(messages: service.messages, isStreaming: service.isStreaming)
     }
 
     private var showsTaskChoices: Bool {
-        taskResults.isEmpty && !service.isStreaming && !service.isComposerBlocked
+        taskItems.isEmpty && !service.isStreaming && !service.isComposerBlocked
             && service.canStream && service.pendingFunction == nil
     }
 
     private var taskResult: some View {
-        let results = taskResults
-        return ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                if !results.isEmpty {
-                    Text("Task Result")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    ForEach(results) { message in
-                        AgentMessageView(message: message, toolResults: toolResults)
+        let items = taskItems
+        let latestMessage = items.compactMap { item -> AgentMessage? in
+            guard case .assistantResult(let message) = item else { return nil }
+            return message
+        }.last
+        return VStack(spacing: AppTheme.Spacing.sm) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    if !items.isEmpty {
+                        Text("Messages · current decisions are shown below")
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        ForEach(items) { item in
+                            Group {
+                                switch item {
+                                case .assistantResult(let message):
+                                    AgentMessageView(message: message, toolResults: toolResults)
+                                case .notice(let notice):
+                                    Text(notice.text).textSelection(.enabled)
+                                        .interfaceFont(size: AppTheme.Typography.ui)
+                                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                                default: EmptyView()
+                                }
+                            }
+                            .id(item.id)
+                        }
+                    } else if showsTaskChoices {
+                        emptyState
                     }
-                    if let message = results.last {
-                        Button("Reply to Agent") { service.stageReply(to: message.id) }
+                    errorBanner
+                }
+                .padding(AppTheme.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
+            }
+            .scrollPosition($messageScrollPosition)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            if let last = items.last {
+                WrapLayout(spacing: AppTheme.Spacing.sm) {
+                    Button("Latest message") { messageScrollPosition.scrollTo(id: last.id, anchor: .bottom) }
+                        .buttonStyle(.capsule(.secondary, size: .small))
+                    if let latestMessage {
+                        Button("Reply to Agent") { service.stageReply(to: latestMessage.id) }
                             .buttonStyle(.capsule(.secondary, size: .small))
                             .disabled(service.isStreaming || service.isComposerBlocked)
                     }
-                } else if showsTaskChoices {
-                    emptyState
                 }
-                errorBanner
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.bottom, AppTheme.Spacing.sm)
             }
-            .padding(AppTheme.Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -681,7 +771,6 @@ struct AgentPanelView: View {
                 GateApprovalCard(
                     approval: gate,
                     error: service.gateApprovalError,
-                    surface: editor.uiContract?.phases[gate.phase]?.surface,
                     isWorking: service.gateApprovalIsWriting,
                     isBlocked: pendingGateIsBlockedByPhaseRun,
                     onApprove: {
@@ -720,7 +809,7 @@ struct AgentPanelView: View {
         case .backendRecovery:
             backendRecoveryDock
         case .composer:
-            footer
+            if service.currentPipelineRepairFailure != nil { pipelineRepairRecovery } else { footer }
         }
     }
 
@@ -765,7 +854,7 @@ struct AgentPanelView: View {
                     modelPicker
                     Spacer(minLength: AppTheme.Spacing.sm)
                     if service.isStreaming {
-                        Button("Stop Task") { service.cancel() }
+                        Button("Stop agent") { service.cancel() }
                             .buttonStyle(.capsule(.secondary, size: .small))
                     }
                 }

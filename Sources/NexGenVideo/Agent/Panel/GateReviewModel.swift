@@ -56,6 +56,21 @@ final class GateReviewModel {
             blocker = "This request no longer belongs to the current project. Request a new approval."
             return
         }
+        if case .rewind(let expectedHash, _) = approval.action {
+            let readiness = await NativeGateWriter.controlReadiness(projectDir: root,
+                phase: approval.phase, declaredPack: approval.declaredPack,
+                declaredBinding: approval.declaredBinding,
+                executionCoordinator: editor.pipelinePhaseRunCoordinator)
+            let currentHash = try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot))
+            guard token == generation, editor.workingRoot == root, !Task.isCancelled else { return }
+            isReady = readiness.mutations.isReady && currentHash == expectedHash
+            blocker = isReady ? nil : "The pipeline changed or is busy. Request a new revision decision."
+            return
+        }
+        if let fingerprint = approval.artifactFingerprint, !fingerprint.matches(dataRoot: dataRoot) {
+            blocker = "This revision changed. Request a new approval for the updated artifact."
+            return
+        }
         var snapshot: StoryboardReviewSnapshot?
         if approval.phase == "storyboard" {
             do {
@@ -94,6 +109,10 @@ final class GateReviewModel {
         guard editor.workingRoot == root,
               editor.declaredPluginBinding == approval.declaredBinding else {
             blocker = "The project changed. Request a new approval."
+            return
+        }
+        if let fingerprint = approval.artifactFingerprint, !fingerprint.matches(dataRoot: dataRoot) {
+            blocker = "The artifact changed during validation. Request a new approval."
             return
         }
         isReady = true

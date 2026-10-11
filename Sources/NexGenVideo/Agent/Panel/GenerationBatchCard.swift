@@ -4,11 +4,13 @@ struct GenerationBatchReviewControls: Equatable {
     let canEdit: Bool
     let canRetryPricing: Bool
     let canApprove: Bool
+    let canApproveWithoutEstimate: Bool
 
     init(hasVerifiedTotal: Bool, hasRetryablePricingFailure: Bool, isBusy: Bool) {
         canEdit = !isBusy
         canRetryPricing = hasRetryablePricingFailure && !isBusy
         canApprove = hasVerifiedTotal && !isBusy
+        canApproveWithoutEstimate = !hasVerifiedTotal && !isBusy
     }
 }
 
@@ -24,77 +26,112 @@ struct GenerationBatchCard: View {
                 isBusy: coordinator.approving || coordinator.isRecovering
             )
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Text(batch.totalEUR == nil
-                    ? String(localized: "Prepare \(batch.payload.items.count) generations")
-                    : String(localized: "Review \(batch.payload.items.count) generations"))
-                    .fontWeight(AppTheme.FontWeight.semibold)
+                Text("Review \(batch.payload.items.count) requests")
+                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
+                priceSummary(batch)
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         ForEach(Array(batch.payload.items.enumerated()), id: \.element.id) { index, item in
-                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                                HStack {
-                                    Text("\(index + 1). \(item.purpose)")
-                                    Spacer()
-                                    Button("Remove") { coordinator.remove(itemID: item.id, editor: editor) }
-                                        .buttonStyle(InlineActionButtonStyle())
-                                        .disabled(!controls.canEdit)
-                                }
-                                GenerationPackageReviewView(package: item.package)
-                                if coordinator.recoveringItemIDs.contains(item.id) {
-                                    Text("Preparing updated review…")
-                                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                                }
-                                let options = coordinator.routeOptions(itemID: item.id)
-                                if item.package.payload.estimate == nil, !options.isEmpty {
-                                    Text("Choose another route and prepare this request again:")
-                                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                                    ForEach(options) { option in
-                                        Button("Use \(option.modelName) · \(option.providerLabel)") {
-                                            Task {
-                                                await coordinator.changeRoute(
-                                                    itemID: item.id,
-                                                    option: option,
-                                                    editor: editor
-                                                )
-                                            }
-                                        }
-                                        .buttonStyle(InlineActionButtonStyle())
-                                        .disabled(!controls.canEdit)
-                                    }
-                                }
-                            }
+                            requestRow(item, index: index, controls: controls)
+                        }
+                        if let error = coordinator.error {
+                            Text("The request could not be updated. Try again or ask the agent to revise it.")
+                                .foregroundStyle(AppTheme.Status.warningColor)
+                            DisclosureGroup("Error details") { Text(error).textSelection(.enabled) }
                         }
                     }
-                }.frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
-                if let total = batch.totalEUR {
-                    Text("Estimated total: €\(total, specifier: "%.2f")")
-                } else {
-                    Text("Cost estimates are missing. Approval is unavailable until every generation is priced.")
-                        .foregroundStyle(AppTheme.Status.warningColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if coordinator.canRetryPricing {
-                    Button("Retry pricing") {
-                        Task { await coordinator.retryPricing(editor: editor) }
-                    }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .disabled(!controls.canRetryPricing)
-                }
-                if let error = coordinator.error { Text(error).foregroundStyle(AppTheme.Status.warningColor) }
-                HStack {
+                .scrollBounceBehavior(.basedOnSize)
+                WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
                     Button("Decline") { coordinator.decline(editor: editor) }
                         .buttonStyle(.capsule(.secondary, size: .regular))
                         .disabled(!controls.canEdit)
-                    Spacer()
-                    Button("Approve \(batch.payload.items.count) generations") {
-                        Task { await coordinator.approve(editor: editor) }
-                    }.buttonStyle(.capsule(.prominent, size: .regular))
-                        .disabled(!controls.canApprove)
-
+                    Button("Ask agent to revise") { coordinator.requestRevision(editor: editor) }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .disabled(!controls.canEdit)
+                    if coordinator.canRetryPricing {
+                        Button("Retry pricing") {
+                            Task { await coordinator.retryPricing(editor: editor) }
+                        }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .disabled(!controls.canRetryPricing)
+                    }
+                    Button(batch.totalEUR == nil
+                        ? String(localized: "Approve without estimate")
+                        : String(localized: "Approve \(batch.payload.items.count) requests")) {
+                        Task {
+                            await coordinator.approve(editor: editor, expectedBatchID: batch.id,
+                                approval: batch.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
+                        }
+                    }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .disabled(!controls.canApprove && !controls.canApproveWithoutEstimate)
+                    .accessibilityIdentifier("generationBatch.approve")
                 }
             }
+            .interfaceFont(size: AppTheme.Typography.ui)
             .padding(AppTheme.Spacing.md)
             .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
             .background(RoundedRectangle(cornerRadius: AppTheme.Radius.md).fill(AppTheme.Background.raisedColor))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("generationBatch.review")
+        }
+    }
+
+    @ViewBuilder
+    private func priceSummary(_ batch: GenerationBatch) -> some View {
+        if let total = batch.totalEUR {
+            Text("Estimated total: €\(total, specifier: "%.2f")")
+        } else {
+            let unknown = batch.payload.items.filter { $0.package.payload.estimate == nil }.count
+            let known = batch.payload.items.compactMap { $0.package.payload.estimate?.eurAmount }.reduce(0, +)
+            Group {
+                if unknown == batch.payload.items.count {
+                    Text("\(unknown) requests: cost unknown")
+                } else {
+                    Text("\(unknown) requests: cost unknown · Known estimate: €\(known, specifier: "%.2f")")
+                }
+            }
+            .foregroundStyle(AppTheme.Status.warningColor)
+            .fixedSize(horizontal: false, vertical: true)
+            Text("Provider charges apply. The project budget cannot be guaranteed for this batch.")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func requestRow(_ item: GenerationBatch.Item, index: Int, controls: GenerationBatchReviewControls) -> some View {
+        let coordinator = editor.generationBatchCoordinator
+        let options = coordinator.routeOptions(itemID: item.id)
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("\(index + 1). \(item.purpose)")
+                .fontWeight(AppTheme.FontWeight.semibold)
+                .lineLimit(2)
+                .help(item.purpose)
+            GenerationPackageReviewView(package: item.package, showsDetails: false)
+            DisclosureGroup("Details and options") {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                    Text(item.purpose).textSelection(.enabled)
+                    if !options.isEmpty {
+                        NativeChoicePicker(label: "Change model", options:
+                            [.init(id: "", title: String(localized: "Keep current model"))]
+                                + options.map { .init(id: $0.id, title: "\($0.modelName) · \($0.providerLabel)", help: $0.target.endpoint) },
+                            selection: Binding(get: { "" }, set: { id in
+                                guard let option = options.first(where: { $0.id == id }) else { return }
+                                Task { await coordinator.changeRoute(itemID: item.id, option: option, editor: editor) }
+                            }))
+                            .disabled(!controls.canEdit)
+                    }
+                    Button("Remove request") { coordinator.remove(itemID: item.id, editor: editor) }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(!controls.canEdit)
+                    GenerationPackageReviewView(package: item.package).details
+                }
+            }
+            if coordinator.recoveringItemIDs.contains(item.id) {
+                Text("Preparing updated request…").foregroundStyle(AppTheme.Text.secondaryColor)
+            }
         }
     }
 }
@@ -116,6 +153,10 @@ struct GenerationBatchProgressView: View {
                             let completed = snapshot.journal.executions.filter { $0.state == .complete }.count
                             Text("\(completed) of \(snapshot.batch.payload.items.count) complete")
                                 .fontWeight(AppTheme.FontWeight.semibold)
+                            if let count = snapshot.journal.pricingOverrideItemIDs?.count {
+                                Text("Approved without estimate for \(count) requests")
+                                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                            }
                             if !snapshot.authorityAvailable {
                                 Text("Execution authority is not available on this Mac. This batch is history only.")
                                     .foregroundStyle(AppTheme.Status.warningColor)

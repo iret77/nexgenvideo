@@ -35,10 +35,12 @@ struct AgentLiveStatusView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let status: AgentLiveStatus
     let onCancel: () -> Void
+    let onOpenPipeline: (() -> Void)?
 
-    init(status: AgentLiveStatus, onCancel: @escaping () -> Void = {}) {
+    init(status: AgentLiveStatus, onCancel: @escaping () -> Void = {}, onOpenPipeline: (() -> Void)? = nil) {
         self.status = status
         self.onCancel = onCancel
+        self.onOpenPipeline = onOpenPipeline
     }
 
     var body: some View {
@@ -51,28 +53,27 @@ struct AgentLiveStatusView: View {
                     statusIcon
                         .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
                         .accessibilityHidden(true)
-                    Text(status.title)
-                        .interfaceFont(
-                            size: AppTheme.Typography.ui,
-                            weight: AppTheme.FontWeight.semibold
-                        )
-                        .foregroundStyle(titleColor)
-                        .lineLimit(1)
-                    if let detail = status.detail, !detail.isEmpty {
-                        Text("· \(detail)")
-                            .interfaceFont(size: AppTheme.Typography.metadata)
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text(status.title)
+                            .interfaceFont(
+                                size: AppTheme.Typography.ui,
+                                weight: AppTheme.FontWeight.semibold
+                            )
+                            .foregroundStyle(titleColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let detail = status.detail, !detail.isEmpty {
+                            Text(detail)
+                                .interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let onOpenPipeline {
+                            Button("Open Pipeline", action: onOpenPipeline)
+                                .buttonStyle(.capsule(.secondary, size: .small))
+                        }
                     }
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    [status.title, status.detail]
-                        .compactMap { $0 }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: ". ")
-                )
+                .accessibilityElement(children: .contain)
                 Spacer(minLength: AppTheme.Spacing.sm)
                 if status.canCancel {
                     Button(status.cancellationRequested ? "Cancelling…" : "Cancel") {
@@ -82,8 +83,8 @@ struct AgentLiveStatusView: View {
                     .disabled(status.cancellationRequested)
                     .accessibilityLabel(
                         status.cancellationRequested
-                            ? "Cancelling generation"
-                            : "Cancel generation"
+                            ? "Cancellation requested"
+                            : "Stop current operation"
                     )
                 }
             }

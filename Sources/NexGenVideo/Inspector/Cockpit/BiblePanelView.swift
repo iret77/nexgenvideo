@@ -1,4 +1,5 @@
 import AppKit
+import NexGenEngine
 import SwiftUI
 
 // Read-only Bible cockpit panel: shows the production Bible (characters, ensembles, props, locations,
@@ -105,7 +106,7 @@ struct BiblePanelView: View {
             ForEach(entities) { entity in
                 let ref = BibleEntityRef(kind: kind, id: entity.id)
                 let isInspected = editor.inspectedObject == .entity(ref)
-                BibleEntityCard(entity: entity, projectDir: editor.workingRoot)
+                BibleEntityCard(entity: entity, projectDir: editor.workingRoot, presentation: .board, reference: ref)
                     .overlay(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                             .strokeBorder(
@@ -114,9 +115,15 @@ struct BiblePanelView: View {
                             )
                     )
                     .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
-                    .onTapGesture { editor.inspectedObject = .entity(ref) }
+                    .onTapGesture { inspect(ref) }
+                    .accessibilityAction(named: "Inspect \(entity.name)") { inspect(ref) }
             }
         }
+    }
+
+    private func inspect(_ ref: BibleEntityRef) {
+        editor.inspectedObject = .entity(ref)
+        editor.inspectorPanelVisible = true
     }
 
     // MARK: - Look
@@ -205,16 +212,20 @@ struct BiblePanelView: View {
 struct BibleEntityCard: View {
     let entity: any BibleEntity
     let projectDir: URL?
+    enum Presentation { case board, inspector }
+    var presentation: Presentation = .inspector
+    var reference: BibleEntityRef?
+    @Environment(EditorViewModel.self) private var editor
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
 
-            if let ensemble = entity as? BibleEnsemble {
+            if presentation == .inspector, let ensemble = entity as? BibleEnsemble {
                 membersRow(ensemble)
             }
 
-            if !entity.visualPrompt.trimmingCharacters(in: .whitespaces).isEmpty {
+            if presentation == .inspector, !entity.visualPrompt.trimmingCharacters(in: .whitespaces).isEmpty {
                 labeledBlock(label: "VISUAL PROMPT") {
                     Text(entity.visualPrompt)
                         .interfaceFont(size: AppTheme.Typography.ui)
@@ -224,7 +235,7 @@ struct BibleEntityCard: View {
                 }
             }
 
-            if !entity.attributes.isEmpty {
+            if presentation == .inspector, !entity.attributes.isEmpty {
                 labeledBlock(label: "ATTRIBUTES") {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         ForEach(entity.attributes) { attr in
@@ -234,9 +245,13 @@ struct BibleEntityCard: View {
                 }
             }
 
-            if !entity.sheets.isEmpty {
-                labeledBlock(label: "REFERENCE SHEETS") {
-                    sheetGrid(entity.sheets)
+            if presentation == .board {
+                if entity.sheets.isEmpty {
+                    Text("No reference sheets")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                } else {
+                    labeledBlock(label: "REFERENCE SHEETS") { sheetGrid(entity.sheets) }
                 }
             }
         }
@@ -311,7 +326,20 @@ struct BibleEntityCard: View {
             spacing: AppTheme.Spacing.sm
         ) {
             ForEach(sheets) { sheet in
-                SheetThumbnailView(label: sheet.key, path: sheet.path, projectDir: projectDir)
+                if let projectDir, let reference {
+                    Button {
+                        editor.openReferencePreview(ProjectReferenceImage(
+                            projectHome: projectDir, path: sheet.path,
+                            name: "\(entity.name.isEmpty ? entity.id : entity.name) — \(sheet.key)", entity: reference
+                        ))
+                    } label: {
+                        SheetThumbnailView(label: sheet.key, path: sheet.path, projectDir: projectDir)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Preview \(entity.name), \(sheet.key)")
+                } else {
+                    SheetThumbnailView(label: sheet.key, path: sheet.path, projectDir: projectDir)
+                }
             }
         }
     }
@@ -333,64 +361,23 @@ struct BibleEntityCard: View {
 
 // MARK: - Sheet thumbnail
 
-/// A single reference-sheet tile. Resolves `projectDir + relative path`, loads it with
-/// `NSImage(contentsOfFile:)` off the main actor, and falls back to a placeholder when missing.
 struct SheetThumbnailView: View {
     let label: String
     let path: String
     let projectDir: URL?
     var tileHeight: CGFloat = AppTheme.ComponentSize.sheetTileHeight
 
-    @State private var image: NSImage?
-    @State private var didAttempt = false
-
-    private var resolvedURL: URL? {
-        guard let projectDir, !path.isEmpty else { return nil }
-        return URL(fileURLWithPath: path, relativeTo: projectDir).standardizedFileURL
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            ZStack {
-                Rectangle().fill(AppTheme.Background.overlayColor)
-                if let image {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    Image(systemName: didAttempt ? "photo" : "photo.on.rectangle")
-                        .interfaceFont(size: AppTheme.Typography.reading)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-            }
-            .frame(height: tileHeight)
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline)
-            )
+            ProjectReferenceImageView(projectHome: projectDir, path: path, compact: true)
+                .frame(height: tileHeight)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             Text(label)
                 .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Text.mutedColor)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
         }
-        .help(resolvedURL.map { "\(label) · \($0.path)" } ?? label)
-        .task(id: resolvedURL) { await loadImage() }
-    }
-
-    private func loadImage() async {
-        guard let url = resolvedURL else {
-            image = nil
-            didAttempt = true
-            return
-        }
-        // Read bytes off the main actor (Data is Sendable); build the NSImage on the main actor —
-        // the codebase keeps non-Sendable AppKit image types off background boundaries.
-        let bytes = await Task.detached(priority: .utility) { () -> Data? in
-            try? Data(contentsOf: url, options: .mappedIfSafe)
-        }.value
-        image = bytes.flatMap { NSImage(data: $0) }
-        didAttempt = true
+        .help(label)
     }
 }

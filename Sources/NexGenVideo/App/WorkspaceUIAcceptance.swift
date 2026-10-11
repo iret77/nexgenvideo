@@ -120,6 +120,9 @@ enum WorkspaceUIAcceptance {
                 fail("could not prepare large production layout", scale: scale)
             }
             let preparedProductionFrames = visiblePanelFrames(in: host)
+            guard productionTimelineSpansContent(preparedProductionFrames) else {
+                fail("production timeline must span cockpit and preview without covering Tasks", scale: scale)
+            }
             try? await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
             guard visiblePanelFrames(in: host) == preparedProductionFrames else {
@@ -837,12 +840,11 @@ enum WorkspaceUIAcceptance {
               editor.activePackAccentColor != nil else {
             fail("pinned Musicvideo startup lost its phases, Track intake or pack identity", scale: scale)
         }
+        editor.cockpitTab = .pipeline
+        editor.cockpitPackSurfaceID = nil
         let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
-            PipelinePanelView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
-            VStack(spacing: AppTheme.Spacing.lg) {
-                PipelinePanelView(presentation: .phaseDock, viewedPhase: "analysis")
-                AgentPanelView()
-            }
+            ProjectCockpitView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
+            AgentPanelView()
         }.interfaceStyle(palette: editor.projectPalette).environment(editor)
             .frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height)
             .background(AppTheme.Background.surfaceColor))
@@ -870,9 +872,9 @@ enum WorkspaceUIAcceptance {
         guard await waitUntil(timeout: .seconds(5), {
             host.layoutSubtreeIfNeeded()
             return window.isKeyWindow && text("agent.dialog.title") == "Track"
-                && text("pipeline.dock.current") == "project_init"
+                && probeState(identifier: "cockpit.tab.Pipeline", in: window) == true
                 && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
-                && probeState(identifier: "pipeline.dock.approve.project_init", in: window) == false
+                && probeState(identifier: "pipeline.overview.approve.project_init", in: window) == false
         }) else { reject("Musicvideo phase controls or Track card did not render") }
         func visibleProbe(_ identifier: String, in view: NSView) -> NSView? {
             guard view.window === window, !view.isHiddenOrHasHiddenAncestor else { return nil }
@@ -927,7 +929,46 @@ enum WorkspaceUIAcceptance {
         let edited = document.isDocumentEdited
         let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
         guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
-        if let reason = click(identifier: "pipeline.dock.approve.project_init", in: window) {
+        let artifactTabs: [CockpitTab] = [.story, .treatment, .storyboard, .bible, .shotlist, .review]
+        let story = "scale-\(scaleLabel(scale))-musicvideo-story-context.png"
+        for tab in artifactTabs {
+            let identifier = "cockpit.tab.\(tab.rawValue)"
+            _ = await revealProbe(identifier, in: window)
+            if let reason = click(identifier: identifier, in: window) {
+                reject("artifact tab could not open: \(tab.rawValue): \(reason)")
+            }
+            guard await waitUntil(timeout: .seconds(5), {
+                host.layoutSubtreeIfNeeded()
+                return probeState(identifier: identifier, in: window) == true
+                    && findProbe(in: host, identifier: "pipeline.overview.root") == nil
+                    && findProbe(in: host, identifier: "pipeline.dock.current") == nil
+                    && findProbe(in: host, identifier: "pipeline.dock.approve.project_init") == nil
+                    && editor.projectState?.nextPhaseName == "project_init"
+                    && text("agent.dialog.title") == "Track"
+            }) else { reject("artifact tab contains unrelated workflow controls or changed the active step: \(tab.rawValue)") }
+            if tab == .story, !snapshot(host, at: evidenceURL.appendingPathComponent(story)) {
+                reject("could not capture artifact context")
+            }
+        }
+        _ = await revealProbe("cockpit.tab.Pipeline", in: window)
+        if let reason = click(identifier: "cockpit.tab.Pipeline", in: window) {
+            reject("Pipeline tab could not reopen: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            host.layoutSubtreeIfNeeded()
+            return probeState(identifier: "cockpit.tab.Pipeline", in: window) == true
+                && probeState(identifier: "pipeline.overview.approve.project_init", in: window) == false
+                && text("pipeline.overview.phase.bible") == "Bible"
+                && findProbe(in: host, identifier: "pipeline.overview.tasks") != nil
+        }) else { reject("Pipeline did not restore project status and guarded actions") }
+        editor.focusedPanel = .project
+        if let reason = click(identifier: "pipeline.overview.tasks", in: window) {
+            reject("Open Tasks could not be reached: \(reason)")
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.focusedPanel == .agent && text("agent.dialog.title") == "Track"
+        }) else { reject("Open Tasks did not focus the pending host interaction") }
+        if let reason = click(identifier: "pipeline.overview.approve.project_init", in: window) {
             reject("disabled approval target: \(reason)")
         }
         try? await Task.sleep(for: .milliseconds(300))
@@ -955,7 +996,9 @@ enum WorkspaceUIAcceptance {
         emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
             "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
             "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
-            "disabledApprovalDidNotMutate": true, "surfaceActionsSingleLine": true, "screenshots": [initial, final]])
+            "disabledApprovalDidNotMutate": true, "surfaceActionsSingleLine": true,
+            "artifactTabsExcludeWorkflowControls": true, "pipelineRestored": true, "tasksReachable": true,
+            "screenshots": [initial, story, final]])
     }
 
     private static func captureAssetProvenance(evidenceURL: URL, scale: Double) async {
@@ -1622,6 +1665,16 @@ enum WorkspaceUIAcceptance {
         }
         visit(root)
         return result
+    }
+
+    private static func productionTimelineSpansContent(_ frames: [String: NSRect]) -> Bool {
+        guard let timeline = frames["timelinePanel"], let cockpit = frames["projectPanel"],
+              let preview = frames["previewPanel"], let tasks = frames["agentPanel"] else { return false }
+        let tolerance = AppTheme.BorderWidth.thin
+        return abs(timeline.minX - cockpit.minX) <= tolerance
+            && abs(timeline.maxX - preview.maxX) <= tolerance
+            && timeline.minX >= tasks.maxX
+            && !timeline.intersects(cockpit) && !timeline.intersects(preview)
     }
 
     private static func defaultPanelWidthsAreValid(

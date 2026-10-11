@@ -135,8 +135,8 @@ struct PipelinePhaseProgressPresentation {
             title = "Saving measured analysis"
             detail = "Validating and writing the canonical analysis artifact."
         default:
-            title = "Preparing audio analysis"
-            detail = "Starting the deterministic analysis pipeline."
+            title = "Processing current phase"
+            detail = "Waiting for the runner’s next progress update."
         }
     }
 }

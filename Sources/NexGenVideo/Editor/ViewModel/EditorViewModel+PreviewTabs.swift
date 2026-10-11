@@ -23,6 +23,8 @@ extension EditorViewModel {
         switch activePreviewTab {
         case .timeline:
             return timeline.totalFrames
+        case .referenceImage:
+            return 0
         case .mediaAsset(let id, _, _):
             guard let asset = mediaAssets.first(where: { $0.id == id }) else { return 0 }
             guard asset.duration.isFinite, asset.duration > 0, timeline.fps > 0 else { return 0 }
@@ -55,6 +57,33 @@ extension EditorViewModel {
         activePreviewTabId = tab.id
         sourcePlayheadFrame = frame.map { asset.duration > 0 ? min(max(0, $0), activePreviewDurationFrames) : max(0, $0) }
             ?? sourcePreviewFrame(for: asset)
+        videoEngine?.activateTab(tab)
+        pushPreviewHistory(tab.id)
+    }
+
+    func discardForeignReferencePreviews() {
+        let removed = previewTabs.compactMap { tab -> String? in
+            guard case .referenceImage(let image) = tab, image.projectHome != workingRoot else { return nil }
+            return tab.id
+        }
+        for id in removed { closePreviewTab(id: id) }
+    }
+
+    func openReferencePreview(_ image: ProjectReferenceImage) {
+        guard workingRoot == image.projectHome else { return }
+        rememberSourcePosition()
+        let tab = PreviewTab.referenceImage(image)
+        if let index = previewTabs.firstIndex(where: { $0.id == tab.id }) {
+            previewTabs[index] = tab
+        } else {
+            previewTabs.append(tab)
+        }
+        activePreviewTabId = tab.id
+        canvasZoom = 1
+        canvasOffset = .zero
+        inspectedObject = .entity(image.entity)
+        inspectorPanelVisible = true
+        maximizedPanel = nil
         videoEngine?.activateTab(tab)
         pushPreviewHistory(tab.id)
     }
@@ -126,6 +155,9 @@ extension EditorViewModel {
         switch activePreviewTab {
         case .timeline:
             break
+        case .referenceImage(let image):
+            inspectedObject = .entity(image.entity)
+            return
         case .mediaAsset(let id, _, _):
             timelineMarkerPreview = nil
             selectedFolderIds.removeAll()

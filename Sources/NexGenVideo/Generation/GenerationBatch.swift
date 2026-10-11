@@ -78,6 +78,11 @@ struct GenerationBatch: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+enum GenerationBatchApproval: Sendable, Equatable {
+    case verifiedPrices
+    case acceptUnknownPrices
+}
+
 struct GenerationBatchJournal: Codable, Sendable, Equatable {
     enum State: String, Codable, Sendable {
         case queued, submitting, running, complete, failed, canceled, blocked
@@ -95,17 +100,22 @@ struct GenerationBatchJournal: Codable, Sendable, Equatable {
     let batchID: String
     let authorityID: String?
     let approvedAt: Date
+    let pricingOverrideItemIDs: [String]?
     private(set) var revision: Int
     private(set) var executions: [Execution]
 
-    init(approving batch: GenerationBatch, authorityID: String, at date: Date = Date()) throws {
+    init(approving batch: GenerationBatch, authorityID: String,
+         approval: GenerationBatchApproval = .verifiedPrices, at date: Date = Date()) throws {
         try batch.validate()
-        guard batch.totalEUR != nil, !authorityID.isEmpty else {
-            throw GenerationRequestError.gate("Every batch item needs a verified monetary ceiling before unattended generation can be approved.")
+        let unpriced = batch.payload.items.filter { $0.package.payload.estimate == nil }.map(\.id).sorted()
+        guard !authorityID.isEmpty,
+              batch.totalEUR != nil || (approval == .acceptUnknownPrices && !unpriced.isEmpty) else {
+            throw GenerationRequestError.gate("Review the estimates or explicitly approve the exact batch without an estimate.")
         }
         batchID = batch.id
         self.authorityID = authorityID
         approvedAt = date
+        pricingOverrideItemIDs = approval == .acceptUnknownPrices && !unpriced.isEmpty ? unpriced : nil
         revision = 0
         executions = batch.payload.items.map {
             Execution(itemID: $0.id, state: .queued, transactionID: nil, providerRequestID: nil,
@@ -115,7 +125,12 @@ struct GenerationBatchJournal: Codable, Sendable, Equatable {
 
     func validate(batch: GenerationBatch) throws {
         try batch.validate()
-        guard batchID == batch.id, authorityID?.isEmpty != true, revision >= 0, batch.totalEUR != nil,
+        let unpriced = batch.payload.items.filter { $0.package.payload.estimate == nil }.map(\.id).sorted()
+        guard (pricingOverrideItemIDs == nil && batch.totalEUR != nil)
+                || (!unpriced.isEmpty && pricingOverrideItemIDs == unpriced) else {
+            throw GenerationRequestError.gate("Unknown prices require explicit approval for these exact batch items.")
+        }
+        guard batchID == batch.id, authorityID?.isEmpty != true, revision >= 0,
               approvedAt.timeIntervalSince1970.isFinite,
               executions.map(\.itemID) == batch.payload.items.map(\.id),
               Set(executions.compactMap(\.transactionID)).count == executions.compactMap(\.transactionID).count else {
