@@ -26,7 +26,7 @@ struct AgentActivityProgressView: View {
                 if !reduceMotion { ProgressView().progressViewStyle(.linear) }
                 Text("Total work not yet known")
             }
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text("Elapsed: \(timing.elapsed(at: context.date)) s")
                     Text(timing.lastEventAt == nil

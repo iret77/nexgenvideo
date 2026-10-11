@@ -39,8 +39,19 @@ jobs:
         run: |
           git checkout 6a56826a64faae5df48c24ec3f35311f50aacc7c -- \
             Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift \
+            Sources/NexGenVideo/Agent/Panel/AgentSurfaceState.swift \
             Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift \
             Sources/NexGenVideo/Agent/Panel/MarkdownText.swift
+          # Keep the historical transcript; adapt only the removed gate-card argument.
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          panel = Path("Sources/NexGenVideo/Agent/Panel/AgentPanelView.swift")
+          source = panel.read_text()
+          obsolete = "                    surface: editor.uiContract?.phases[gate.phase]?.surface,\n"
+          if source.count(obsolete) != 1:
+              raise SystemExit("Pinned baseline gate-card call changed; inspect its compatibility")
+          panel.write_text(source.replace(obsolete, "", 1))
+          PYTHON
       - name: Build optimized replay app
         run: |
           scripts/bundle.sh release
