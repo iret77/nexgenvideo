@@ -26,7 +26,7 @@ struct NewProjectFormatSheet: View {
             ScrollView {
                 VStack(spacing: AppTheme.Spacing.mdLg) {
                     optionCard(id: nil, title: "Generic",
-                               subtitle: "Free-form AI editing — no fixed pipeline.", badge: nil)
+                               subtitle: "Free-form AI editing — no fixed pipeline.", badge: Self.genericBanner)
                     ForEach(packs) { pack in
                         optionCard(id: pack.name, title: pack.displayName,
                                    subtitle: pack.benefit ?? pack.tagline ?? "", badge: pack.headerImage())
@@ -53,30 +53,27 @@ struct NewProjectFormatSheet: View {
         .frame(width: AppTheme.ComponentSize.formatSheetWidth)
     }
 
-    /// Native banner aspect (728×193) — the hero frame matches it so a badge fills the full
-    /// card width with no letterbox and no side crop.
     private func optionCard(id: String?, title: String, subtitle: String, badge: NSImage?) -> some View {
         let isSelected = selected == id
         let accent = InstalledPack.named(id)?.palette.accent ?? AppTheme.Accent.primary
         return Button { selected = id } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
-                Group {
-                    if let badge {
-                        // Banner art is authored at the hero aspect, so fit (not fill) shows all of it —
-                        // fill shaves a subpixel row off the bottom when the frame height rounds down.
-                        Image(nsImage: badge).resizable().scaledToFit()
-                    } else {
-                        AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle)
-                            .overlay(
-                                Image(systemName: "wand.and.stars")
-                                    .interfaceFont(size: AppTheme.IconSize.lg)
-                                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                            )
+                Color.clear
+                    .aspectRatio(AppTheme.ComponentSize.pluginBadgeAspect, contentMode: .fit)
+                    .overlay {
+                        if let badge {
+                            Image(nsImage: badge).resizable().scaledToFill()
+                        } else {
+                            AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle)
+                                .overlay {
+                                    Image(systemName: "wand.and.stars")
+                                        .interfaceFont(size: AppTheme.IconSize.lg)
+                                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                                }
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
-                .aspectRatio(AppTheme.ComponentSize.pluginBadgeAspect, contentMode: .fit)
-                .clipped()
+                    .clipped()
+                    .accessibilityHidden(true)
 
                 HStack(spacing: AppTheme.Spacing.md) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
@@ -113,4 +110,16 @@ struct NewProjectFormatSheet: View {
         }
         .buttonStyle(.plain)
     }
+
+    private static let genericBanner: NSImage? = {
+        guard let root = Bundle.main.resourceURL else { return nil }
+        let candidates = [
+            root.appendingPathComponent("Images/generic-format-banner.png"),
+            root.appendingPathComponent("NexGenVideo_NexGenVideo.bundle/Images/generic-format-banner.png"),
+        ]
+        for url in candidates {
+            if let image = NSImage(contentsOf: url) { return image }
+        }
+        return nil
+    }()
 }
