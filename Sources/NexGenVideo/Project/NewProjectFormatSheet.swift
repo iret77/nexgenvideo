@@ -92,6 +92,7 @@ struct NewProjectFormatSheet: View {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .interfaceFont(size: AppTheme.Typography.title)
                         .foregroundStyle(isSelected ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
+                        .accessibilityHidden(true)
                 }
                 .padding(AppTheme.Spacing.mdLg)
             }
@@ -109,8 +110,10 @@ struct NewProjectFormatSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    // Preserve the supplied master; the shared header center-crops it to the banner aspect.
     private static let genericBanner: NSImage? = {
         guard let root = Bundle.main.resourceURL else { return nil }
         let candidates = [
