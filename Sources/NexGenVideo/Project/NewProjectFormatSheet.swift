@@ -113,7 +113,6 @@ struct NewProjectFormatSheet: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    // Preserve the supplied master; the shared header center-crops it to the banner aspect.
     private static let genericBanner: NSImage? = {
         guard let root = Bundle.main.resourceURL else { return nil }
         let candidates = [
