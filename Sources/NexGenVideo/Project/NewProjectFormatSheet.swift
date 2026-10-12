@@ -58,7 +58,7 @@ struct NewProjectFormatSheet: View {
         let accent = InstalledPack.named(id)?.palette.accent ?? AppTheme.Accent.primary
         return Button { selected = id } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
-                Color.clear
+                AppTheme.Background.clearColor
                     .aspectRatio(AppTheme.ComponentSize.pluginBadgeAspect, contentMode: .fit)
                     .overlay {
                         if let badge {
