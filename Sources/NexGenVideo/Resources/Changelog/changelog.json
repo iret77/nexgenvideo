@@ -9,7 +9,19 @@
           "heading": "Agent",
           "items": [
             "Shot List image anchors use the reference-image input that production routes actually offer, so Render no longer rejects a Shot List written from the published execution contract.",
-            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error."
+            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error.",
+            "A second request to revise approved work without new direction from you pauses with Continue without revision. All approvals are kept.",
+            "Repeated writes that fail or leave the artifact unchanged pause per phase, also across chats.",
+            "Batches without a cost estimate are reported to the agent as unpriced, not as waiting only for approval."
+          ]
+        },
+        {
+          "heading": "Interface",
+          "items": [
+            "Earlier approval requests and status cards in Tasks are marked superseded or reset by a later revision and no longer offer review or approval actions.",
+            "Not yet and allowed revisions appear in Tasks with the reset approvals and the stated reason.",
+            "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison.",
+            "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write, with a direct review action."
           ]
         }
       ]
