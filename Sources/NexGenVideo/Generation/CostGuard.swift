@@ -66,6 +66,39 @@ enum SpendOptionBuilder {
             $0.modelId == currentModelId && $0.target == defaultTarget
         } ?? options.first
     }
+
+    /// Never falls back to another model: without a runnable required model the user chooses.
+    static func recommended(
+        from options: [SpendOption],
+        requiredModelId: String?,
+        defaultTarget: ResolvedGenerationTarget
+    ) -> SpendOption? {
+        guard let requiredModelId else { return nil }
+        return options.first {
+            $0.modelId == requiredModelId && $0.target == defaultTarget
+        } ?? options.first { $0.modelId == requiredModelId }
+    }
+}
+
+/// A model fixed by project truth (e.g. a brief route). Other models are a one-time change the user makes.
+struct SpendModelRequirement: Equatable, Sendable, Codable {
+    let modelId: String?
+    let modelName: String
+    let source: String
+    let unavailableReason: String?
+
+    func isModelChange(_ option: SpendOption) -> Bool {
+        option.modelId != modelId
+    }
+}
+
+/// What a tool knows about its required model; the approval derives availability per refresh.
+struct SpendModelRequirementInput {
+    let modelId: String?
+    let modelName: String
+    let source: String
+    let unavailableReason: @MainActor () -> String
+    let diagnostics: @MainActor () -> String
 }
 
 /// One exact model/provider combination the user can approve and dispatch unchanged.
@@ -212,6 +245,17 @@ enum SpendSelectionPreferences {
         }
         let optionID = stored["option_id"] as? String
         let modelID = stored["model_id"] as? String
+        if let requirement = approval.modelRequirement {
+            guard requirement.unavailableReason == nil,
+                  let preferred = approval.options.first(where: {
+                      $0.modelId == requirement.modelId && $0.id == optionID
+                  }) ?? approval.options.first(where: {
+                      $0.modelId == requirement.modelId && $0.target.provider == provider
+                  }) else {
+                return approval
+            }
+            return approval.preferring(preferred)
+        }
         let recommended = approval.options.first {
             $0.id == approval.recommendedOptionId
         }
@@ -227,25 +271,17 @@ enum SpendSelectionPreferences {
             }
             ?? approval.options.first { $0.target.provider == provider }
         guard let preferred else { return approval }
-        let ordered = [preferred] + approval.options.filter { $0.id != preferred.id }
-        return SpendApproval(
-            id: approval.id,
-            recommendedOptionId: preferred.id,
-            options: ordered,
-            actionLabel: approval.actionLabel,
-            providerScope: approval.providerScope,
-            selectionScope: scope,
-            requiresGenerationPackage: approval.requiresGenerationPackage == true,
-            preparationRevision: approval.preparationRevision
-        )
+        return approval.preferring(preferred)
     }
 
+    /// A one-time change away from a required model never becomes the default for later requests.
     static func record(
         _ option: SpendOption,
         for approval: SpendApproval,
         defaults: UserDefaults = .standard
     ) {
-        guard let scope = approval.selectionScope else { return }
+        guard let scope = approval.selectionScope,
+              approval.modelRequirement?.isModelChange(option) != true else { return }
         defaults.set([
             "option_id": option.id,
             "model_id": option.modelId,
@@ -266,6 +302,7 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
     let selectionScope: SpendSelectionScope?
     let requiresGenerationPackage: Bool?
     let preparationRevision: String?
+    let modelRequirement: SpendModelRequirement?
 
     init(
         id: String,
@@ -275,7 +312,8 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
         providerScope: [GenerationProvider]? = nil,
         selectionScope: SpendSelectionScope? = nil,
         requiresGenerationPackage: Bool = false,
-        preparationRevision: String? = nil
+        preparationRevision: String? = nil,
+        modelRequirement: SpendModelRequirement? = nil
     ) {
         self.id = id
         self.recommendedOptionId = recommendedOptionId
@@ -284,6 +322,7 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
         self.selectionScope = selectionScope
         self.requiresGenerationPackage = requiresGenerationPackage
         self.preparationRevision = preparationRevision ?? (requiresGenerationPackage ? UUID().uuidString : nil)
+        self.modelRequirement = modelRequirement
         var seen = Set<GenerationProvider>()
         self.providerScope = (providerScope ?? options.map(\.target.provider)).filter {
             seen.insert($0).inserted
@@ -293,6 +332,15 @@ struct SpendApproval: Identifiable, Equatable, Sendable, Codable {
     func replacingOptions(_ options: [SpendOption]) -> Self {
         Self(id: id, recommendedOptionId: recommendedOptionId, options: options, actionLabel: actionLabel,
             providerScope: providerScope, selectionScope: selectionScope,
-            requiresGenerationPackage: requiresGenerationPackage == true, preparationRevision: preparationRevision)
+            requiresGenerationPackage: requiresGenerationPackage == true, preparationRevision: preparationRevision,
+            modelRequirement: modelRequirement)
+    }
+
+    func preferring(_ preferred: SpendOption) -> Self {
+        Self(id: id, recommendedOptionId: preferred.id,
+            options: [preferred] + options.filter { $0.id != preferred.id }, actionLabel: actionLabel,
+            providerScope: providerScope, selectionScope: selectionScope,
+            requiresGenerationPackage: requiresGenerationPackage == true, preparationRevision: preparationRevision,
+            modelRequirement: modelRequirement)
     }
 }
