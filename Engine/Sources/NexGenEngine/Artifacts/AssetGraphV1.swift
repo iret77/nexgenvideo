@@ -21,6 +21,7 @@ public enum CoreReferenceInputSlotIDV1 {
     public static let lastFrame = "core.input.last-frame"
     public static let sourceVideo = "core.input.source-video"
     public static let audioTiming = "core.input.audio-timing"
+    @available(*, deprecated, message: "No route offers this slot; anchors bind referenceImage.")
     public static let referenceAnchor = "reference.image.anchor"
 }
 
@@ -364,6 +365,49 @@ public enum AssetGraphValidationError: Error, Sendable, Equatable {
     case invalidCoreReference(String)
     case invalidProvenance(String)
     case invalidChainedReferencePlan
+}
+
+extension AssetGraphValidationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema(let schema):
+            return "Unsupported asset graph schema \(schema)."
+        case .emptyField(let field):
+            return "\(field) must not be empty."
+        case .duplicateID(let id):
+            return "Identifier \(id) is used more than once."
+        case .invalidPath(let path):
+            return "\(path) is not a project-relative path."
+        case .invalidHash(let value):
+            return "\(value) does not carry a valid SHA-256."
+        case .invalidVersion(let id):
+            return "\(id) has a negative priority or invalid version."
+        case .invalidDuration(let id):
+            return "\(id): duration_seconds applies only to video or audio and must equal the asset's measured duration."
+        case .invalidNamespacedID(let value):
+            return "\(value) is not a dot-separated namespaced identifier such as core.reference-anchor or core.input.reference-image."
+        case .projectMismatch:
+            return "The reference demand set belongs to a different project than the asset graph."
+        case .assetGraphMismatch:
+            return "The reference demand set is not bound to the current asset graph bytes."
+        case .unknownAsset(let id):
+            return "Reference demand asset \(id) is not in the asset graph."
+        case .modalityMismatch(let id):
+            return "Reference demand \(id): modality differs from the referenced file's modality."
+        case .useNotAllowed(let demandID, let jobID):
+            return "Reference demand \(demandID): its asset is not approved for semantic_job_id \(jobID)."
+        case .invalidExclusion(let id):
+            return "Reference demand \(id): exclusion_demand_ids must name other demands of the same shot."
+        case .unapprovedAsset(let id):
+            return "Asset \(id) is not approved for production use."
+        case .invalidCoreReference(let id):
+            return "Reference \(id) misuses a dedicated core job or slot. First/last-frame, predecessor, source-video and audio-timing inputs are host-derived from core_inputs; each appears at most once, on its own core slot and modality. Image anchors use core.reference-anchor on core.input.reference-image."
+        case .invalidProvenance(let id):
+            return "Asset \(id) lacks the provenance its production role requires."
+        case .invalidChainedReferencePlan:
+            return "A chained shot must bind its immediate predecessor's exact approved last frame."
+        }
+    }
 }
 
 public enum AssetGraphValidatorV1 {

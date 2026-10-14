@@ -10,6 +10,22 @@ enum PipelineProductionInputsError: Error, Sendable, Equatable {
     case unsafePath(String)
 }
 
+extension PipelineProductionInputsError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidArtifact(let detail),
+             .persistedArtifactInvalid(let detail):
+            return detail
+        case .publicationFailed(let detail):
+            return "Production inputs could not be published: \(detail)"
+        case .publicationRollbackFailed(let detail):
+            return "Production input publication failed and could not be rolled back: \(detail)"
+        case .unsafePath(let path):
+            return "\(path) is outside the project or crosses a symlink."
+        }
+    }
+}
+
 enum PipelineProductionInputsWriter {
     private static let refreshableCoreSemanticJobs: Set<String> = [
         CoreReferenceSemanticJobIDV1.firstFrame,

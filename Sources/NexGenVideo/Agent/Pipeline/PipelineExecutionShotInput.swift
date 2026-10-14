@@ -5,6 +5,7 @@ enum PipelineExecutionShotInputValidationError: Error, Sendable, Equatable,
     LocalizedError {
     case invalid(String)
     case invalidIdentifier(field: String, value: String)
+    case violation(field: String, rule: String)
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum PipelineExecutionShotInputValidationError: Error, Sendable, Equatable,
             return "Invalid execution identifier at \(field): \(value). Expected a dot-separated namespace, e.g. core.reference-anchor for an image anchor. Entity kinds such as location, character or prop are not semantic job IDs. Read get_project_state.execution_input_contract and list_models.production_routes for exact roles, input slots and modes; correct this field without asking the user for internal IDs."
         case .invalid(let field):
             return "Invalid execution shot input at \(field)."
+        case .violation(let field, let rule):
+            return "Invalid execution shot input at \(field): \(rule)"
         }
     }
 }
@@ -420,7 +423,9 @@ struct PipelineReferenceDemandInput: Codable, Sendable, Equatable {
             field: "\(path).semantic_job_id"
         )
         guard priority >= 0 else {
-            throw PipelineExecutionShotInputValidationError.invalid("\(path).priority")
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).priority", rule: "priority must be 0 or greater."
+            )
         }
         try PipelineExecutionInputValidation.uniqueNonEmpty(
             preservationScopeIDs,
@@ -451,12 +456,23 @@ struct PipelineReferenceDemandInput: Codable, Sendable, Equatable {
             viewID,
             field: "\(path).view_id"
         )
-        guard !identityLock || isRequired,
-              !exclusionDemandIDs.contains(id),
-              !ProductionReferenceDemandSemanticsV1.isDedicated(
-                  semanticJobID: semanticJobID
-              ) else {
-            throw PipelineExecutionShotInputValidationError.invalid(path)
+        guard !identityLock || isRequired else {
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).identity_lock", rule: "identity_lock requires is_required=true."
+            )
+        }
+        guard !exclusionDemandIDs.contains(id) else {
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).exclusion_demand_ids", rule: "a demand cannot exclude itself."
+            )
+        }
+        guard !ProductionReferenceDemandSemanticsV1.isDedicated(
+            semanticJobID: semanticJobID
+        ) else {
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).semantic_job_id",
+                rule: "\(semanticJobID) is a dedicated core job derived from core_inputs. Remove this demand and set the matching core_inputs mode instead."
+            )
         }
     }
 }
@@ -808,7 +824,9 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             field: "\(path).camera_endpoint"
         )
         guard let generationRequirement, let coreInputs else {
-            throw PipelineExecutionShotInputValidationError.invalid(path)
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: path, rule: "generated and AI-enhanced shots require generation_requirement and core_inputs."
+            )
         }
         try generationRequirement.validate(path: "\(path).generation_requirement")
         try coreInputs.validate(path: "\(path).core_inputs")
@@ -816,8 +834,9 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
 
         if sourceMode == .generated {
             guard coreInputs.sourceVideoModeID == nil else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "\(path).core_inputs.source_video_mode_id"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "\(path).core_inputs.source_video_mode_id",
+                    rule: "only ai_enhanced shots bind a source video."
                 )
             }
         } else {
@@ -825,7 +844,10 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                   coreInputs.firstFrameModeID == nil,
                   coreInputs.lastFrameModeID == nil,
                   coreInputs.predecessorLastFrameModeID == nil else {
-                throw PipelineExecutionShotInputValidationError.invalid(path)
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "\(path).core_inputs",
+                    rule: "an ai_enhanced shot sets source_video_mode_id and no first, last or predecessor frame mode."
+                )
             }
         }
 
@@ -838,16 +860,18 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         for (index, demand) in referenceDemands.enumerated() {
             try demand.validate(path: "\(path).reference_demands[\(index)]")
             guard Set(demand.exclusionDemandIDs).isSubset(of: demandIDs) else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "\(path).reference_demands[\(index)].exclusion_demand_ids"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "\(path).reference_demands[\(index)].exclusion_demand_ids",
+                    rule: "every entry must be the id of another reference demand of this shot."
                 )
             }
         }
         for (index, item) in blocking.enumerated() {
             if let anchorDemandID = item.anchorDemandID,
                !demandIDs.contains(anchorDemandID) {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "\(path).blocking[\(index)].anchor_demand_id"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "\(path).blocking[\(index)].anchor_demand_id",
+                    rule: "must be the id of a reference demand of this shot."
                 )
             }
         }
@@ -856,17 +880,19 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
             ProductionIdentifierNormalizerV1.canonical
         ))
         let inputModes = coreInputs.modeIDs + referenceDemands.map(\.modeID)
-        guard inputModes.allSatisfy({
-            declaredModes.contains(ProductionIdentifierNormalizerV1.canonical($0))
-        }) else {
-            throw PipelineExecutionShotInputValidationError.invalid(
-                "\(path).generation_requirement.mode_ids"
+        if let undeclared = inputModes.first(where: {
+            !declaredModes.contains(ProductionIdentifierNormalizerV1.canonical($0))
+        }) {
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).generation_requirement.mode_ids",
+                rule: "mode \(undeclared), used by core_inputs or reference_demands[].mode_id, is not declared here. Every mode must also appear in a matching list_models.production_routes input slot."
             )
         }
         if coreInputs.predecessorLastFrameModeID != nil,
            !referenceDemands.isEmpty {
-            throw PipelineExecutionShotInputValidationError.invalid(
-                "\(path).reference_demands"
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).reference_demands",
+                rule: "a frame-continuation shot binds only its predecessor's last frame; remove its reference demands."
             )
         }
         try validateConditioning(path: path, coreInputs: coreInputs)
@@ -883,8 +909,9 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         guard conditioning.modeIDs.allSatisfy({
             declaredModes.contains(ProductionIdentifierNormalizerV1.canonical($0))
         }) else {
-            throw PipelineExecutionShotInputValidationError.invalid(
-                "\(path).conditioning.mode_ids"
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).conditioning.mode_ids",
+                rule: "every conditioning mode must also be declared in generation_requirement.mode_ids."
             )
         }
         let demandsByID = Dictionary(uniqueKeysWithValues: referenceDemands.map { ($0.id, $0) })
@@ -956,7 +983,10 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
                 && conditioning.originalReferenceDemandIDs.isEmpty
         }
         guard valid else {
-            throw PipelineExecutionShotInputValidationError.invalid("\(path).conditioning")
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).conditioning",
+                rule: Self.conditioningRule(conditioning.strategy)
+            )
         }
         let boundModes: [String] = switch conditioning.strategy {
         case .referenceAnchor:
@@ -975,9 +1005,25 @@ struct PipelineExecutionShotInput: Codable, Sendable, Equatable {
         }
         guard Set(conditioning.modeIDs.map(ProductionIdentifierNormalizerV1.canonical))
                 == Set(boundModes.map(ProductionIdentifierNormalizerV1.canonical)) else {
-            throw PipelineExecutionShotInputValidationError.invalid(
-                "\(path).conditioning.mode_ids"
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "\(path).conditioning.mode_ids",
+                rule: "must equal exactly the modes of the inputs this strategy binds: \(boundModes.joined(separator: ", "))."
             )
+        }
+    }
+
+    private static func conditioningRule(_ strategy: ConditioningStrategyKindV1) -> String {
+        switch strategy {
+        case .referenceAnchor:
+            "reference_anchor applies to generated shots without frame or source-video inputs; anchor_demand_ids must name image reference demands with semantic_job_id core.reference-anchor; predecessor_shot_id, source_shot_id, direction, boundary_state_id and original_reference_demand_ids stay empty."
+        case .twoStateInterpolation:
+            "two_state_interpolation applies to generated shots with first_frame_mode_id and last_frame_mode_id only; anchor and continuation fields stay empty."
+        case .frameContinuation:
+            "frame_continuation applies to generated shots with predecessor_last_frame_mode_id only and requires predecessor_shot_id; other conditioning fields stay empty."
+        case .nativeExtension:
+            "native_extension applies to ai_enhanced shots with source_video_mode_id and requires source_shot_id, direction and boundary_state_id; original_reference_demand_ids must name this shot's reference demands."
+        case .firstFrame:
+            "first_frame applies to generated shots with first_frame_mode_id only; anchor and continuation fields stay empty."
         }
     }
 
