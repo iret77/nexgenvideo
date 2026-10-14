@@ -577,6 +577,10 @@ enum GenericPhaseExtensionWriter {
         return destination
     }
 
+    static func artifactRelativePath(contract: ResolvedPhaseContract, phase: String) -> String? {
+        (try? declaration(contract: contract, phase: phase))?.extensionArtifact?.relativePath
+    }
+
     static func requireCurrent(
         contract: ResolvedPhaseContract,
         phase: String,

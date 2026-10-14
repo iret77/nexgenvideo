@@ -31,16 +31,7 @@ struct GateApprovalCard: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             Button("Open \(reviewRoute?.destinationLabel ?? "Pipeline")") {
-                switch reviewRoute?.destination {
-                case .tab(let tab): editor.revealCockpit(tab)
-                case .pack(let id):
-                    editor.revealCockpit(.pipeline)
-                    editor.cockpitPackSurfaceID = id
-                case .chat:
-                    editor.agentPanelVisible = true
-                    editor.focusedPanel = .agent
-                default: editor.revealCockpit(.pipeline)
-                }
+                editor.revealReviewSurface(for: approval.phase)
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(isWorking || isBlocked)
@@ -110,6 +101,12 @@ struct GateApprovalCard: View {
                 Text("Approve the current \(approval.phaseLabel) as the basis for the next production step. This does not authorize generation costs.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .fixedSize(horizontal: false, vertical: true)
+                if let comparison = priorComparisonText {
+                    Text(comparison)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Text(approval.isRewind ? (review.isReady ? "Confirm only if you want to revise this approved work." : "Checking whether a revision can start…")
                  : isBlocked ? "\(approval.phaseLabel) is still being processed. Approval is not available yet."
@@ -149,6 +146,18 @@ struct GateApprovalCard: View {
         }
     }
 
+    private var priorComparisonText: String? {
+        switch approval.priorComparison {
+        case nil: nil
+        case .identical:
+            "Unchanged since your earlier approval. The host compared the exact bytes."
+        case .changed(let reason?) where !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            "Changed since your earlier approval. Revision reason: \(reason)"
+        case .changed:
+            "Changed since your earlier approval. Review the new version before approving."
+        }
+    }
+
     private var footerRow: some View {
         ViewThatFits(in: .horizontal) {
             approvalActions(horizontal: true)
@@ -183,6 +192,23 @@ struct GateApprovalCard: View {
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""
                 )
+        }
+    }
+}
+
+extension EditorViewModel {
+    func revealReviewSurface(for phase: String) {
+        let route = PipelineSurfaceRouting.route(for: phase, contract: uiContract,
+            availablePackSurfaces: availableCockpitPackSurfaces)
+        switch route?.destination {
+        case .tab(let tab): revealCockpit(tab)
+        case .pack(let id):
+            revealCockpit(.pipeline)
+            cockpitPackSurfaceID = id
+        case .chat:
+            agentPanelVisible = true
+            focusedPanel = .agent
+        case nil: revealCockpit(.pipeline)
         }
     }
 }

@@ -39,9 +39,9 @@ private struct AgentHostStateView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Image(systemName: symbol)
+                Image(systemName: isCurrent ? symbol : "clock.arrow.circlepath")
                     .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(color)
+                    .foregroundStyle(isCurrent ? color : AppTheme.Text.tertiaryColor)
                     .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text(title)
@@ -49,16 +49,22 @@ private struct AgentHostStateView: View {
                             size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.semibold
                         )
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text(detail)
+                        .foregroundStyle(isCurrent ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                    Text(isCurrent ? detail : historicalDetail)
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .fixedSize(horizontal: false, vertical: true)
+                    if isCurrent, let reason {
+                        Text("Reason: \(reason)")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if showsReviewAction {
                 Button("Review \(PhaseDisplay.label(state.record.phase))") {
-                    editor.revealCockpit(cockpitTab(for: state.record.phase))
+                    editor.revealReviewSurface(for: state.record.phase)
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
             }
@@ -97,7 +103,30 @@ private struct AgentHostStateView: View {
                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(title). \(detail)")
+        .accessibilityLabel("\(title). \(isCurrent ? detail : historicalDetail)")
+    }
+
+    private var isCurrent: Bool { state.disposition == .current }
+
+    private var historicalDetail: String {
+        switch state.disposition {
+        case .current: detail
+        case .superseded: String(localized: "Superseded by a later update.")
+        case .resetByRevision: String(localized: "Reset by a later revision.")
+        }
+    }
+
+    private var reason: String? {
+        guard state.record.state == .rewound || state.record.state == .declined,
+              let note = state.record.note?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !note.isEmpty else { return nil }
+        return note
+    }
+
+    private var resetPhaseList: String {
+        (state.record.resetPhases ?? [state.record.phase])
+            .map(PhaseDisplay.label)
+            .joined(separator: ", ")
     }
 
     private var title: String {
@@ -112,6 +141,11 @@ private struct AgentHostStateView: View {
         case .checked: String(localized: "\(phase) saved and checked")
         case .approved: String(localized: "\(phase) approved")
         case .approvalFailed: String(localized: "\(phase) not approved")
+        case .declined:
+            state.record.resetPhases == nil
+                ? String(localized: "\(phase) approval postponed")
+                : String(localized: "\(phase) revision declined")
+        case .rewound: String(localized: "Revising from \(phase)")
         }
     }
 
@@ -180,6 +214,12 @@ private struct AgentHostStateView: View {
             default:
                 String(localized: "The artifact no longer passes host checks. The agent must correct it before approval.")
             }
+        case .declined:
+            state.record.resetPhases == nil
+                ? String(localized: "You chose Not yet. Nothing was approved.")
+                : String(localized: "You chose Not yet. Approved work stays approved.")
+        case .rewound:
+            String(localized: "You allowed this revision. Reset approvals: \(resetPhaseList).")
         }
     }
 
@@ -191,6 +231,8 @@ private struct AgentHostStateView: View {
         case .approved: "checkmark.seal.fill"
         case .checked: "checkmark.circle.fill"
         case .draft, .persisted: "doc.badge.clock"
+        case .declined: "pause.circle"
+        case .rewound: "arrow.uturn.backward.circle"
         }
     }
 
@@ -200,7 +242,7 @@ private struct AgentHostStateView: View {
              .persistedPhaseRecordFailed, .approvalFailed:
             AppTheme.Status.warningColor
         case .approved, .checked: AppTheme.Status.successColor
-        case .draft, .persisted: AppTheme.Text.tertiaryColor
+        case .draft, .persisted, .declined, .rewound: AppTheme.Text.tertiaryColor
         }
     }
 
@@ -213,24 +255,16 @@ private struct AgentHostStateView: View {
     }
 
     private var hasLiveGateDecision: Bool {
-        editor.agentService.pendingGateApproval?.phase == state.record.phase
+        isCurrent && editor.agentService.pendingGateApproval?.sourceHostStateID == state.record.id
     }
 
     private var showsReviewAction: Bool {
-        guard state.record.action == .reviewChangedSource
-            || state.record.action == .reviewForApproval else { return false }
-        return !hasLiveGateDecision
-    }
-
-    private func cockpitTab(for phase: String) -> CockpitTab {
-        switch phase {
-        case "brief", "production_design": .story
-        case "treatment": .treatment
-        case "storyboard": .storyboard
-        case "bible": .bible
-        case "shotlist": .shotlist
-        case "frames", "sanity", "render", "finish": .review
-        default: .pipeline
+        guard isCurrent, !hasLiveGateDecision else { return false }
+        switch state.record.action {
+        case .reviewChangedSource, .reviewForApproval:
+            return true
+        default:
+            return state.record.state == .writeRejected && state.record.artifactPath != nil
         }
     }
 

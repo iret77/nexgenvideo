@@ -19,8 +19,19 @@ struct GateArtifactFingerprint: Equatable, Sendable {
     }
 }
 
+/// The host-recorded approval of the same phase that preceded this request.
+struct GatePriorApproval: Equatable, Sendable {
+    let sha256: String
+    let revisionReason: String?
+}
+
 /// A durable user decision that outlives the requesting gate tool call.
 struct GateApproval: Identifiable, Equatable, Sendable {
+    enum PriorComparison: Equatable, Sendable {
+        case identical
+        case changed(revisionReason: String?)
+    }
+
     enum Action: Equatable, Sendable {
         case approve
         case rewind(gatesSHA256: String, phases: [String])
@@ -58,6 +69,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
     let artifactFingerprint: GateArtifactFingerprint?
+    var priorApproval: GatePriorApproval?
 
     init(
         phase: String,
@@ -95,10 +107,22 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         return false
     }
 
+    var resetPhases: [String]? {
+        if case .rewind(_, let phases) = action { return phases }
+        return nil
+    }
+
     var decisionTitle: String { isRewind ? "Revise from \(phaseLabel)" : "Approve \(phaseLabel)" }
 
+    var priorComparison: PriorComparison? {
+        guard !isRewind, let priorApproval, let current = artifactFingerprint?.sha256 else { return nil }
+        return priorApproval.sha256 == current
+            ? .identical
+            : .changed(revisionReason: priorApproval.revisionReason)
+    }
+
     func scoped(to sessionId: UUID?) -> GateApproval {
-        GateApproval(
+        var scoped = GateApproval(
             phase: phase,
             notes: notes,
             dataRoot: dataRoot,
@@ -113,6 +137,27 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             artifactFingerprint: artifactFingerprint,
             id: id
         )
+        scoped.priorApproval = priorApproval
+        return scoped
+    }
+
+    /// Latest host-recorded approval of `phase`, plus the reason of a later revision that reset it.
+    static func priorApproval(
+        phase: String,
+        in records: [AgentHostStateRecord]
+    ) -> GatePriorApproval? {
+        var revisionReason: String?
+        for record in records.reversed() {
+            if record.state == .rewound,
+               revisionReason == nil,
+               record.resetPhases?.contains(phase) == true {
+                revisionReason = record.note
+            }
+            if record.state == .approved, record.phase == phase, let sha256 = record.currentSHA256 {
+                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason)
+            }
+        }
+        return nil
     }
 
     func matchesRequest(_ other: GateApproval) -> Bool {

@@ -182,6 +182,42 @@ struct BriefWriteContractTests {
         #expect(state.action == .agentCorrection)
     }
 
+    @Test("rejected writes pause per phase even when the agent switches chat sessions")
+    func repeatedRejectionsPauseAcrossSessions() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var invalid = validArgs(dataRoot: dataRoot)
+        invalid["visual_medium"] = "2d_animation"
+        h.editor.agentService.newChat()
+        let first = try #require(h.editor.agentService.currentSessionId)
+        for attempt in 0..<2 {
+            let result = await h.executor.execute(name: "write_brief", args: invalid,
+                origin: .inAppChat(sessionID: first), toolUseID: "first-\(attempt)")
+            #expect(result.isError)
+            #expect(result.turnDisposition == .continueTurn)
+        }
+        #expect(h.editor.agentService.currentPipelineRepairFailure == nil)
+        h.editor.agentService.newChat()
+        let second = try #require(h.editor.agentService.currentSessionId)
+        #expect(second != first)
+        let third = await h.executor.execute(name: "write_brief", args: invalid,
+            origin: .inAppChat(sessionID: second), toolUseID: "second")
+        #expect(third.isError)
+        #expect(third.turnDisposition == .suspendTurn)
+        #expect(h.editor.agentService.currentPipelineRepairFailure?.kind == .repeatedAttempts)
+        #expect(!FileManager.default.fileExists(
+            atPath: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot).path))
+    }
+
+    @Test("the first shot list write has a host snapshot instead of an unverifiable outcome")
+    func firstShotlistSnapshotIsAbsentNotUnknown() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let snapshot = try #require(await h.executor.hostArtifactSnapshot(phase: "shotlist", dataRoot: dataRoot))
+        #expect(snapshot.path == PipelineLayout.shotlistVersionFile(1))
+        #expect(!snapshot.exists)
+    }
+
     @Test("artifact snapshots reject project-local symlink escapes")
     func artifactSnapshotRejectsSymlinkEscape() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

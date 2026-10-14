@@ -188,9 +188,12 @@ struct AgentPanelView: View {
     }
 
     private var liveStatus: AgentLiveStatus {
-        if service.currentPipelineRepairFailure != nil {
-            return AgentLiveStatus(state: .failed, title: "Planning needs repair",
-                detail: "Repeated attempts stopped. Review the recovery action below.")
+        if let failure = service.currentPipelineRepairFailure {
+            return failure.kind == .unrequestedRevision
+                ? AgentLiveStatus(state: .waiting, title: "Revision paused",
+                    detail: "The agent asked to revise approved work again without new direction. Choose how to continue below.")
+                : AgentLiveStatus(state: .failed, title: "Planning needs repair",
+                    detail: "Repeated attempts stopped. Review the recovery action below.")
         }
         switch surfaceState.statusOwner {
         case .spendRun:
@@ -266,12 +269,20 @@ struct AgentPanelView: View {
     @ViewBuilder private var pipelineRepairRecovery: some View {
         if let failure = service.currentPipelineRepairFailure {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Label("Planning paused after repeated validation failures", systemImage: "exclamationmark.triangle")
-                Text("Existing artifacts are preserved. Retry planning with the current project and tool definitions; no new generation is authorized.")
-                if failure.origin.chatSessionID == nil {
-                    Text("Allow the connected agent to resubmit its corrected plan. This does not start a new in-app task.")
+                if failure.kind == .unrequestedRevision {
+                    Label("Revision paused", systemImage: "arrow.uturn.backward.circle")
+                    Text("The agent asked to revise approved work again without new direction from you. All approvals are kept.")
+                    Text(failure.origin.chatSessionID == nil
+                        ? "Allow the connected agent one more revision request. It still needs your approval."
+                        : "Continue keeps the approved work. To revise it, tell the agent what should change.")
+                } else {
+                    Label("Planning paused after repeated attempts without progress", systemImage: "exclamationmark.triangle")
+                    Text("Existing artifacts are preserved. Retry planning with the current project and tool definitions; no new generation is authorized.")
+                    if failure.origin.chatSessionID == nil {
+                        Text("Allow the connected agent to resubmit its corrected plan. This does not start a new in-app task.")
+                    }
                 }
-                Button(failure.origin.chatSessionID == nil ? "Allow connected agent to retry" : "Retry planning") { service.retryPipelineRepair() }
+                Button(repairActionTitle(failure)) { service.retryPipelineRepair() }
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .disabled(service.isStreaming)
                 DisclosureGroup("Diagnostic details") {
@@ -281,6 +292,15 @@ struct AgentPanelView: View {
             .interfaceFont(size: AppTheme.Typography.ui)
             .fixedSize(horizontal: false, vertical: true)
             .padding(AppTheme.Spacing.mdLg)
+        }
+    }
+
+    private func repairActionTitle(_ failure: AgentService.PipelineRepairFailure) -> String {
+        switch (failure.kind, failure.origin.chatSessionID == nil) {
+        case (.unrequestedRevision, true): "Allow one more revision request"
+        case (.unrequestedRevision, false): "Continue without revision"
+        case (.repeatedAttempts, true): "Allow connected agent to retry"
+        case (.repeatedAttempts, false): "Retry planning"
         }
     }
 

@@ -1611,7 +1611,12 @@ final class AgentService {
         guard !isComposerBlocked, editor.generationBatchCoordinator.pending == nil else {
             throw ToolError("Finish the current native decision before reviewing a generation batch.")
         }
-        let marker = "Generation batch \(batch.id) is waiting for native approval and completion."
+        let unpriced = batch.payload.items.filter { $0.package.payload.estimate == nil }.count
+        let marker = unpriced == 0
+            ? "Generation batch \(batch.id) is waiting for native approval and completion."
+            : "Generation batch \(batch.id) is waiting for native approval and completion. "
+                + "\(unpriced) of \(batch.payload.items.count) items have no cost estimate; the user can retry pricing "
+                + "or explicitly approve this exact batch without an estimate. Do not describe it as priced or as waiting only for approval."
         generationBatchOrigins[batch.id] = (origin, marker)
         editor.agentPanelVisible = true
         do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
@@ -2161,9 +2166,15 @@ final class AgentService {
 
     /// The one gate decision currently waiting in the composer.
     struct PipelineRepairFailure {
+        enum Kind: Equatable {
+            case repeatedAttempts
+            case unrequestedRevision
+        }
+
         let tool: String
         let detail: String
         let origin: ToolCallOrigin
+        var kind: Kind = .repeatedAttempts
     }
     private var pipelineRepairFailure: PipelineRepairFailure?
     var currentPipelineRepairFailure: PipelineRepairFailure? {
@@ -2172,9 +2183,38 @@ final class AgentService {
         return failure
     }
 
-    func pausePipelineRepair(tool: String, detail: String, origin: ToolCallOrigin) {
-        pipelineRepairFailure = .init(tool: tool, detail: detail, origin: origin)
+    func pausePipelineRepair(
+        tool: String,
+        detail: String,
+        origin: ToolCallOrigin,
+        kind: PipelineRepairFailure.Kind = .repeatedAttempts
+    ) {
+        pipelineRepairFailure = .init(tool: tool, detail: detail, origin: origin, kind: kind)
         suspendToolCalls(from: origin)
+    }
+
+    @ObservationIgnored
+    private var userDirectionSerial = 0
+
+    @ObservationIgnored
+    private var revisionRequestSerials: [String: Int] = [:]
+
+    func recordUserDirection() { userDirectionSerial += 1 }
+
+    /// One agent revision request per user direction; a second one without new direction is a loop.
+    func admitRevisionRequest(origin: ToolCallOrigin) -> Bool {
+        guard let key = Self.revisionRequestKey(origin) else { return true }
+        if revisionRequestSerials[key] == userDirectionSerial { return false }
+        revisionRequestSerials[key] = userDirectionSerial
+        return true
+    }
+
+    private static func revisionRequestKey(_ origin: ToolCallOrigin) -> String? {
+        switch origin {
+        case .direct: nil
+        case .inAppChat(let sessionID), .embeddedRuntime(let sessionID, _): sessionID.uuidString
+        case .externalMCP(let sessionID): "mcp:\(sessionID.uuidString)"
+        }
     }
 
     func clearPipelineRepair(origin: ToolCallOrigin) {
@@ -2189,7 +2229,16 @@ final class AgentService {
         toolExecutor?.resetPipelineRepairAttempts()
         pipelineRepairFailure = nil
         if failure.origin.chatSessionID == nil {
+            if failure.kind == .unrequestedRevision,
+               let key = Self.revisionRequestKey(failure.origin) {
+                revisionRequestSerials.removeValue(forKey: key)
+            }
             resumeToolCalls(from: failure.origin)
+            return
+        }
+        if failure.kind == .unrequestedRevision {
+            enqueueGateFollowUp("The user did not ask for another revision. Continue the current phase from the current approved inputs without rewinding or regenerating approved work. If a concrete inconsistency blocks progress, state it in one sentence, name the affected artifact, and wait for the user's direction. Previous diagnostic: \(failure.detail)",
+                origin: failure.origin, includeNextPhaseInstructions: true)
             return
         }
         enqueueGateFollowUp("Resume the paused \(failure.tool) repair. First read current project state, execution_input_contract and list_models.production_routes. Correct the rejected field using these contracts, preserving approved inputs and existing outputs. Do not regenerate assets or rewind phases to work around a schema error. Previous diagnostic: \(failure.detail)",
@@ -2282,7 +2331,11 @@ final class AgentService {
         _ approval: GateApproval,
         origin: ToolCallOrigin = .direct
     ) throws -> GateApprovalRequest {
-        let scoped = approval.scoped(to: origin.chatSessionID)
+        var scoped = approval.scoped(to: origin.chatSessionID)
+        scoped.priorApproval = GateApproval.priorApproval(
+            phase: approval.phase,
+            in: chronologicalHostStateRecords()
+        )
         if let pending = pendingGateApproval {
             suspendToolCalls(from: origin)
             return GateApprovalRequest(
@@ -2308,6 +2361,16 @@ final class AgentService {
         return GateApprovalRequest(approval: scoped, isNew: true, matchesRequestedApproval: true)
     }
 
+    private func chronologicalHostStateRecords() -> [AgentHostStateRecord] {
+        let others = sessions
+            .filter { $0.id != currentSessionId }
+            .sorted { $0.updatedAt < $1.updatedAt }
+            .flatMap(\.messages)
+        return (others + messages).flatMap { message in
+            message.hostStateRecords + (message.userPresentation?.hostStateRecord.map { [$0] } ?? [])
+        }
+    }
+
     /// Applies the decision locally and resumes its originating in-app turn when possible.
     @discardableResult
     func resolveGate(_ decision: GateDecision) async -> ToolResult? {
@@ -2318,6 +2381,27 @@ final class AgentService {
             pendingGateApproval = nil
             pendingGateOrigin = nil
             gateApprovalError = nil
+            if approval.sessionId != nil {
+                recordHostState(
+                    AgentHostStateRecord(
+                        id: approval.sourceHostStateID,
+                        toolUseID: approval.sourceToolUseID,
+                        state: .declined,
+                        phase: approval.phase,
+                        toolName: approval.sourceToolName,
+                        action: .none,
+                        artifactPath: approval.artifactFingerprint?.path,
+                        byteComparison: nil,
+                        previousSHA256: nil,
+                        currentSHA256: approval.artifactFingerprint?.sha256,
+                        resetPhases: approval.resetPhases,
+                        note: approval.isRewind ? approval.notes : nil
+                    ),
+                    origin: origin,
+                    toolUseID: approval.sourceToolUseID,
+                    turnReference: approval.sourceHostTurnReference
+                )
+            }
             let message = "The user chose Not yet for \(approval.decisionTitle). Preserve approved artifacts and do not retry this request without new user direction. "
                 + "Do not advance or claim the gate was approved."
             enqueueGateFollowUp(message, origin: origin)
@@ -2345,14 +2429,16 @@ final class AgentService {
                         AgentHostStateRecord(
                             id: approval.sourceHostStateID,
                             toolUseID: approval.sourceToolUseID,
-                            state: approval.isRewind ? .draft : .approved,
+                            state: approval.isRewind ? .rewound : .approved,
                             phase: approval.phase,
                             toolName: approval.sourceToolName,
                             action: .none,
                             artifactPath: approval.artifactFingerprint?.path,
                             byteComparison: nil,
                             previousSHA256: nil,
-                            currentSHA256: approval.artifactFingerprint?.sha256
+                            currentSHA256: approval.artifactFingerprint?.sha256,
+                            resetPhases: approval.resetPhases,
+                            note: approval.isRewind ? approval.notes : nil
                         ),
                         origin: origin,
                         toolUseID: approval.sourceToolUseID,
@@ -3042,6 +3128,7 @@ final class AgentService {
             mentions: referencedMentions, contextHint: contextHint, hidden: hidden,
             userPresentation: presentation
         ))
+        if !hidden || presentation != nil { recordUserDirection() }
         checkpointCurrentSession()
         streamError = nil
         pendingTurnImages = runtimeImages

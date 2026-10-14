@@ -104,6 +104,8 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         case checked
         case approved
         case approvalFailed
+        case declined
+        case rewound
     }
 
     enum Action: String, Codable, Equatable, Sendable {
@@ -132,6 +134,8 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
     let byteComparison: ByteComparison?
     let previousSHA256: String?
     let currentSHA256: String?
+    let resetPhases: [String]?
+    let note: String?
 
     init(
         id: UUID = UUID(),
@@ -143,7 +147,9 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         artifactPath: String?,
         byteComparison: ByteComparison?,
         previousSHA256: String?,
-        currentSHA256: String?
+        currentSHA256: String?,
+        resetPhases: [String]? = nil,
+        note: String? = nil
     ) {
         self.id = id
         self.toolUseID = toolUseID
@@ -155,6 +161,8 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         self.byteComparison = byteComparison
         self.previousSHA256 = previousSHA256
         self.currentSHA256 = currentSHA256
+        self.resetPhases = resetPhases
+        self.note = note
     }
 
     func associated(with toolUseID: String?, retaining id: UUID? = nil) -> Self {
@@ -168,13 +176,15 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
             artifactPath: artifactPath,
             byteComparison: byteComparison,
             previousSHA256: previousSHA256,
-            currentSHA256: currentSHA256
+            currentSHA256: currentSHA256,
+            resetPhases: resetPhases,
+            note: note
         )
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, toolUseID, state, phase, toolName, action, artifactPath
-        case byteComparison, previousSHA256, currentSHA256
+        case byteComparison, previousSHA256, currentSHA256, resetPhases, note
     }
 
     init(from decoder: Decoder) throws {
@@ -189,6 +199,8 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         byteComparison = try container.decodeIfPresent(ByteComparison.self, forKey: .byteComparison)
         previousSHA256 = try container.decodeIfPresent(String.self, forKey: .previousSHA256)
         currentSHA256 = try container.decodeIfPresent(String.self, forKey: .currentSHA256)
+        resetPhases = try container.decodeIfPresent([String].self, forKey: .resetPhases)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
     }
 }
 

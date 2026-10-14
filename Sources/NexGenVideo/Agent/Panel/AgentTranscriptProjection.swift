@@ -48,7 +48,14 @@ struct AgentNoticeReceipt: Identifiable {
 }
 
 struct AgentHostState: Identifiable {
+    enum Disposition: Equatable {
+        case current
+        case superseded
+        case resetByRevision
+    }
+
     let record: AgentHostStateRecord
+    var disposition: Disposition = .current
     var id: UUID { record.id }
 }
 
@@ -109,8 +116,47 @@ enum AgentTranscriptProjection {
         let diagnosticID = HangDiagnosticRecorder.shared.record(.projection, values: [Double(messages.count)])
         defer { HangDiagnosticRecorder.shared.record(.projection, correlation: diagnosticID, end: true) }
         let messageTurns = splitIntoTurns(messages)
-        return messageTurns.enumerated().compactMap { index, messages in
+        let turns = messageTurns.enumerated().compactMap { index, messages in
             project(messages, isRunning: isStreaming && index == messageTurns.count - 1)
+        }
+        return markingHistoricalHostStates(turns)
+    }
+
+    /// Older host states stay visible as history but never read as the current call to action.
+    private static func markingHistoricalHostStates(
+        _ turns: [AgentTranscriptTurn]
+    ) -> [AgentTranscriptTurn] {
+        var dispositions: [UUID: AgentHostState.Disposition] = [:]
+        var live: [AgentHostState] = []
+        for turn in turns {
+            for case .hostState(let state) in turn.items {
+                if state.record.state == .rewound {
+                    let reset = Set(state.record.resetPhases ?? [state.record.phase])
+                    live.removeAll { earlier in
+                        guard reset.contains(earlier.record.phase) else { return false }
+                        dispositions[earlier.id] = .resetByRevision
+                        return true
+                    }
+                }
+                live.removeAll { earlier in
+                    guard earlier.record.phase == state.record.phase,
+                          replaces(state.record.state, earlier: earlier.record.state) else {
+                        return false
+                    }
+                    dispositions[earlier.id] = .superseded
+                    return true
+                }
+                live.append(state)
+            }
+        }
+        guard !dispositions.isEmpty else { return turns }
+        return turns.map { turn in
+            AgentTranscriptTurn(id: turn.id, items: turn.items.map { item in
+                guard case .hostState(var state) = item,
+                      let disposition = dispositions[state.id] else { return item }
+                state.disposition = disposition
+                return .hostState(state)
+            })
         }
     }
 
@@ -223,40 +269,29 @@ enum AgentTranscriptProjection {
             output[exact] = state
             return
         }
-        let samePhase = output.indices.filter {
-            output[$0].record.phase == state.record.phase
-        }
-        switch state.record.state {
-        case .approved, .checked, .persisted, .persistedPhaseRecordFailed:
-            for index in samePhase.reversed() {
-                output.remove(at: index)
-            }
-        case .writeOutcomeUnavailable:
-            for index in samePhase.reversed() {
-                if output[index].record.state != .persistedPhaseRecordFailed {
-                    output.remove(at: index)
-                }
-            }
-        case .draft, .writeBlocked, .writeRejected:
-            let hasProtectedState = samePhase.contains {
-                isCleanDurable(output[$0].record.state)
-                    || isRepairRequired(output[$0].record.state)
-            }
-            for index in samePhase.reversed() {
-                if !hasProtectedState
-                    || (!isCleanDurable(output[index].record.state)
-                        && !isRepairRequired(output[index].record.state)) {
-                    output.remove(at: index)
-                }
-            }
-        case .approvalFailed:
-            for index in samePhase.reversed() {
-                if !isRepairRequired(output[index].record.state) {
-                    output.remove(at: index)
-                }
+        if state.record.state != .rewound {
+            output.removeAll {
+                $0.record.phase == state.record.phase
+                    && replaces(state.record.state, earlier: $0.record.state)
             }
         }
         output.append(state)
+    }
+
+    static func replaces(
+        _ later: AgentHostStateRecord.State,
+        earlier: AgentHostStateRecord.State
+    ) -> Bool {
+        switch later {
+        case .approved, .checked, .persisted, .persistedPhaseRecordFailed, .rewound:
+            true
+        case .writeOutcomeUnavailable:
+            earlier != .persistedPhaseRecordFailed
+        case .draft, .writeBlocked, .writeRejected, .declined:
+            !isCleanDurable(earlier) && !isRepairRequired(earlier)
+        case .approvalFailed:
+            !isRepairRequired(earlier)
+        }
     }
 
     private static func isCleanDurable(_ state: AgentHostStateRecord.State) -> Bool {
