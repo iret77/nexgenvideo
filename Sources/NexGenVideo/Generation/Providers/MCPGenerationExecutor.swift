@@ -266,6 +266,7 @@ enum MCPGenerationExecutor {
             ) {
             case .pending:
                 unknownStatuses = 0
+                ProviderStatusSignal.confirmRunning()
                 if attempt + 1 < maxAttempts, intervalNanoseconds > 0 {
                     try await Task.sleep(nanoseconds: intervalNanoseconds)
                 }

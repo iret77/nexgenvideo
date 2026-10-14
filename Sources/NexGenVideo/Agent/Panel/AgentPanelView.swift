@@ -233,7 +233,7 @@ struct AgentPanelView: View {
         case .phaseFailure:
             return AgentLiveStatus(
                 state: .failed,
-                title: "Stopped"
+                title: editor.pipelinePhaseExecution.snapshot.map { "\(PhaseDisplay.label($0.phase)) failed" } ?? "Phase failed"
             )
         case .actionRequired:
             if surfaceState.dockOwner == .gateApproval, let gate = service.pendingGateApproval {
@@ -249,10 +249,10 @@ struct AgentPanelView: View {
                 title: "Resuming agent"
             )
         case .stream:
-            return AgentLiveStatus(state: .working, title: service.activityEvents.last ?? "Waiting for agent response",
+            return AgentLiveStatus(state: .working, title: service.activityEvents.last?.label ?? "Waiting for agent response",
                 detail: "No approval request is open.", canCancel: true)
         case .turnFailure:
-            return AgentLiveStatus(state: .failed, title: "Stopped")
+            return AgentLiveStatus(state: .failed, title: "Agent request failed")
         case .backendChecking:
             return AgentLiveStatus(state: .working, title: "Checking Agent")
         case .backendUnavailable:
@@ -286,25 +286,40 @@ struct AgentPanelView: View {
 
     @ViewBuilder private var activityProgress: some View {
         if surfaceState.statusOwner == .spendRun, let run = service.currentSpendRun {
-            AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: nil),
-                completed: 0, total: 0, events: ["Requested \(run.modelName) via \(run.providerName)"])
+            AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: nil,
+                providerConfirmedAt: run.providerConfirmedAt),
+                completed: 0, total: 0,
+                events: [AgentActivityEvent(at: run.startedAt, label: "Requested \(run.modelName) via \(run.providerName)")])
         } else if surfaceState.statusOwner == .batchRun,
            let id = editor.generationBatchCoordinator.activeBatchID,
            let batch = editor.generationBatchCoordinator.snapshots.first(where: { $0.batch.id == id }) {
             AgentActivityProgressView(timing: .init(startedAt: batch.journal.approvedAt,
-                lastEventAt: editor.generationBatchCoordinator.lastProgressAt[id]),
+                lastEventAt: editor.generationBatchCoordinator.lastProgressAt[id],
+                providerConfirmedAt: editor.generationBatchCoordinator.providerConfirmedAt[id]),
                 completed: batch.journal.executions.filter { $0.state == .complete }.count,
                 total: batch.journal.executions.count,
-                events: batch.journal.executions.enumerated().map { "Generation \($0.offset + 1): \($0.element.state.rawValue)" })
+                scope: "generations in this batch",
+                events: batch.journal.executions.enumerated().map {
+                    AgentActivityEvent(at: nil, label: "Generation \($0.offset + 1): \($0.element.state.rawValue)")
+                })
         } else if surfaceState.statusOwner == .phaseRun,
            let run = editor.pipelinePhaseExecution.snapshot, run.isRunning {
             AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: run.lastEventAt),
                 completed: run.completedUnitCount, total: run.totalUnitCount,
-                events: [PipelinePhaseProgressPresentation(stageID: run.stageID).title])
+                scope: "stages in this phase",
+                events: [AgentActivityEvent(at: run.startedAt, label: "\(PhaseDisplay.label(run.phase)) started")]
+                    + run.stageEvents.map { AgentActivityEvent(at: $0.at, label: PipelinePhaseProgressPresentation(stageID: $0.stageID).title) })
         } else if surfaceState.statusOwner == .stream,
                   service.activitySessionID == service.currentSessionId, let start = service.activityStartedAt {
             AgentActivityProgressView(timing: .init(startedAt: start, lastEventAt: service.activityLastEventAt),
                 completed: 0, total: 0, events: service.activityEvents)
+        }
+    }
+
+    private var statusOwnerIsRunning: Bool {
+        switch surfaceState.statusOwner {
+        case .spendRun, .batchRun, .decisionWorking, .phaseRun, .hostFollowUp, .stream: true
+        default: false
         }
     }
 
@@ -547,6 +562,13 @@ struct AgentPanelView: View {
             guard case .assistantResult(let message) = item else { return nil }
             return message
         }.last
+        let lastEarlierResultID = AgentTaskResultMarker.lastEarlierResultID(
+            items: items,
+            messages: service.messages,
+            currentTurnBaseline: service.isStreaming && service.activitySessionID == service.currentSessionId
+                ? service.activityBaselineMessageID : nil,
+            workIsRunning: statusOwnerIsRunning
+        )
         return VStack(spacing: AppTheme.Spacing.sm) {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
@@ -557,7 +579,15 @@ struct AgentPanelView: View {
                             Group {
                                 switch item {
                                 case .assistantResult(let message):
-                                    AgentMessageView(message: message, toolResults: toolResults)
+                                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                                        if item.id == lastEarlierResultID {
+                                            Text("Last result")
+                                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                                                .accessibilityAddTraits(.isHeader)
+                                        }
+                                        AgentMessageView(message: message, toolResults: toolResults)
+                                    }
                                 case .notice(let notice):
                                     Text(notice.text).textSelection(.enabled)
                                         .interfaceFont(size: AppTheme.Typography.ui)

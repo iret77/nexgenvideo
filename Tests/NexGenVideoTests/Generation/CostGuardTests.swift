@@ -535,6 +535,50 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func providerStatusConfirmsOnlyTheRunningSpend() async throws {
+        let editor = EditorViewModel()
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false
+        )
+        service.editor = editor
+        service.newChat()
+        service.isStreaming = true
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: try #require(service.currentSessionId),
+            runtimeGenerationID: UUID()
+        )
+        let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let approval = SpendApproval(
+            id: "provider-status",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate video"
+        )
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                #expect(service.currentSpendRun?.providerConfirmedAt == nil)
+                service.recordSpendProviderStatus(runToken: UUID())
+                #expect(service.currentSpendRun?.providerConfirmedAt == nil)
+                await Task { ProviderStatusSignal.confirmRunning() }.value
+                for _ in 0..<1_000 where service.currentSpendRun?.providerConfirmedAt == nil {
+                    await Task.yield()
+                }
+                #expect(service.currentSpendRun?.providerConfirmedAt != nil)
+                return .ok("rendered")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { service.currentSpendRun == nil }
+        ProviderStatusSignal.confirmRunning()
+        #expect(service.currentSpendRun == nil)
+    }
+
+    @MainActor
     @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
         let editor = EditorViewModel()
         let service = AgentService(

@@ -294,6 +294,7 @@ actor RunwayClient {
                 let reason = (json?["failure"] as? String) ?? "Runway generation \(state.lowercased())"
                 throw TerminalTaskError(message: reason)
             case "PENDING", "THROTTLED", "RUNNING":
+                ProviderStatusSignal.confirmRunning()
                 if Date() >= deadline {
                     throw GenerationBackendError.transport("Runway generation timed out.")
                 }
