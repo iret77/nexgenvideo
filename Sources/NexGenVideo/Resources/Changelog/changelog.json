@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.6.4",
+      "date": "2026-10-14",
+      "sections": [
+        {
+          "heading": "Agent",
+          "items": [
+            "Shot List image anchors use the reference-image input that production routes actually offer, so Render no longer rejects a Shot List written from the published execution contract.",
+            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.6.3",
       "date": "2026-10-11",
       "sections": [

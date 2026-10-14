@@ -272,6 +272,33 @@ public enum ReferencePlanValidationErrorV2: Error, Sendable, Equatable {
     case nonDeterministicPlan
 }
 
+extension ReferencePlanValidationErrorV2: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema(let schema):
+            return "Unsupported reference plan schema \(schema)."
+        case .emptyField(let field):
+            return "Reference plan field \(field) must not be empty."
+        case .invalidSHA256(let value):
+            return "\(value) is not a valid SHA-256 in the reference plan."
+        case .projectMismatch:
+            return "The reference plan belongs to a different project."
+        case .demandBindingMismatch:
+            return "A reference binding does not match its demand's asset, input_slot_id or mode_id on the selected route."
+        case .routeBindingMismatch:
+            return "The reference plan is not bound to the selected production route."
+        case .duplicateDemand(let id):
+            return "Reference demand \(id) is planned more than once."
+        case .incompleteDemandAccounting:
+            return "Every reference demand must be either bound or recorded as dropped."
+        case .requiredDemandDropped(let id):
+            return "Required reference demand \(id) cannot be bound by the selected route. Compare its input_slot_id and mode_id with list_models.production_routes."
+        case .nonDeterministicPlan:
+            return "The reference plan is not the deterministic result for these demands and this route."
+        }
+    }
+}
+
 public enum ReferencePlanCanonicalCodecV2 {
     public static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
