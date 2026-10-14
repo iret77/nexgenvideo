@@ -347,6 +347,22 @@ public enum ProductionReferenceDemandSemanticsV1 {
         CoreReferenceSemanticJobIDV1.audioTiming,
     ])
 
+    public static let selectableModalities: [String: Set<AssetPhysicalModalityV1>] = [
+        CoreReferenceSemanticJobIDV1.referenceAnchor: [.image],
+        CoreReferenceSemanticJobIDV1.styleReference: [.image, .video],
+        CoreReferenceSemanticJobIDV1.lightingReference: [.image, .video],
+        CoreReferenceSemanticJobIDV1.motionReference: [.video],
+        CoreReferenceSemanticJobIDV1.voiceReference: [.audio],
+    ]
+
+    public static func modalities(
+        forSelectableRole semanticJobID: String
+    ) -> Set<AssetPhysicalModalityV1>? {
+        selectableModalities.first {
+            ProductionIdentifierNormalizerV1.matches($0.key, semanticJobID)
+        }?.value
+    }
+
     public static func isDedicated(semanticJobID: String) -> Bool {
         dedicatedSemanticJobIDs.contains(
             ProductionIdentifierNormalizerV1.canonical(semanticJobID)

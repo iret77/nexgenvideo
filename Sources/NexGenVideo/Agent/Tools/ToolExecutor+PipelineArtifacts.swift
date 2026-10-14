@@ -533,7 +533,7 @@ extension ToolExecutor {
     func writeShotlistTool(
         _ editor: EditorViewModel,
         _ args: [String: Any]
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let brief: Brief
         do {
@@ -630,6 +630,7 @@ extension ToolExecutor {
         } else {
             musicvideoPlan = nil
         }
+        let routes = await activatedProductionRoutes(for: executionInputs)
         let declaration = try mutationPackDeclaration(
             editor,
             dataRoot: root
@@ -658,6 +659,7 @@ extension ToolExecutor {
             let url = try PipelineShotlistWriter.write(
                 shotlist,
                 executionInputs: executionInputs,
+                routes: routes,
                 dataRoot: stagingRoot,
                 declaredPack: declaration.packName,
                 declaredBinding: declaration.binding,
@@ -1029,6 +1031,22 @@ extension ToolExecutor {
             paths.append(bible.look.lightingAnchor)
         }
         return paths
+    }
+
+    private func activatedProductionRoutes(
+        for executionInputs: [PipelineExecutionShotInput]
+    ) async -> [ProductionRouteCandidateV1] {
+        guard executionInputs.contains(where: {
+            $0.sourceMode != .imported
+                && $0.generationRequirement?.modalityID == .video
+                && !$0.referenceDemands.isEmpty
+        }) else { return [] }
+        await CatalogDiscovery.ensureCurrent()
+        let preferences = ModelPreferences.shared
+        return productionRouteCandidates(providerActivation()).filter {
+            $0.candidate.providerActivated && $0.candidate.liveAvailable
+                && preferences.isEnabled($0.modelID)
+        }.map(\.candidate)
     }
 
     func archiveExisting(_ relative: String, dataRoot: URL) throws {

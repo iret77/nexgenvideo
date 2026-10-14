@@ -9,7 +9,8 @@
           "heading": "Agent",
           "items": [
             "Shot List image anchors use the reference-image input that production routes actually offer, so Render no longer rejects a Shot List written from the published execution contract.",
-            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error."
+            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error.",
+            "Shot List reference demands use a fixed set of roles: identity, location and prop anchors plus style, lighting, motion and voice references. Unknown roles, unsupported modalities and input slots or modes that no activated video route offers are rejected when the Shot List is written, not after approval."
           ]
         }
       ]
