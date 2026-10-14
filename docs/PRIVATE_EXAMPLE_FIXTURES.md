@@ -76,7 +76,7 @@ private packages are unlinked, confirms that its dedicated package secret exists
 current index or reachable repository history if any blob matches private fixture content. It removes
 its temporary media and registry credentials before the macOS job can start.
 
-The `xcode-27` build job first bundles the app and external pack without access to private fixture
+The `macrunner` build job first bundles the app and external pack without access to private fixture
 data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
 symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. The runtime job then:
 

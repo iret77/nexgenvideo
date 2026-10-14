@@ -109,7 +109,28 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertFalse(any(line.strip().startswith(("paths:", "paths-ignore:")) for line in header))
         self.assertNotIn("runs-on: macos", text)
         self.assertNotIn("runs-on: xcode", text)
+        self.assertNotIn("runs-on: macrunner", text)
         self.assertNotIn("uses: ./.github/workflows/", text)
+
+    def test_macos_builds_use_macrunner_and_runtime_acceptance_keeps_the_macos_26_floor(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            lines = path.read_text().splitlines()
+            for index, line in enumerate(lines):
+                if not line.strip().startswith("runs-on:"):
+                    continue
+                runner = line.split(":", 1)[1].strip()
+                with self.subTest(workflow=path.name, line=index + 1):
+                    self.assertIn(runner, {"ubuntu-24.04", "macrunner", "macos-26"})
+                    if runner == "macos-26":
+                        self.assertIn("ci-lint: allow-CI005", lines[index - 1])
+                        job = []
+                        for body in lines[index + 1:]:
+                            if body.startswith("  ") and not body.startswith("   ") and body.strip():
+                                break
+                            job.append(body)
+                        job = "\n".join(job)
+                        for build_step in ("swift build", "swift test", "scripts/bundle.sh", "setup-xcode-27"):
+                            self.assertNotIn(build_step, job)
 
     def test_pull_request_check_mirrors_the_ci_light_job(self):
         light = CI.read_text().split("  source_gate:\n", 1)[1].split("\n  ui_render:\n", 1)[0]

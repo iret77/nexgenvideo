@@ -9,7 +9,7 @@ permissions:
 jobs:
   sign:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +63,7 @@ jobs:
           retention-days: 7
   capture:
     needs: sign
+    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 5
     steps:

@@ -13,7 +13,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         build = text[text.index("  build-runtime-harness:") : text.index("  analyze:")]
         analyze = text[text.index("  analyze:") :]
 
-        self.assertIn("runs-on: xcode-27", build)
+        self.assertIn("runs-on: macrunner", build)
         self.assertIn("scripts/bundle.sh debug", build)
         self.assertIn("scripts/assemble_ngvpack.sh", build)
         self.assertIn("actions/upload-artifact@v4", build)
