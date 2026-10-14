@@ -646,7 +646,7 @@ enum PipelineArtifactWriteContract {
             "priority": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
             "preservation_scope_ids": stringArray,
             "exclusion_demand_ids": stringArray,
-            "input_slot_id": PipelineExecutionIdentifierContract.schema("Exact compatible input slot from list_models.production_routes.input_slots, e.g. reference.image.anchor. Do not guess an entity kind or provider parameter name."),
+            "input_slot_id": PipelineExecutionIdentifierContract.schema("Exact compatible input slot from list_models.production_routes.input_slots, e.g. core.input.reference-image for an image anchor. Do not guess an entity kind or provider parameter name."),
             "mode_id": nonEmptyString,
             "identity_lock": boolean,
             "entity_id": nonEmptyString,

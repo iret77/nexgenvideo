@@ -13,6 +13,31 @@ enum PipelineExecutionPlanComposerError: Error, Sendable, Equatable {
     case unsupportedRequirement(String)
 }
 
+extension PipelineExecutionPlanComposerError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .inputCoverageMismatch:
+            return "execution_shots must contain exactly one entry per Shot List shot, with the same ids in the same order."
+        case .sourceModeMismatch(let shot):
+            return "execution_shots[\(shot)].source_mode must equal the Shot List shot's source_mode."
+        case .missingProductionPlan(let shot):
+            return "Shot \(shot) is generated or AI-enhanced and needs a production_plan in shots[]."
+        case .invalidCoreInputs(let shot):
+            return "execution_shots[\(shot)].core_inputs contradicts the shot: first_frame_mode_id/last_frame_mode_id must match keyframe_strategy or conditioning.strategy, a chained shot uses only predecessor_last_frame_mode_id and cannot be the first shot, and source_video_mode_id is required exactly for ai_enhanced shots."
+        case .invalidBlocking(let shot):
+            return "execution_shots[\(shot)].blocking must name every shots[].blocking character_ref exactly once as entity_id; the Shot List blocking needs a non-empty relation_to_set, and anchor_demand_id must name a reference_demands id of the same shot."
+        case .invalidReference(let value):
+            return "Execution reference \(value) does not resolve to a project-local file, a reference_demands id of this shot, or a current upstream phase artifact. Correct the asset_path or id; do not substitute another asset."
+        case .referenceSetMismatch(let shot):
+            return "Shot \(shot): the image paths in shots[].reference_image_refs must equal the asset_path values of its image reference_demands."
+        case .conflictingReference(let path):
+            return "\(path) is bound with different modality, entity_id, canon_ids, state_id or view_id in different reference_demands. One asset path carries one identity across the Shot List."
+        case .unsupportedRequirement(let shot):
+            return "execution_shots[\(shot)] lacks a supported generation contract: generated and AI-enhanced shots need generation_requirement (video, or the timeline animated-still image mode) plus core_inputs and a Brief aspect ratio; imported shots need camera, primary_action and renderability."
+        }
+    }
+}
+
 struct PipelineExecutionPlanDraft {
     let plan: ExecutionPlanV1
     let context: ProjectCreativeContextV1

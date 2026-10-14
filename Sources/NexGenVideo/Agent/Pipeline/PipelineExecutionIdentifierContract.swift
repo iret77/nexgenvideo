@@ -13,7 +13,7 @@ enum PipelineExecutionIdentifierContract {
             "identifier_pattern": pattern,
             "reference_anchor": [
                 "semantic_job_id": CoreReferenceSemanticJobIDV1.referenceAnchor,
-                "input_slot_id": CoreReferenceInputSlotIDV1.referenceAnchor,
+                "input_slot_id": CoreReferenceInputSlotIDV1.referenceImage,
                 "modality": "image",
                 "purpose": "Identity, location or prop anchor; bind entity_id and view_id separately. Use a compatible slot/mode from list_models.production_routes."
             ],
