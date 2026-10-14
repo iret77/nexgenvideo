@@ -1856,6 +1856,12 @@ final class AgentService {
             return
         }
         SpendSelectionPreferences.record(option, for: approval)
+        if let requirement = approval.modelRequirement {
+            Log.generation.notice(
+                "spend \(approval.id) confirmed option=\(option.id) recommended=\(approval.recommendedOptionId) "
+                    + "required=\(requirement.modelId ?? "none") model_change=\(requirement.isModelChange(option))"
+            )
+        }
         spendPreparationID = nil
         spendPreparationTask = nil
         pendingSpendApproval = nil

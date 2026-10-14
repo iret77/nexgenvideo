@@ -792,6 +792,7 @@ extension ToolExecutor {
         recommendedTarget: ResolvedGenerationTarget? = nil,
         targetIsCompatible: @escaping @MainActor (ResolvedGenerationTarget) -> Bool = { _ in true },
         diagnosticProviderScope: @escaping @MainActor () -> [GenerationProvider] = { [] },
+        modelRequirement: SpendModelRequirementInput? = nil,
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
         prepare: (@MainActor (EditorViewModel, SpendOption) async throws -> AgentPreparedGeneration)? = nil,
         execute: (@MainActor (EditorViewModel, SpendOption) async throws -> ToolResult)? = nil
@@ -842,20 +843,68 @@ extension ToolExecutor {
                 }
             ).filter { targetIsCompatible($0.target) }
         }
+        func requirementState(_ options: [SpendOption]) -> SpendModelRequirement? {
+            guard let modelRequirement else { return nil }
+            let runnable = modelRequirement.modelId.map { id in
+                options.contains { $0.modelId == id }
+            } ?? false
+            return SpendModelRequirement(
+                modelId: modelRequirement.modelId,
+                modelName: modelRequirement.modelName,
+                source: modelRequirement.source,
+                unavailableReason: runnable ? nil : modelRequirement.unavailableReason()
+            )
+        }
+        func recommendation(_ options: [SpendOption]) -> SpendOption? {
+            let defaultTarget = recommendedTarget
+                ?? GenerationService.dispatchTarget(modelId: currentModelId)
+            if let modelRequirement {
+                return SpendOptionBuilder.recommended(
+                    from: options,
+                    requiredModelId: modelRequirement.modelId,
+                    defaultTarget: defaultTarget
+                )
+            }
+            return SpendOptionBuilder.recommended(
+                from: options,
+                currentModelId: currentModelId,
+                defaultTarget: defaultTarget
+            )
+        }
         let options = currentOptions()
-        let defaultTarget = recommendedTarget
-            ?? GenerationService.dispatchTarget(modelId: currentModelId)
-        guard let recommended = SpendOptionBuilder.recommended(
-            from: options,
-            currentModelId: currentModelId,
-            defaultTarget: defaultTarget
-        ) else {
+        let requirement = requirementState(options)
+        let recommended = recommendation(options)
+        let approvalID = UUID().uuidString
+        if let modelRequirement, let requirement {
+            Log.generation.notice(
+                "spend \(approvalID) model requirement: source=\(requirement.source) "
+                    + "required=\(requirement.modelId ?? "none") "
+                    + "unavailable=\(requirement.unavailableReason ?? "no") "
+                    + "recommended=\(recommended?.id ?? "none (user must choose)") "
+                    + "options=[\(options.map(\.id).joined(separator: ", "))] "
+                    + modelRequirement.diagnostics()
+            )
+        }
+        if recommended == nil, requirement == nil || options.isEmpty {
+            if let requirement, let reason = requirement.unavailableReason {
+                throw ToolError(
+                    "\(requirement.modelName) (\(requirement.source)) cannot run this request: \(reason) "
+                        + "No other connected model can run it either."
+                )
+            }
             throw ToolError(
                 noCompatibleModelReason
                     ?? "No enabled model is available through an active provider for this request. Choose a runnable model from list_models."
             )
         }
         if let batch = GenerationBatchPreparation.current {
+            guard let recommended else {
+                throw ToolError(
+                    "\(requirement?.modelName ?? currentModelName) (\(requirement?.source ?? "required model")) cannot run this request: "
+                        + "\(requirement?.unavailableReason ?? "unavailable") Generate this image on its own, outside "
+                        + "prepare_generation_batch, so the user can choose a one-time model change."
+                )
+            }
             guard let prepare else { throw ToolError("This operation cannot be included in a visual generation batch.") }
             let value = try await prepare(editor, recommended)
             guard value.package.payload.target == recommended.target,
@@ -882,7 +931,7 @@ extension ToolExecutor {
             batch.entries.append((value.package, recovery))
             return .ok("Prepared generation package: \(value.package.id). No generation was submitted.")
         }
-        guard CostGuard.needsApproval(credits: recommended.credits) else {
+        if let recommended, !CostGuard.needsApproval(credits: recommended.credits) {
             do {
                 var selected = recommended
                 if prepare != nil { selected.generationPackage = try await prepareSelected(editor, selected) }
@@ -892,22 +941,17 @@ extension ToolExecutor {
                 throw error
             }
         }
-        let approvalID = UUID().uuidString
         var providerScope = Set(options.map(\.target.provider))
         providerScope.formUnion(diagnosticProviderScope())
         func makeApproval() -> SpendApproval {
             let latest = currentOptions()
             providerScope.formUnion(latest.map(\.target.provider))
             providerScope.formUnion(diagnosticProviderScope())
-            let latestRecommended = SpendOptionBuilder.recommended(
-                from: latest,
-                currentModelId: currentModelId,
-                defaultTarget: recommendedTarget
-                    ?? GenerationService.dispatchTarget(modelId: currentModelId)
-            )
+            let latestRecommended = recommendation(latest)
+            let latestRequirement = requirementState(latest)
             let ordered = latestRecommended.map { option in
                 [option] + latest.filter { $0.id != option.id }
-            } ?? []
+            } ?? (latestRequirement == nil ? [] : latest)
             return SpendApproval(
                 id: approvalID,
                 recommendedOptionId: latestRecommended?.id ?? "",
@@ -917,7 +961,8 @@ extension ToolExecutor {
                     providerScope.contains($0)
                 },
                 selectionScope: selectionScope,
-                requiresGenerationPackage: prepare != nil
+                requiresGenerationPackage: prepare != nil,
+                modelRequirement: latestRequirement
             )
         }
         return try editor.agentService.requestSpendApproval(
@@ -1681,16 +1726,29 @@ extension ToolExecutor {
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
         await CatalogDiscovery.ensureCurrent()
+        let productionDesign = try productionDesignImageBinding(tool: .generateImage, editor: editor)
+        let productionDesignSnapshot = try productionDesign.map {
+            try Self.productionDesignReferenceSnapshot(dataRoot: $0.dataRoot)
+        }
+        let productionDesignDataRoot = productionDesign.map {
+            $0.dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        let briefImageBinding = productionDesign?.binding
+        let requestedModelID = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) }
+        let requiredModel = try briefImageBinding.flatMap { binding in
+            try Self.requiredBriefImageModel(binding, requestedModelID: requestedModelID)
+        }
         let requestedEditInputs = !args.stringArray("referenceMediaRefs").isEmpty
             || !args.stringArray("referenceProjectPaths").isEmpty
             || args.string("maskMediaRef") != nil
+            || productionDesignSnapshot?.paths.isEmpty == false
         let defaultModelID = requestedEditInputs
             ? "fal-ai/gpt-image-2.5/flare/edit"
             : "fal-ai/gpt-image-2.5/flare/text-to-image"
         let defaultModel = ImageModelConfig.allModels.first {
             $0.id == defaultModelID
         } ?? ImageModelConfig.allModels.first
-        guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? defaultModel?.id else {
+        guard let modelId = requiredModel?.id ?? requestedModelID ?? defaultModel?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -1741,24 +1799,6 @@ extension ToolExecutor {
         let requestedProjectPaths = initialFramePlan == nil
             ? args.stringArray("referenceProjectPaths")
             : []
-        let productionDesignSnapshot: ProductionDesignReferenceSnapshot?
-        let productionDesignDataRoot: URL?
-        if let workingRoot = editor.workingRoot,
-           let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-           try currentPhaseIfEnforced(
-               tool: .generateImage,
-               editor: editor,
-               dataRoot: dataRoot
-           ) == "production_design" {
-            productionDesignSnapshot = try Self.productionDesignReferenceSnapshot(
-                dataRoot: dataRoot
-            )
-            productionDesignDataRoot = dataRoot.standardizedFileURL
-                .resolvingSymlinksInPath()
-        } else {
-            productionDesignSnapshot = nil
-            productionDesignDataRoot = nil
-        }
         let projectPaths = productionDesignSnapshot?.paths ?? requestedProjectPaths
         let projectRefs = try projectImageReferences(projectPaths, editor: editor)
         let effectiveLibraryRefs = productionDesignSnapshot == nil ? libraryRefs : []
@@ -1791,6 +1831,44 @@ extension ToolExecutor {
         let credits = CostEstimator.imageCost(
             model: model, resolution: resolution, quality: quality, numImages: numImages)
         let originalModelId = model.id
+        let modelRequirement: SpendModelRequirementInput? = briefImageBinding.map { binding in
+            let evaluation: @MainActor () -> CatalogImageOfferingEvaluation = {
+                ModelCatalog.shared.imageOfferingEvaluation(
+                    preferredModelID: model.id,
+                    aspectRatio: aspectRatio,
+                    resolution: resolution,
+                    quality: quality,
+                    referenceCount: refs.count,
+                    numImages: numImages,
+                    background: background,
+                    outputFormat: requestedOutputFormat,
+                    outputCompression: outputCompression,
+                    hasMask: mask != nil
+                )
+            }
+            return SpendModelRequirementInput(
+                modelId: binding.catalogModelID,
+                modelName: binding.displayName,
+                source: binding.source,
+                unavailableReason: {
+                    binding.unmappedReason
+                        ?? binding.catalogModelID.flatMap { evaluation().exclusionReason(for: $0) }
+                        ?? "\(binding.displayName) has no runnable offering for this request."
+                },
+                diagnostics: {
+                    "brief.\(binding.briefField)=\(binding.briefValue) "
+                        + "agent_model=\(requestedModelID ?? "none") requested_model=\(model.id) "
+                        + "references=\(refs.count) excluded=["
+                        + evaluation().exclusions.map { "\($0.modelID): \($0.reason)" }.joined(separator: "; ")
+                        + "]"
+                }
+            )
+        }
+        let modelChangeNote: (String) -> String = { approvedModelID in
+            guard let binding = briefImageBinding, approvedModelID != binding.catalogModelID else { return "" }
+            return " The user chose this model for this image only; brief.\(binding.briefField) stays "
+                + "\(binding.briefValue). Do not rewrite the brief."
+        }
         let exactImageOptions: (@MainActor () -> [SpendOption])?
         if isMarble {
             exactImageOptions = nil
@@ -1821,6 +1899,7 @@ extension ToolExecutor {
             alternatives: { [] },
             exactOptions: exactImageOptions,
             diagnosticProviderScope: { self.activeImageProviderScope() },
+            modelRequirement: modelRequirement,
             prepare: { editor, approved in
                 var verifiedProductionDesignRoot: URL?
                 if let productionDesignSnapshot {
@@ -2001,12 +2080,43 @@ extension ToolExecutor {
                         request, editor: editor, preflight: preflight,
                         success: {
                             "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio), outputs: \(numImages)"
+                                + modelChangeNote(finalModelID)
                         })
                 }
 
                 return try await submit(refs)
             }
         )
+    }
+
+    /// Production Design images render with the brief's Bible-images route; nil outside that phase.
+    func productionDesignImageBinding(
+        tool: ToolName,
+        editor: EditorViewModel
+    ) throws -> (dataRoot: URL, binding: BriefImageModelBinding)? {
+        guard let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+              try currentPhaseIfEnforced(tool: tool, editor: editor, dataRoot: dataRoot) == "production_design"
+        else { return nil }
+        return (dataRoot, try BriefImageModelBinding.productionDesign(dataRoot: dataRoot))
+    }
+
+    /// The live brief model a call must use. A model the catalog cannot run is left to the spend card.
+    static func requiredBriefImageModel(
+        _ binding: BriefImageModelBinding,
+        requestedModelID: String?,
+        catalog: [ImageModelConfig] = ImageModelConfig.allModels
+    ) throws -> ImageModelConfig? {
+        guard let required = binding.liveModel(in: catalog) else { return nil }
+        if let requestedModelID, requestedModelID != required.id {
+            throw ToolError(
+                "Production Design images are bound to brief.\(binding.briefField) (\(binding.briefValue)). "
+                    + "Call compile_prompt and generate_image with model=\"\(required.id)\" instead of "
+                    + "\"\(requestedModelID)\". If that model cannot run the request, the spend card names the reason "
+                    + "and lets the user choose a one-time model change; never substitute a model yourself."
+            )
+        }
+        return required
     }
 
     @MainActor
@@ -2471,6 +2581,10 @@ extension ToolExecutor {
         let intent = try args.requireString("intent")
         let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
         let shotId = try args.requireString("shotId")
+        if PromptCompiler.modalityForModel(modelId) == .image,
+           let binding = try productionDesignImageBinding(tool: .compilePrompt, editor: editor)?.binding {
+            _ = try Self.requiredBriefImageModel(binding, requestedModelID: modelId)
+        }
         // #231: `shotId` is REQUIRED and has no default — "none" is the explicit free-intent choice. It
         // used to be optional, so forgetting it degraded the compile silently: no camera projection from
         // the spec, no drift lint, no error. The contract now forces the decision instead of asking the

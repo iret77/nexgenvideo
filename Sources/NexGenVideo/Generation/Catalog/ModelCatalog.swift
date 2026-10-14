@@ -629,9 +629,35 @@ final class ModelCatalog {
         outputCompression: Int? = nil,
         hasMask: Bool = false
     ) -> [CatalogImageOfferingCandidate] {
+        imageOfferingEvaluation(
+            preferredModelID: preferredModelID,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            referenceCount: referenceCount,
+            numImages: numImages,
+            background: background,
+            outputFormat: outputFormat,
+            outputCompression: outputCompression,
+            hasMask: hasMask
+        ).offerings
+    }
+
+    func imageOfferingEvaluation(
+        preferredModelID: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int,
+        numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false
+    ) -> CatalogImageOfferingEvaluation {
         let discovered = discoveredByProvider
         let discoveryStates = providerDiscovery
-        return Self.compatibleImageOfferings(
+        return Self.imageOfferingEvaluation(
             models: image,
             offersByModelID: offersById,
             preferredModelID: preferredModelID,
@@ -712,100 +738,173 @@ final class ModelCatalog {
         isEnabled: (String) -> Bool,
         offeringIsVerified: (String, ProviderBinding) -> Bool
     ) -> [CatalogImageOfferingCandidate] {
-        models
-            .filter { isEnabled($0.id) && !MarbleModelRegistry.isMarbleModel($0.id) }
-            .compactMap { model -> (ImageAlternativeCandidate, [ProviderBinding])? in
-                let adapted: ImageAlternativeCandidate
-                if model.id == preferredModelID {
-                    guard model.validate(
-                        aspectRatio: aspectRatio,
-                        resolution: resolution,
-                        quality: quality,
-                        imageRefCount: referenceCount,
-                        numImages: numImages,
-                        background: background,
-                        outputFormat: outputFormat,
-                        outputCompression: outputCompression,
-                        hasMask: hasMask
-                    ) == nil else { return nil }
-                    adapted = ImageAlternativeCandidate(
-                        model: model,
-                        aspectRatio: aspectRatio,
-                        resolution: resolution,
-                        quality: quality
-                    )
-                } else {
-                    guard let candidate = ImageAlternativeResolver.candidates(
-                        models: [model],
-                        excluding: preferredModelID,
-                        aspectRatio: aspectRatio,
-                        resolution: resolution,
-                        quality: quality,
-                        referenceCount: referenceCount,
-                        background: background,
-                        outputFormat: outputFormat,
-                        outputCompression: outputCompression,
-                        hasMask: hasMask,
-                        isAvailable: { _ in true }
-                    ).first,
-                    candidate.model.validate(
-                        aspectRatio: candidate.aspectRatio,
-                        resolution: candidate.resolution,
-                        quality: candidate.quality,
-                        imageRefCount: referenceCount,
-                        numImages: numImages,
-                        background: background,
-                        outputFormat: outputFormat,
-                        outputCompression: outputCompression,
-                        hasMask: hasMask
-                    ) == nil else { return nil }
-                    adapted = candidate
+        imageOfferingEvaluation(
+            models: models,
+            offersByModelID: offersByModelID,
+            preferredModelID: preferredModelID,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            referenceCount: referenceCount,
+            numImages: numImages,
+            background: background,
+            outputFormat: outputFormat,
+            outputCompression: outputCompression,
+            hasMask: hasMask,
+            activation: activation,
+            isEnabled: isEnabled,
+            offeringIsVerified: offeringIsVerified
+        ).offerings
+    }
+
+    nonisolated static func imageOfferingEvaluation(
+        models: [ImageModelConfig],
+        offersByModelID: [String: [ProviderOffer]],
+        preferredModelID: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int,
+        numImages: Int = 1,
+        background: String? = nil,
+        outputFormat: String? = nil,
+        outputCompression: Int? = nil,
+        hasMask: Bool = false,
+        activation: ProviderActivation,
+        isEnabled: (String) -> Bool,
+        offeringIsVerified: (String, ProviderBinding) -> Bool
+    ) -> CatalogImageOfferingEvaluation {
+        var offerings: [CatalogImageOfferingCandidate] = []
+        var exclusions: [CatalogImageOfferingExclusion] = []
+        for model in models where !MarbleModelRegistry.isMarbleModel(model.id) {
+            func exclude(_ reason: String) {
+                exclusions.append(CatalogImageOfferingExclusion(modelID: model.id, reason: reason))
+            }
+            guard isEnabled(model.id) else {
+                exclude("\(model.displayName) is turned off in model settings.")
+                continue
+            }
+            let adapted: ImageAlternativeCandidate
+            if model.id == preferredModelID {
+                if let failure = model.validate(
+                    aspectRatio: aspectRatio,
+                    resolution: resolution,
+                    quality: quality,
+                    imageRefCount: referenceCount,
+                    numImages: numImages,
+                    background: background,
+                    outputFormat: outputFormat,
+                    outputCompression: outputCompression,
+                    hasMask: hasMask
+                ) {
+                    exclude(failure)
+                    continue
                 }
-                let offers = offersByModelID[model.id]
-                    ?? ProviderManifest.defaultOffers(forModelId: model.id)
-                let bindings = ProviderResolver.preferredActiveBindingPerProvider(
-                    bindings: ProviderManifest.bindings(from: offers, modelId: model.id),
-                    activation: activation,
-                    effectiveCost: ProviderManifest.effectiveCost,
-                    isCompatible: {
-                        imageRouteIsImplemented(modelID: model.id, binding: $0)
-                            && (!imageRouteRequiresLiveDiscovery($0)
-                                || offeringIsVerified(model.id, $0))
-                    }
+                adapted = ImageAlternativeCandidate(
+                    model: model,
+                    aspectRatio: aspectRatio,
+                    resolution: resolution,
+                    quality: quality
                 )
-                return bindings.isEmpty ? nil : (adapted, bindings)
-            }
-            .flatMap { adapted, bindings in
-                bindings.map { binding in
-                    CatalogImageOfferingCandidate(
-                        model: adapted.model,
-                        target: ResolvedGenerationTarget(
-                            modelId: adapted.model.id,
-                            provider: binding.provider,
-                            endpoint: binding.providerRef,
-                            binding: binding
-                        ),
-                        aspectRatio: adapted.aspectRatio,
-                        resolution: adapted.resolution,
-                        quality: adapted.quality
-                    )
+            } else {
+                guard let candidate = ImageAlternativeResolver.candidates(
+                    models: [model],
+                    excluding: preferredModelID,
+                    aspectRatio: aspectRatio,
+                    resolution: resolution,
+                    quality: quality,
+                    referenceCount: referenceCount,
+                    background: background,
+                    outputFormat: outputFormat,
+                    outputCompression: outputCompression,
+                    hasMask: hasMask,
+                    isAvailable: { _ in true }
+                ).first,
+                candidate.model.validate(
+                    aspectRatio: candidate.aspectRatio,
+                    resolution: candidate.resolution,
+                    quality: candidate.quality,
+                    imageRefCount: referenceCount,
+                    numImages: numImages,
+                    background: background,
+                    outputFormat: outputFormat,
+                    outputCompression: outputCompression,
+                    hasMask: hasMask
+                ) == nil else {
+                    exclude("\(model.displayName) has no configuration that supports this request.")
+                    continue
                 }
+                adapted = candidate
             }
-            .sorted { lhs, rhs in
-                if lhs.model.id == preferredModelID,
-                   rhs.model.id != preferredModelID { return true }
-                if rhs.model.id == preferredModelID,
-                   lhs.model.id != preferredModelID { return false }
-                let providerOrder = GenerationProvider.allCases
-                let lhsProvider = providerOrder.firstIndex(of: lhs.target.provider) ?? .max
-                let rhsProvider = providerOrder.firstIndex(of: rhs.target.provider) ?? .max
-                if lhsProvider != rhsProvider { return lhsProvider < rhsProvider }
-                let modelOrder = lhs.model.displayName.localizedCaseInsensitiveCompare(
-                    rhs.model.displayName
+            let offers = offersByModelID[model.id]
+                ?? ProviderManifest.defaultOffers(forModelId: model.id)
+            let declared = ProviderManifest.bindings(from: offers, modelId: model.id)
+            let active = declared.filter { activation.isActive($0.provider, $0.transport) }
+            guard !active.isEmpty else {
+                let providers = providerNames(declared)
+                exclude(providers.isEmpty
+                    ? "No provider offers \(model.displayName)."
+                    : "\(model.displayName) needs a connected provider: \(providers).")
+                continue
+            }
+            let implemented = active.filter {
+                imageRouteIsImplemented(modelID: model.id, binding: $0)
+            }
+            guard !implemented.isEmpty else {
+                exclude("\(providerNames(active)) has no supported image route for \(model.displayName).")
+                continue
+            }
+            let bindings = ProviderResolver.preferredActiveBindingPerProvider(
+                bindings: declared,
+                activation: activation,
+                effectiveCost: ProviderManifest.effectiveCost,
+                isCompatible: {
+                    imageRouteIsImplemented(modelID: model.id, binding: $0)
+                        && (!imageRouteRequiresLiveDiscovery($0)
+                            || offeringIsVerified(model.id, $0))
+                }
+            )
+            guard !bindings.isEmpty else {
+                exclude("\(providerNames(implemented)) has not confirmed \(model.displayName) in live model discovery.")
+                continue
+            }
+            offerings += bindings.map { binding in
+                CatalogImageOfferingCandidate(
+                    model: adapted.model,
+                    target: ResolvedGenerationTarget(
+                        modelId: adapted.model.id,
+                        provider: binding.provider,
+                        endpoint: binding.providerRef,
+                        binding: binding
+                    ),
+                    aspectRatio: adapted.aspectRatio,
+                    resolution: adapted.resolution,
+                    quality: adapted.quality
                 )
-                if modelOrder != .orderedSame { return modelOrder == .orderedAscending }
-                return lhs.target.endpoint < rhs.target.endpoint
             }
+        }
+        offerings.sort { lhs, rhs in
+            if lhs.model.id == preferredModelID,
+               rhs.model.id != preferredModelID { return true }
+            if rhs.model.id == preferredModelID,
+               lhs.model.id != preferredModelID { return false }
+            let providerOrder = GenerationProvider.allCases
+            let lhsProvider = providerOrder.firstIndex(of: lhs.target.provider) ?? .max
+            let rhsProvider = providerOrder.firstIndex(of: rhs.target.provider) ?? .max
+            if lhsProvider != rhsProvider { return lhsProvider < rhsProvider }
+            let modelOrder = lhs.model.displayName.localizedCaseInsensitiveCompare(
+                rhs.model.displayName
+            )
+            if modelOrder != .orderedSame { return modelOrder == .orderedAscending }
+            return lhs.target.endpoint < rhs.target.endpoint
+        }
+        return CatalogImageOfferingEvaluation(offerings: offerings, exclusions: exclusions)
+    }
+
+    private nonisolated static func providerNames(_ bindings: [ProviderBinding]) -> String {
+        var seen = Set<GenerationProvider>()
+        return bindings.compactMap { seen.insert($0.provider).inserted ? $0.provider.displayName : nil }
+            .joined(separator: ", ")
     }
 
     func activeImageProviderScope() -> [GenerationProvider] {
@@ -1240,6 +1339,20 @@ struct CatalogImageOfferingCandidate: Sendable {
     let aspectRatio: String
     let resolution: String?
     let quality: String?
+}
+
+struct CatalogImageOfferingExclusion: Equatable, Sendable {
+    let modelID: String
+    let reason: String
+}
+
+struct CatalogImageOfferingEvaluation: Sendable {
+    let offerings: [CatalogImageOfferingCandidate]
+    let exclusions: [CatalogImageOfferingExclusion]
+
+    func exclusionReason(for modelID: String) -> String? {
+        exclusions.first { $0.modelID == modelID }?.reason
+    }
 }
 
 private struct CatalogImageBindingIdentity: Hashable {
