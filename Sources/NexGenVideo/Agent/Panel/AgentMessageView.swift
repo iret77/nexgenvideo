@@ -255,7 +255,7 @@ private struct AgentHostStateView: View {
     }
 
     private var hasLiveGateDecision: Bool {
-        isCurrent && editor.agentService.pendingGateApproval?.sourceHostStateID == state.record.id
+        isCurrent && editor.agentService.pendingGateApproval?.phase == state.record.phase
     }
 
     private var showsReviewAction: Bool {

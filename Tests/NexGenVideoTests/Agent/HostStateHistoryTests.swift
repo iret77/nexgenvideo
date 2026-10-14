@@ -156,7 +156,7 @@ struct HostStateHistoryTests {
         }
         return AgentTranscriptProjection.turns(messages: messages, isStreaming: false)
             .flatMap(\.items)
-            .compactMap { item in
+            .compactMap { item -> AgentHostState? in
                 guard case .hostState(let state) = item else { return nil }
                 return state
             }

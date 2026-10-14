@@ -274,7 +274,7 @@ struct AgentPanelView: View {
                     Text("The agent asked to revise approved work again without new direction from you. All approvals are kept.")
                     Text(failure.origin.chatSessionID == nil
                         ? "Allow the connected agent one more revision request. It still needs your approval."
-                        : "Continue keeps the approved work. To revise it, tell the agent what should change.")
+                        : "Continue keeps every approval. Afterwards, tell the agent what should change if you want a revision.")
                 } else {
                     Label("Planning paused after repeated attempts without progress", systemImage: "exclamationmark.triangle")
                     Text("Existing artifacts are preserved. Retry planning with the current project and tool definitions; no new generation is authorized.")
