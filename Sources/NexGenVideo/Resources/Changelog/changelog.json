@@ -21,7 +21,7 @@
             "Earlier approval requests and status cards in Tasks are marked superseded or reset by a later revision and no longer offer review or approval actions.",
             "Not yet and allowed revisions appear in Tasks with the reset approvals and the stated reason.",
             "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison.",
-            "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write, with a direct review action."
+            "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write. A rejected write of an existing artifact offers a direct review of the stored version."
           ]
         }
       ]

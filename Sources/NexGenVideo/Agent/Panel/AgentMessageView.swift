@@ -264,7 +264,7 @@ private struct AgentHostStateView: View {
         case .reviewChangedSource, .reviewForApproval:
             return true
         default:
-            return state.record.state == .writeRejected && state.record.artifactPath != nil
+            return state.record.state == .writeRejected && state.record.previousSHA256 != nil
         }
     }
 
