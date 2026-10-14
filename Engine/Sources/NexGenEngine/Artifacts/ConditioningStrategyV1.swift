@@ -149,6 +149,25 @@ public enum ConditioningStrategyValidationErrorV1: Error, Sendable, Equatable {
     case referencePlanMismatch(String)
 }
 
+extension ConditioningStrategyValidationErrorV1: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema(let schema):
+            return "Unsupported conditioning strategy schema \(schema)."
+        case .invalidField(let field):
+            return "Conditioning strategy field \(field) is missing or invalid."
+        case .duplicateShot(let shot):
+            return "Shot \(shot) has more than one conditioning strategy."
+        case .invalidIdentity:
+            return "The conditioning plan id does not match its Shot List and strategies."
+        case .strategyMismatch(let shot):
+            return "Shot \(shot): conditioning.strategy contradicts its inputs. reference_anchor needs image anchors with core.reference-anchor and no frame inputs; two_state_interpolation needs first and last frame; first_frame needs only a first frame; frame_continuation needs predecessor_shot_id and the predecessor last frame; native_extension needs an AI-enhanced source video."
+        case .referencePlanMismatch(let shot):
+            return "Shot \(shot): the reference plan does not bind the exact anchors or source video declared by its conditioning strategy."
+        }
+    }
+}
+
 public enum ConditioningStrategyCanonicalCodecV1 {
     public static func encode(_ value: ConditioningStrategyPlanV1) throws -> Data {
         let encoder = JSONEncoder()

@@ -163,8 +163,9 @@ enum PipelineConditioningStrategyStore {
         }
         let anchors = try explicit.anchorDemandIDs.map { demandID -> ConditioningAssetBindingV1 in
             guard let demand = input.referenceDemands.first(where: { $0.id == demandID }) else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.anchor_demand_ids"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.anchor_demand_ids",
+                    rule: "\(demandID) is not a reference_demands id of this shot."
                 )
             }
             return try assetBinding(demand: demand, dataRoot: dataRoot)
@@ -172,8 +173,9 @@ enum PipelineConditioningStrategyStore {
         let sourceVideo: ConditioningAssetBindingV1?
         if explicit.strategy == .nativeExtension {
             guard let sourcePath = shot.sourcePath else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.source_shot_id"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.source_shot_id",
+                    rule: "native_extension requires the shot's source_path in the Shot List."
                 )
             }
             sourceVideo = try assetBinding(
@@ -191,29 +193,33 @@ enum PipelineConditioningStrategyStore {
                   explicit.predecessorShotID == allShots[index - 1].id,
                   shot.chainWithPreviousEnd,
                   shot.keyframeStrategy == .none else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.predecessor_shot_id"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.predecessor_shot_id",
+                    rule: "frame_continuation must name the immediately preceding shot, and the Shot List shot needs chain_with_previous_end=true and keyframe_strategy=none."
                 )
             }
         }
         if explicit.strategy == .referenceAnchor {
             guard shot.keyframeStrategy == .none, !shot.chainWithPreviousEnd else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.strategy"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.strategy",
+                    rule: "reference_anchor requires keyframe_strategy=none and chain_with_previous_end=false in the Shot List."
                 )
             }
         }
         if explicit.strategy == .twoStateInterpolation {
             guard shot.keyframeStrategy == .startEnd, !shot.chainWithPreviousEnd else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.strategy"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.strategy",
+                    rule: "two_state_interpolation requires keyframe_strategy=start_end and chain_with_previous_end=false in the Shot List."
                 )
             }
         }
         if explicit.strategy == .firstFrame {
             guard shot.keyframeStrategy == .start, !shot.chainWithPreviousEnd else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.strategy"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.strategy",
+                    rule: "first_frame requires keyframe_strategy=start and chain_with_previous_end=false in the Shot List."
                 )
             }
         }
@@ -222,8 +228,9 @@ enum PipelineConditioningStrategyStore {
                   shot.keyframeStrategy == .none,
                   !shot.chainWithPreviousEnd,
                   coreInputs.sourceVideoModeID != nil else {
-                throw PipelineExecutionShotInputValidationError.invalid(
-                    "execution_shot[\(shot.id)].conditioning.strategy"
+                throw PipelineExecutionShotInputValidationError.violation(
+                    field: "execution_shot[\(shot.id)].conditioning.strategy",
+                    rule: "native_extension requires an ai_enhanced shot with keyframe_strategy=none, chain_with_previous_end=false and core_inputs.source_video_mode_id."
                 )
             }
         }

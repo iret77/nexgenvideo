@@ -44,7 +44,7 @@ struct ProductionRecoveryTests {
         let contract = PipelineExecutionIdentifierContract.discovery
         let anchor = try #require(contract["reference_anchor"] as? [String: String])
         #expect(anchor["semantic_job_id"] == CoreReferenceSemanticJobIDV1.referenceAnchor)
-        #expect(anchor["input_slot_id"] == CoreReferenceInputSlotIDV1.referenceAnchor)
+        #expect(anchor["input_slot_id"] == CoreReferenceInputSlotIDV1.referenceImage)
     }
 
     @Test("Writer rejects entity kinds as semantic roles and accepts namespaced anchors")
@@ -52,7 +52,7 @@ struct ProductionRecoveryTests {
         func demand(_ role: String) -> PipelineReferenceDemandInput {
             PipelineReferenceDemandInput(id: "street", assetPath: "assets/street.png", modality: .image,
                 semanticJobID: role, isRequired: true, priority: 0, preservationScopeIDs: [],
-                exclusionDemandIDs: [], inputSlotID: CoreReferenceInputSlotIDV1.referenceAnchor,
+                exclusionDemandIDs: [], inputSlotID: CoreReferenceInputSlotIDV1.referenceImage,
                 modeID: "reference", identityLock: false, entityID: "main_street", canonIDs: [],
                 stateID: nil, viewID: nil)
         }
@@ -61,6 +61,44 @@ struct ProductionRecoveryTests {
             try demand("location").validate(path: "reference")
         }
         try demand(CoreReferenceSemanticJobIDV1.referenceAnchor).validate(path: "reference")
+        do {
+            try demand(CoreReferenceSemanticJobIDV1.firstFrame).validate(path: "reference")
+            Issue.record("A dedicated core job was accepted as a reference demand")
+        } catch {
+            #expect(error.localizedDescription.contains("reference.semantic_job_id"))
+            #expect(error.localizedDescription.contains("core_inputs"))
+        }
+    }
+
+    @Test("Writer and route failures name the field, the rule and the resolution")
+    func structuredFailureDescriptions() {
+        let coreInputs = PipelineExecutionPlanComposerError.invalidCoreInputs("shot-002").localizedDescription
+        #expect(coreInputs.contains("execution_shots[shot-002].core_inputs"))
+        #expect(coreInputs.contains("keyframe_strategy"))
+        let coreReference = AssetGraphValidationError.invalidCoreReference("street").localizedDescription
+        #expect(coreReference.contains("street"))
+        #expect(coreReference.contains(CoreReferenceInputSlotIDV1.referenceImage))
+        let dropped = ReferencePlanValidationErrorV2.requiredDemandDropped("street").localizedDescription
+        #expect(dropped.contains("list_models.production_routes"))
+        let mismatch = ConditioningStrategyValidationErrorV1.strategyMismatch("shot-002").localizedDescription
+        #expect(mismatch.contains(CoreReferenceSemanticJobIDV1.referenceAnchor))
+    }
+
+    @Test("Discovered anchor slot is the slot real reference-image routes offer")
+    func discoveredAnchorSlotIsRoutable() throws {
+        let resolver = try #require(CatalogCapabilityRuntime.resolver)
+        let anchor = try #require(
+            PipelineExecutionIdentifierContract.discovery["reference_anchor"] as? [String: String]
+        )
+        let slotID = try #require(anchor["input_slot_id"])
+        let frameSlots: Set<String> = [CoreReferenceInputSlotIDV1.firstFrame, CoreReferenceInputSlotIDV1.lastFrame]
+        let imageReferenceSlots = FalModelRegistry.entries
+            .flatMap { (try? ModelCatalog.offeringCapabilities(for: $0, resolver: resolver)) ?? [] }
+            .filter { $0.offering.modality == .video }
+            .flatMap { ModelCatalog.inputSlots(capabilities: $0) }
+            .filter { $0.modality == .image && !frameSlots.contains($0.id) }
+        #expect(!imageReferenceSlots.isEmpty)
+        #expect(imageReferenceSlots.allSatisfy { $0.id == slotID })
     }
 
     @Test("Offered approval expires on artifact or lineage changes")

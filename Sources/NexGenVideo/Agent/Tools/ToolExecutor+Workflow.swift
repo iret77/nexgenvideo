@@ -1670,6 +1670,8 @@ extension ToolExecutor {
                     let deficits = noMatch.evaluations.flatMap { evaluation in
                         evaluation.deficits.map {
                             "\(evaluation.candidate.capabilities.offering.offeringID):\($0.code.rawValue)"
+                                + " required \($0.requiredValue)"
+                                + ($0.availableValue.map { ", available \($0)" } ?? "")
                         }
                     }
                     let recoveryActions = noMatch.recoveryActions.map(\.rawValue)
@@ -1681,8 +1683,10 @@ extension ToolExecutor {
                             + "Do not reduce the requirement without the user's decision."
                     )
                 case .requiredInputsUnsupported(let failure):
-                    let deficits = failure.deficits.map {
-                        "\($0.demandID ?? "unknown"):\($0.code.rawValue)"
+                    let deficits = failure.deficits.map { deficit in
+                        "\(deficit.demandID ?? "unknown"):\(deficit.code.rawValue) at \(deficit.scopeID)"
+                            + (deficit.requiredValue.map { " required \($0)" } ?? "")
+                            + (deficit.availableValue.map { ", available \($0)" } ?? "")
                     }
                     throw ToolError(
                         "The selected route cannot bind every required input for shot '\(shotId)'. "

@@ -325,6 +325,19 @@ public enum ProductionRequirementResolverErrorV1: Error, Sendable, Equatable {
     case invalidCandidate(String)
 }
 
+extension ProductionRequirementResolverErrorV1: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .projectMismatch:
+            return "The production requirement and reference demands belong to different projects."
+        case .invalidRequirement(let detail):
+            return "Invalid production requirement: \(detail)."
+        case .invalidCandidate(let detail):
+            return "Invalid production route candidate: \(detail)."
+        }
+    }
+}
+
 public enum ProductionReferenceDemandSemanticsV1 {
     public static let dedicatedSemanticJobIDs = Set([
         CoreReferenceSemanticJobIDV1.firstFrame,

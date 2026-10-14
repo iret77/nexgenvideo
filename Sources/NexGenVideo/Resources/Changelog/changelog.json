@@ -6,6 +6,13 @@
       "date": "2026-10-15",
       "sections": [
         {
+          "heading": "Agent",
+          "items": [
+            "Shot List image anchors use the reference-image input that production routes actually offer, so Render no longer rejects a Shot List written from the published execution contract.",
+            "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error."
+          ]
+        },
+        {
           "heading": "Interface",
           "items": [
             "Generation batch review shows a numbered overview grouped by characters, locations and props, with reference thumbnails, per-request costs and details on demand. Remove, Decline and Ask agent to revise respond while pricing is retried, and the list keeps room for at least one complete request at every panel width and text size."
