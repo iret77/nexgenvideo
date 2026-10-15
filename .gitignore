@@ -44,3 +44,7 @@ __pycache__/
 # Private real-media fixtures are distributed through private GHCR OCI artifacts only.
 /examples/
 /.private-fixtures/
+
+# Agent rule files live as a local, gitignored AGENTS.md in the main checkout (host-admin #155).
+AGENTS.md
+CLAUDE.md
