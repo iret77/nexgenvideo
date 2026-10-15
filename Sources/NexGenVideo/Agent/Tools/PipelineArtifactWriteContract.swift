@@ -641,7 +641,7 @@ enum PipelineArtifactWriteContract {
             "id": nonEmptyString,
             "asset_path": nonEmptyString,
             "modality": enumeration(AssetPhysicalModalityV1.allCases.map(\.rawValue)),
-            "semantic_job_id": PipelineExecutionIdentifierContract.schema("Semantic role, not entity kind. For image identity/location/prop anchors use core.reference-anchor. Dedicated first/last-frame, source-video and audio jobs are derived through core_inputs. Consult get_project_state.execution_input_contract for extensions."),
+            "semantic_job_id": PipelineExecutionIdentifierContract.roleSchema,
             "is_required": boolean,
             "priority": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame],
             "preservation_scope_ids": stringArray,
