@@ -15,7 +15,7 @@
         {
           "heading": "Interface",
           "items": [
-            "Generation batch review shows a numbered overview grouped by characters, locations and props, with reference thumbnails, per-request costs and details on demand. Remove, Decline and Ask agent to revise respond while pricing is retried, and the list keeps room for at least one complete request at every panel width and text size."
+            "Generation batch review shows a numbered overview grouped by characters, locations and props, with reference thumbnails, per-request costs and details on demand. Remove, Decline and Ask agent to revise respond while pricing is retried. The review takes the height it needs to show a complete request, and narrow panels fold Ask agent to revise and Retry pricing into a More menu."
           ]
         }
       ]

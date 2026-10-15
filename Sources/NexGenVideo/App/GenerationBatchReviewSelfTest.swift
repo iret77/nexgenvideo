@@ -49,6 +49,7 @@ enum GenerationBatchReviewSelfTest {
                         runtimeEvidenceEnabled: true,
                         runtimeEvidence: runtimeEvidence
                     )
+                    .layoutPriority(1)
                 }
                 .environment(editor)
                 .environment(\.interfaceScale, AppTheme.Typography.largestScale)
@@ -58,7 +59,7 @@ enum GenerationBatchReviewSelfTest {
                     x: AppTheme.Spacing.none,
                     y: AppTheme.Spacing.none,
                     width: AppTheme.Layout.agentPanelMin,
-                    height: panelHeight
+                    height: minimumPanelHeight
                 ),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
@@ -98,9 +99,14 @@ enum GenerationBatchReviewSelfTest {
         }
     }
 
-    // The smallest project window minus its title bar and toolbar bounds the agent panel.
-    private static var panelHeight: CGFloat {
+    // Agent panel heights in the smallest project window and in the default window on the fallback screen.
+    private static var minimumPanelHeight: CGFloat {
         AppTheme.Window.projectMin.height - AppTheme.Layout.titleBarChromeHeight - AppTheme.Layout.toolbarHeight
+    }
+
+    private static var defaultPanelHeight: CGFloat {
+        AppTheme.Window.fallbackVisibleFrame.height * AppTheme.Window.projectHeightFraction
+            - AppTheme.Layout.titleBarChromeHeight - AppTheme.Layout.toolbarHeight
     }
 
     private static func verify(
@@ -126,9 +132,8 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.remove.\(firstID)",
             "generation-batch.details.\(firstID)",
             "generation-batch.decline",
-            "generation-batch.revise",
+            "generation-batch.more",
             "generation-batch.approve",
-            "generation-batch.retry-pricing",
         ], in: window, context: "13-item narrow large-text review")
         try await verifyDetailsToggle(
             identifier: "generation-batch.details.\(firstID)",
@@ -168,19 +173,37 @@ enum GenerationBatchReviewSelfTest {
 
         let keyboardID = afterClick.payload.items[0].id
         window.setContentSize(NSSize(
+            width: AppTheme.Layout.agentPanelMin,
+            height: defaultPanelHeight
+        ))
+        try await reveal(
+            identifier: "generation-batch.item.\(keyboardID)",
+            in: window,
+            context: "12-item narrow large-text review in the default window"
+        )
+        try await requireVisible([
+            "generation-batch.item.\(keyboardID)",
+            "generation-batch.decline",
+            "generation-batch.more",
+            "generation-batch.approve",
+        ], in: window, context: "12-item narrow large-text review in the default window")
+
+        window.setContentSize(NSSize(
             width: AppTheme.Layout.agentPanelMax,
-            height: panelHeight
+            height: minimumPanelHeight
         ))
         try await reveal(
             identifier: "generation-batch.remove.\(keyboardID)",
             in: window,
-            context: "13-item wide review"
+            context: "12-item wide review"
         )
         try await requireVisible([
             "generation-batch.remove.\(keyboardID)",
             "generation-batch.decline",
+            "generation-batch.revise",
+            "generation-batch.retry-pricing",
             "generation-batch.approve",
-        ], in: window, context: "13-item wide review")
+        ], in: window, context: "12-item wide review")
         guard NSApp.isFullKeyboardAccessEnabled else {
             throw Failure(message: "keyboard navigation is disabled on this runner, so Remove cannot take focus")
         }
@@ -207,7 +230,7 @@ enum GenerationBatchReviewSelfTest {
         try present(single, editor: editor)
         window.setContentSize(NSSize(
             width: AppTheme.Layout.agentPanelMin,
-            height: panelHeight
+            height: minimumPanelHeight
         ))
         try await reveal(
             identifier: "generation-batch.remove.\(single.payload.items[0].id)",
@@ -218,6 +241,7 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.remove.\(single.payload.items[0].id)",
             "generation-batch.details.\(single.payload.items[0].id)",
             "generation-batch.decline",
+            "generation-batch.more",
             "generation-batch.approve",
         ], in: window, context: "single-item narrow large-text review")
 
@@ -233,7 +257,7 @@ enum GenerationBatchReviewSelfTest {
         for width in [CGFloat(400), AppTheme.Layout.agentPanelMax] {
             window.setContentSize(NSSize(
                 width: width,
-                height: panelHeight
+                height: minimumPanelHeight
             ))
             try await reveal(
                 identifier: "generation-batch.remove.\(fifty.payload.items[0].id)",

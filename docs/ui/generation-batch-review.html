@@ -298,10 +298,13 @@
         transcript overlay, second approval surface or user-authored turn.</li>
       <li>The header and footer never scroll. The body receives the available decision height after
         measured header, footer and theme spacing are subtracted. There is no nested item scroll.</li>
-      <li>The body never drops below <code>generationBatchListMinHeight</code> × text scale, enough for one
-        complete item with its actions. When header, footer and that minimum exceed the usual decision
-        bound (narrow panel, largest text, unknown-cost notice), the decision grows and the task result
-        above it yields height. Actions are never clipped to keep the bound.</li>
+      <li>The decision prefers a body of <code>generationBatchListMinHeight</code> × text scale, enough for one
+        complete item with its actions, even when that exceeds the usual decision bound. It has layout
+        priority over the task result above it, which yields height first. Only when the window itself is
+        too short does the body shrink below that minimum; header and footer are never clipped.</li>
+      <li>Footer actions use the widest arrangement that fits: one row; secondary actions in one row with
+        Approve below; or, in narrow panels, Decline, a “More” menu holding Ask agent to revise and Retry
+        pricing, and Approve. The menu keeps both actions available while saving list height.</li>
       <li>Group headings are not pinned. A pinned heading covers part of a short viewport and can hide
         the only visible item's actions.</li>
       <li>Only an actual approval commit disables all mutations. Package recovery stays visible,
@@ -329,7 +332,7 @@
         estimate: €X” and “Provider charges apply. The project budget cannot be guaranteed for this
         batch.” Approve reads “Approve without estimate” and stays enabled; it binds the exact retained
         manifest and records the unknown cost. Decline, Ask agent to revise and Retry pricing (when a
-        retryable failure exists) sit beside it.</td></tr>
+        retryable failure exists) sit beside it; narrow panels fold the latter two into “More”.</td></tr>
     </table>
 
     <h2>Interaction and state</h2>
@@ -371,7 +374,7 @@
     <table class="spec-table">
       <tr><th>Condition</th><th>Behavior</th></tr>
       <tr><td>240 pt</td><td>Item price moves below the purpose; metadata and actions wrap; details use
-        one column. All labeled footer actions fit without horizontal scrolling.</td></tr>
+        one column. Footer shows Decline, More and Approve without horizontal scrolling.</td></tr>
       <tr><td>400 pt</td><td>Number, purpose and price share the summary row. Reference thumbnails remain
         compact and request details stay collapsed until chosen.</td></tr>
       <tr><td>640 pt</td><td>Extra width becomes readable inset and two-column detail. It never creates a
@@ -488,7 +491,7 @@
           <div class="batch-body">${groups(count, openIndex)}</div>
           <footer class="batch-footer">${priced ? `<div class="total"><span>Estimated total</span><span>€${total}</span></div>` : `<div class="reason">1 request: cost unknown · Known estimate: €${total}</div>`}
             ${priced ? "" : `<div class="note">Provider charges apply. The project budget cannot be guaranteed for this batch.</div>`}
-            <div class="decision-actions"><span class="button decline">Decline</span><span class="button">Ask agent to revise</span>${priced ? "" : `<span class="button">Retry pricing</span>`}<span class="button primary">${priced ? `Approve ${count} request${count === 1 ? "" : "s"}` : "Approve without estimate"}</span></div>
+            <div class="decision-actions"><span class="button decline">Decline</span>${width === 240 ? `<span class="button">More ▾</span>` : `<span class="button">Ask agent to revise</span>${priced ? "" : `<span class="button">Retry pricing</span>`}`}<span class="button primary">${priced ? `Approve ${count} request${count === 1 ? "" : "s"}` : "Approve without estimate"}</span></div>
           </footer>
         </section></div>
       </article></div>`;

@@ -238,20 +238,70 @@ struct GenerationBatchCard: View {
                         .textSelection(.enabled)
                 }
             }
-            WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
-                declineButton(controls)
-                Button("Ask agent to revise") { coordinator.requestRevision(editor: editor) }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .disabled(!controls.canEdit)
-                    .accessibilityIdentifier("generation-batch.revise")
-                    .modifier(GenerationBatchRuntimeProbe(
-                        identifier: "generation-batch.revise",
-                        enabled: runtimeEvidenceEnabled
-                    ))
-                if coordinator.canRetryPricing { retryButton(controls) }
-                approveButton(batch: batch, controls: controls)
+            // Narrow panels fold the secondary actions so the list keeps room for a complete request.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    declineButton(controls)
+                    reviseButton(controls)
+                    if coordinator.canRetryPricing { retryButton(controls) }
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    approveButton(batch: batch, controls: controls)
+                }
+                VStack(alignment: .trailing, spacing: AppTheme.Spacing.sm) {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        declineButton(controls)
+                        reviseButton(controls)
+                        if coordinator.canRetryPricing { retryButton(controls) }
+                        Spacer(minLength: AppTheme.Spacing.none)
+                    }
+                    approveButton(batch: batch, controls: controls)
+                }
+                WrapLayout(spacing: AppTheme.Spacing.sm) {
+                    declineButton(controls)
+                    moreMenu(controls)
+                    approveButton(batch: batch, controls: controls)
+                }
             }
         }
+    }
+
+    private func reviseButton(_ controls: GenerationBatchReviewControls) -> some View {
+        Button("Ask agent to revise") { editor.generationBatchCoordinator.requestRevision(editor: editor) }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .disabled(!controls.canEdit)
+            .accessibilityIdentifier("generation-batch.revise")
+            .modifier(GenerationBatchRuntimeProbe(
+                identifier: "generation-batch.revise",
+                enabled: runtimeEvidenceEnabled
+            ))
+    }
+
+    private func moreMenu(_ controls: GenerationBatchReviewControls) -> some View {
+        let coordinator = editor.generationBatchCoordinator
+        return Menu {
+            Button("Ask agent to revise") { coordinator.requestRevision(editor: editor) }
+                .disabled(!controls.canEdit)
+            if coordinator.canRetryPricing {
+                Button("Retry pricing") { Task { await coordinator.retryPricing(editor: editor) } }
+                    .disabled(!controls.canRetryPricing)
+            }
+        } label: {
+            HStack(spacing: AppTheme.Spacing.xxs) {
+                Text("More")
+                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!controls.canEdit)
+        .accessibilityLabel("More actions")
+        .accessibilityIdentifier("generation-batch.more")
+        .modifier(GenerationBatchRuntimeProbe(
+            identifier: "generation-batch.more",
+            enabled: runtimeEvidenceEnabled
+        ))
     }
 
     @ViewBuilder
@@ -488,6 +538,10 @@ private struct GenerationBatchItemRow: View {
             }
         }
         .padding(.vertical, AppTheme.Spacing.sm)
+        .modifier(GenerationBatchRuntimeProbe(
+            identifier: "generation-batch.item.\(item.id)",
+            enabled: runtimeEvidenceEnabled
+        ))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Request \(item.manifestIndex + 1), \(item.purpose)")
     }
@@ -574,7 +628,7 @@ private struct GenerationBatchRuntimeProbe: ViewModifier {
     }
 }
 
-// The list keeps a usable minimum; the card grows past its usual maximum instead of hiding actions.
+// Prefers room for one complete request over the usual bound; a shorter offer shrinks only the list.
 private struct GenerationBatchDecisionLayout: SwiftUI.Layout {
     let maximumHeight: CGFloat
     let minimumBodyHeight: CGFloat
@@ -595,10 +649,9 @@ private struct GenerationBatchDecisionLayout: SwiftUI.Layout {
             + (finite(subviews[2].sizeThatFits(childProposal).height) ?? AppTheme.Spacing.none)
             + spacing + spacing
         let body = finite(subviews[1].sizeThatFits(childProposal).height) ?? minimumBodyHeight
-        let required = fixed + minimumBodyHeight
-        let ceiling = max(maximumHeight, required)
-        let available = min(max(finite(proposal.height) ?? ceiling, required), ceiling)
-        let height = fillsMaximumHeight ? available : min(max(fixed + body, required), available)
+        let ceiling = max(maximumHeight, fixed + minimumBodyHeight)
+        let available = min(max(finite(proposal.height) ?? ceiling, fixed), ceiling)
+        let height = fillsMaximumHeight ? available : min(fixed + body, available)
         return CGSize(width: width, height: height)
     }
 
