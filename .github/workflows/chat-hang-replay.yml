@@ -9,7 +9,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +27,7 @@ jobs:
 
   replay:
     needs: build
+    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 8
     steps:

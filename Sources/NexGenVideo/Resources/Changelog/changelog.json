@@ -3,13 +3,14 @@
   "entries": [
     {
       "version": "1.6.4",
-      "date": "2026-10-14",
+      "date": "2026-10-15",
       "sections": [
         {
           "heading": "Agent",
           "items": [
             "Shot List image anchors use the reference-image input that production routes actually offer, so Render no longer rejects a Shot List written from the published execution contract.",
             "Shot List and Render validation failures name the field, the violated rule and the host contract to consult instead of a generic error.",
+            "Shot List reference demands use a fixed set of roles: identity, location and prop anchors plus style, lighting, motion and voice references. Unknown roles, unsupported modalities and input slots or modes that no activated video route offers are rejected when the Shot List is written, not after approval.",
             "A second request to revise approved work without new direction from you pauses with Continue without revision. All approvals are kept.",
             "Repeated writes that fail or leave the artifact unchanged pause per phase, also across chats.",
             "Batches without a cost estimate are reported to the agent as unpriced, not as waiting only for approval."
@@ -18,6 +19,7 @@
         {
           "heading": "Interface",
           "items": [
+            "Generation batch review shows a numbered overview grouped by characters, locations and props, with reference thumbnails, per-request costs and details on demand. Remove, Decline and Ask agent to revise respond while pricing is retried. The review takes the height it needs to show a complete request, and narrow panels fold Ask agent to revise and Retry pricing into a More menu.",
             "Earlier approval requests and status cards in Tasks are marked superseded or reset by a later revision and no longer offer review or approval actions.",
             "Not yet and allowed revisions appear in Tasks with the reset approvals and the stated reason.",
             "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison.",

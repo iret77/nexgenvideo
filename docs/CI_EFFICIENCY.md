@@ -5,7 +5,7 @@
 A pull request starts only `pr-checks.yml`: one Linux job, `Light Checks`
 (AppTheme lint, pack pipeline contracts, script tests), without a paths filter.
 It is the required status check for `main`, without an up-to-date requirement.
-No push, pull request or schedule starts a macOS or `xcode-27` runner.
+No push, pull request or schedule starts a macOS runner (`macrunner` or `macos-26`).
 
 Heavy verification runs only through `ci-batch.yml`, a manual dispatch the owner
 approves per run. It calls `ci.yml` and, selectable per run, the hang replays and
@@ -19,7 +19,7 @@ satisfies the required check.
 
 CI classifies the diff (a run without a pull-request base verifies everything),
 runs inexpensive source checks on Linux, then compiles debug products and tests
-once on `xcode-27`. When bundle paths change,
+once on `macrunner`. When bundle paths change,
 the same job assembles the app from that build directory through SwiftPM's
 incremental build. Real external pack loads, historical compatibility checks and
 relaunch checks still run. Normal-startup acceptance consumes the zipped app on

@@ -1,6 +1,5 @@
 name: Release (signed + notarized)
 
-# ci-lint: allow-CI005 The release gate is Linux; the macOS job is required for signing and notarization.
 # ci-lint: allow-CI007 This workflow has workflow_dispatch only; push/PR appear solely in prohibition comments.
 # ci-lint: allow-CI008 Manual workflow_dispatch releases have no path-filter semantics.
 
@@ -310,7 +309,7 @@ jobs:
     needs: release-gate
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 90
     permissions:
       contents: write
@@ -613,6 +612,7 @@ jobs:
           codesign --verify --strict --verbose=2 "$INSTALL_APP/Contents/Frameworks/libNexGenEngine.dylib"
           xcrun stapler validate "$INSTALL_APP"
           spctl -a -vvv -t exec "$INSTALL_APP"
+          scripts/verify_app_slice.sh "$INSTALL_APP"
           INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALL_APP/Contents/Info.plist")"
           INSTALLED_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INSTALL_APP/Contents/Info.plist")"
           [ "$INSTALLED_VERSION" = "$REL_VERSION" ] \
@@ -867,6 +867,7 @@ jobs:
 
   diagnostic-acceptance:
     needs: release
+    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 10
     permissions:

@@ -31,8 +31,14 @@ struct PipelinePhaseExecutionSnapshot: Equatable {
     var nextStageID: String?
     var status: PipelinePhaseExecutionStatus
 
+    struct StageEvent: Equatable {
+        let at: Date
+        let stageID: String?
+    }
+
     var startedAt: Date = Date()
-    var lastEventAt: Date = Date()
+    var lastEventAt: Date?
+    var stageEvents: [StageEvent] = []
 
     var isRunning: Bool { status == .running }
 }
@@ -61,12 +67,15 @@ final class PipelinePhaseExecutionState {
         )
     }
 
-    func update(runID: UUID, progress: PhaseProgress) {
+    func update(runID: UUID, progress: PhaseProgress, at now: Date = Date()) {
         guard var current = snapshot,
               current.runID == runID,
               current.status == .running
         else { return }
-        current.lastEventAt = Date()
+        current.lastEventAt = now
+        if current.stageEvents.last?.stageID != progress.stageID {
+            current.stageEvents = Array((current.stageEvents + [.init(at: now, stageID: progress.stageID)]).suffix(8))
+        }
         current.sourceFilename = progress.sourceFilename ?? current.sourceFilename
         current.stageID = progress.stageID
         current.completedUnitCount = progress.completedUnitCount

@@ -407,6 +407,26 @@ enum AgentTranscriptProjection {
     }
 }
 
+enum AgentTaskResultMarker {
+    static func lastEarlierResultID(
+        items: [AgentTranscriptItem],
+        messages: [AgentMessage],
+        currentTurnBaseline: UUID?,
+        workIsRunning: Bool
+    ) -> String? {
+        guard workIsRunning else { return nil }
+        var earlier: Set<UUID>?
+        if let currentTurnBaseline {
+            guard let index = messages.firstIndex(where: { $0.id == currentTurnBaseline }) else { return nil }
+            earlier = Set(messages[...index].map(\.id))
+        }
+        return items.last(where: { item in
+            guard case .assistantResult(let message) = item else { return false }
+            return earlier?.contains(message.id) ?? true
+        })?.id
+    }
+}
+
 enum AgentTranscriptScrollPolicy {
     static let endID = "transcript-end"
 

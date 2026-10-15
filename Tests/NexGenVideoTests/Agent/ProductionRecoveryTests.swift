@@ -70,6 +70,113 @@ struct ProductionRecoveryTests {
         }
     }
 
+    @Test("Shot List writer accepts only host reference roles with their modalities")
+    func referenceRoleVocabulary() throws {
+        var style = demandObject(role: CoreReferenceSemanticJobIDV1.styleReference, modality: "video")
+        style["input_slot_id"] = CoreReferenceInputSlotIDV1.referenceVideo
+        let styled = try generatedInput(demands: [style])
+        let route = try videoRoute(slots: [ProductionInputSlotCapabilityV1(
+            id: CoreReferenceInputSlotIDV1.referenceVideo, modality: .video,
+            modeIDs: ["reference-to-video"], requestOrder: 3, countsTowardModalityBudget: true,
+            countsTowardTotalBudget: true, countsTowardCombinedDuration: true
+        )])
+        try PipelineReferenceRouteContract.validate([styled], routes: [route])
+        for (role, modality, field) in [
+            ("core.location", "image", "semantic_job_id"),
+            ("look.identity", "image", "semantic_job_id"),
+            (CoreReferenceSemanticJobIDV1.referenceAnchor, "audio", "modality"),
+            (CoreReferenceSemanticJobIDV1.voiceReference, "image", "modality"),
+        ] {
+            let input = try generatedInput(demands: [
+                demandObject(role: role, modality: modality),
+            ])
+            do {
+                try PipelineReferenceRouteContract.validate([input], routes: [route])
+                Issue.record("\(role) with \(modality) was accepted")
+            } catch {
+                #expect(error.localizedDescription.contains("reference_demands[0].\(field)"))
+            }
+        }
+        let schema = PipelineExecutionIdentifierContract.roleSchema
+        #expect(schema["enum"] as? [String]
+            == ProductionReferenceDemandSemanticsV1.selectableModalities.keys.sorted())
+    }
+
+    @Test("Generated reference demands must match a slot an activated video route offers")
+    func referenceDemandsMatchActivatedRoutes() throws {
+        let anchor = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
+        let input = try generatedInput(demands: [anchor])
+        let route = try videoRoute(slots: [ProductionInputSlotCapabilityV1(
+            id: CoreReferenceInputSlotIDV1.referenceImage, modality: .image,
+            modeIDs: ["reference-to-video"], requestOrder: 2, countsTowardModalityBudget: true,
+            countsTowardTotalBudget: true, countsTowardCombinedDuration: false
+        )])
+        try PipelineReferenceRouteContract.validate([input], routes: [route])
+
+        do {
+            try PipelineReferenceRouteContract.validate([input], routes: [])
+            Issue.record("A reference demand without an activated route was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("reference_demands[0].input_slot_id"))
+            #expect(error.localizedDescription.contains("activate a provider"))
+        }
+
+        var unrouted = anchor
+        unrouted["input_slot_id"] = "reference.image.anchor"
+        let guessed = try generatedInput(demands: [unrouted])
+        do {
+            try PipelineReferenceRouteContract.validate([guessed], routes: [route])
+            Issue.record("An unoffered input slot was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains(CoreReferenceInputSlotIDV1.referenceImage))
+        }
+    }
+
+    private func demandObject(role: String, modality: String) -> [String: Any] {
+        [
+            "id": "street", "asset_path": "bible/street.png", "modality": modality,
+            "semantic_job_id": role, "is_required": true, "priority": 0,
+            "preservation_scope_ids": [], "exclusion_demand_ids": [],
+            "input_slot_id": CoreReferenceInputSlotIDV1.referenceImage,
+            "mode_id": "reference-to-video", "identity_lock": false,
+            "entity_id": "main_street", "canon_ids": [],
+        ]
+    }
+
+    private func generatedInput(demands: [[String: Any]]) throws -> PipelineExecutionShotInput {
+        let value: [String: Any] = [
+            "id": "s001",
+            "source_mode": ExecutionSourceModeV1.generated.rawValue,
+            "start_state": ["summary": "The street is empty.", "entity_state_ids": []],
+            "end_state": ["summary": "The mouse crosses the street.", "entity_state_ids": []],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [["id": "street", "requirement": "The street stays recognizable.", "severity": "required"]],
+            "generation_requirement": [
+                "modality_id": "video",
+                "mode_ids": ["reference-to-video"],
+                "duration": ["allows_automatic": true],
+                "requires_output_audio": false,
+            ],
+            "core_inputs": [:],
+            "reference_demands": demands,
+        ]
+        return try JSONDecoder().decode(
+            PipelineExecutionShotInput.self,
+            from: JSONSerialization.data(withJSONObject: value)
+        )
+    }
+
+    private func videoRoute(slots: [ProductionInputSlotCapabilityV1]) throws -> ProductionRouteCandidateV1 {
+        let resolver = try #require(CatalogCapabilityRuntime.resolver)
+        let capabilities = try #require(FalModelRegistry.entries
+            .flatMap { (try? ModelCatalog.offeringCapabilities(for: $0, resolver: resolver)) ?? [] }
+            .first { $0.offering.modality == .video })
+        return ProductionRouteCandidateV1(
+            capabilities: capabilities, providerActivated: true, liveAvailable: true, inputSlots: slots
+        )
+    }
+
     @Test("Writer and route failures name the field, the rule and the resolution")
     func structuredFailureDescriptions() {
         let coreInputs = PipelineExecutionPlanComposerError.invalidCoreInputs("shot-002").localizedDescription

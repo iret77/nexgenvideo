@@ -16,6 +16,7 @@ struct SpendApprovalCard: View {
     let onPrepare: (SpendOption) -> Void
 
     @State private var selectedOptionId: String
+    @State private var chosenProvider: GenerationProvider?
     @State private var approvalError: String?
     @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
@@ -54,7 +55,15 @@ struct SpendApprovalCard: View {
     }
 
     private var selectedProvider: GenerationProvider? {
-        selectedOption?.target.provider ?? availableProviders.first
+        selectedOption?.target.provider
+            ?? chosenProvider.flatMap { availableProviders.contains($0) ? $0 : nil }
+            ?? availableProviders.first
+    }
+
+    private var modelPickerOptions: [NativeChoicePicker.Option] {
+        let options = modelOptions.map { NativeChoicePicker.Option(id: $0.id, title: $0.modelName) }
+        guard selectedOption == nil, !options.isEmpty else { return options }
+        return [.init(id: "", title: "Choose a model", isEnabled: false)] + options
     }
 
     private var modelOptions: [SpendOption] {
@@ -117,7 +126,10 @@ struct SpendApprovalCard: View {
     private var decisionBody: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             summary
-            if availableOptions.count > 1 { selectionControls }
+            if let requirement = approval.modelRequirement { requirementNotice(requirement) }
+            if availableOptions.count > 1 || (selectedOption == nil && !availableOptions.isEmpty) {
+                selectionControls
+            }
             if approval.requiresGenerationPackage == true {
                 if let package = selectedOption?.generationPackage {
                     GenerationPackageReviewView(package: package)
@@ -175,7 +187,7 @@ struct SpendApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("\(approval.actionLabel) with \(selectedOption.map { displayName($0) } ?? "Unavailable model")")
+            Text(summaryTitle)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -185,6 +197,38 @@ struct SpendApprovalCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
+        }
+    }
+
+    private var summaryTitle: String {
+        if let selectedOption { return "\(approval.actionLabel) with \(displayName(selectedOption))" }
+        return availableOptions.isEmpty
+            ? "\(approval.actionLabel) with Unavailable model"
+            : "\(approval.actionLabel): choose a model"
+    }
+
+    @ViewBuilder
+    private func requirementNotice(_ requirement: SpendModelRequirement) -> some View {
+        if let reason = requirement.unavailableReason {
+            Text("\(requirement.modelName), set for \(requirement.source), can't run this request. \(reason)")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Status.warningColor)
+                .fixedSize(horizontal: false, vertical: true)
+            if !availableOptions.isEmpty {
+                Text("Choose another model for this image only. The brief stays unchanged.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if let selectedOption, requirement.isModelChange(selectedOption) {
+            Text("Model change: \(selectedOption.modelName) replaces \(requirement.modelName), set for \(requirement.source). Applies to this image only; the brief stays unchanged.")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Status.warningColor)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("Model set for \(requirement.source).")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
         }
     }
 
@@ -214,12 +258,10 @@ struct SpendApprovalCard: View {
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 NativeChoicePicker(
                     label: "Model",
-                    options: modelOptions.map {
-                        .init(id: $0.id, title: $0.modelName)
-                    },
+                    options: modelPickerOptions,
                     selection: $selectedOptionId
                 )
-                .disabled(isWorking || modelOptions.count < 2)
+                .disabled(isWorking || modelOptions.isEmpty || (modelOptions.count < 2 && selectedOption != nil))
                 .focused($focusedControl, equals: .model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,9 +275,15 @@ struct SpendApprovalCard: View {
                 guard let provider = GenerationProvider(rawValue: rawValue) else { return }
                 let currentModelId = selectedOption?.modelId
                 let matching = availableOptions.filter { $0.target.provider == provider }
-                selectedOptionId = matching.first { $0.modelId == currentModelId }?.id
-                    ?? matching.first?.id
-                    ?? ""
+                let sameModel = matching.first { $0.modelId == currentModelId }?.id
+                chosenProvider = provider
+                if let requirement = approval.modelRequirement {
+                    selectedOptionId = sameModel
+                        ?? matching.first { $0.modelId == requirement.modelId }?.id
+                        ?? ""
+                } else {
+                    selectedOptionId = sameModel ?? matching.first?.id ?? ""
+                }
                 approvalError = nil
             }
         )
@@ -264,7 +312,7 @@ struct SpendApprovalCard: View {
     private func requestInitialFocus() {
         let target: SpendApprovalFocusTarget = if availableProviders.count > 1 {
             .provider
-        } else if modelOptions.count > 1 {
+        } else if modelOptions.count > 1 || selectedOption == nil {
             .model
         } else {
             .approve
@@ -277,7 +325,11 @@ struct SpendApprovalCard: View {
 
     private func normalizeSelection() {
         guard !availableOptions.contains(where: { $0.id == selectedOptionId }) else { return }
-        selectedOptionId = availableOptions.first?.id ?? ""
+        if let requirement = approval.modelRequirement {
+            selectedOptionId = availableOptions.first { $0.modelId == requirement.modelId }?.id ?? ""
+        } else {
+            selectedOptionId = availableOptions.first?.id ?? ""
+        }
         approvalError = nil
     }
 

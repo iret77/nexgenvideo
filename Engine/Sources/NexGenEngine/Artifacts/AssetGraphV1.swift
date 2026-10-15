@@ -10,6 +10,10 @@ public enum CoreReferenceSemanticJobIDV1 {
     public static let sourceVideo = "core.source-video"
     public static let audioTiming = "core.audio-timing"
     public static let referenceAnchor = "core.reference-anchor"
+    public static let styleReference = "core.style-reference"
+    public static let lightingReference = "core.lighting-reference"
+    public static let motionReference = "core.motion-reference"
+    public static let voiceReference = "core.voice-reference"
 }
 
 public enum CoreReferenceInputSlotIDV1 {

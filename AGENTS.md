@@ -14,9 +14,9 @@ section of `musicvideo/docs/v1-studio-plan.md`.
 ## Verification
 
 Never build, test, or launch the app locally. GitHub Actions is the only verification surface:
-builds, unit tests, and bundles run on `xcode-27`; runtime tests of latest-macOS-only APIs run on a
-configured Actions runner that boots the current product minimum. Do not run `scripts/dev.sh` or
-start a local dev server.
+builds, unit tests, and bundles run on the self-hosted `macrunner` (Xcode 27, fresh macOS 27 VM per
+job); runtime acceptance runs on GitHub's `macos-26` because it boots the current product minimum.
+Do not run `scripts/dev.sh` or start a local dev server.
 
 ## Code style
 
@@ -61,11 +61,11 @@ release or a wasted CI cycle.
 
 ### Building and releasing
 
-- **Never build locally.** GitHub Actions is the only verification surface. Use `xcode-27` for
-  builds, unit tests, and bundles; use a configured current-macOS runtime runner only for tests that
-  execute APIs unavailable on the `xcode-27` runner's older booted OS.
-- **Never merge to `main` or dispatch `release.yml` without the owner's explicit, in-the-moment
-  "build now".** Stage the work, hold, ask. Concept approval is not build approval.
+- **Never build locally.** GitHub Actions is the only verification surface. Use `macrunner` for
+  builds, unit tests, and bundles; use `macos-26` only for runtime acceptance that must boot the
+  product minimum, which `macrunner` (macOS 27 only) cannot.
+- **Merge to `main` as soon as the PR's checks are green; no build is needed for that.** Dispatch
+  `release.yml` only on the owner's explicit instruction.
 - **One batch, one release.** Collect fixes and release once. Never propose an intermediate or
   partial release, and never split scope that was agreed as a single batch.
 - `gh` resolves to the upstream `palmier-io/palmier-pro` remote. **Always pass

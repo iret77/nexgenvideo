@@ -795,6 +795,14 @@ enum PromptCompiler {
             return .sourceVideo
         case ProductionIdentifierNormalizerV1.canonical(CoreReferenceSemanticJobIDV1.audioTiming):
             return .audioTiming
+        case ProductionIdentifierNormalizerV1.canonical(CoreReferenceSemanticJobIDV1.styleReference):
+            return .style
+        case ProductionIdentifierNormalizerV1.canonical(CoreReferenceSemanticJobIDV1.lightingReference):
+            return .lighting
+        case ProductionIdentifierNormalizerV1.canonical(CoreReferenceSemanticJobIDV1.motionReference):
+            return .motion
+        case ProductionIdentifierNormalizerV1.canonical(CoreReferenceSemanticJobIDV1.voiceReference):
+            return .voice
         default:
             break
         }
@@ -808,6 +816,7 @@ enum PromptCompiler {
         if shot.ledgerReferences.propRefs.map(ProductionIdentifierNormalizerV1.canonical).contains(entity) {
             return .prop
         }
+        // Legacy free-form roles in already written Shot Lists.
         if semantic.contains("voice") { return .voice }
         if semantic.contains("motion") || semantic.contains("pacing") { return .motion }
         if semantic.contains("light") { return .lighting }

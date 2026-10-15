@@ -57,6 +57,7 @@ actor MarbleClient {
                 if (json?["done"] as? Bool) == true {
                     return data
                 }
+                ProviderStatusSignal.confirmRunning()
             } else if status >= 400, status != 404, status != 408, status != 429, status < 500 {
                 // A hard client error (other than the few that can be transient) is fatal.
                 try Self.throwIfError(status: status, json: Self.parse(data))

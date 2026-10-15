@@ -77,8 +77,8 @@ release blockers:
    cancellation, rollback, content verification, and close/undo lifetime guarantees.
 
 Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
-surface. Do not dispatch CI, merge, publish, or build a DMG without the owner's explicit
-in-the-moment `build now`.
+surface. Merge when the PR's checks are green; publish or build a release DMG only on the owner's
+instruction.
 
 ## Working state
 
@@ -301,9 +301,8 @@ The locked source documents are:
 
 ## Release procedure for this batch
 
-1. Never trigger CI until the owner says `build now`.
-2. On explicit approval, commit/push as one batch, require every PR gate to pass, merge, then run one
-   GitHub Actions macOS release build.
+1. Commit/push as one batch and merge once every PR gate passes.
+2. Run the GitHub Actions macOS release build only on the owner's instruction.
 3. Verify the notarized DMG with the exact on-device trace: original Track name, English default agent,
    visible advancing Audio Analysis, no active Approve, successful analysis completion, interpretation,
    then approval.

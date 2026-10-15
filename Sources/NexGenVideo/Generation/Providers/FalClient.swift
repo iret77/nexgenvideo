@@ -249,6 +249,7 @@ actor FalClient {
                     return resultResponse.data
                 case "IN_QUEUE", "IN_PROGRESS":
                     invalidStatusResponses = 0
+                    ProviderStatusSignal.confirmRunning()
                     finalPollAvailable = try await waitForNextPoll(
                         deadline: deadline,
                         finalPollAvailable: finalPollAvailable
