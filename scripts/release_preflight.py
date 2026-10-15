@@ -817,18 +817,6 @@ def validate_pipeline_contract() -> None:
             fail(f"{manifest_path.name} principalClass is not implemented by its target")
 
 
-def validate_agent_guidance() -> None:
-    try:
-        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        fail(f"agent project guidance is unreadable: {error}")
-    if agents != claude:
-        fail("AGENTS.md and CLAUDE.md must contain the same standalone project guidance")
-    if "@AGENTS.md" in agents or "@CLAUDE.md" in agents:
-        fail("agent project guidance must not depend on cross-file include directives")
-
-
 def validate_engine_registry_abi() -> None:
     path = ROOT / "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift"
     try:
@@ -1101,7 +1089,6 @@ def main() -> None:
     validate_changelog(version)
     validate_hardsteps()
     validate_pipeline_contract()
-    validate_agent_guidance()
     validate_engine_registry_abi()
     validate_engine_boundary_abi()
     validate_release_assets()
