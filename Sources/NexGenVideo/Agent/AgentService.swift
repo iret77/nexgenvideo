@@ -2420,6 +2420,11 @@ final class AgentService {
             phase: approval.phase,
             in: chronologicalHostStateRecords()
         )
+        scoped.priorChanges = GateApproval.priorChanges(
+            prior: scoped.priorApproval,
+            fingerprint: approval.artifactFingerprint,
+            dataRoot: approval.dataRoot
+        )
         if let pending = pendingGateApproval {
             suspendToolCalls(from: origin)
             return GateApprovalRequest(
@@ -2522,7 +2527,10 @@ final class AgentService {
                             previousSHA256: nil,
                             currentSHA256: approval.artifactFingerprint?.sha256,
                             resetPhases: approval.resetPhases,
-                            note: approval.isRewind ? approval.notes : nil
+                            note: approval.isRewind ? approval.notes : nil,
+                            approvedText: approval.artifactFingerprint.flatMap {
+                                ArtifactLineDiff.verifiedText(path: $0.path, sha256: $0.sha256, dataRoot: approval.dataRoot)
+                            }
                         ),
                         origin: origin,
                         toolUseID: approval.sourceToolUseID,

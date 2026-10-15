@@ -23,6 +23,7 @@ struct GateArtifactFingerprint: Equatable, Sendable {
 struct GatePriorApproval: Equatable, Sendable {
     let sha256: String
     let revisionReason: String?
+    var text: String? = nil
 }
 
 /// A durable user decision that outlives the requesting gate tool call.
@@ -70,6 +71,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let sessionId: UUID?
     let artifactFingerprint: GateArtifactFingerprint?
     var priorApproval: GatePriorApproval?
+    var priorChanges: ArtifactLineDiff.Result?
 
     init(
         phase: String,
@@ -138,6 +140,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             id: id
         )
         scoped.priorApproval = priorApproval
+        scoped.priorChanges = priorChanges
         return scoped
     }
 
@@ -154,10 +157,19 @@ struct GateApproval: Identifiable, Equatable, Sendable {
                 revisionReason = record.note
             }
             if record.state == .approved, record.phase == phase, let sha256 = record.currentSHA256 {
-                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason)
+                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason, text: record.approvedText)
             }
         }
         return nil
+    }
+
+    /// Line changes against the prior approval, when both texts are host-verified.
+    static func priorChanges(prior: GatePriorApproval?, fingerprint: GateArtifactFingerprint?, dataRoot: URL?)
+        -> ArtifactLineDiff.Result? {
+        guard let prior, let old = prior.text, let fingerprint, prior.sha256 != fingerprint.sha256,
+              let new = ArtifactLineDiff.verifiedText(path: fingerprint.path, sha256: fingerprint.sha256,
+                  dataRoot: dataRoot) else { return nil }
+        return ArtifactLineDiff.changes(old: old, new: new)
     }
 
     func matchesRequest(_ other: GateApproval) -> Bool {

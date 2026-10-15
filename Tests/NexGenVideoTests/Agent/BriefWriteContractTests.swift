@@ -209,6 +209,57 @@ struct BriefWriteContractTests {
             atPath: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot).path))
     }
 
+    @Test("resume recovery chain keeps truthful host states and resets the limit on real progress")
+    func resumeRecoveryChain() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let session = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.inAppChat(sessionID: session)
+        var invalid = validArgs(dataRoot: dataRoot)
+        invalid["visual_medium"] = "2d_animation"
+        service.messages = [
+            AgentMessage(role: .user, blocks: [.text("Resume the brief.")], hidden: true),
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "rejected-1", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "rejected-2", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "written", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "rejected-3", name: "write_brief", inputJSON: "{}"),
+                .toolUse(id: "rejected-4", name: "write_brief", inputJSON: "{}"),
+            ]),
+        ]
+        for id in ["rejected-1", "rejected-2"] {
+            let result = await h.executor.execute(name: "write_brief", args: invalid, origin: origin, toolUseID: id)
+            #expect(result.isError)
+        }
+        let written = await h.executor.execute(name: "write_brief", args: validArgs(dataRoot: dataRoot),
+            origin: origin, toolUseID: "written")
+        #expect(!written.isError)
+        for id in ["rejected-3", "rejected-4"] {
+            let result = await h.executor.execute(name: "write_brief", args: invalid, origin: origin, toolUseID: id)
+            #expect(result.isError)
+            #expect(result.turnDisposition == .continueTurn)
+        }
+        #expect(service.currentPipelineRepairFailure == nil)
+
+        let records = service.messages.flatMap(\.hostStateRecords)
+        let persisted = try #require(records.first { $0.state == .persisted })
+        #expect(persisted.byteComparison == .created)
+        #expect(records.filter { $0.state == .writeRejected }.allSatisfy {
+            $0.byteComparison == .unchanged && $0.action == .agentCorrection
+        })
+        let states = AgentTranscriptProjection.turns(messages: service.messages, isStreaming: false)
+            .flatMap(\.items)
+            .compactMap { item -> AgentHostState? in
+                guard case .hostState(let state) = item else { return nil }
+                return state
+            }
+        #expect(states.map(\.record.state).contains(.persisted))
+        #expect(!states.contains { $0.record.state == .writeOutcomeUnavailable })
+        #expect((service.currentWorkTime?.failedAttempts ?? 0) == 4)
+    }
+
     @Test("the first shot list write has a host snapshot instead of an unverifiable outcome")
     func firstShotlistSnapshotIsAbsentNotUnknown() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

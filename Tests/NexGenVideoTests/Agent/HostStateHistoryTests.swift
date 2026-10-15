@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NexGenEngine
 @testable import NexGenVideo
 
 @MainActor
@@ -133,6 +134,83 @@ struct HostStateHistoryTests {
             == PipelineRepairAttempts.scope(projectRoot: "/p", phase: "storyboard", tool: "write_phase_extension"))
         #expect(PipelineRepairAttempts.scope(projectRoot: "/p", phase: "storyboard", tool: "write_storyboard")
             != PipelineRepairAttempts.scope(projectRoot: "/p", phase: "bible", tool: "write_storyboard"))
+    }
+
+    @Test("line changes against the prior approval use host-verified texts only")
+    func priorLineChanges() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("prior-diff-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("storyboard"), withIntermediateDirectories: true)
+        let old = "scene: 1\nlocation: street\nprop: lamp\n"
+        let new = "scene: 1\nlocation: rooftop\nprop: lamp\n"
+        try Data(new.utf8).write(to: root.appendingPathComponent("storyboard/current.yaml"))
+        let newSHA = FileDigest.sha256(of: Data(new.utf8))
+        let fingerprint = GateArtifactFingerprint(path: "storyboard/current.yaml", sha256: newSHA, lineageSHA256: nil)
+        let prior = GatePriorApproval(sha256: FileDigest.sha256(of: Data(old.utf8)), revisionReason: nil, text: old)
+        let changes = try #require(GateApproval.priorChanges(prior: prior, fingerprint: fingerprint, dataRoot: root))
+        #expect(changes.lines == [
+            .init(kind: .removed, number: 2, text: "location: street"),
+            .init(kind: .inserted, number: 2, text: "location: rooftop"),
+        ])
+        #expect(!changes.isTruncated)
+        let tampered = GateArtifactFingerprint(path: "storyboard/current.yaml",
+            sha256: String(repeating: "c", count: 64), lineageSHA256: nil)
+        #expect(GateApproval.priorChanges(prior: prior, fingerprint: tampered, dataRoot: root) == nil)
+        let withoutText = GatePriorApproval(sha256: prior.sha256, revisionReason: nil)
+        #expect(GateApproval.priorChanges(prior: withoutText, fingerprint: fingerprint, dataRoot: root) == nil)
+        #expect(ArtifactLineDiff.verifiedText(path: "../outside.yaml", sha256: newSHA, dataRoot: root) == nil)
+    }
+
+    @Test("approved records keep their verified text through persistence")
+    func approvedTextRoundTrips() throws {
+        let approved = AgentHostStateRecord(state: .approved, phase: "storyboard", toolName: "approve_gate",
+            action: .none, artifactPath: "storyboard/current.yaml", byteComparison: nil, previousSHA256: nil,
+            currentSHA256: String(repeating: "a", count: 64), approvedText: "scene: 1\n")
+        let decoded = try JSONDecoder().decode(AgentHostStateRecord.self, from: JSONEncoder().encode(approved))
+        #expect(decoded == approved)
+        let prior = GateApproval.priorApproval(phase: "storyboard", in: [decoded])
+        #expect(prior?.text == "scene: 1\n")
+        let legacy = try JSONDecoder().decode(AgentHostStateRecord.self, from: Data(
+            #"{"state":"approved","phase":"bible","toolName":"approve_gate","action":"none"}"#.utf8))
+        #expect(legacy.approvedText == nil && legacy.resetPhases == nil && legacy.note == nil)
+    }
+
+    @Test("work time accumulates per category and closes intervals once")
+    func workTimeIntervals() {
+        var time = AgentWorkTime()
+        time.add(120, to: .turn)
+        time.add(30, to: .tool)
+        time.add(600, to: .provider)
+        time.add(-5, to: .waiting)
+        #expect(time.agentSeconds == 90)
+        #expect(time.providerSeconds == 600)
+        #expect(time.waitingSeconds == 0)
+        var intervals = AgentWorkTimeIntervals()
+        let session = UUID()
+        let start = Date(timeIntervalSince1970: 1_000)
+        intervals.begin("batch-wait:a", sessionID: session, category: .waiting, at: start)
+        intervals.begin("batch-wait:a", sessionID: session, category: .waiting, at: start.addingTimeInterval(50))
+        intervals.rekey("batch-wait:a", to: "batch-wait:b")
+        #expect(intervals.end("batch-wait:a") == nil)
+        let closed = intervals.end("batch-wait:b", at: start.addingTimeInterval(45))
+        #expect(closed?.sessionID == session)
+        #expect(closed?.seconds == 45)
+        #expect(intervals.end("batch-wait:b") == nil)
+        intervals.begin("external", sessionID: nil, category: .waiting)
+        #expect(intervals.end("external") == nil)
+    }
+
+    @Test("tool time and failed attempts land on the originating chat")
+    func toolTimeRecordsPerChat() throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let session = try #require(service.currentSessionId)
+        service.recordToolTime(4, failed: false, origin: .inAppChat(sessionID: session))
+        service.recordToolTime(2, failed: true, origin: .inAppChat(sessionID: session))
+        service.recordToolTime(9, failed: true, origin: .externalMCP(sessionID: UUID()))
+        #expect(service.currentWorkTime?.toolSeconds == 6)
+        #expect(service.currentWorkTime?.failedAttempts == 1)
     }
 
     private func record(

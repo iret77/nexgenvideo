@@ -12,6 +12,7 @@ struct GateApprovalCard: View {
     @Environment(EditorViewModel.self) private var editor
     @State private var review = GateReviewModel()
     @State private var showsDiagnostics = false
+    @State private var showsChanges = false
 
     private var reviewRoute: PipelineSurfaceRouting.Route? {
         PipelineSurfaceRouting.route(for: approval.phase, contract: editor.uiContract,
@@ -106,6 +107,29 @@ struct GateApprovalCard: View {
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let changes = approval.priorChanges, !changes.lines.isEmpty {
+                    DisclosureGroup(isExpanded: $showsChanges) {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                            ForEach(Array(changes.lines.enumerated()), id: \.offset) { _, line in
+                                Text("\(line.kind == .removed ? "−" : "+") \(line.number)  \(line.text)")
+                                    .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+                                    .foregroundStyle(line.kind == .removed
+                                        ? AppTheme.Status.errorColor : AppTheme.Status.successColor)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+                            if changes.isTruncated {
+                                Text("Showing \(changes.lines.count) of \(changes.totalChangedLines) changed lines.")
+                                    .interfaceFont(size: AppTheme.Typography.metadata)
+                                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            }
+                        }
+                    } label: {
+                        Text("Show changes since your approval (\(changes.totalChangedLines) lines)")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
                 }
             }
             Text(approval.isRewind ? (review.isReady ? "Confirm only if you want to revise this approved work." : "Checking whether a revision can start…")

@@ -102,6 +102,14 @@ private struct AgentHostStateView: View {
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
         )
+        .background {
+            if WorkspaceUIAcceptance.isRequested {
+                AppRelaunchClickProbe(identifier: "agent.hostState.\(state.record.id.uuidString)",
+                    acceptanceState: showsReviewAction,
+                    acceptanceText: "\(title)\n\(isCurrent ? detail : historicalDetail)")
+                    .allowsHitTesting(false)
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(title). \(isCurrent ? detail : historicalDetail)")
     }
@@ -173,7 +181,9 @@ private struct AgentHostStateView: View {
             case .retryAfterHostRecovery:
                 String(localized: "The new draft was not saved. Wait for the current project operation to finish.")
             default:
-                String(localized: "The new draft was not saved. The stored artifact is unchanged.")
+                state.record.previousSHA256 == nil
+                    ? String(localized: "The draft was not saved. No earlier version exists yet.")
+                    : String(localized: "The new draft was not saved. The stored artifact is unchanged.")
             }
         case .writeOutcomeUnavailable:
             switch state.record.action {

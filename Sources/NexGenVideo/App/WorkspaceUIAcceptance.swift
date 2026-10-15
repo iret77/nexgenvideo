@@ -45,6 +45,7 @@ enum WorkspaceUIAcceptance {
                 case "analysis": await captureAnalysis(evidenceURL: evidenceURL, scale: scale)
                 case "provenance": await captureAssetProvenance(evidenceURL: evidenceURL, scale: scale)
                 case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
+                case "hoststates": await captureHostStateHistory(evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -2359,5 +2360,78 @@ enum WorkspaceUIAcceptance {
             FileHandle.standardError.write(Data("WORKSPACE_UI_ACCEPTANCE_FAIL \(reason)\n".utf8))
         }
         exit(2)
+    }
+}
+
+extension WorkspaceUIAcceptance {
+    /// Owner-visible Tasks history after resume, approval, revision and a rejected first write (#532).
+    fileprivate static func captureHostStateHistory(evidenceURL: URL, scale: Double) async {
+        func record(_ state: AgentHostStateRecord.State, _ phase: String, action: AgentHostStateRecord.Action = .none,
+                    resetPhases: [String]? = nil, note: String? = nil, artifactPath: String? = nil) -> AgentHostStateRecord {
+            AgentHostStateRecord(state: state, phase: phase, toolName: "write_\(phase)", action: action,
+                artifactPath: artifactPath, byteComparison: nil, previousSHA256: nil, currentSHA256: nil,
+                resetPhases: resetPhases, note: note)
+        }
+        let checkedBible = record(.checked, "bible", action: .reviewForApproval)
+        let approvedBible = record(.approved, "bible")
+        let approvedTreatment = record(.approved, "treatment")
+        let rewound = record(.rewound, "treatment", resetPhases: ["treatment", "storyboard", "bible"],
+            note: "Four locations instead of six")
+        let rejectedShotlist = record(.writeRejected, "shotlist", action: .agentCorrection,
+            artifactPath: PipelineLayout.shotlistVersionFile(1))
+        let turns: [[AgentHostStateRecord]] = [[checkedBible], [approvedBible, approvedTreatment], [rewound], [rejectedShotlist]]
+        let messages = turns.enumerated().flatMap { index, records in
+            [
+                AgentMessage(role: .user, blocks: [.text("Continue \(index).")], hidden: true),
+                AgentMessage(role: .assistant, blocks: [], hostStateRecords: records),
+            ]
+        }
+        let projected = AgentTranscriptProjection.turns(messages: messages, isStreaming: false)
+        let editor = EditorViewModel()
+        let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            ForEach(projected) { turn in
+                AgentTranscriptTurnView(turn: turn, toolResults: [:])
+            }
+        }
+        .padding(AppTheme.Spacing.xl)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .environment(editor)
+        .interfaceStyle())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 900),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        let all = [checkedBible, approvedBible, approvedTreatment, rewound, rejectedShotlist]
+        func probe(_ record: AgentHostStateRecord) -> AppRelaunchClickProbeView? {
+            findProbe(in: host, identifier: "agent.hostState.\(record.id.uuidString)") as? AppRelaunchClickProbeView
+        }
+        let ready = await waitUntil(timeout: .seconds(5)) {
+            host.layoutSubtreeIfNeeded()
+            return all.allSatisfy { probe($0)?.acceptanceText != nil }
+        }
+        let name = "scale-\(scaleLabel(scale))-host-state-history.png"
+        let captured = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+        guard ready, captured else { fail("host state history did not render", scale: scale) }
+        func text(_ record: AgentHostStateRecord) -> String { probe(record)?.acceptanceText ?? "" }
+        func reviewOffered(_ record: AgentHostStateRecord) -> Bool { probe(record)?.acceptanceState == true }
+        let shotList = PhaseDisplay.label("shotlist")
+        emit("host-state-history", scale: scale, fields: [
+            "supersededRequestHasNoAction": text(checkedBible).contains("Superseded by a later update.")
+                && !reviewOffered(checkedBible),
+            "resetApprovalsMarked": [approvedBible, approvedTreatment].allSatisfy {
+                text($0).contains("Reset by a later revision.") && !reviewOffered($0)
+            },
+            "revisionNamesResetApprovals": text(rewound).contains("Revising from \(PhaseDisplay.label("treatment"))")
+                && text(rewound).contains("Reset approvals: \(["treatment", "storyboard", "bible"].map(PhaseDisplay.label).joined(separator: ", "))"),
+            "rejectedFirstWriteNotUnverified": text(rejectedShotlist).hasPrefix("\(shotList) not saved")
+                && text(rejectedShotlist).contains("No earlier version exists yet.")
+                && !text(rejectedShotlist).contains("unverified") && !reviewOffered(rejectedShotlist),
+            "screenshots": [name],
+        ])
     }
 }
