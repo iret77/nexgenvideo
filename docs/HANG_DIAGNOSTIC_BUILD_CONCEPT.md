@@ -238,7 +238,8 @@ Builds/Tests/Bundles ausschließlich GitHub Actions (`xcode-27`); Laufzeitprüfu
 macOS-26-Runnern. Bestehende Signierung/Notarisierung wiederverwenden. Kein Build auf dem
 MacBook. Ein echter, durch CI nicht erfüllbarer Berechtigungsnachweis wäre eine konkret
 zu benennende Abnahmehürde, keine stillschweigende Verlagerung der Tests auf den Nutzer.
-Merge und Release erst nach ausdrücklichem „build now“; dieses Konzept startet nichts.
+Merge, sobald die PR-Checks grün sind; Release nur auf Anweisung des Owners. Dieses Konzept
+startet nichts.
 
 ## Quellen
 
