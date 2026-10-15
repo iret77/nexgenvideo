@@ -64,8 +64,8 @@ release or a wasted CI cycle.
 - **Never build locally.** GitHub Actions is the only verification surface. Use `xcode-27` for
   builds, unit tests, and bundles; use a configured current-macOS runtime runner only for tests that
   execute APIs unavailable on the `xcode-27` runner's older booted OS.
-- **Never merge to `main` or dispatch `release.yml` without the owner's explicit, in-the-moment
-  "build now".** Stage the work, hold, ask. Concept approval is not build approval.
+- **Merge to `main` as soon as the PR's checks are green; no build is needed for that.** Dispatch
+  `release.yml` only on the owner's explicit instruction.
 - **One batch, one release.** Collect fixes and release once. Never propose an intermediate or
   partial release, and never split scope that was agreed as a single batch.
 - `gh` resolves to the upstream `palmier-io/palmier-pro` remote. **Always pass
