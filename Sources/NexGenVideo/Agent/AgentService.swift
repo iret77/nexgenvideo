@@ -358,7 +358,7 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
-            trackDecisionWait("dialog", isOpen: pendingDialog != nil)
+            trackDecisionWait("dialog", sessionID: pendingDialog.flatMap { dialogOrigins[$0.id]?.chatSessionID })
             clearSavedDecision(id: oldValue?.id)
             dialogChoiceSelections = [:]
             dialogDraft = AgentDialogDraft()
@@ -437,7 +437,21 @@ final class AgentService {
         guard nativeGateMutationID == nil, !isComposerBlocked else { return nil }
         let id = UUID()
         nativeGateMutationID = id
+        recordApprovalEvidence(GateApprovalEvidence(kind: .untracked, phases: nil, recordedAt: Date()))
         return id
+    }
+
+    private static func evidence(for approval: GateApproval) -> GateApprovalEvidence {
+        if let phases = approval.resetPhases {
+            return GateApprovalEvidence(kind: .rewound, phases: phases, reason: approval.notes, recordedAt: Date())
+        }
+        guard let fingerprint = approval.artifactFingerprint else {
+            return GateApprovalEvidence(kind: .untracked, phases: [approval.phase], recordedAt: Date())
+        }
+        return GateApprovalEvidence(kind: .approved, phases: [approval.phase], sha256: fingerprint.sha256,
+            text: ArtifactLineDiff.verifiedText(path: fingerprint.path, sha256: fingerprint.sha256,
+                dataRoot: approval.dataRoot),
+            recordedAt: Date())
     }
 
     func endNativeGateMutation(_ id: UUID) {
@@ -1578,7 +1592,7 @@ final class AgentService {
     private(set) var pendingSpendApproval: SpendApproval? {
         didSet {
             captureDiagnosticTranscript()
-            trackDecisionWait("spend", isOpen: pendingSpendApproval != nil)
+            trackDecisionWait("spend", sessionID: pendingSpendApproval == nil ? nil : pendingSpendOperation?.origin.chatSessionID)
         }
     }
     private(set) var spendApprovalError: String?
@@ -1638,6 +1652,7 @@ final class AgentService {
         do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
         catch {
             generationBatchOrigins.removeValue(forKey: batch.id)
+            _ = workIntervals.end("batch-wait:\(batch.id)")
             throw error
         }
 
@@ -2257,9 +2272,10 @@ final class AgentService {
         addWorkTime(seconds, to: .tool, sessionID: origin.chatSessionID, failedAttempt: failed)
     }
 
-    private func trackDecisionWait(_ key: String, isOpen: Bool) {
+    /// Closes the previous wait for `key`; a nil session (closed or external request) starts none.
+    private func trackDecisionWait(_ key: String, sessionID: UUID?) {
         closeWorkInterval(key)
-        if isOpen { workIntervals.begin(key, sessionID: currentSessionId, category: .waiting) }
+        workIntervals.begin(key, sessionID: sessionID, category: .waiting)
     }
 
     private func closeWorkInterval(_ key: String) {
@@ -2282,10 +2298,19 @@ final class AgentService {
 
     /// One agent revision request per user direction; a second one without new direction is a loop.
     func admitRevisionRequest(origin: ToolCallOrigin) -> Bool {
-        guard let key = Self.revisionRequestKey(origin) else { return true }
-        if revisionRequestSerials[key] == userDirectionSerial { return false }
-        revisionRequestSerials[key] = userDirectionSerial
+        guard revisionRequestIsAdmissible(origin: origin) else { return false }
+        noteRevisionRequest(origin: origin)
         return true
+    }
+
+    func revisionRequestIsAdmissible(origin: ToolCallOrigin) -> Bool {
+        guard let key = Self.revisionRequestKey(origin) else { return true }
+        return revisionRequestSerials[key] != userDirectionSerial
+    }
+
+    func noteRevisionRequest(origin: ToolCallOrigin) {
+        guard let key = Self.revisionRequestKey(origin) else { return }
+        revisionRequestSerials[key] = userDirectionSerial
     }
 
     private static func revisionRequestKey(_ origin: ToolCallOrigin) -> String? {
@@ -2327,7 +2352,7 @@ final class AgentService {
     private(set) var pendingGateApproval: GateApproval? {
         didSet {
             guard oldValue?.id != pendingGateApproval?.id else { return }
-            trackDecisionWait("gate", isOpen: pendingGateApproval != nil)
+            trackDecisionWait("gate", sessionID: pendingGateApproval?.sessionId)
         }
     }
     private(set) var gateApprovalIsWriting = false
@@ -2418,7 +2443,7 @@ final class AgentService {
         var scoped = approval.scoped(to: origin.chatSessionID)
         scoped.priorApproval = GateApproval.priorApproval(
             phase: approval.phase,
-            in: chronologicalHostStateRecords()
+            in: sessions.flatMap { $0.approvalEvidence ?? [] }
         )
         scoped.priorChanges = GateApproval.priorChanges(
             prior: scoped.priorApproval,
@@ -2450,14 +2475,13 @@ final class AgentService {
         return GateApprovalRequest(approval: scoped, isNew: true, matchesRequestedApproval: true)
     }
 
-    private func chronologicalHostStateRecords() -> [AgentHostStateRecord] {
-        let others = sessions
-            .filter { $0.id != currentSessionId }
-            .sorted { $0.updatedAt < $1.updatedAt }
-            .flatMap(\.messages)
-        return (others + messages).flatMap { message in
-            message.hostStateRecords + (message.userPresentation?.hostStateRecord.map { [$0] } ?? [])
-        }
+    /// Without any chat there is no earlier evidence a later comparison could misread.
+    func recordApprovalEvidence(_ evidence: GateApprovalEvidence, sessionID: UUID? = nil) {
+        guard let index = sessionID.flatMap({ id in sessions.firstIndex { $0.id == id } })
+            ?? currentSessionId.flatMap({ id in sessions.firstIndex { $0.id == id } })
+            ?? sessions.indices.first else { return }
+        sessions[index].approvalEvidence = (sessions[index].approvalEvidence ?? []) + [evidence]
+        onSessionsChanged?()
     }
 
     /// Applies the decision locally and resumes its originating in-app turn when possible.
@@ -2513,6 +2537,7 @@ final class AgentService {
                 pendingGateApproval = nil
                 pendingGateOrigin = nil
                 gateApprovalError = nil
+                recordApprovalEvidence(Self.evidence(for: approval), sessionID: approval.sessionId)
                 if approval.sessionId != nil {
                     recordHostState(
                         AgentHostStateRecord(
@@ -2527,10 +2552,7 @@ final class AgentService {
                             previousSHA256: nil,
                             currentSHA256: approval.artifactFingerprint?.sha256,
                             resetPhases: approval.resetPhases,
-                            note: approval.isRewind ? approval.notes : nil,
-                            approvedText: approval.artifactFingerprint.flatMap {
-                                ArtifactLineDiff.verifiedText(path: $0.path, sha256: $0.sha256, dataRoot: approval.dataRoot)
-                            }
+                            note: approval.isRewind ? approval.notes : nil
                         ),
                         origin: origin,
                         toolUseID: approval.sourceToolUseID,
@@ -3016,11 +3038,16 @@ final class AgentService {
            let idx = sessions.firstIndex(where: { $0.id == id }),
            sessions[idx].messages.isEmpty,
            composerStateIsEmpty(for: id) {
+            let evidence = sessions[idx].approvalEvidence
             sessions.remove(at: idx)
             composerStates.removeValue(forKey: id)
+            var session = ChatSession()
+            session.approvalEvidence = evidence
+            sessions.insert(session, at: 0)
+        } else {
+            sessions.insert(ChatSession(), at: 0)
         }
-        let session = ChatSession()
-        sessions.insert(session, at: 0)
+        let session = sessions[0]
         currentSessionId = session.id
         messages = []
         isStreaming = false          // a cancelled first-send encode never had a runtime to stop
@@ -3155,7 +3182,11 @@ final class AgentService {
             pendingGateFollowUp = nil
             resumeToolCalls(from: followUp.origin)
         }
+        let evidence = sessions.first { $0.id == id }?.approvalEvidence ?? []
         sessions.removeAll { $0.id == id }
+        if !evidence.isEmpty, !sessions.isEmpty {
+            sessions[0].approvalEvidence = (sessions[0].approvalEvidence ?? []) + evidence
+        }
         hostTurnReferences = hostTurnReferences.filter {
             $0.value.chatSessionID != id
         }

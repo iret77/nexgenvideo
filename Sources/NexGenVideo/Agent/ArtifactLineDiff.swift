@@ -27,15 +27,29 @@ enum ArtifactLineDiff {
     static func changes(old: String, new: String) -> Result {
         let oldLines = old.components(separatedBy: "\n")
         let newLines = new.components(separatedBy: "\n")
-        let lines = newLines.difference(from: oldLines).map { change -> Line in
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in newLines.difference(from: oldLines) {
             switch change {
-            case .remove(let offset, let element, _):
-                Line(kind: .removed, number: offset + 1, text: element)
-            case .insert(let offset, let element, _):
-                Line(kind: .inserted, number: offset + 1, text: element)
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
             }
         }
-        .sorted { ($0.number, $0.kind == .removed ? 0 : 1) < ($1.number, $1.kind == .removed ? 0 : 1) }
+        var lines: [Line] = []
+        var oldIndex = 0
+        var newIndex = 0
+        while oldIndex < oldLines.count || newIndex < newLines.count {
+            if oldIndex < oldLines.count, removed.contains(oldIndex) {
+                lines.append(Line(kind: .removed, number: oldIndex + 1, text: oldLines[oldIndex]))
+                oldIndex += 1
+            } else if newIndex < newLines.count, inserted.contains(newIndex) {
+                lines.append(Line(kind: .inserted, number: newIndex + 1, text: newLines[newIndex]))
+                newIndex += 1
+            } else {
+                oldIndex += 1
+                newIndex += 1
+            }
+        }
         return Result(lines: Array(lines.prefix(maximumLines)), totalChangedLines: lines.count)
     }
 

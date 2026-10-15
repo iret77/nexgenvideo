@@ -74,11 +74,13 @@ struct HostStateHistoryTests {
     func priorApprovalEvidence() {
         let first = String(repeating: "a", count: 64)
         let second = String(repeating: "b", count: 64)
-        let records = [
-            record(.approved, phase: "storyboard", currentSHA256: first),
-            record(.rewound, phase: "treatment", resetPhases: ["treatment", "storyboard"], note: "Fewer locations"),
+        let start = Date(timeIntervalSince1970: 1_000)
+        let evidence = [
+            GateApprovalEvidence(kind: .rewound, phases: ["treatment", "storyboard"], reason: "Fewer locations",
+                recordedAt: start.addingTimeInterval(10)),
+            GateApprovalEvidence(kind: .approved, phases: ["storyboard"], sha256: first, recordedAt: start),
         ]
-        let prior = GateApproval.priorApproval(phase: "storyboard", in: records)
+        let prior = GateApproval.priorApproval(phase: "storyboard", in: evidence)
         #expect(prior == GatePriorApproval(sha256: first, revisionReason: "Fewer locations"))
         var changed = GateApproval(phase: "storyboard",
             artifactFingerprint: .init(path: "storyboard/current.yaml", sha256: second, lineageSHA256: nil))
@@ -89,7 +91,55 @@ struct HostStateHistoryTests {
         identical.priorApproval = prior
         #expect(identical.priorComparison == .identical)
         #expect(identical.scoped(to: UUID()).priorApproval == prior)
-        #expect(GateApproval.priorApproval(phase: "bible", in: records) == nil)
+        #expect(GateApproval.priorApproval(phase: "bible", in: evidence) == nil)
+    }
+
+    @Test("an untracked native gate change voids every older comparison")
+    func untrackedGateChangeVoidsPriorApproval() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let approved = GateApprovalEvidence(kind: .approved, phases: ["storyboard"],
+            sha256: String(repeating: "a", count: 64), recordedAt: start)
+        let untracked = GateApprovalEvidence(kind: .untracked, phases: nil, recordedAt: start.addingTimeInterval(5))
+        #expect(GateApproval.priorApproval(phase: "storyboard", in: [untracked, approved]) == nil)
+        let newer = GateApprovalEvidence(kind: .approved, phases: ["storyboard"],
+            sha256: String(repeating: "b", count: 64), recordedAt: start.addingTimeInterval(9))
+        #expect(GateApproval.priorApproval(phase: "storyboard", in: [approved, untracked, newer])?.sha256 == newer.sha256)
+    }
+
+    @Test("approval evidence survives persistence, an empty new chat and chat deletion")
+    func approvalEvidencePersists() throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let evidence = GateApprovalEvidence(kind: .approved, phases: ["bible"], sha256: String(repeating: "c", count: 64),
+            text: "figure: mouse\n", recordedAt: Date(timeIntervalSince1970: 2_000))
+        service.recordApprovalEvidence(evidence)
+        service.newChat()
+        #expect(service.sessions.flatMap { $0.approvalEvidence ?? [] } == [evidence])
+        let holder = try #require(service.sessions.first { $0.approvalEvidence?.isEmpty == false })
+        #expect(holder.hasPersistedContent)
+        let decoded = try JSONDecoder().decode(ChatSession.self, from: JSONEncoder().encode(holder))
+        #expect(decoded.approvalEvidence == [evidence])
+        service.messages = [AgentMessage(role: .user, blocks: [.text("Keep me.")])]
+        service.newChat()
+        service.deleteSession(holder.id)
+        #expect(service.sessions.flatMap { $0.approvalEvidence ?? [] } == [evidence])
+        let legacy = try JSONDecoder().decode(AgentHostStateRecord.self, from: Data(
+            #"{"state":"approved","phase":"bible","toolName":"approve_gate","action":"none"}"#.utf8))
+        #expect(legacy.resetPhases == nil && legacy.note == nil)
+    }
+
+    @Test("line changes keep hunks in document order")
+    func lineChangesKeepHunkOrder() {
+        let changes = ArtifactLineDiff.changes(old: "a\nb\nc\nd\ne", new: "a\nB\nc\nd\nE\nf")
+        #expect(changes.lines == [
+            .init(kind: .removed, number: 2, text: "b"),
+            .init(kind: .inserted, number: 2, text: "B"),
+            .init(kind: .removed, number: 5, text: "e"),
+            .init(kind: .inserted, number: 5, text: "E"),
+            .init(kind: .inserted, number: 6, text: "f"),
+        ])
+        #expect(changes.totalChangedLines == 5)
     }
 
     @Test("a second revision request without new user direction is refused")
@@ -159,20 +209,6 @@ struct HostStateHistoryTests {
         let withoutText = GatePriorApproval(sha256: prior.sha256, revisionReason: nil)
         #expect(GateApproval.priorChanges(prior: withoutText, fingerprint: fingerprint, dataRoot: root) == nil)
         #expect(ArtifactLineDiff.verifiedText(path: "../outside.yaml", sha256: newSHA, dataRoot: root) == nil)
-    }
-
-    @Test("approved records keep their verified text through persistence")
-    func approvedTextRoundTrips() throws {
-        let approved = AgentHostStateRecord(state: .approved, phase: "storyboard", toolName: "approve_gate",
-            action: .none, artifactPath: "storyboard/current.yaml", byteComparison: nil, previousSHA256: nil,
-            currentSHA256: String(repeating: "a", count: 64), approvedText: "scene: 1\n")
-        let decoded = try JSONDecoder().decode(AgentHostStateRecord.self, from: JSONEncoder().encode(approved))
-        #expect(decoded == approved)
-        let prior = GateApproval.priorApproval(phase: "storyboard", in: [decoded])
-        #expect(prior?.text == "scene: 1\n")
-        let legacy = try JSONDecoder().decode(AgentHostStateRecord.self, from: Data(
-            #"{"state":"approved","phase":"bible","toolName":"approve_gate","action":"none"}"#.utf8))
-        #expect(legacy.approvedText == nil && legacy.resetPhases == nil && legacy.note == nil)
     }
 
     @Test("work time accumulates per category and closes intervals once")

@@ -136,8 +136,6 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
     let currentSHA256: String?
     let resetPhases: [String]?
     let note: String?
-    /// Host-verified text of an approved artifact, kept so a later re-approval can show line changes.
-    let approvedText: String?
 
     init(
         id: UUID = UUID(),
@@ -151,8 +149,7 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         previousSHA256: String?,
         currentSHA256: String?,
         resetPhases: [String]? = nil,
-        note: String? = nil,
-        approvedText: String? = nil
+        note: String? = nil
     ) {
         self.id = id
         self.toolUseID = toolUseID
@@ -166,7 +163,6 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         self.currentSHA256 = currentSHA256
         self.resetPhases = resetPhases
         self.note = note
-        self.approvedText = approvedText
     }
 
     func associated(with toolUseID: String?, retaining id: UUID? = nil) -> Self {
@@ -182,14 +178,13 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
             previousSHA256: previousSHA256,
             currentSHA256: currentSHA256,
             resetPhases: resetPhases,
-            note: note,
-            approvedText: approvedText
+            note: note
         )
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, toolUseID, state, phase, toolName, action, artifactPath
-        case byteComparison, previousSHA256, currentSHA256, resetPhases, note, approvedText
+        case byteComparison, previousSHA256, currentSHA256, resetPhases, note
     }
 
     init(from decoder: Decoder) throws {
@@ -206,7 +201,6 @@ struct AgentHostStateRecord: Codable, Equatable, Sendable {
         currentSHA256 = try container.decodeIfPresent(String.self, forKey: .currentSHA256)
         resetPhases = try container.decodeIfPresent([String].self, forKey: .resetPhases)
         note = try container.decodeIfPresent(String.self, forKey: .note)
-        approvedText = try container.decodeIfPresent(String.self, forKey: .approvedText)
     }
 }
 

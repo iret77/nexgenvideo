@@ -1412,8 +1412,8 @@ extension ToolExecutor {
         guard !affected.isEmpty else {
             return try jsonResult(["target": target, "reset_phases": [], "message": "No approved gates to reset. Continue the current phase without rewriting approved inputs."] as [String: Any])
         }
-        if editor.agentService.pendingGateApproval == nil,
-           !editor.agentService.admitRevisionRequest(origin: origin) {
+        let opensRevision = editor.agentService.pendingGateApproval == nil
+        if opensRevision, !editor.agentService.revisionRequestIsAdmissible(origin: origin) {
             let detail = "rewind \(target) requested again without new user direction; affected approvals: "
                 + affected.joined(separator: ", ")
             editor.agentService.pausePipelineRepair(
@@ -1433,6 +1433,7 @@ extension ToolExecutor {
             sourceToolName: ToolName.rewind.rawValue, sourceToolUseID: toolUseID,
             sourceHostStateID: hostStateID, sourceHostTurnReference: hostTurnReference
         ), origin: origin)
+        if opensRevision, request.isNew { editor.agentService.noteRevisionRequest(origin: origin) }
         return try gateApprovalPendingResult(request, requestedPhase: target)
     }
 

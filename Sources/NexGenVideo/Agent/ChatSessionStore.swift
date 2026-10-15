@@ -66,8 +66,11 @@ struct ChatSession: Codable, Identifiable {
     var draft: ChatSessionDraft?
     var decision: ChatSessionDecision?
     var workTime: AgentWorkTime?
+    var approvalEvidence: [GateApprovalEvidence]?
 
-    var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false || decision != nil }
+    var hasPersistedContent: Bool {
+        !messages.isEmpty || draft?.isEmpty == false || decision != nil || approvalEvidence?.isEmpty == false
+    }
 
     init(id: UUID = UUID(), title: String = "New chat", messages: [AgentMessage] = [], isOpen: Bool = true) {
         self.id = id
@@ -79,10 +82,11 @@ struct ChatSession: Codable, Identifiable {
         self.draft = nil
         self.decision = nil
         self.workTime = nil
+        self.approvalEvidence = nil
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision, workTime
+        case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision, workTime, approvalEvidence
     }
 
     init(from decoder: Decoder) throws {
@@ -96,6 +100,7 @@ struct ChatSession: Codable, Identifiable {
         self.draft = try c.decodeIfPresent(ChatSessionDraft.self, forKey: .draft)
         self.decision = try c.decodeIfPresent(ChatSessionDecision.self, forKey: .decision)
         self.workTime = try c.decodeIfPresent(AgentWorkTime.self, forKey: .workTime)
+        self.approvalEvidence = try c.decodeIfPresent([GateApprovalEvidence].self, forKey: .approvalEvidence)
     }
 }
 

@@ -22,7 +22,9 @@
             "Generation batch review shows a numbered overview grouped by characters, locations and props, with reference thumbnails, per-request costs and details on demand. Remove, Decline and Ask agent to revise respond while pricing is retried. The review takes the height it needs to show a complete request, and narrow panels fold Ask agent to revise and Retry pricing into a More menu.",
             "Earlier approval requests and status cards in Tasks are marked superseded or reset by a later revision and no longer offer review or approval actions.",
             "Not yet and allowed revisions appear in Tasks with the reset approvals and the stated reason.",
-            "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison.",
+            "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison, and list the changed lines. After an approval made outside Tasks, no comparison is claimed until the next recorded approval.",
+            "Tasks shows the time spent in each chat on agent work, tool calls, provider generation and waiting for your decisions, plus failed attempts.",
+            "Tasks status reports a paused repair or revision and an outdated approval from the same project state as Pipeline.",
             "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write. A rejected write of an existing artifact offers a direct review of the stored version."
           ]
         }

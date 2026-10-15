@@ -19,6 +19,26 @@ struct GateArtifactFingerprint: Equatable, Sendable {
     }
 }
 
+/// Host-recorded approval history. `untracked` marks a gate change the host could not fingerprint,
+/// so no later comparison may claim to know the last approved version.
+struct GateApprovalEvidence: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case approved
+        case rewound
+        case untracked
+    }
+
+    let kind: Kind
+    /// Affected phases; nil means every phase.
+    let phases: [String]?
+    var sha256: String? = nil
+    var text: String? = nil
+    var reason: String? = nil
+    let recordedAt: Date
+
+    func affects(_ phase: String) -> Bool { phases?.contains(phase) ?? true }
+}
+
 /// The host-recorded approval of the same phase that preceded this request.
 struct GatePriorApproval: Equatable, Sendable {
     let sha256: String
@@ -147,17 +167,18 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     /// Latest host-recorded approval of `phase`, plus the reason of a later revision that reset it.
     static func priorApproval(
         phase: String,
-        in records: [AgentHostStateRecord]
+        in evidence: [GateApprovalEvidence]
     ) -> GatePriorApproval? {
         var revisionReason: String?
-        for record in records.reversed() {
-            if record.state == .rewound,
-               revisionReason == nil,
-               record.resetPhases?.contains(phase) == true {
-                revisionReason = record.note
-            }
-            if record.state == .approved, record.phase == phase, let sha256 = record.currentSHA256 {
-                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason, text: record.approvedText)
+        for entry in evidence.sorted(by: { $0.recordedAt < $1.recordedAt }).reversed() where entry.affects(phase) {
+            switch entry.kind {
+            case .untracked:
+                return nil
+            case .rewound:
+                if revisionReason == nil { revisionReason = entry.reason }
+            case .approved:
+                guard let sha256 = entry.sha256 else { return nil }
+                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason, text: entry.text)
             }
         }
         return nil
