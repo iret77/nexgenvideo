@@ -414,6 +414,8 @@ enum AppTheme {
         static let fontPickerMaxWidth: CGFloat = 160
         static let generationReferenceWidth: CGFloat = 72
         static let generationReferenceHeight: CGFloat = 41
+        static let generationBatchPurposeMinWidth: CGFloat = 120
+        static let generationBatchListMinHeight: CGFloat = 160
         static let textEditorMinHeight: CGFloat = 80
         static let dragPreviewWidth: CGFloat = 80
         static let dragPreviewHeight: CGFloat = 60

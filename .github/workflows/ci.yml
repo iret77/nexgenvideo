@@ -84,7 +84,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Render Agent UI specification
-        run: python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+        run: |
+          python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+          python3 scripts/render_generation_batch_review_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
       - name: Upload Agent UI render evidence
         uses: actions/upload-artifact@v4
         with:
@@ -351,11 +353,25 @@ jobs:
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
       - name: Verify helper recovery during active work
         run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
+      - name: Verify generation batch pointer and keyboard review on macOS 26
+        run: |
+          # Keyboard navigation (System Settings › Keyboard) lets Remove take focus, as in the owner test plan.
+          defaults write -g AppleKeyboardUIMode -int 2
+          mkdir -p evidence
+          status=0
+          NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
+            candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
+            > evidence/generation-batch-review.log 2>&1 || status=$?
+          cat evidence/generation-batch-review.log
+          test "$status" -eq 0
+          grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK' evidence/generation-batch-review.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: diagnostic-normal-startup
-          path: evidence/*.json
+          path: |
+            evidence/*.json
+            evidence/*.log
 
   merge_gate:
     name: Merge Gate

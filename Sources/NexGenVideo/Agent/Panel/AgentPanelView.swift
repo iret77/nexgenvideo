@@ -751,7 +751,8 @@ struct AgentPanelView: View {
         switch surfaceState.dockOwner {
         case .spendApproval:
             if editor.generationBatchCoordinator.pending != nil {
-                GenerationBatchCard(editor: editor)
+                // The decision is offered height before the task result so its list can show a complete request.
+                GenerationBatchCard(editor: editor).layoutPriority(1)
             } else if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
