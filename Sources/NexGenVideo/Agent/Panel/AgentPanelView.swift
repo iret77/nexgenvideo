@@ -88,6 +88,7 @@ struct AgentPanelView: View {
                 onOpenPipeline: editor.hasProductionPipeline ? { editor.revealCockpit(.pipeline) } : nil
             )
             activityProgress
+            workTimeSummary
             taskResult
             composerDock
             GenerationBatchProgressView(editor: editor)
@@ -183,19 +184,33 @@ struct AgentPanelView: View {
             hasTurnFailure: service.streamError != nil && !showsAuthenticationError,
             isCheckingBackend: service.isCheckingBackend,
             needsBackendRecovery: !service.isCheckingBackend
-                && (!service.canStream || showsAuthenticationError)
+                && (!service.canStream || showsAuthenticationError),
+            hasRepairPause: service.currentPipelineRepairFailure != nil,
+            hasOutdatedApproval: !outdatedApprovalPhases.isEmpty
         ))
     }
 
+    private var outdatedApprovalPhases: [String] {
+        (editor.projectState?.phases ?? [])
+            .filter { $0.approved && !$0.approvalCurrent }
+            .map { PhaseDisplay.label($0.phase) }
+    }
+
     private var liveStatus: AgentLiveStatus {
-        if let failure = service.currentPipelineRepairFailure {
+        switch surfaceState.statusOwner {
+        case .repairPaused:
+            guard let failure = service.currentPipelineRepairFailure else {
+                return AgentLiveStatus(state: .ready, title: "No task running")
+            }
             return failure.kind == .unrequestedRevision
                 ? AgentLiveStatus(state: .waiting, title: "Revision paused",
                     detail: "The agent asked to revise approved work again without new direction. Choose how to continue below.")
                 : AgentLiveStatus(state: .failed, title: "Planning needs repair",
                     detail: "Repeated attempts stopped. Review the recovery action below.")
-        }
-        switch surfaceState.statusOwner {
+        case .approvalOutdated:
+            return AgentLiveStatus(state: .waiting,
+                title: "Approval outdated: " + outdatedApprovalPhases.joined(separator: ", "),
+                detail: "An approved artifact no longer matches its approval. Check Pipeline for the next step.")
         case .spendRun:
             guard let run = service.currentSpendRun else {
                 return AgentLiveStatus(state: .working, title: "Generation in progress")
@@ -302,6 +317,31 @@ struct AgentPanelView: View {
         case (.repeatedAttempts, true): "Allow connected agent to retry"
         case (.repeatedAttempts, false): "Retry planning"
         }
+    }
+
+    @ViewBuilder private var workTimeSummary: some View {
+        if let time = service.currentWorkTime, !time.isEmpty {
+            DisclosureGroup("Time in this chat") {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text("Agent \(Self.clock(time.agentSeconds))")
+                    Text("Tools \(Self.clock(time.toolSeconds))")
+                    Text("Provider generation \(Self.clock(time.providerSeconds))")
+                    Text("Waiting for you \(Self.clock(time.waitingSeconds))")
+                    Text("Failed attempts \(time.failedAttempts)")
+                }
+                .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(AppTheme.Text.secondaryColor)
+            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.bottom, AppTheme.Spacing.sm)
+            .accessibilityLabel("Time in this chat")
+        }
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        AgentActivityTiming.clock(Int(seconds.rounded()))
     }
 
     @ViewBuilder private var activityProgress: some View {
@@ -857,10 +897,12 @@ struct AgentPanelView: View {
                 .id(dialog.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
+        case .repairRecovery:
+            pipelineRepairRecovery
         case .backendRecovery:
             backendRecoveryDock
         case .composer:
-            if service.currentPipelineRepairFailure != nil { pipelineRepairRecovery } else { footer }
+            footer
         }
     }
 

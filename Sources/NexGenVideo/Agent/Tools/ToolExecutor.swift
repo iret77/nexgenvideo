@@ -603,6 +603,7 @@ final class ToolExecutor {
         }
         feedbackState.record(result, for: tool)
         let elapsed = started.duration(to: .now).seconds
+        editor.agentService.recordToolTime(elapsed, failed: result.isError, origin: origin)
         if origin.chatSessionID == editor.agentService.currentSessionId {
             editor.agentService.recordActivity(ToolRunPresentation.label(for: tool.rawValue)
                 + (result.isError ? " · failed" : " · finished"))

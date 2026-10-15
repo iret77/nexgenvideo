@@ -270,6 +270,9 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return }
+            if oldValue, !isStreaming, let started = activityStartedAt {
+                addWorkTime(Date().timeIntervalSince(started), to: .turn, sessionID: activitySessionID)
+            }
             if oldValue, !isStreaming {
                 // A turn finished: flush its messages into the active chat and mark the document edited
                 // (`onSessionsChanged`) so ⌘S / the close-warning actually persists the transcript AND
@@ -355,6 +358,7 @@ final class AgentService {
         didSet {
             captureDiagnosticTranscript()
             guard oldValue?.id != pendingDialog?.id else { return }
+            trackDecisionWait("dialog", isOpen: pendingDialog != nil)
             clearSavedDecision(id: oldValue?.id)
             dialogChoiceSelections = [:]
             dialogDraft = AgentDialogDraft()
@@ -1572,10 +1576,20 @@ final class AgentService {
     /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
     /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
     private(set) var pendingSpendApproval: SpendApproval? {
-        didSet { captureDiagnosticTranscript() }
+        didSet {
+            captureDiagnosticTranscript()
+            trackDecisionWait("spend", isOpen: pendingSpendApproval != nil)
+        }
     }
     private(set) var spendApprovalError: String?
-    private(set) var runningSpendStatus: SpendRunStatus?
+    private(set) var runningSpendStatus: SpendRunStatus? {
+        didSet {
+            guard oldValue?.runToken != runningSpendStatus?.runToken else { return }
+            if let old = oldValue {
+                addWorkTime(Date().timeIntervalSince(old.startedAt), to: .provider, sessionID: old.chatSessionID)
+            }
+        }
+    }
 
     var spendApprovalIsRunning: Bool { runningSpendStatus != nil }
 
@@ -1619,6 +1633,7 @@ final class AgentService {
                 + "\(unpriced) of \(batch.payload.items.count) items have no cost estimate; the user can retry pricing "
                 + "or explicitly approve this exact batch without an estimate. Do not describe it as priced or as waiting only for approval."
         generationBatchOrigins[batch.id] = (origin, marker)
+        workIntervals.begin("batch-wait:\(batch.id)", sessionID: origin.chatSessionID, category: .waiting)
         editor.agentPanelVisible = true
         do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
         catch {
@@ -1632,9 +1647,18 @@ final class AgentService {
 
     func replaceGenerationBatchPresentation(oldID: String, newID: String) {
         if let origin = generationBatchOrigins.removeValue(forKey: oldID) { generationBatchOrigins[newID] = origin }
+        workIntervals.rekey("batch-wait:\(oldID)", to: "batch-wait:\(newID)")
+    }
+
+    func noteGenerationBatchStarted(_ batchID: String) {
+        closeWorkInterval("batch-wait:\(batchID)")
+        workIntervals.begin("batch-run:\(batchID)", sessionID: generationBatchOrigins[batchID]?.origin.chatSessionID,
+            category: .provider)
     }
 
     func completeGenerationBatch(_ batchID: String, message: String) {
+        closeWorkInterval("batch-wait:\(batchID)")
+        closeWorkInterval("batch-run:\(batchID)")
         guard let stored = generationBatchOrigins.removeValue(forKey: batchID) else { return }
         let result = ToolResult.ok(message)
         replacePendingSpendToolResult(result, origin: stored.origin, marker: stored.marker)
@@ -2221,6 +2245,41 @@ final class AgentService {
 
     func recordUserDirection() { userDirectionSerial += 1 }
 
+    @ObservationIgnored
+    private var workIntervals = AgentWorkTimeIntervals()
+
+    var currentWorkTime: AgentWorkTime? {
+        guard let currentSessionId else { return nil }
+        return sessions.first { $0.id == currentSessionId }?.workTime
+    }
+
+    func recordToolTime(_ seconds: Double, failed: Bool, origin: ToolCallOrigin) {
+        addWorkTime(seconds, to: .tool, sessionID: origin.chatSessionID, failedAttempt: failed)
+    }
+
+    private func trackDecisionWait(_ key: String, isOpen: Bool) {
+        closeWorkInterval(key)
+        if isOpen { workIntervals.begin(key, sessionID: currentSessionId, category: .waiting) }
+    }
+
+    private func closeWorkInterval(_ key: String) {
+        guard let closed = workIntervals.end(key) else { return }
+        addWorkTime(closed.seconds, to: closed.category, sessionID: closed.sessionID)
+    }
+
+    private func addWorkTime(
+        _ seconds: Double,
+        to category: AgentWorkTime.Category,
+        sessionID: UUID?,
+        failedAttempt: Bool = false
+    ) {
+        guard let sessionID, let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        var time = sessions[index].workTime ?? AgentWorkTime()
+        time.add(seconds, to: category)
+        if failedAttempt { time.failedAttempts += 1 }
+        sessions[index].workTime = time
+    }
+
     /// One agent revision request per user direction; a second one without new direction is a loop.
     func admitRevisionRequest(origin: ToolCallOrigin) -> Bool {
         guard let key = Self.revisionRequestKey(origin) else { return true }
@@ -2265,7 +2324,12 @@ final class AgentService {
             origin: failure.origin, includeNextPhaseInstructions: true)
     }
 
-    private(set) var pendingGateApproval: GateApproval?
+    private(set) var pendingGateApproval: GateApproval? {
+        didSet {
+            guard oldValue?.id != pendingGateApproval?.id else { return }
+            trackDecisionWait("gate", isOpen: pendingGateApproval != nil)
+        }
+    }
     private(set) var gateApprovalIsWriting = false
     private(set) var gateApprovalError: String?
 

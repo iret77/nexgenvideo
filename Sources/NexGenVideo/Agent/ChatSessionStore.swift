@@ -65,6 +65,7 @@ struct ChatSession: Codable, Identifiable {
     var claudeSessionId: String?
     var draft: ChatSessionDraft?
     var decision: ChatSessionDecision?
+    var workTime: AgentWorkTime?
 
     var hasPersistedContent: Bool { !messages.isEmpty || draft?.isEmpty == false || decision != nil }
 
@@ -77,9 +78,12 @@ struct ChatSession: Codable, Identifiable {
         self.claudeSessionId = nil
         self.draft = nil
         self.decision = nil
+        self.workTime = nil
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision, workTime
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -91,6 +95,7 @@ struct ChatSession: Codable, Identifiable {
         self.claudeSessionId = try c.decodeIfPresent(String.self, forKey: .claudeSessionId)
         self.draft = try c.decodeIfPresent(ChatSessionDraft.self, forKey: .draft)
         self.decision = try c.decodeIfPresent(ChatSessionDecision.self, forKey: .decision)
+        self.workTime = try c.decodeIfPresent(AgentWorkTime.self, forKey: .workTime)
     }
 }
 
