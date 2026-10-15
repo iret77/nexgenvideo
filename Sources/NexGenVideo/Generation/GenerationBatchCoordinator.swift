@@ -56,6 +56,7 @@ final class GenerationBatchCoordinator {
     private(set) var recoveringItemIDs: Set<String> = []
     private(set) var activeBatchID: String?
     private(set) var lastProgressAt: [String: Date] = [:]
+    private(set) var providerConfirmedAt: [String: Date] = [:]
 
     var isRecovering: Bool { !recoveringItemIDs.isEmpty }
     var canRetryPricing: Bool {
@@ -289,75 +290,91 @@ final class GenerationBatchCoordinator {
                remainingBatchIDs: [String] = []) {
         guard jobs.isEmpty, let home = editor.workingRoot else { return }
         activeBatchID = batchID
+        providerConfirmedAt.removeValue(forKey: batchID)
         jobs[batchID] = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
-            var settled = false
-            defer {
-                self.jobs.removeValue(forKey: batchID)
-                self.activeBatchID = nil
-                if editor.workingRoot == home {
-                    if let next = remainingBatchIDs.first {
-                        self.start(batchID: next, editor: editor, resumeBlocked: resumeBlocked,
-                                   remainingBatchIDs: Array(remainingBatchIDs.dropFirst()))
-                    } else if settled { self.resume(editor: editor, retryKnownJobs: false) }
-                }
+            await ProviderStatusSignal.$observer.withValue({ [weak self] in
+                Task { @MainActor in self?.recordProviderStatus(batchID: batchID) }
+            }) {
+                await self.run(batchID: batchID, editor: editor, home: home, resumeBlocked: resumeBlocked,
+                               remainingBatchIDs: remainingBatchIDs)
             }
-            do {
-                await CatalogDiscovery.ensureCurrent()
+        }
+    }
+
+    func recordProviderStatus(batchID: String, at date: Date = Date()) {
+        guard activeBatchID == batchID else { return }
+        providerConfirmedAt[batchID] = date
+    }
+
+    private func run(batchID: String, editor: EditorViewModel, home: URL, resumeBlocked: Bool,
+                     remainingBatchIDs: [String]) async {
+        var settled = false
+        defer {
+            self.jobs.removeValue(forKey: batchID)
+            self.activeBatchID = nil
+            if editor.workingRoot == home {
+                if let next = remainingBatchIDs.first {
+                    self.start(batchID: next, editor: editor, resumeBlocked: resumeBlocked,
+                               remainingBatchIDs: Array(remainingBatchIDs.dropFirst()))
+                } else if settled { self.resume(editor: editor, retryKnownJobs: false) }
+            }
+        }
+        do {
+            await CatalogDiscovery.ensureCurrent()
+            guard editor.workingRoot == home else { return }
+            let manifest = try GenerationBatchStore.load(id: batchID, home: home).batch
+            for item in manifest.payload.items {
                 guard editor.workingRoot == home else { return }
-                let manifest = try GenerationBatchStore.load(id: batchID, home: home).batch
-                for item in manifest.payload.items {
+                let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
+                guard let state = snapshot.journal.executions.first(where: { $0.itemID == item.id }) else { continue }
+                let authorization = GenerationBatchAuthorization(batchID: batchID, itemID: item.id)
+                do {
+                    var lease: (root: URL, id: UUID)?
+                    if [.queued, .submitting, .running].contains(state.state) || (state.state == .blocked && resumeBlocked),
+                       let root = DataRootResolver.dataRoot(of: home) {
+                        guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: manifest.payload.phase ?? "Generation batch") else {
+                            throw GenerationRequestError.gate("Another pipeline job is running. Resume this batch when that work finishes.")
+                        }
+                        lease = (root, id)
+                    }
+                    defer {
+                        if let lease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) }
+                    }
+                    switch state.state {
+                    case .queued:
+                        let generation = try await GenerationController.restoreApprovedBatchItem(authorization, editor: editor)
+                        let result = try await GenerationController.submitPrepared(generation, editor: editor).get()
+                        await editor.generationService.waitForGeneration(placeholderId: result.placeholderId)
+                    case .running:
+                        try await editor.generationService.resumeBatchJob(authorization, editor: editor)
+                    case .submitting:
+                        guard let transaction = state.transactionID,
+                              let receipt = editor.generationLog.spendEvents.first(where: {
+                                  $0.transactionId == transaction && $0.kind == .submitted && $0.providerRequestResumable == true
+                              }), let requestID = receipt.providerRequestId else {
+                            throw GenerationRequestError.gate("Submission was interrupted before a provider receipt was saved. This item will not be sent again.")
+                        }
+                        try authorization.recordProviderRequest(transactionID: transaction, requestID: requestID, resumable: true, editor: editor)
+                        try await editor.generationService.resumeBatchJob(authorization, editor: editor)
+                    case .blocked where resumeBlocked && state.providerRequestResumable:
+                        try await editor.generationService.resumeBatchJob(authorization, editor: editor)
+                    case .complete, .failed, .canceled, .blocked: break
+                    }
+                } catch {
                     guard editor.workingRoot == home else { return }
-                    let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
-                    guard let state = snapshot.journal.executions.first(where: { $0.itemID == item.id }) else { continue }
-                    let authorization = GenerationBatchAuthorization(batchID: batchID, itemID: item.id)
-                    do {
-                        var lease: (root: URL, id: UUID)?
-                        if [.queued, .submitting, .running].contains(state.state) || (state.state == .blocked && resumeBlocked),
-                           let root = DataRootResolver.dataRoot(of: home) {
-                            guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: manifest.payload.phase ?? "Generation batch") else {
-                                throw GenerationRequestError.gate("Another pipeline job is running. Resume this batch when that work finishes.")
-                            }
-                            lease = (root, id)
-                        }
-                        defer {
-                            if let lease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) }
-                        }
-                        switch state.state {
-                        case .queued:
-                            let generation = try await GenerationController.restoreApprovedBatchItem(authorization, editor: editor)
-                            let result = try await GenerationController.submitPrepared(generation, editor: editor).get()
-                            await editor.generationService.waitForGeneration(placeholderId: result.placeholderId)
-                        case .running:
-                            try await editor.generationService.resumeBatchJob(authorization, editor: editor)
-                        case .submitting:
-                            guard let transaction = state.transactionID,
-                                  let receipt = editor.generationLog.spendEvents.first(where: {
-                                      $0.transactionId == transaction && $0.kind == .submitted && $0.providerRequestResumable == true
-                                  }), let requestID = receipt.providerRequestId else {
-                                throw GenerationRequestError.gate("Submission was interrupted before a provider receipt was saved. This item will not be sent again.")
-                            }
-                            try authorization.recordProviderRequest(transactionID: transaction, requestID: requestID, resumable: true, editor: editor)
-                            try await editor.generationService.resumeBatchJob(authorization, editor: editor)
-                        case .blocked where resumeBlocked && state.providerRequestResumable:
-                            try await editor.generationService.resumeBatchJob(authorization, editor: editor)
-                        case .complete, .failed, .canceled, .blocked: break
-                        }
-                    } catch {
-                        guard editor.workingRoot == home else { return }
-                        let current = try GenerationBatchStore.load(id: batchID, home: home)
-                        if let execution = current.journal.executions.first(where: { $0.itemID == item.id }),
-                           [.queued, .submitting, .running].contains(execution.state) {
-                            _ = try GenerationBatchStore.update(current, editor: editor) {
-                                try $0.stop(itemID: item.id, state: .blocked, detail: error.localizedDescription)
-                            }
+                    let current = try GenerationBatchStore.load(id: batchID, home: home)
+                    if let execution = current.journal.executions.first(where: { $0.itemID == item.id }),
+                       [.queued, .submitting, .running].contains(execution.state) {
+                        _ = try GenerationBatchStore.update(current, editor: editor) {
+                            try $0.stop(itemID: item.id, state: .blocked, detail: error.localizedDescription)
                         }
                     }
                 }
-                editor.agentService.completeGenerationBatch(batchID,
-                    message: "Generation batch \(batchID) has settled. Read get_generation_batches for completed outputs and any failed or blocked items before continuing the phase.")
-                settled = true
-            } catch { self.error = error.localizedDescription }
-        }
+            }
+            editor.agentService.completeGenerationBatch(batchID,
+                message: "Generation batch \(batchID) has settled. Read get_generation_batches for completed outputs and any failed or blocked items before continuing the phase.")
+            settled = true
+        } catch { self.error = error.localizedDescription }
     }
 }

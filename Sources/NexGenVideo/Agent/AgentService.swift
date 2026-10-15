@@ -253,15 +253,16 @@ final class AgentService {
     private(set) var activityStartedAt: Date?
     private(set) var activityLastEventAt: Date?
     private(set) var activitySessionID: UUID?
-    private(set) var activityEvents: [String] = []
+    private(set) var activityEvents: [AgentActivityEvent] = []
+    private(set) var activityBaselineMessageID: UUID?
     private(set) var stoppedAgent = false
 
     func recordActivity(_ label: String? = nil) {
         guard activitySessionID == currentSessionId, isStreaming else { return }
-        activityLastEventAt = Date()
-        if let label, activityEvents.last != label {
-            activityEvents.append(label)
-            activityEvents = Array(activityEvents.suffix(8))
+        let now = Date()
+        activityLastEventAt = now
+        if let label {
+            activityEvents = AgentActivityEvent.appending(.init(at: now, label: label), to: activityEvents)
         }
     }
 
@@ -1663,6 +1664,8 @@ final class AgentService {
         let providerName: String
         var cancellationRequested: Bool
         var startedAt: Date = Date()
+        var providerConfirmedAt: Date?
+        var runToken = UUID()
     }
 
     private struct SpendFollowUp {
@@ -1877,6 +1880,7 @@ final class AgentService {
             cancellationRequested: false
         )
         runningSpendCancel = operation.cancel
+        let runToken = runningSpendStatus?.runToken
         let task = Task { @MainActor [weak self, pipelineLease] in
             guard let self else {
                 if let pipelineLease {
@@ -1887,12 +1891,16 @@ final class AgentService {
                 }
                 return
             }
-            await self.executeApprovedSpend(
-                approvalID: approval.id,
-                option: option,
-                operation: operation,
-                pipelineLease: pipelineLease
-            )
+            await ProviderStatusSignal.$observer.withValue({ [weak self] in
+                Task { @MainActor in self?.recordSpendProviderStatus(runToken: runToken) }
+            }) {
+                await self.executeApprovedSpend(
+                    approvalID: approval.id,
+                    option: option,
+                    operation: operation,
+                    pipelineLease: pipelineLease
+                )
+            }
         }
         runningSpendTask = task
     }
@@ -1973,6 +1981,12 @@ final class AgentService {
         runningSpendCancel = nil
         replacePendingSpendToolResult(result, origin: origin)
         enqueueSpendFollowUp(text, origin: origin, result: result)
+    }
+
+    func recordSpendProviderStatus(runToken: UUID?, at date: Date = Date()) {
+        guard var status = runningSpendStatus, status.runToken == runToken else { return }
+        status.providerConfirmedAt = date
+        runningSpendStatus = status
     }
 
     func cancelRunningSpend() {
@@ -3507,7 +3521,8 @@ final class AgentService {
         activityStartedAt = Date()
         activityLastEventAt = nil
         activitySessionID = currentSessionId
-        activityEvents = ["Agent request started"]
+        activityEvents = [.init(at: activityStartedAt ?? Date(), label: "Agent request started")]
+        activityBaselineMessageID = messages.last?.id
         stoppedAgent = false
         isStreaming = true
         let boundSessionID = currentSessionId

@@ -94,6 +94,9 @@ struct AgentLiveStatusView: View {
         .frame(maxWidth: AppTheme.Layout.chatColumnMax)
         .frame(maxWidth: .infinity)
         .background(AppTheme.Background.surfaceColor)
+        .onChange(of: status.title) { _, title in
+            AccessibilityNotification.Announcement(title).post()
+        }
     }
 
     @ViewBuilder

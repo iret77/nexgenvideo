@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 
 @testable import NexGenVideo
@@ -907,6 +908,44 @@ struct FalClientTests {
         _ = try await client.result(endpoint: endpoint, requestId: requestID)
 
         #expect(FixtureURLProtocol.requests().filter { $0.url == status }.count == 4)
+    }
+
+    @Test("only valid running states confirm provider liveness")
+    func runningStatusConfirmsLiveness() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let status = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-live/status"
+        )!
+        let result = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-live"
+        )!
+        FixtureURLProtocol.installSequence([
+            submit: [fixture("{\"request_id\":\"job-live\"}")],
+            status: [
+                fixture("{}"),
+                fixture("{\"status\":\"IN_QUEUE\"}"),
+                fixture("{\"status\":\"IN_PROGRESS\"}"),
+                fixture("{\"status\":\"COMPLETED\"}"),
+            ],
+            result: [fixture("{\"images\":[]}")],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(
+            apiKey: "test-key",
+            session: testSession,
+            pollIntervalNanoseconds: 0,
+            retryBaseDelayNanoseconds: 0
+        )
+        let confirmations = OSAllocatedUnfairLock(initialState: 0)
+
+        try await ProviderStatusSignal.$observer.withValue({ confirmations.withLock { $0 += 1 } }) {
+            let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+            _ = try await client.result(endpoint: endpoint, requestId: requestID)
+        }
+
+        #expect(confirmations.withLock { $0 } == 2)
     }
 
     @Test("terminal provider failure states fail without cancellation")

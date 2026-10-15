@@ -10,7 +10,7 @@ struct PipelinePhaseProgressView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
             HStack(spacing: AppTheme.Spacing.md) {
-                Image(systemName: "waveform")
+                Image(systemName: presentation.isAudioAnalysis ? "waveform" : "gearshape.2")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
                     .frame(
@@ -31,11 +31,14 @@ struct PipelinePhaseProgressView: View {
                             weight: AppTheme.FontWeight.semibold
                         )
                         .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text(snapshot.sourceFilename ?? "Assigned track")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    if let source = snapshot.sourceFilename
+                        ?? (presentation.isAudioAnalysis ? "Assigned track" : nil) {
+                        Text(source)
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
                 Spacer(minLength: AppTheme.Spacing.sm)
                 if snapshot.totalUnitCount > 0 {
@@ -110,6 +113,7 @@ struct PipelinePhaseProgressView: View {
 struct PipelinePhaseProgressPresentation {
     let title: String
     let detail: String
+    var isAudioAnalysis = true
 
     init(stageID: String?) {
         switch stageID {
@@ -137,6 +141,7 @@ struct PipelinePhaseProgressPresentation {
         default:
             title = "Processing current phase"
             detail = "Waiting for the runner’s next progress update."
+            isAudioAnalysis = false
         }
     }
 }
