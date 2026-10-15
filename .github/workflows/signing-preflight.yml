@@ -16,7 +16,7 @@ concurrency:
 jobs:
   preflight:
     # macOS is required for Keychain, codesign, and notarytool verification.
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 15
     steps:
       - name: Verify Developer ID cert + notary API key

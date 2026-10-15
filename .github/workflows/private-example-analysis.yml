@@ -110,7 +110,7 @@ jobs:
     name: Build Private Analysis Harness
     needs: source-gate
     # Compilation and bundling stay on the designated Xcode 27 build runner.
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -142,6 +142,7 @@ jobs:
     needs: build-runtime-harness
     # The production floor is the newest released macOS; pin it so this acceptance run
     # cannot silently switch to the dormant macOS 27 Music Understanding adapter.
+    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 60

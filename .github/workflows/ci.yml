@@ -100,7 +100,7 @@ jobs:
     needs: source_gate
     if: needs.source_gate.outputs.build_required == 'true'
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -187,6 +187,10 @@ jobs:
       - name: Bundle (debug, ad-hoc signed)
         if: needs.source_gate.outputs.bundle_required == 'true'
         run: scripts/bundle.sh debug
+
+      - name: Verify app architecture and minimum macOS
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: scripts/verify_app_slice.sh .build/NexGenVideo.app
 
       - name: Verify app build did not mutate tracked source
         if: needs.source_gate.outputs.bundle_required == 'true'
@@ -319,6 +323,7 @@ jobs:
   diagnostic-startup:
     needs: [source_gate, build_test]
     if: needs.source_gate.outputs.bundle_required == 'true'
+    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 10
     permissions:

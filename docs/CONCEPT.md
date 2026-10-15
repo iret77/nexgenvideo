@@ -314,7 +314,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 ## 11. Build-/CI-Realität (verbindlich)
 
 **Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
-(`ci.yml`, `xcode-27`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
+(`ci.yml`, `macrunner`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
 rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs
 laufen über den davon entkoppelten, append-only `plugins`-Kanal. PRs immer `--repo iret77/nexgenvideo`.

@@ -117,7 +117,7 @@ jobs:
       inputs.run_paid_llm_smoke == true &&
       inputs.approval == 'APPROVE-CODEX-LLM-SMOKE'
     needs: gate
-    runs-on: xcode-27
+    runs-on: macrunner
     timeout-minutes: 25
     env:
       NGV_CODEX_APP_SERVER_ACCEPTANCE: "1"
