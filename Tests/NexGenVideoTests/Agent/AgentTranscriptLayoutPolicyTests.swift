@@ -142,7 +142,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(dockImplementation.contains("case .dialog:"))
         #expect(dockImplementation.contains("case .backendRecovery:"))
         #expect(dockImplementation.contains("case .composer:"))
-        #expect(dockImplementation.contains("pipelineRepairRecovery } else { footer }"))
+        #expect(dockImplementation.contains("case .repairRecovery:\n            pipelineRepairRecovery"))
 
         let statusSource = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
@@ -242,8 +242,9 @@ struct AgentTranscriptLayoutPolicyTests {
         let composerStart = try #require(dock.range(of: "case .composer:"))
         #expect(!dock[dock.startIndex..<composerStart.lowerBound].contains("footer"))
         let composer = dock[composerStart.upperBound..<dock.endIndex]
-        #expect(composer.contains("service.currentPipelineRepairFailure != nil"))
-        #expect(composer.contains("pipelineRepairRecovery } else { footer }"))
+        #expect(composer.contains("footer"))
+        #expect(!composer.contains("pipelineRepairRecovery"))
+        #expect(dock.contains("case .repairRecovery:"))
         #expect(!input.contains("blockedHint"))
         #expect(!input.contains(".disabled(blocked)"))
         #expect(input.contains("onFocusChange(value)"))
@@ -331,7 +332,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(message.contains("private struct AgentHostStateView"))
         #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
         #expect(message.contains("Previous fingerprint"))
-        #expect(message.contains("editor.revealCockpit"))
+        #expect(message.contains("editor.revealReviewSurface(for: state.record.phase)"))
         #expect(batch.contains("Approve without estimate"))
         #expect(batch.contains("Provider charges apply. The project budget cannot be guaranteed for this batch."))
         #expect(batch.contains("expectedBatchID: batch.id"))

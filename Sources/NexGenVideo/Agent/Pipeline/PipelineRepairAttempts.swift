@@ -10,4 +10,21 @@ struct PipelineRepairAttempts {
     }
 
     mutating func reset() { counts.removeAll() }
+
+    /// A failed write and a write that left the artifact byte-identical both count as no progress.
+    static func noProgress(
+        isError: Bool,
+        errorText: String,
+        byteComparison: AgentHostStateRecord.ByteComparison?
+    ) -> String? {
+        if isError { return errorText }
+        if byteComparison == .unchanged {
+            return "The writer stored byte-identical content; the artifact did not change."
+        }
+        return nil
+    }
+
+    static func scope(projectRoot: String?, phase: String?, tool: String) -> String {
+        "\(projectRoot ?? ""): \(phase ?? tool)"
+    }
 }

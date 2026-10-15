@@ -137,6 +137,7 @@ final class GenerationBatchCoordinator {
             pending = nil
             recoveries = [:]
             error = nil
+            editor.agentService.noteGenerationBatchStarted(manifest.id)
             start(batchID: manifest.id, editor: editor)
         } catch { self.error = error.localizedDescription }
     }

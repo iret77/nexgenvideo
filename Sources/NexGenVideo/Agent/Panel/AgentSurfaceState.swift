@@ -5,6 +5,7 @@ struct AgentSurfaceState: Equatable {
         case spendApproval
         case gateApproval
         case dialog
+        case repairRecovery
         case backendRecovery
         case composer
     }
@@ -16,11 +17,13 @@ struct AgentSurfaceState: Equatable {
         case phaseRun
         case phaseFailure
         case actionRequired
+        case repairPaused
         case hostFollowUp
         case stream
         case turnFailure
         case backendChecking
         case backendUnavailable
+        case approvalOutdated
         case ready
     }
 
@@ -42,6 +45,8 @@ struct AgentSurfaceState: Equatable {
         var hasTurnFailure = false
         var isCheckingBackend = false
         var needsBackendRecovery = false
+        var hasRepairPause = false
+        var hasOutdatedApproval = false
     }
 
     let dockOwner: DockOwner
@@ -56,6 +61,8 @@ struct AgentSurfaceState: Equatable {
             dockOwner = .gateApproval
         } else if input.hasDialog {
             dockOwner = .dialog
+        } else if input.hasRepairPause {
+            dockOwner = .repairRecovery
         } else if input.needsBackendRecovery {
             dockOwner = .backendRecovery
         } else {
@@ -73,6 +80,8 @@ struct AgentSurfaceState: Equatable {
         } else if dockOwner == .spendApproval || dockOwner == .dialog
                     || (dockOwner == .gateApproval && !input.gateApprovalBlocked) {
             statusOwner = .actionRequired
+        } else if input.hasRepairPause {
+            statusOwner = .repairPaused
         } else if input.phaseIsRunning || input.gateApprovalBlocked {
             statusOwner = .phaseRun
         } else if input.phaseHasFailed {
@@ -87,6 +96,8 @@ struct AgentSurfaceState: Equatable {
             statusOwner = .backendChecking
         } else if input.needsBackendRecovery {
             statusOwner = .backendUnavailable
+        } else if input.hasOutdatedApproval {
+            statusOwner = .approvalOutdated
         } else {
             statusOwner = .ready
         }

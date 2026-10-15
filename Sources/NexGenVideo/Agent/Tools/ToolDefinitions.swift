@@ -1710,7 +1710,7 @@ enum ToolDefinitions {
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "description": "The phase whose gate verdict to record."],
-                    "state": ["type": "string", "description": "approved / approved_with_notes / needs_revision / pending."],
+                    "state": ["type": "string", "enum": GateState.allCases.map(\.rawValue), "description": "approved / approved_with_notes / needs_revision / pending."],
                     "notes": ["type": "string", "description": "Optional reviewer notes."],
                 ],
                 required: ["phase", "state"]

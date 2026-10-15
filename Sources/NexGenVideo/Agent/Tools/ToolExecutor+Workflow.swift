@@ -1054,7 +1054,7 @@ extension ToolExecutor {
             declaredBinding: declaredBinding,
             editor: editor
         )
-        let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root)
+        let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root, declaredPack: declaredPack)
         let request = try editor.agentService.requestGateApproval(
             GateApproval(
                 phase: phase,
@@ -1130,7 +1130,7 @@ extension ToolExecutor {
                 declaredBinding: declaredBinding,
                 editor: editor
             )
-            let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root)
+            let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root, declaredPack: declaredPack)
             let request = try editor.agentService.requestGateApproval(
                 GateApproval(
                     phase: phase,
@@ -1194,8 +1194,14 @@ extension ToolExecutor {
         ])
     }
 
-    private func gateArtifactFingerprint(phase: String, root: URL) async throws -> GateArtifactFingerprint? {
-        guard let snapshot = await hostArtifactSnapshot(phase: phase, dataRoot: root) else { return nil }
+    private func gateArtifactFingerprint(
+        phase: String,
+        root: URL,
+        declaredPack: String?
+    ) async throws -> GateArtifactFingerprint? {
+        guard let snapshot = await hostArtifactSnapshot(phase: phase, dataRoot: root, declaredPack: declaredPack) else {
+            return nil
+        }
         guard snapshot.exists else { return nil }
         guard let bytes = snapshot.bytes else { throw ToolError("The artifact cannot be bound to this review. Repair it before requesting approval.") }
         return GateArtifactFingerprint(path: snapshot.path, sha256: FileDigest.sha256(of: bytes),
@@ -1406,6 +1412,19 @@ extension ToolExecutor {
         guard !affected.isEmpty else {
             return try jsonResult(["target": target, "reset_phases": [], "message": "No approved gates to reset. Continue the current phase without rewriting approved inputs."] as [String: Any])
         }
+        let opensRevision = editor.agentService.pendingGateApproval == nil
+        if opensRevision, !editor.agentService.revisionRequestIsAdmissible(origin: origin) {
+            let detail = "rewind \(target) requested again without new user direction; affected approvals: "
+                + affected.joined(separator: ", ")
+            editor.agentService.pausePipelineRepair(
+                tool: ToolName.rewind.rawValue,
+                detail: detail,
+                origin: origin,
+                kind: .unrequestedRevision
+            )
+            return ToolResult(content: [.text("Revision loop stopped. The user has not given new direction since your last revision request, so the host paused this request and kept every approval. Do not request another rewind, regenerate approved work, or ask for re-approval. Wait for the user. " + detail)],
+                isError: true, turnDisposition: .suspendTurn)
+        }
         let hash = try FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
         let request = try editor.agentService.requestGateApproval(GateApproval(
             phase: target, notes: args.string("reason"), dataRoot: root,
@@ -1414,6 +1433,7 @@ extension ToolExecutor {
             sourceToolName: ToolName.rewind.rawValue, sourceToolUseID: toolUseID,
             sourceHostStateID: hostStateID, sourceHostTurnReference: hostTurnReference
         ), origin: origin)
+        if opensRevision, request.isNew { editor.agentService.noteRevisionRequest(origin: origin) }
         return try gateApprovalPendingResult(request, requestedPhase: target)
     }
 

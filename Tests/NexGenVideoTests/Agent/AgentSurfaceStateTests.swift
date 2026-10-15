@@ -126,4 +126,24 @@ struct AgentSurfaceStateTests {
             needsBackendRecovery: true
         )).statusOwner == .backendUnavailable)
     }
+
+    @Test("a repair pause owns the dock and status until a decision card takes precedence")
+    func repairPauseIsOneHostState() {
+        let paused = AgentSurfaceState.resolve(.init(hasRepairPause: true))
+        #expect(paused.dockOwner == .repairRecovery)
+        #expect(paused.statusOwner == .repairPaused)
+        let pausedWithOutdated = AgentSurfaceState.resolve(.init(hasRepairPause: true, hasOutdatedApproval: true))
+        #expect(pausedWithOutdated.statusOwner == .repairPaused)
+        let decision = AgentSurfaceState.resolve(.init(hasGateApproval: true, hasRepairPause: true))
+        #expect(decision.dockOwner == .gateApproval)
+        #expect(decision.statusOwner == .actionRequired)
+    }
+
+    @Test("an outdated approval is reported when no work or decision is active")
+    func outdatedApprovalWhenIdle() {
+        #expect(AgentSurfaceState.resolve(.init(hasOutdatedApproval: true)).statusOwner == .approvalOutdated)
+        #expect(AgentSurfaceState.resolve(.init(hasOutdatedApproval: true)).dockOwner == .composer)
+        #expect(AgentSurfaceState.resolve(.init(isStreaming: true, hasOutdatedApproval: true)).statusOwner == .stream)
+        #expect(AgentSurfaceState.resolve(.init(hasBatchRun: true, hasOutdatedApproval: true)).statusOwner == .batchRun)
+    }
 }

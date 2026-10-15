@@ -584,6 +584,28 @@ struct GenerationBatchTests {
         return try original.replacingPackage(itemID: item.id, with: package)
     }
 
+    @Test func unpricedBatchTellsTheAgentAndRecordsWaitingTime() async throws {
+        let (root, editor, original) = try await fixture()
+        defer { cleanup(root) }
+        let batch = try await unpricedBatch(original, editor: editor)
+        editor.agentService.newChat()
+        let session = try #require(editor.agentService.currentSessionId)
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        let result = try editor.agentService.presentGenerationBatch(
+            batch, recoveries: recoveries, origin: .inAppChat(sessionID: session), editor: editor)
+        let text = result.content.compactMap { block -> String? in
+            if case .text(let value) = block { return value }
+            return nil
+        }.joined()
+        #expect(text.contains("1 of 3 items have no cost estimate"))
+        #expect(text.contains("Do not describe it as priced"))
+        editor.generationBatchCoordinator.decline(editor: editor)
+        #expect(editor.agentService.currentWorkTime?.waitingSeconds != nil)
+        #expect(editor.agentService.currentWorkTime?.providerSeconds == 0)
+    }
+
     @Test func unknownCostApprovalPersistsExactItemsAndCannotMoveToAnotherManifest() async throws {
         let (root, editor, original) = try await fixture()
         defer { cleanup(root) }

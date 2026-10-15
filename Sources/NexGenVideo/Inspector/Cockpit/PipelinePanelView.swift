@@ -362,7 +362,11 @@ struct PipelinePanelView: View {
 
     private func nextActionDescription(for phase: String) -> String {
         if gateWriting { return "Saving the phase decision…" }
-        if editor.agentService.currentPipelineRepairFailure != nil { return "Planning paused after repeated validation failures. Open Tasks to retry with current project state." }
+        if let failure = editor.agentService.currentPipelineRepairFailure {
+            return failure.kind == .unrequestedRevision
+                ? "Revision paused. The agent asked to revise approved work again without new direction. Open Tasks to continue."
+                : "Planning paused after repeated attempts without progress. Open Tasks to retry with current project state."
+        }
         if let dialog = editor.agentService.pendingDialog {
             return "Complete ‘\(dialog.title)’ in Tasks."
         }

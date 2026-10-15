@@ -443,7 +443,8 @@ final class ToolExecutor {
                let hostStateRoot {
                 artifactBefore = await hostArtifactSnapshot(
                     phase: hostStatePhase,
-                    dataRoot: hostStateRoot
+                    dataRoot: hostStateRoot,
+                    declaredPack: guardedDeclaration?.packName
                 )
             }
             if tool.isCanonicalArtifactWriter, let phase = hostStatePhase {
@@ -541,6 +542,7 @@ final class ToolExecutor {
             phase: hostStatePhase ?? guardedPhase,
             dataRoot: hostStateRoot ?? guardedRoot,
             artifactBefore: artifactBefore,
+            declaredPack: guardedDeclaration?.packName,
             writerEntered: writerEntered,
             writerReturnedSuccess: writerReturnedSuccess,
             phaseRecordFailed: phaseRecordFailed,
@@ -579,20 +581,29 @@ final class ToolExecutor {
         }
         if tool.isCanonicalArtifactWriter {
             lastPipelineWriteFailed = result.isError
-            if !result.isError { editor.agentService.clearPipelineRepair(origin: origin) }
-            let scope = "\(editor.workingRoot?.path ?? ""): \(origin.chatSessionID?.uuidString ?? "external"): \(tool.rawValue)"
-            let failure = result.isError ? result.content.compactMap { block -> String? in
-                if case .text(let value) = block { return value }
-                return nil
-            }.joined(separator: " ") : nil
+            let failure = PipelineRepairAttempts.noProgress(
+                isError: result.isError,
+                errorText: result.content.compactMap { block -> String? in
+                    if case .text(let value) = block { return value }
+                    return nil
+                }.joined(separator: " "),
+                byteComparison: state?.byteComparison
+            )
+            if failure == nil { editor.agentService.clearPipelineRepair(origin: origin) }
+            let scope = PipelineRepairAttempts.scope(
+                projectRoot: (hostStateRoot ?? guardedRoot ?? editor.workingRoot)?.path,
+                phase: hostStatePhase ?? guardedPhase,
+                tool: tool.rawValue
+            )
             if pipelineRepairAttempts.record(scope: scope, failure: failure), let failure {
                 editor.agentService.pausePipelineRepair(tool: tool.rawValue, detail: failure, origin: origin)
-                result = ToolResult(content: [.text("Repeated validation failure without progress. The host paused this repair attempt and preserved the existing artifacts. Do not ask the user for internal identifiers or keep retrying. Read get_project_state.execution_input_contract and list_models.production_routes when explicitly resumed. " + failure)],
+                result = ToolResult(content: [.text("Repeated attempts without progress. The host paused this repair attempt and preserved the existing artifacts. Do not ask the user for internal identifiers or keep retrying. Read get_project_state.execution_input_contract and list_models.production_routes when explicitly resumed. " + failure)],
                     isError: true, turnDisposition: .suspendTurn)
             }
         }
         feedbackState.record(result, for: tool)
         let elapsed = started.duration(to: .now).seconds
+        editor.agentService.recordToolTime(elapsed, failed: result.isError, origin: origin)
         if origin.chatSessionID == editor.agentService.currentSessionId {
             editor.agentService.recordActivity(ToolRunPresentation.label(for: tool.rawValue)
                 + (result.isError ? " · failed" : " · finished"))
@@ -633,6 +644,7 @@ final class ToolExecutor {
         phase guardedPhase: String?,
         dataRoot: URL?,
         artifactBefore: HostArtifactSnapshot?,
+        declaredPack: String?,
         writerEntered: Bool,
         writerReturnedSuccess: Bool,
         phaseRecordFailed: Bool,
@@ -663,7 +675,8 @@ final class ToolExecutor {
             if let dataRoot {
                 artifactAfter = await hostArtifactSnapshot(
                     phase: phase,
-                    dataRoot: dataRoot
+                    dataRoot: dataRoot,
+                    declaredPack: declaredPack
                 )
             } else {
                 artifactAfter = nil
@@ -738,18 +751,20 @@ final class ToolExecutor {
             phase: phase,
             toolName: tool.rawValue,
             action: .reviewForApproval,
-            artifactPath: nil,
+            artifactPath: pendingApproval?.artifactFingerprint?.path,
             byteComparison: nil,
             previousSHA256: nil,
-            currentSHA256: nil
+            currentSHA256: pendingApproval?.artifactFingerprint?.sha256
         )
     }
 
     func hostArtifactSnapshot(
         phase: String?,
-        dataRoot: URL
+        dataRoot: URL,
+        declaredPack: String? = nil
     ) async -> HostArtifactSnapshot? {
-        guard let phase, let url = currentArtifactURL(phase: phase, dataRoot: dataRoot) else {
+        guard let phase,
+              let url = currentArtifactURL(phase: phase, dataRoot: dataRoot, declaredPack: declaredPack) else {
             return nil
         }
         return await Task.detached(priority: .utility) {
@@ -809,7 +824,7 @@ final class ToolExecutor {
         }.value
     }
 
-    private func currentArtifactURL(phase: String, dataRoot: URL) -> URL? {
+    private func currentArtifactURL(phase: String, dataRoot: URL, declaredPack: String?) -> URL? {
         let relative: String?
         switch phase {
         case "analysis":
@@ -820,9 +835,11 @@ final class ToolExecutor {
         case "storyboard": relative = PipelineLayout.storyboardCurrentFile
         case "bible": relative = PipelineLayout.bibleFile
         case "shotlist":
-            guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
-            relative = PipelineLayout.shotlistVersionFile(version)
-        default: relative = nil
+            relative = PipelineLayout.shotlistVersionFile(latestShotlistVersion(dataRoot: dataRoot) ?? 1)
+        default:
+            relative = (try? PhaseContractRuntime.contract(activePack: declaredPack)).flatMap {
+                GenericPhaseExtensionWriter.artifactRelativePath(contract: $0, phase: phase)
+            }
         }
         return relative.map { PipelineLayout.url($0, in: dataRoot) }
     }

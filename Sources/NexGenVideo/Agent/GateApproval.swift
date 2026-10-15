@@ -19,8 +19,40 @@ struct GateArtifactFingerprint: Equatable, Sendable {
     }
 }
 
+/// Host-recorded approval history. `untracked` marks a gate change the host could not fingerprint,
+/// so no later comparison may claim to know the last approved version.
+struct GateApprovalEvidence: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case approved
+        case rewound
+        case untracked
+    }
+
+    let kind: Kind
+    /// Affected phases; nil means every phase.
+    let phases: [String]?
+    var sha256: String? = nil
+    var text: String? = nil
+    var reason: String? = nil
+    let recordedAt: Date
+
+    func affects(_ phase: String) -> Bool { phases?.contains(phase) ?? true }
+}
+
+/// The host-recorded approval of the same phase that preceded this request.
+struct GatePriorApproval: Equatable, Sendable {
+    let sha256: String
+    let revisionReason: String?
+    var text: String? = nil
+}
+
 /// A durable user decision that outlives the requesting gate tool call.
 struct GateApproval: Identifiable, Equatable, Sendable {
+    enum PriorComparison: Equatable, Sendable {
+        case identical
+        case changed(revisionReason: String?)
+    }
+
     enum Action: Equatable, Sendable {
         case approve
         case rewind(gatesSHA256: String, phases: [String])
@@ -58,6 +90,8 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
     let artifactFingerprint: GateArtifactFingerprint?
+    var priorApproval: GatePriorApproval?
+    var priorChanges: ArtifactLineDiff.Result?
 
     init(
         phase: String,
@@ -95,10 +129,22 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         return false
     }
 
+    var resetPhases: [String]? {
+        if case .rewind(_, let phases) = action { return phases }
+        return nil
+    }
+
     var decisionTitle: String { isRewind ? "Revise from \(phaseLabel)" : "Approve \(phaseLabel)" }
 
+    var priorComparison: PriorComparison? {
+        guard !isRewind, let priorApproval, let current = artifactFingerprint?.sha256 else { return nil }
+        return priorApproval.sha256 == current
+            ? .identical
+            : .changed(revisionReason: priorApproval.revisionReason)
+    }
+
     func scoped(to sessionId: UUID?) -> GateApproval {
-        GateApproval(
+        var scoped = GateApproval(
             phase: phase,
             notes: notes,
             dataRoot: dataRoot,
@@ -113,6 +159,38 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             artifactFingerprint: artifactFingerprint,
             id: id
         )
+        scoped.priorApproval = priorApproval
+        scoped.priorChanges = priorChanges
+        return scoped
+    }
+
+    /// Latest host-recorded approval of `phase`, plus the reason of a later revision that reset it.
+    static func priorApproval(
+        phase: String,
+        in evidence: [GateApprovalEvidence]
+    ) -> GatePriorApproval? {
+        var revisionReason: String?
+        for entry in evidence.sorted(by: { $0.recordedAt < $1.recordedAt }).reversed() where entry.affects(phase) {
+            switch entry.kind {
+            case .untracked:
+                return nil
+            case .rewound:
+                if revisionReason == nil { revisionReason = entry.reason }
+            case .approved:
+                guard let sha256 = entry.sha256 else { return nil }
+                return GatePriorApproval(sha256: sha256, revisionReason: revisionReason, text: entry.text)
+            }
+        }
+        return nil
+    }
+
+    /// Line changes against the prior approval, when both texts are host-verified.
+    static func priorChanges(prior: GatePriorApproval?, fingerprint: GateArtifactFingerprint?, dataRoot: URL?)
+        -> ArtifactLineDiff.Result? {
+        guard let prior, let old = prior.text, let fingerprint, prior.sha256 != fingerprint.sha256,
+              let new = ArtifactLineDiff.verifiedText(path: fingerprint.path, sha256: fingerprint.sha256,
+                  dataRoot: dataRoot) else { return nil }
+        return ArtifactLineDiff.changes(old: old, new: new)
     }
 
     func matchesRequest(_ other: GateApproval) -> Bool {
