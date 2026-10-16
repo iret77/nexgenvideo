@@ -993,6 +993,79 @@ struct BudgetStopTests {
         }
     }
 
+    @Test("only a provider-confirmed end settles a failed submitted run")
+    func onlyConfirmedProviderEndsSettleFailedRuns() {
+        #expect(!GenerationService.providerRunEnded(after: FalClient.SubmissionOutcomeUnknownError(
+            ledgerRequestID: "unknown", message: "No receipt")))
+        #expect(!GenerationService.providerRunEnded(after: FalClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "missing-request-id", message: "No request id")))
+        #expect(!GenerationService.providerRunEnded(after: FalClient.CancellationFailedError(message: "May run")))
+        #expect(!GenerationService.providerRunEnded(after: RunwayClient.SubmissionOutcomeUnknownError(
+            ledgerRequestID: "runway-unknown", message: "No receipt")))
+        #expect(!GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "task", message: "Cancellation failed")))
+        #expect(GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "task", message: "Cancelled", providerTaskEnded: true)))
+        #expect(!GenerationService.providerRunEnded(after: RunwayClient.CancellationFailedError(message: "May run")))
+        #expect(GenerationService.providerRunEnded(after: RunwayClient.TaskFailure(message: "FAILED", cost: nil)))
+        #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.cancellationFailed("offline")))
+        #expect(GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.toolFailed("rejected")))
+        #expect(!GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(
+            jobID: "job", message: "Cancellation failed", providerRunEnded: false)))
+        #expect(GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(jobID: "job", message: "FAILED")))
+        #expect(GenerationService.providerRunEnded(after: CancellationError()))
+    }
+
+    @Test("an unknown provider outcome stays in flight; a terminal failure settles with its reported cost")
+    func unknownProviderOutcomeStaysInFlight() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        func submitted(_ request: String) async throws -> GenerationAuthorization {
+            let authorization = try await GenerationBudgetGuard.authorize(
+                input: GenerationPricingInput(
+                    modelId: "fal-ai/veo3",
+                    modality: .video,
+                    durationSeconds: 5,
+                    outputCount: 1,
+                    resolution: nil,
+                    quality: nil,
+                    promptCharacterCount: 5,
+                    generateAudio: true,
+                    referenceCount: 0
+                ),
+                target: GenerationService.dispatchTarget(modelId: "fal-ai/veo3"),
+                editor: editor,
+                quoteLoader: { _, _ in money(2) }
+            )
+            try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+                providerRequestId: request, money: authorization.estimate)
+            return authorization
+        }
+        let service = editor.generationService
+
+        let unknown = try await submitted("job-unknown")
+        service.recordSubmittedRunFailure(
+            FalClient.SubmissionOutcomeUnknownError(ledgerRequestID: "job-unknown", message: "No receipt"),
+            message: "No receipt", authorization: unknown, editor: editor)
+        let cancellationFailed = try await submitted("job-cancel")
+        service.recordSubmittedRunFailure(
+            RunwayClient.CancellationFailedError(message: "The provider task may still run and incur charges."),
+            message: "Cancellation failed", authorization: cancellationFailed, editor: editor)
+        let terminal = try await submitted("job-failed")
+        let credits = GenerationProviderCost(amount: 7, unit: "credits", source: "fixture")
+        service.recordSubmittedRunFailure(RunwayClient.TaskFailure(message: "FAILED", cost: credits),
+            message: "FAILED", authorization: terminal, editor: editor)
+
+        let terminalID = try #require(terminal.transactionId)
+        let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
+        #expect(settled.map(\.transactionId) == [terminalID])
+        #expect(settled.first?.providerCost == credits)
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
+        #expect(snapshot.inFlightCount == 2)
+        #expect(snapshot.providerCredits.map(\.amount) == [7])
+    }
+
     @Test("invalid append-only transitions are rejected")
     func invalidTransitionIsRejected() throws {
         let tx = UUID().uuidString

@@ -1207,6 +1207,8 @@ struct FalClientTests {
             #expect(error.localizedDescription.contains("provider cancellation failed"))
             #expect(error.localizedDescription.contains("HTTP 503: cancellation unavailable"))
             #expect(error.localizedDescription.contains("may still be running and may incur charges"))
+            #expect(error is FalClient.CancellationFailedError)
+            #expect(!GenerationService.providerRunEnded(after: error))
         }
         #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status, cancel])
         #expect(FixtureURLProtocol.requests().map(\.method) == ["POST", "GET", "PUT"])

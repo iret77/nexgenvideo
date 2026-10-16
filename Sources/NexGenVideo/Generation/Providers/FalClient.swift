@@ -174,18 +174,28 @@ actor FalClient {
         return requestId
     }
 
-    struct SubmissionAcknowledgedError: LocalizedError, Sendable {
+    struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
 
         var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
     }
 
-    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable {
+    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
 
         var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
+    }
+
+    /// The local run ended but fal did not confirm the cancellation; the request may still run.
+    struct CancellationFailedError: LocalizedError, Sendable, ProviderRunEndReporting {
+        let message: String
+
+        var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
     }
 
     /// Poll the queue until the job completes, then fetch and return the raw
@@ -287,16 +297,16 @@ actor FalClient {
         } catch is CancellationError {
             guard !providerReachedTerminalState else { throw CancellationError() }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
-                throw GenerationBackendError.transport(
-                    "fal.ai generation was cancelled locally. \(warning)"
+                throw CancellationFailedError(
+                    message: "fal.ai generation was cancelled locally. \(warning)"
                 )
             }
             throw CancellationError()
         } catch {
             guard !providerReachedTerminalState else { throw error }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
-                throw GenerationBackendError.transport(
-                    "\(error.localizedDescription) \(warning)"
+                throw CancellationFailedError(
+                    message: "\(error.localizedDescription) \(warning)"
                 )
             }
             throw error
@@ -457,11 +467,11 @@ actor FalClient {
     private func abandonmentError(
         _ message: String,
         cancelURL: URL
-    ) async -> GenerationBackendError {
+    ) async -> any Error {
         guard let warning = await cancellationFailureWarning(url: cancelURL) else {
             return GenerationBackendError.transport(message)
         }
-        return GenerationBackendError.transport("\(message) \(warning)")
+        return CancellationFailedError(message: "\(message) \(warning)")
     }
 
     private func cancellationFailureWarning(url: URL) async -> String? {

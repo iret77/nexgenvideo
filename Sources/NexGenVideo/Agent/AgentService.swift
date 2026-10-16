@@ -19,6 +19,7 @@ final class AgentService {
     private let modelCatalogStore: AnthropicModelCatalogStore
     private let modelDiscoveryTransport: AnthropicModelsAPI.Transport
     private var modelDiscoveryGeneration = 0
+    private let apiKeyLoader: @Sendable () async -> String?
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -35,12 +36,14 @@ final class AgentService {
         runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
         runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil,
         modelCatalogDefaults: UserDefaults = .standard,
-        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport
+        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport,
+        apiKeyLoader: @escaping @Sendable () async -> String? = { AnthropicKeychain.load() }
     ) {
         self.backend = backend
         let store = AnthropicModelCatalogStore(defaults: modelCatalogDefaults)
         self.modelCatalogStore = store
         self.modelDiscoveryTransport = modelDiscoveryTransport
+        self.apiKeyLoader = apiKeyLoader
         self.availableModels = store.cachedModels()
         self.model = store.storedModelID
         self.modelFamily = store.storedFamily
@@ -95,21 +98,30 @@ final class AgentService {
         }
     }
 
-    private func reloadAPIKey() {
+    func reloadAPIKey() {
         apiKeyGeneration &+= 1
         let generation = apiKeyGeneration
         isCheckingAPIKey = true
         modelListIsCurrent = false
+        invalidateModelDiscovery()
+        let loader = apiKeyLoader
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
-                AnthropicKeychain.load() ?? ""
+                await loader() ?? ""
             }.value
             guard let self, self.apiKeyGeneration == generation else { return }
             self.apiKey = key
             self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
+            self.invalidateModelDiscovery()
             if !key.isEmpty { await self.refreshModelCatalog() }
         }
+    }
+
+    /// A list fetched with another key must never become the current one.
+    private func invalidateModelDiscovery() {
+        modelDiscoveryGeneration &+= 1
+        isDiscoveringModels = false
     }
 
     /// Never blocks the chat: a failed discovery keeps the last successful list.
@@ -121,6 +133,7 @@ final class AgentService {
         guard !key.isEmpty else { return }
         modelDiscoveryGeneration &+= 1
         let generation = modelDiscoveryGeneration
+        let keyGeneration = apiKeyGeneration
         isDiscoveringModels = true
         let transport = modelDiscoveryTransport
         let result: Result<[AnthropicModelInfo], Error>
@@ -129,7 +142,7 @@ final class AgentService {
         } catch {
             result = .failure(error)
         }
-        guard modelDiscoveryGeneration == generation else { return }
+        guard modelDiscoveryGeneration == generation, apiKeyGeneration == keyGeneration else { return }
         isDiscoveringModels = false
         switch result {
         case .success(let models):
@@ -1720,8 +1733,8 @@ final class AgentService {
         }
 
         suspendToolCalls(from: origin)
-        if let phase = batch.payload.phase, editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil {
-            editor.generationBatchCoordinator.approveUnderPhaseApproval(editor: editor, expectedBatchID: batch.id, phase: phase)
+        if let phase = batch.payload.phase, let grant = editor.phaseSpendApproval.active(phase: phase, editor: editor) {
+            editor.generationBatchCoordinator.approveUnderPhaseApproval(editor: editor, expectedBatchID: batch.id, grant: grant)
         }
         return .suspended(marker)
     }
@@ -1890,23 +1903,25 @@ final class AgentService {
             to: approval
         )
         if let phase = pipelineScope?.phase,
-           editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil,
+           let grant = editor.phaseSpendApproval.active(phase: phase, editor: editor),
            approval.modelRequirement?.unavailableReason == nil,
            let option = approval.options.first(where: { $0.id == approval.recommendedOptionId }) {
-            startPhaseApprovedSpend(option: option, phase: phase, editor: editor)
+            startPhaseApprovedSpend(option: option, grant: grant, editor: editor)
         }
         return .suspended(Self.spendSuspensionText)
     }
 
     /// Runs the pending request with the resolver's default route under the user's phase approval,
     /// through the same preparation and approval path a click takes. Any failure shows the card.
-    private func startPhaseApprovedSpend(option: SpendOption, phase: String, editor: EditorViewModel) {
+    private func startPhaseApprovedSpend(option: SpendOption, grant: PhaseSpendApproval, editor: EditorViewModel) {
         guard let approvalID = pendingSpendApproval?.id else { return }
+        let phase = grant.phase
         autoApprovingSpendPhase = phase
         Task { @MainActor [weak self, weak editor] in
             guard let self else { return }
             defer { if self.autoApprovingSpendPhase == phase { self.autoApprovingSpendPhase = nil } }
-            guard let editor, self.pendingSpendApproval?.id == approvalID else { return }
+            guard let editor, self.pendingSpendApproval?.id == approvalID,
+                  editor.phaseSpendApproval.isActive(grant, editor: editor) else { return }
             var selected = option
             if self.pendingSpendApproval?.requiresGenerationPackage == true {
                 self.prepareSpendOption(option)
@@ -1916,6 +1931,9 @@ final class AgentService {
                       prepared.generationPackage != nil else { return }
                 selected = prepared
             }
+            // The grant may have ended while this task waited; then the card decides.
+            guard self.pendingSpendApproval?.id == approvalID,
+                  editor.phaseSpendApproval.isActive(grant, editor: editor) else { return }
             await self.approveSpendRecordingPhaseRun(selected, approvalID: approvalID, editor: editor,
                 recordSelection: false)
         }
@@ -2317,8 +2335,9 @@ final class AgentService {
             mentions: [],
             hidden: true,
             allowWhileBlocked: true,
-            runtimeImages: Self.imagesMissingFromToolResults(
+            runtimeImages: Self.followUpImages(
                 Self.runtimeImages(from: followUp.imageBlocks),
+                backend: backend,
                 in: messages
             )
         )
@@ -3762,7 +3781,9 @@ final class AgentService {
                 runtimeContextSignature = nil
             }
         case .providerRequest(let prefixDigest):
+            // Every request answers with its own assistant message, also after a paused turn.
             pendingProviderPrefixDigest = prefixDigest
+            defaultAssistantID = nil
         case .text(let messageID, let value, _):
             recordActivity("Receiving agent response")
             let id = assistantID(
@@ -4372,6 +4393,15 @@ final class AgentService {
         case .toolResult(let toolUseId, let content, let isError):
             return .toolResult(id: toolUseId, content: content, isError: isError)
         }
+    }
+
+    /// Only the API replays history; stateful runtimes see the current message, so it must carry them.
+    static func followUpImages(
+        _ images: [AgentRuntimeImage],
+        backend: AgentBackend,
+        in messages: [AgentMessage]
+    ) -> [AgentRuntimeImage] {
+        backend == .anthropicAPI ? imagesMissingFromToolResults(images, in: messages) : images
     }
 
     /// The replaced tool result already carries these images; repeating them would persist twice.

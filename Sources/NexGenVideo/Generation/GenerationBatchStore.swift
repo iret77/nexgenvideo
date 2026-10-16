@@ -68,9 +68,11 @@ enum GenerationBatchStore {
             .sorted { $0.journal.approvedAt < $1.journal.approvedAt }
     }
 
+    /// `confirm` runs after the last await, immediately before execution authority is created.
     static func approve(_ batch: GenerationBatch, editor: EditorViewModel,
                         approval: GenerationBatchApproval = .verifiedPrices,
-                        authority supplied: GenerationExecutionAuthorityStore? = nil) async throws -> Snapshot {
+                        authority supplied: GenerationExecutionAuthorityStore? = nil,
+                        confirm: (@MainActor () throws -> Void)? = nil) async throws -> Snapshot {
         guard let home = editor.workingRoot else {
             throw GenerationRequestError.storage("Save this project before approving a generation batch.")
         }
@@ -94,6 +96,7 @@ enum GenerationBatchStore {
             }
             return existing
         }
+        try confirm?()
         for item in batch.payload.items { try item.package.persist(editor: editor) }
         try markDirty(editor: editor)
         let record = try authority.create(batch: batch, journal: snapshot.journal, home: home)
@@ -245,16 +248,16 @@ enum GenerationBatchStore {
         }
     }
 
-    /// Transactions whose batch item delivered every output; read-only proof that a run finished.
+    /// Transactions a validated, project-local journal of this project's own batch proves finished.
     nonisolated static func completedTransactionIDs(home: URL) -> Set<String> {
+        guard let projectKey = projectIdentity(home: home) else { return [] }
         let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
         guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
         var completed: Set<String> = []
         for id in ids where !id.hasPrefix(".") {
-            let url = folder.appendingPathComponent(id, isDirectory: true).appendingPathComponent("journal.json")
-            guard let data = try? Data(contentsOf: url),
-                  let journal = try? JSONDecoder().decode(GenerationBatchJournal.self, from: data) else { continue }
-            for execution in journal.executions where execution.state == .complete {
+            guard let snapshot = try? loadProjectIfPresent(id: id, home: home),
+                  snapshot.batch.payload.projectKey == projectKey else { continue }
+            for execution in snapshot.journal.executions where execution.state == .complete {
                 if let transaction = execution.transactionID { completed.insert(transaction) }
             }
         }

@@ -317,6 +317,8 @@ struct RunwayClientTests {
         } catch {
             #expect(error.localizedDescription.contains("Runway task cancellation failed"))
             #expect(error.localizedDescription.contains("may still run and incur charges"))
+            #expect(error is RunwayClient.CancellationFailedError)
+            #expect(!GenerationService.providerRunEnded(after: error))
         }
         #expect(FixtureURLProtocol.requests().filter { $0.method == "DELETE" }.count == 1)
     }

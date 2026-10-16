@@ -542,6 +542,7 @@ struct MCPGenerationExecutorTests {
             #expect(error.jobID == "timed-out")
             #expect(error.message.contains("did not finish"))
             #expect(error.message.contains("sent a cancellation request"))
+            #expect(error.providerRunEnded)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -710,6 +711,7 @@ struct MCPGenerationExecutorTests {
         } catch let error as MCPGenerationExecutor.JobFailure {
             #expect(error.message.contains("No compatible cancellation tool"))
             #expect(error.message.contains("may still charge"))
+            #expect(!error.providerRunEnded)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -753,6 +755,7 @@ struct MCPGenerationExecutorTests {
         } catch let error as MCPGenerationExecutor.JobFailure {
             #expect(error.message.contains("job is already terminal"))
             #expect(error.message.contains("may still charge"))
+            #expect(!error.providerRunEnded)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

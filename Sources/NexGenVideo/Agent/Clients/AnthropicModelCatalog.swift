@@ -55,12 +55,16 @@ enum AnthropicModelsAPI {
         case http(status: Int)
         case invalidResponse
         case emptyList
+        case incompletePagination
+        case pageLimitReached
 
         var errorDescription: String? {
             switch self {
             case .http(let status): "The Anthropic model list returned HTTP \(status)."
             case .invalidResponse: "The Anthropic model list could not be read."
             case .emptyList: "The Anthropic API key has no models available."
+            case .incompletePagination: "The Anthropic model list reported more pages without a new cursor."
+            case .pageLimitReached: "The Anthropic model list has more pages than NexGenVideo reads."
             }
         }
     }
@@ -82,9 +86,11 @@ enum AnthropicModelsAPI {
         return request
     }
 
+    /// Succeeds only on the page that reports `has_more: false`; anything short of that is an error.
     static func fetchAll(apiKey: String, transport: Transport) async throws -> [AnthropicModelInfo] {
         var models: [AnthropicModelInfo] = []
         var seen: Set<String> = []
+        var cursors: Set<String> = []
         var afterID: String?
         for _ in 0..<maximumPages {
             let (data, response) = try await transport(request(apiKey: apiKey, afterID: afterID))
@@ -95,11 +101,16 @@ enum AnthropicModelsAPI {
             for model in parsed.models where seen.insert(model.id).inserted {
                 models.append(model)
             }
-            guard parsed.hasMore, let next = parsed.lastID, next != afterID else { break }
+            guard parsed.hasMore else {
+                guard !models.isEmpty else { throw DiscoveryError.emptyList }
+                return models
+            }
+            guard let next = parsed.lastID, !next.isEmpty, cursors.insert(next).inserted else {
+                throw DiscoveryError.incompletePagination
+            }
             afterID = next
         }
-        guard !models.isEmpty else { throw DiscoveryError.emptyList }
-        return models
+        throw DiscoveryError.pageLimitReached
     }
 
     static func page(from data: Data) throws -> Page {

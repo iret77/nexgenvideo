@@ -19,6 +19,13 @@ struct PhaseSpendApproval: Equatable, Sendable {
     /// revision request changes it.
     let gateFingerprint: String
     var runs: [Run]
+    /// Tells this grant apart from a later grant for the same phase.
+    let id = UUID()
+}
+
+/// The exact grant an automatic start relied on no longer covers its phase.
+struct PhaseSpendApprovalEnded: LocalizedError {
+    var errorDescription: String? { "The phase approval ended before this run started." }
 }
 
 /// Where a granted phase approval lives between uses. Host-side persistence (surviving relaunch,
@@ -79,6 +86,11 @@ final class PhaseSpendApprovalController {
             return nil
         }
         return approval.phase == phase ? approval : nil
+    }
+
+    /// True only while this exact grant still covers its phase; a later re-grant does not count.
+    func isActive(_ grant: PhaseSpendApproval, editor: EditorViewModel) -> Bool {
+        active(phase: grant.phase, editor: editor)?.id == grant.id
     }
 
     func withdraw(editor: EditorViewModel) {

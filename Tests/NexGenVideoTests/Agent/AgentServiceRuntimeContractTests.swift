@@ -459,6 +459,78 @@ struct AgentServiceRuntimeContractTests {
         }
     }
 
+    @Test(
+        "a host follow-up hands its images to a stateful runtime and to the API replay exactly once",
+        arguments: [AgentBackend.anthropicAPI, .claudeCode, .codexAppServer]
+    )
+    func followUpImagesReachEveryBackend(backend: AgentBackend) async throws {
+        let adapter = FakeRuntimeAdapter(backend: backend)
+        let service = makeService(backend: backend, adapter: adapter)
+        let editor = EditorViewModel()
+        service.editor = editor
+        let chatSessionID = try #require(service.currentSessionId)
+        let image = AgentRuntimeImage(mediaType: "image/png", base64: "aW1hZ2U=")
+        let selected = SpendOption(
+            modelId: "m1",
+            modelName: "Model One",
+            target: ResolvedGenerationTarget(
+                modelId: "m1",
+                provider: .fal,
+                endpoint: "m1",
+                binding: ProviderBinding(provider: .fal, transport: .api, kind: .generation,
+                    providerRef: "m1", billing: .perCall)
+            ),
+            credits: nil,
+            requiresCatalogAvailability: false
+        )
+        let suspended = "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        service.messages = [
+            AgentMessage(role: .user, blocks: [.text("Make the frame")]),
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "image-tool", name: ToolName.generateImage.rawValue, inputJSON: "{}"),
+            ]),
+            AgentMessage(role: .user, blocks: [
+                .toolResult(toolUseId: "image-tool", content: [.text(suspended)], isError: false),
+            ]),
+        ]
+        _ = try service.requestSpendApproval(
+            SpendApproval(id: "follow-up-images", recommendedOptionId: selected.id, options: [selected],
+                actionLabel: "Generate image"),
+            origin: .inAppChat(sessionID: chatSessionID),
+            editor: editor,
+            execute: { _, _ in
+                ToolResult(
+                    content: [.text("Generation completed."), .image(base64: image.base64, mediaType: image.mediaType)],
+                    isError: false
+                )
+            }
+        )
+        await service.approveSpend(selected)
+        await waitUntil { adapter.sendRequests.count == 1 }
+
+        let request = try #require(adapter.sendRequests.first)
+        var imagesInHistory = 0
+        for content in request.messages.flatMap(\.content) {
+            switch content {
+            case .image(let item) where item == image:
+                imagesInHistory += 1
+            case .toolResult(_, let blocks, _):
+                for case .image(let base64, _) in blocks where base64 == image.base64 { imagesInHistory += 1 }
+            default:
+                break
+            }
+        }
+        if backend == .anthropicAPI {
+            #expect(!request.currentMessage.content.contains(.image(image)))
+            #expect(imagesInHistory == 1)
+        } else {
+            #expect(request.currentMessage.content.contains(.image(image)))
+        }
+        adapter.emit(.terminal(.completed(.endTurn)), for: request)
+        adapter.finish(request)
+        await waitUntil { !service.isStreaming }
+    }
+
     @Test("the request digest binds the assistant turn it produced, once")
     func requestDigestStampsAssistantTurn() async throws {
         let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
