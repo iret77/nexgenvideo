@@ -693,4 +693,31 @@ struct ProviderStatusTests {
         #expect(Fixture.requests() == ["GET /fal-ai/veo3/requests/fal-late-receipt/status"])
         #expect(service.flushPendingReceipts(editor: editor) == 0)
     }
+
+    @Test func providerToolAnswersEndTheRunOnlyOnAConfirmedEnd() {
+        let statusTool = MCPProviderClient.DiscoveredTool(
+            name: "job_status",
+            description: nil,
+            inputSchema: .object([
+                "properties": .object(["job_id": .object(["type": .string("string")])]),
+                "required": .array([.string("job_id")]),
+            ])
+        )
+        func outcome(_ payload: String, tools: [MCPProviderClient.DiscoveredTool]? = nil) -> ToolExecutor.ProviderToolOutcome {
+            ToolExecutor.providerToolOutcome(payloads: [payload], tools: tools ?? [statusTool])
+        }
+
+        #expect(outcome(#"{"job_id":"j-1","status":"queued"}"#) == .init(jobID: "j-1", queryable: true, ended: false))
+        #expect(outcome(#"{"job_id":"j-2"}"#) == .init(jobID: "j-2", queryable: true, ended: false))
+        #expect(outcome(#"{"job_id":"j-3","status":null,"url":"https://output.invalid/preview.png"}"#)
+            == .init(jobID: "j-3", queryable: true, ended: false))
+        #expect(outcome(#"{"job_id":"j-4","status":"failed","message":"rejected"}"#)
+            == .init(jobID: "j-4", queryable: true, ended: true))
+        #expect(outcome(#"{"status":"completed","url":"https://output.invalid/done.png"}"#).ended)
+        #expect(outcome("Background removed: https://output.invalid/cutout.png")
+            == .init(jobID: nil, queryable: false, ended: true))
+        #expect(outcome(#"{"status":"queued"}"#) == .init(jobID: nil, queryable: false, ended: false))
+        #expect(outcome(#"{"job_id":"j-5","status":"queued"}"#, tools: [])
+            == .init(jobID: "j-5", queryable: false, ended: false))
+    }
 }
