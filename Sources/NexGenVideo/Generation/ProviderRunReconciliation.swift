@@ -118,6 +118,7 @@ extension GenerationService {
     @discardableResult
     func reconcileOpenRuns(editor: EditorViewModel, now: Date = Date()) async -> Int {
         guard let home = editor.workingRoot, !reconcilingHomes.contains(home) else { return 0 }
+        flushPendingReceipts(editor: editor)
         if let last = lastReconciliation[home], now.timeIntervalSince(last) < reconciliation.minimumInterval {
             return 0
         }

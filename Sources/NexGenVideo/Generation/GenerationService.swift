@@ -1150,6 +1150,24 @@ final class GenerationService {
         }
     }
 
+    /// Re-writes this project's failed receipts so their jobs become resumable once storage works again.
+    @discardableResult
+    func flushPendingReceipts(editor: EditorViewModel) -> Int {
+        var written = 0
+        for (transactionID, pending) in pendingReceipts {
+            guard editor.generationLog.spendEvents.contains(where: {
+                      $0.transactionId == transactionID && $0.kind == .reserved
+                  }),
+                  pending.authorization.projectMutationScope.map({ (try? $0.requireCurrent(editor: editor)) != nil }) ?? true
+            else { continue }
+            if markSubmitted(authorization: pending.authorization, providerRequestId: pending.requestID,
+                resumable: pending.resumable, editor: editor) {
+                written += 1
+            }
+        }
+        return written
+    }
+
     /// Writes a receipt that failed earlier, so a closing event or an open run keeps its provider id.
     private func retryPendingReceipt(for transactionID: String?, editor: EditorViewModel) {
         guard let transactionID, let pending = pendingReceipts[transactionID] else { return }

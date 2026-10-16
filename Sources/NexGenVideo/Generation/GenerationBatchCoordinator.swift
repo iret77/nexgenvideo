@@ -316,6 +316,7 @@ final class GenerationBatchCoordinator {
 
     func resume(editor: EditorViewModel, retryKnownJobs: Bool = true) {
         guard jobs.isEmpty, let home = editor.workingRoot else { return }
+        editor.generationService.flushPendingReceipts(editor: editor)
         let requestID = UUID()
         readID = requestID
         Task { @MainActor [weak self, weak editor] in

@@ -665,4 +665,32 @@ struct ProviderStatusTests {
             editor: editor))
         #expect(editor.generationLog.spendEvents.filter { $0.kind == .submitted }.count == 2)
     }
+
+    @MainActor
+    @Test func reconciliationFirstWritesAReceiptThatFailedEarlierThenQueriesIt() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let service = editor.generationService
+        service.reconciliation = reconciliation(session)
+        let authorization = GenerationAuthorization(
+            transactionId: "receipt-late",
+            target: ResolvedGenerationTarget(modelId: "fal-ai/veo3", provider: .fal, endpoint: "fal-ai/veo3", binding: nil),
+            estimate: nil
+        )
+        #expect(!service.markSubmitted(authorization: authorization, providerRequestId: "fal-late-receipt",
+            resumable: true, editor: editor))
+        editor.generationLog.spendEvents = [GenerationSpendEvent(transactionId: "receipt-late", kind: .reserved,
+            model: "fal-ai/veo3", provider: .fal, transport: .api, endpoint: "fal-ai/veo3")]
+        Fixture.stub("GET", "/requests/fal-late-receipt/status", .response(status: 200, body: #"{"status":"IN_PROGRESS"}"#))
+
+        #expect(await service.reconcileOpenRuns(editor: editor) == 0)
+        let receipt = editor.generationLog.spendEvents.first { $0.kind == .submitted }
+        #expect(receipt?.providerRequestId == "fal-late-receipt")
+        #expect(receipt?.providerRequestResumable == true)
+        #expect(Fixture.requests() == ["GET /fal-ai/veo3/requests/fal-late-receipt/status"])
+        #expect(service.flushPendingReceipts(editor: editor) == 0)
+    }
 }
