@@ -2581,7 +2581,7 @@ extension ToolExecutor {
                 }
             }
             var spaced = ""
-            var previous: Character?
+            var previous: Swift.Character?
             for character in text {
                 if character.isUppercase, let previous, previous.isLowercase || previous.isNumber {
                     spaced.append(" ")
