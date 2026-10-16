@@ -398,17 +398,19 @@ jobs:
             --key "$NOTARY_KEY_FILE" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER" >/dev/null
-          if [ -n "${SPARKLE_PRIV_DER:-}" ]; then
-            openssl pkey -inform DER -in "$SPARKLE_PRIV_DER" -noout
-          fi
           DMG_VENV="$RUNNER_TEMP/dmgvenv"
           python3 -m venv "$DMG_VENV"
           "$DMG_VENV/bin/pip" install \
             --quiet \
             --disable-pip-version-check \
-            "dmgbuild==1.6.7"
+            "dmgbuild==1.6.7" \
+            "cryptography==50.0.2"
           [ -x "$DMG_VENV/bin/dmgbuild" ]
+          if [ -n "${SPARKLE_PRIV_DER:-}" ]; then
+            "$DMG_VENV/bin/python" scripts/sparkle_ed25519.py check "$SPARKLE_PRIV_DER"
+          fi
           echo "DMGBUILD_BIN=$DMG_VENV/bin/dmgbuild" >> "$GITHUB_ENV"
+          echo "DMG_PYTHON=$DMG_VENV/bin/python" >> "$GITHUB_ENV"
 
       - name: Bump version
         run: |
@@ -685,8 +687,7 @@ jobs:
         if: ${{ env.SPARKLE_PRIV_DER != '' }}
         run: |
           set -euo pipefail
-          SIG="$(openssl pkeyutl -sign -rawin -keyform DER -inkey "$SPARKLE_PRIV_DER" \
-            -in .build/NexGenVideo.dmg | base64)"
+          SIG="$("$DMG_PYTHON" scripts/sparkle_ed25519.py sign "$SPARKLE_PRIV_DER" .build/NexGenVideo.dmg)"
           {
             echo "ED_SIGNATURE=$SIG"
             echo "DMG_LENGTH=$(stat -f%z .build/NexGenVideo.dmg)"
