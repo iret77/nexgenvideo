@@ -83,10 +83,16 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                 var assistantContent: [AgentRuntimeContent] = []
                 var toolCalls: [(id: String, name: String, inputJSON: String)] = []
                 var stopReason: AgentRuntimeStopReason?
+                let wire = AnthropicReplay.wireMessages(messages)
+                relay.yield(.providerRequest(prefixDigest: AnthropicPrefixDigest.of(
+                    system: session.hostContext.systemInstructions,
+                    tools: session.hostContext.toolSchemas,
+                    messages: wire
+                )))
                 let stream = client.stream(
                     system: session.hostContext.systemInstructions,
                     tools: tools,
-                    messages: messages.map(Self.anthropicMessage)
+                    messages: wire.map(Self.anthropicMessage)
                 )
                 for try await event in stream {
                     try Task.checkCancellation()

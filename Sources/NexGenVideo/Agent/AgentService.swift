@@ -2242,7 +2242,10 @@ final class AgentService {
             mentions: [],
             hidden: true,
             allowWhileBlocked: true,
-            runtimeImages: Self.runtimeImages(from: followUp.imageBlocks)
+            runtimeImages: Self.imagesMissingFromToolResults(
+                Self.runtimeImages(from: followUp.imageBlocks),
+                in: messages
+            )
         )
         if started {
             pendingSpendFollowUps.remove(at: followUpIndex)
@@ -2981,7 +2984,7 @@ final class AgentService {
     private var runtimeGenerationID: UUID?
 
     @ObservationIgnored
-    private var pendingTurnImages: [AgentRuntimeImage] = []
+    private var pendingProviderPrefixDigest: String?
 
     private(set) var lastRuntimeUsage: AgentRuntimeUsage?
 
@@ -3296,12 +3299,11 @@ final class AgentService {
         messages.append(AgentMessage(
             role: .user, blocks: [.text(trimmed)],
             mentions: referencedMentions, contextHint: contextHint, hidden: hidden,
-            userPresentation: presentation
+            userPresentation: presentation, attachedImages: runtimeImages
         ))
         if !hidden || presentation != nil { recordUserDirection() }
         checkpointCurrentSession()
         streamError = nil
-        pendingTurnImages = runtimeImages
         kickOffRuntimeTurn()
         return true
     }
@@ -3666,6 +3668,8 @@ final class AgentService {
             case .codexAppServer:
                 runtimeContextSignature = nil
             }
+        case .providerRequest(let prefixDigest):
+            pendingProviderPrefixDigest = prefixDigest
         case .text(let messageID, let value, _):
             recordActivity("Receiving agent response")
             let id = assistantID(
@@ -3755,7 +3759,9 @@ final class AgentService {
         if providerMessageID == nil, let defaultAssistantID {
             return defaultAssistantID
         }
-        let message = AgentMessage(role: .assistant, blocks: [])
+        var message = AgentMessage(role: .assistant, blocks: [])
+        message.providerPrefixDigest = pendingProviderPrefixDigest
+        pendingProviderPrefixDigest = nil
         messages.append(message)
         if let providerMessageID {
             messageIDs[providerMessageID] = message.id
@@ -3776,13 +3782,9 @@ final class AgentService {
         stoppedAgent = false
         isStreaming = true
         let boundSessionID = currentSessionId
-        let transientImages = pendingTurnImages
-        pendingTurnImages = []
+        pendingProviderPrefixDigest = nil
         currentTask = Task { [weak self] in
-            await self?.runRuntimeTurn(
-                sessionID: boundSessionID,
-                transientImages: transientImages
-            )
+            await self?.runRuntimeTurn(sessionID: boundSessionID)
             guard !Task.isCancelled,
                   let self,
                   self.currentSessionId == boundSessionID else { return }
@@ -3792,10 +3794,7 @@ final class AgentService {
         }
     }
 
-    private func runRuntimeTurn(
-        sessionID: UUID?,
-        transientImages: [AgentRuntimeImage]
-    ) async {
+    private func runRuntimeTurn(sessionID: UUID?) async {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
@@ -3813,7 +3812,7 @@ final class AgentService {
                 return
             }
         }
-        let runtimeMessages = await runtimeMessages(transientImages: transientImages)
+        let runtimeMessages = await runtimeMessages(hostContext: hostContext)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
               let inputMessage = messages.last,
@@ -4160,9 +4159,10 @@ final class AgentService {
         }
     }
 
-    func runtimeMessages(transientImages: [AgentRuntimeImage]) async -> [AgentRuntimeMessage] {
-        var result: [AgentRuntimeMessage] = []
-        for (index, msg) in messages.enumerated() {
+    /// Rebuilds the provider history; with a host context, invalidated thinking is left out.
+    func runtimeMessages(hostContext: AgentRuntimeHostContext? = nil) async -> [AgentRuntimeMessage] {
+        var entries: [AnthropicReplay.Entry] = []
+        for msg in messages {
             if msg.isIncompleteAPIResponse { continue }
             var content = msg.blocks.compactMap(Self.runtimeContent)
 
@@ -4173,13 +4173,20 @@ final class AgentService {
                 content.insert(contentsOf: Self.runtimeImages(from: inlined.blocks).map(AgentRuntimeContent.image), at: 0)
                 content.insert(.text("<app-context>\(hint)</app-context>"), at: 0)
             }
-            if index == messages.indices.last, msg.role == .user {
-                content.append(contentsOf: transientImages.map(AgentRuntimeContent.image))
+            if msg.role == .user {
+                content.append(contentsOf: msg.attachedImages.map(AgentRuntimeContent.image))
             }
             guard !content.isEmpty else { continue }
-            result.append(AgentRuntimeMessage(role: msg.role, content: content))
+            entries.append(.init(role: msg.role, content: content, recordedPrefixDigest: msg.providerPrefixDigest))
         }
-        return result
+        guard let hostContext else {
+            return entries.map { AgentRuntimeMessage(role: $0.role, content: $0.content) }
+        }
+        return AnthropicReplay.strippingInvalidatedThinking(
+            entries,
+            system: hostContext.systemInstructions,
+            tools: hostContext.toolSchemas
+        )
     }
 
     private func inlineImageBlocks(for mentions: [AgentMention]) async -> AgentMentionContext.InlinedMentions {
@@ -4233,6 +4240,23 @@ final class AgentService {
         case .toolResult(let toolUseId, let content, let isError):
             return .toolResult(id: toolUseId, content: content, isError: isError)
         }
+    }
+
+    /// The replaced tool result already carries these images; repeating them would persist twice.
+    static func imagesMissingFromToolResults(
+        _ images: [AgentRuntimeImage],
+        in messages: [AgentMessage]
+    ) -> [AgentRuntimeImage] {
+        var carried: Set<String> = []
+        for message in messages {
+            for block in message.blocks {
+                guard case .toolResult(_, let content, _) = block else { continue }
+                for item in content {
+                    if case .image(let base64, _) = item { carried.insert(base64) }
+                }
+            }
+        }
+        return images.filter { !carried.contains($0.base64) }
     }
 
     private static func runtimeImages(from blocks: [[String: Any]]) -> [AgentRuntimeImage] {
@@ -4302,6 +4326,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     /// Host-authored tool-call metadata that never becomes provider-facing user content.
     var hostStateRecords: [AgentHostStateRecord]
     var isIncompleteAPIResponse: Bool = false
+    /// Images sent with this turn; replayed on every later request so the history stays append-only.
+    var attachedImages: [AgentRuntimeImage] = []
+    /// Prefix digest of the API request that produced this assistant turn.
+    var providerPrefixDigest: String?
 
 
     init(
@@ -4312,7 +4340,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint: String? = nil,
         hidden: Bool = false,
         userPresentation: AgentUserPresentation? = nil,
-        hostStateRecords: [AgentHostStateRecord] = []
+        hostStateRecords: [AgentHostStateRecord] = [],
+        attachedImages: [AgentRuntimeImage] = []
     ) {
         self.id = id
         self.role = role
@@ -4322,11 +4351,12 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         self.hidden = hidden
         self.userPresentation = userPresentation
         self.hostStateRecords = hostStateRecords
+        self.attachedImages = attachedImages
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords, isIncompleteAPIResponse
-
+        case attachedImages, providerPrefixDigest
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -4345,6 +4375,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
             forKey: .hostStateRecords
         ) ?? []
         isIncompleteAPIResponse = try c.decodeIfPresent(Bool.self, forKey: .isIncompleteAPIResponse) ?? false
+        attachedImages = try c.decodeIfPresent([AgentRuntimeImage].self, forKey: .attachedImages) ?? []
+        providerPrefixDigest = try c.decodeIfPresent(String.self, forKey: .providerPrefixDigest)
 
     }
 }

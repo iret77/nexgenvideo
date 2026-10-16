@@ -162,7 +162,7 @@ struct AnthropicThinkingTests {
         _ = await service.runPendingToolUses(assistantID: restored.id, origin: .direct)
         #expect(service.messages.count == 3)
         #expect(service.messages[1].blocks == partial.blocks)
-        let replay = await service.runtimeMessages(transientImages: [])
+        let replay = await service.runtimeMessages()
         #expect(replay.count == 2)
         #expect(replay.allSatisfy { $0.role == .user })
         #expect(restored.isIncompleteAPIResponse)
