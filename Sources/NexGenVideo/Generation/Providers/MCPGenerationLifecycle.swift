@@ -132,6 +132,11 @@ enum MCPGenerationLifecycle {
         )
     }
 
+    /// The status string the provider stated itself, if any.
+    static func explicitStatus(from payloads: [String]) -> String? {
+        firstString(keys: ["status", "state", "phase"], in: jsonObjects(payloads))
+    }
+
     static func status(
         from payloads: [String],
         allowRootURL: Bool = false

@@ -323,4 +323,33 @@ struct ProviderStatusTests {
         #expect(fields["in_flight_runs"] as? Int == 2)
         #expect(fields["active_reservations"] as? Int == 3)
     }
+
+    @Test func statusReadsNeedAnExplicitTerminalStateAndIgnoreJSONNull() async throws {
+        Fixture.reset()
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let marble = MarbleClient(apiKey: "marble-secret", session: session)
+        Fixture.stub("GET", "/operations/op-null", .response(status: 200, body: #"{"done":false,"error":null}"#))
+        Fixture.stub("GET", "/operations/op-finished", .response(status: 200,
+            body: #"{"done":true,"error":null,"cost":{"total_credits":4}}"#))
+        Fixture.stub("GET", "/operations/op-undecided", .response(status: 200,
+            body: #"{"error":{"message":"World generation failed"}}"#))
+        Fixture.stub("GET", "/operations/op-numeric", .response(status: 200, body: #"{"done":1}"#))
+
+        #expect(try await marble.status(operationId: "op-null") == .running)
+        #expect(try await marble.status(operationId: "op-finished") == .completed(GenerationProviderCost(
+            amount: 4, unit: "credits", source: "Marble GET /marble/v1/operations/{id} cost.total_credits")))
+        await #expect(throws: GenerationBackendError.self) {
+            _ = try await marble.status(operationId: "op-undecided")
+        }
+        await #expect(throws: GenerationBackendError.self) {
+            _ = try await marble.status(operationId: "op-numeric")
+        }
+
+        let mediaOnly = MCPStatusStub(payloads: ["job-media": #"{"job_id":"job-media","result":{"url":"https://output.invalid/a.png"}}"#])
+        await #expect(throws: GenerationBackendError.self) {
+            _ = try await MCPGenerationExecutor.status(jobID: "job-media", tools: try await mediaOnly.discoverTools(),
+                client: mediaOnly)
+        }
+    }
 }

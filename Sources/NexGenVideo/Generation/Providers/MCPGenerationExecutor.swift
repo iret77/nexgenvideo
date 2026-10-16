@@ -250,6 +250,10 @@ enum MCPGenerationExecutor {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return nil }
         let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
         let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
+        // Settling needs a status the provider stated; inferred success from media alone is not enough.
+        guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else {
+            throw GenerationBackendError.transport("The provider MCP returned no explicit job status.")
+        }
         switch MCPGenerationLifecycle.status(
             from: payloads,
             allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(statusTool.outputSchema)

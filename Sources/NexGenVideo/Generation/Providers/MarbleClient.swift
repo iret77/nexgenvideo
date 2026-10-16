@@ -83,14 +83,15 @@ actor MarbleClient {
             // Transient non-200 on a poll is retried (matches marble.py), not fatal.
             if status == 200 {
                 let json = Self.parse(data)
-                if json?["error"] != nil, let message = Self.errorMessage(in: json) {
-                    throw ProviderRunEndedError(message: message)
+                let done = json.flatMap { Self.flag($0["done"]) }
+                if done == true, let json, let failure = Self.operationError(in: json) {
+                    throw ProviderRunEndedError(message: failure)
+                }
+                if done == true {
+                    return data
                 }
                 if let message = Self.errorMessage(in: json) {
                     throw GenerationBackendError.transport(message)
-                }
-                if (json?["done"] as? Bool) == true {
-                    return data
                 }
                 ProviderStatusSignal.confirmRunning()
             } else if status >= 400, status != 404, status != 408, status != 429, status < 500 {
@@ -110,17 +111,29 @@ actor MarbleClient {
             throw GenerationBackendError.transport("Invalid Marble operation id: \(operationId)")
         }
         let (data, status) = try await send(makeRequest(url: url, method: "GET", body: nil))
-        guard status == 200, let json = Self.parse(data) else {
-            throw GenerationBackendError.transport("Marble operation status returned HTTP \(status).")
+        guard status == 200, let json = Self.parse(data), let done = Self.flag(json["done"]) else {
+            throw GenerationBackendError.transport("Marble returned no usable operation status (HTTP \(status)).")
         }
-        if json["error"] != nil {
-            let message = Self.errorMessage(in: json) ?? "Marble reported the operation as failed"
-            return .failed(message, ProviderReportedCost.marble(operation: data))
+        guard done else { return .running }
+        if let failure = Self.operationError(in: json) {
+            return .failed(failure, ProviderReportedCost.marble(operation: data))
         }
-        if (json["done"] as? Bool) == true {
-            return .completed(ProviderReportedCost.marble(operation: data))
+        return .completed(ProviderReportedCost.marble(operation: data))
+    }
+
+    /// A finished operation's own failure; a missing or JSON-null `error` is no failure.
+    private static func operationError(in json: [String: Any]) -> String? {
+        if let error = json["error"] as? [String: Any] {
+            return (error["message"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Marble reported the operation as failed"
         }
-        return .running
+        if let error = json["error"] as? String, !error.isEmpty { return error }
+        return nil
+    }
+
+    /// Only a JSON boolean counts; numbers and strings are not a terminal flag.
+    private static func flag(_ value: Any?) -> Bool? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+        return number.boolValue
     }
 
     private func makeRequest(url: URL, method: String, body: Data?) -> URLRequest {
