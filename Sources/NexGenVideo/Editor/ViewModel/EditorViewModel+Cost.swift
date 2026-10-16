@@ -105,6 +105,12 @@ extension EditorViewModel {
         generationLog.entries.reduce(0) { $0 + ($1.costCredits ?? 0) }
     }
 
+    /// Ledger outcome per spend transaction, for labelling each Project Activity row honestly.
+    var generationSpendOutcomes: [String: GenerationSpendOutcome] {
+        let outcomes = (try? GenerationSpendLedger.outcomes(log: generationLog, generatedInputs: [])) ?? []
+        return Dictionary(outcomes.map { ($0.transactionId, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     func appendGenerationLog(for asset: MediaAsset) {
         guard let gen = asset.generationInput else { return }
         generationLog.entries.append(GenerationLogEntry(

@@ -364,9 +364,9 @@ enum AppTheme {
         static let homeNoticeHorizontalMinWidth: CGFloat = 500
         static let homeNoticeMinHeight: CGFloat = 70
         static let updateOverlayWidth: CGFloat = 640
-        static let projectActivityWidth: CGFloat = 340
+        static let projectActivityWidth: CGFloat = 380
         static let projectActivityMaxHeight: CGFloat = 420
-        static let projectActivityCostWidth: CGFloat = 68
+        static let projectActivityCostWidth: CGFloat = 108
         static let tourStageHeight: CGFloat = 300
         static let exportSidebarWidth: CGFloat = 360
         static let exportWindow = CGSize(width: 860, height: 560)

@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Scrollable list of AI generations for the current project.
+/// Scrollable list of AI generations for the current project. A row shows what the provider billed or
+/// reported for the run; the catalog's credit figure is only ever shown as an estimate.
 struct ProjectActivityView: View {
     let entries: [GenerationLogEntry]
+    var outcomes: [String: GenerationSpendOutcome] = [:]
 
-    private var total: Int {
+    private var estimatedTotal: Int {
         entries.reduce(0) { $0 + ($1.costCredits ?? 0) }
     }
 
@@ -22,7 +24,7 @@ struct ProjectActivityView: View {
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Spacer()
                 if !entries.isEmpty {
-                    Text("\(CostEstimator.format(total)) used")
+                    Text("Estimated \(CostEstimator.format(estimatedTotal))")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -56,11 +58,13 @@ struct ProjectActivityView: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.xs)
-            Text(CostEstimator.format(entry.costCredits))
+            Text(costLabel(entry))
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .monospacedDigit()
                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                .lineLimit(1)
                 .frame(width: AppTheme.ComponentSize.projectActivityCostWidth, alignment: .leading)
+                .help(costHelp(entry))
             Text(entry.modelDisplayName)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -74,6 +78,31 @@ struct ProjectActivityView: View {
         }
         .padding(.vertical, AppTheme.Spacing.xs)
         .padding(.horizontal, AppTheme.Spacing.xxs)
+    }
+
+    static func costLabel(entry: GenerationLogEntry, outcome: GenerationSpendOutcome?) -> String {
+        if let money = outcome?.billedMoney {
+            return "€" + String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), money.eurAmount)
+        }
+        if let cost = outcome?.providerCost {
+            return "\(cost.amount.formatted(.number.precision(.fractionLength(0...2)))) \(cost.unit)"
+        }
+        if let credits = entry.costCredits {
+            return "est. \(CostEstimator.format(credits))"
+        }
+        return String(localized: "Cost unknown")
+    }
+
+    private func costLabel(_ entry: GenerationLogEntry) -> String {
+        Self.costLabel(entry: entry, outcome: entry.spendTransactionId.flatMap { outcomes[$0] })
+    }
+
+    private func costHelp(_ entry: GenerationLogEntry) -> String {
+        let outcome = entry.spendTransactionId.flatMap { outcomes[$0] }
+        if outcome?.billedMoney != nil { return String(localized: "Billed by the provider") }
+        if let cost = outcome?.providerCost { return String(localized: "Reported by the provider: \(cost.source)") }
+        if entry.costCredits != nil { return String(localized: "Catalog estimate, not a provider charge") }
+        return String(localized: "The provider reported no cost for this run")
     }
 
     private func relativeTime(_ date: Date?) -> String {
@@ -95,9 +124,9 @@ struct ProjectActivityButton: View {
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
-        .help("Project Activity · \(CostEstimator.format(editor.totalGenerationCost)) used")
+        .help("Project Activity · estimated \(CostEstimator.format(editor.totalGenerationCost))")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            ProjectActivityView(entries: editor.generationLogEntries)
+            ProjectActivityView(entries: editor.generationLogEntries, outcomes: editor.generationSpendOutcomes)
         }
     }
 }

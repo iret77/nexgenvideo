@@ -1418,7 +1418,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .estimateCost,
-            description: "The project's verified money journal and budget picture. Read-only.\n\nIncludes every priced reservation and charge across sheets, frames, retakes, failed submitted jobs, and renders. Returns the planning `budget_eur`, optional enforced `budget_stop_eur`, verified spend, reservation and unknown-cost counts, and remaining amounts only when the journal is complete. This is the project spend view, not a forward per-shot estimate. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The project's verified money journal and budget picture. Read-only.\n\nIncludes every priced reservation and charge across sheets, frames, retakes, failed submitted jobs, and renders. Returns the planning `budget_eur`, billed spend (`verified_spend_eur`), `provider_credits` in each provider's own unit, and unknown-cost, legacy and in-flight run counts; the budget is a display, so `over_budget` is always false and `remaining_eur` null. This is the project spend view, not a forward per-shot estimate. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: projectDirSchema()
         ),
         AgentTool(

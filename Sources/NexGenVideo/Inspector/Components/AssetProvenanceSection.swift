@@ -87,16 +87,21 @@ struct AssetProvenanceSection: View {
                 InspectorSection("Job and Cost") {
                     let jobs = Array(Set(events.compactMap(\.providerRequestId))).sorted()
                     row("Provider job", jobs.isEmpty ? "Not recorded" : jobs.joined(separator: "\n"))
-                    let charges = events.filter { $0.kind == .charged }.compactMap(\.money)
-                    if charges.isEmpty {
-                        row("Booked cost", "Unavailable")
-                    } else {
-                        ForEach(charges.indices, id: \.self) { index in
-                            row("Booked cost", money(charges[index]))
-                        }
+                    let billed = events.filter { $0.kind == .charged }.compactMap(\.money).filter(\.isProviderBilled)
+                    let reported = events.compactMap(\.providerCost)
+                    if billed.isEmpty && reported.isEmpty {
+                        row("Cost", "Unknown")
                     }
-                    if !charges.isEmpty {
-                        row("Cost evidence", "Ledger amount; may use the approved estimate. Provider invoice not verified.")
+                    ForEach(billed.indices, id: \.self) { index in
+                        row("Billed cost", money(billed[index]))
+                    }
+                    ForEach(reported.indices, id: \.self) { index in
+                        row("Provider cost", "\(reported[index].amount.formatted(.number.precision(.fractionLength(0...2)))) \(reported[index].unit)")
+                    }
+                    if !billed.isEmpty {
+                        row("Cost evidence", "Provider billing record")
+                    } else if !reported.isEmpty {
+                        row("Cost evidence", reported.map(\.source).joined(separator: "\n"))
                     }
                     if let estimate = package?.payload.estimate ?? events.first(where: { $0.kind == .reserved })?.money {
                         row("Estimate", money(estimate))
