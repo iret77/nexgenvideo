@@ -193,13 +193,22 @@ enum NativeCockpitReader {
         return value
     }
 
-    /// `read.py` "router": `core.router.describe()` — `{tiers:{...}, task_classes:{name:{tier, effort}}}`.
-    static func routerJSON(dataRoot: URL? = nil) throws -> Data {
+    /// `read.py` "router": `{tiers:{tier: family or pinned id}, models:{tier: newest discovered id},
+    /// task_classes:{name:{tier, effort}}}`.
+    static func routerJSON(
+        dataRoot: URL? = nil,
+        catalog: AnthropicModelCatalogStore = AnthropicModelCatalogStore()
+    ) throws -> Data {
         var taskClasses: [String: Any] = [:]
         for tc in ModelRouter.taskClasses {
             taskClasses[tc.name] = ["tier": tc.tier, "effort": tc.effort]
         }
-        return try serialize(["tiers": ModelRouter.manifest(dataRoot: dataRoot), "task_classes": taskClasses])
+        let manifest = ModelRouter.manifest(dataRoot: dataRoot)
+        var models: [String: Any] = [:]
+        for (tier, value) in manifest {
+            if let id = catalog.resolveRoute(value).modelID { models[tier] = id }
+        }
+        return try serialize(["tiers": manifest, "models": models, "task_classes": taskClasses])
     }
 
     // MARK: - Project kinds

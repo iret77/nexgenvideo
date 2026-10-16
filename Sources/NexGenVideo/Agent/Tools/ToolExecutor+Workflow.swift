@@ -1557,10 +1557,13 @@ extension ToolExecutor {
         let dataRoot = try? resolveDataRoot(args, editor: editor)
         do {
             let r = try ModelRouter.resolve(taskClass, escalate: escalate, dataRoot: dataRoot)
+            let route = AnthropicModelCatalogStore().resolveRoute(r.model)
             return try jsonResult([
                 "task_class": r.taskClass,
                 "tier": r.tier,
-                "model": r.model,
+                "family": route.family.map { $0 as Any } ?? NSNull(),
+                "model": route.modelID ?? r.model,
+                "model_discovered": route.modelID != nil,
                 "effort": r.effort,
                 "escalated": r.escalated,
             ])

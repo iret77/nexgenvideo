@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -168,6 +169,23 @@ struct AnthropicModelCatalogTests {
         #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels().map(\.id) == [
             "claude-sonnet-5-5", "claude-sonnet-4-6",
         ])
+    }
+
+    @Test("router families resolve to the newest discovered id; pinned ids stay pinned")
+    func routeResolution() throws {
+        let store = AnthropicModelCatalogStore(defaults: F.isolatedDefaults())
+        #expect(store.resolveRoute("haiku").family == "haiku")
+        #expect(store.resolveRoute("haiku").modelID == nil)
+        store.saveCatalog(F.models([F.haiku45, F.haiku55, F.opus55]))
+        #expect(store.resolveRoute("haiku").modelID == "claude-haiku-5-5")
+        #expect(store.resolveRoute("claude-haiku-4-5-20251001").modelID == "claude-haiku-4-5-20251001")
+        #expect(store.resolveRoute("claude-opus-4-8").modelID == nil)
+        #expect(store.resolveRoute("claude-opus-4-8").family == "opus")
+        #expect(store.resolveRoute("sonnet").modelID == nil)
+        let data = try NativeCockpitReader.routerJSON(catalog: store)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["tiers"] as? [String: String] == ModelRouter.defaultManifest)
+        #expect(object["models"] as? [String: String] == ["fast": "claude-haiku-5-5", "deep": "claude-opus-5-5"])
     }
 
     @Test("request body follows the selected model's capabilities")
