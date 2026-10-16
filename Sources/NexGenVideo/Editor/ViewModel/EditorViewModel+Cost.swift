@@ -151,8 +151,7 @@ extension EditorViewModel {
         do {
             _ = try GenerationBudgetGuard.verifiedSpend(
                 log: generationLog,
-                generatedAssets: mediaAssets,
-                requireCompleteMoney: false
+                generatedAssets: mediaAssets
             )
             if let batch = authorization.batchItem {
                 try GenerationBatchStore.recordSpendEvent(event, authorization: batch, editor: self)

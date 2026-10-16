@@ -196,7 +196,7 @@ enum GenerationBatchStore {
             }
         }
         _ = try GenerationBudgetGuard.verifiedSpend(log: editor.generationLog,
-            generatedAssets: editor.mediaAssets, requireCompleteMoney: false)
+            generatedAssets: editor.mediaAssets)
         if changedLog { try editor.persistGenerationLog() }
 
         var changedMedia = false

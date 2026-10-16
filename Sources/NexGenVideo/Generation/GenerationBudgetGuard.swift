@@ -104,26 +104,15 @@ enum GenerationBudgetGuard {
         try mutationScope.requireCurrent(editor: editor)
         let stop = try budgetStop(in: workingRoot)
         var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        let existingSpend = try verifiedSpend(
-            log: log,
-            generatedAssets: editor.mediaAssets,
-            requireCompleteMoney: stop != nil && !acceptsUnknownPrice
-                && !(try batchItem?.hasPricingOverride(editor: editor) ?? false)
-        )
+        let existingSpend = try verifiedSpend(log: log, generatedAssets: editor.mediaAssets)
 
-        if let stop, !acceptsUnknownPrice {
-            guard let estimate else {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop: \(target.provider.displayName) did not provide a verified monetary "
-                    + "estimate for \(target.endpoint). No provider request was sent. "
-                    + (pricingFailure?.localizedDescription ?? "Pricing is unavailable.")
-                )
-            }
+        // The stop judges known amounts only; an unknown price goes through per-run approval instead.
+        if let stop, let estimate, !acceptsUnknownPrice {
             let projected = existingSpend + estimate.eurAmount
             guard projected <= stop else {
                 throw GenerationBudgetError.blocked(
                     "Budget stop reached. This request is estimated at "
-                    + euro(estimate.eurAmount) + "; verified project spend plus reservations would be "
+                    + euro(estimate.eurAmount) + "; known project spend plus reservations would be "
                     + euro(projected) + ", above the limit of " + euro(stop) + "."
                 )
             }
@@ -182,19 +171,8 @@ enum GenerationBudgetGuard {
             editor: editor
         )
 
-        let stop = try budgetStop(in: workingRoot)
         var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        _ = try verifiedSpend(
-            log: log,
-            generatedAssets: editor.mediaAssets,
-            requireCompleteMoney: stop != nil
-        )
-        if stop != nil {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: \(provider.displayName) does not expose a verified monetary estimate "
-                + "for \(endpoint). No provider request was sent."
-            )
-        }
+        _ = try verifiedSpend(log: log, generatedAssets: editor.mediaAssets)
 
         let authorization = GenerationAuthorization(
             transactionId: UUID().uuidString,
@@ -213,26 +191,12 @@ enum GenerationBudgetGuard {
 
     static func verifiedSpend(
         log: GenerationLog,
-        generatedAssets: [MediaAsset],
-        requireCompleteMoney: Bool
+        generatedAssets: [MediaAsset]
     ) throws -> Double {
-        let snapshot = try spendSnapshot(
+        try spendSnapshot(
             log: log,
             generatedInputs: generatedAssets.compactMap(\.generationInput)
-        )
-        if requireCompleteMoney, snapshot.legacyGenerationCount > 0 {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: existing generation history has no verified monetary ledger. "
-                    + "No provider request was sent."
-            )
-        }
-        if requireCompleteMoney, snapshot.unpricedTransactionCount > 0 {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: project spend contains an unpriced provider request. "
-                    + "No provider request was sent."
-            )
-        }
-        return snapshot.verifiedEur
+        ).verifiedEur
     }
 
     nonisolated static func spendSnapshot(
@@ -324,7 +288,7 @@ enum GenerationBudgetGuard {
         )
     }
 
-    private static func budgetStop(in workingRoot: URL) throws -> Double? {
+    static func budgetStop(in workingRoot: URL) throws -> Double? {
         let dataRoot: URL?
         if let resolved = DataRootResolver.dataRoot(of: workingRoot) {
             dataRoot = resolved

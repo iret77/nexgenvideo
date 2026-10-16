@@ -24,15 +24,6 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
     }
 
     @MainActor
-    func hasPricingOverride(editor: EditorViewModel) throws -> Bool {
-        guard let home = editor.workingRoot else { return false }
-        let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
-        guard snapshot.authorityAvailable, snapshot.batch.payload.projectKey == editor.projectId,
-              let overrideIDs = snapshot.journal.pricingOverrideItemIDs else { return false }
-        return !overrideIDs.isEmpty && snapshot.batch.payload.items.contains { $0.id == itemID }
-    }
-
-    @MainActor
     func consume(authorization: GenerationAuthorization, editor: EditorViewModel) throws {
         guard let package = authorization.generationPackage, let transactionID = authorization.transactionId,
               authorization.target == package.payload.target else {

@@ -636,8 +636,8 @@ struct GenerationBatchTests {
         try JSONDecoder().decode(GenerationBatchJournal.self, from: legacyData).validate(batch: original)
     }
 
-    @Test func explicitUnknownCostApprovalReservesUnknownMoneyWithoutDisablingFutureBudgetChecks() async throws {
-        let (root, editor, original) = try await fixture(stop: 1)
+    @Test func unknownCostReservationsNeverLockLaterWorkWhileKnownPricesStillMeetTheStop() async throws {
+        let (root, editor, original) = try await fixture(stop: 0.6)
         defer { cleanup(root) }
         let batch = try await unpricedBatch(original, editor: editor)
         _ = try await GenerationBatchStore.approve(batch, editor: editor, approval: .acceptUnknownPrices)
@@ -666,22 +666,33 @@ struct GenerationBatchTests {
                 requiresVerifiedCeiling: true, batchItem: sibling,
                 quoteLoader: { _, _ in GenerationPackageFixture.money(0.50) })
         }
-        await #expect(throws: (any Error).self) {
-            try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+        let laterUnknown = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            quoteLoader: { _, _ in throw GenerationBudgetError.blocked("Pricing unavailable") })
+        #expect(laterUnknown.estimate == nil)
+        _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+            target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        #expect(editor.generationLog.spendEvents.count == 4)
+        do {
+            _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
                 target: known.package.payload.target, editor: editor, approvedPackage: known.package,
                 quoteLoader: { _, _ in GenerationPackageFixture.money() })
+            Issue.record("expected the known price above the stop to block")
+        } catch let error as GenerationBudgetError {
+            #expect(error.localizedDescription.contains("Budget stop reached"))
         }
-        #expect(editor.generationLog.spendEvents.count == 2)
+        #expect(editor.generationLog.spendEvents.count == 4)
         let dataRoot = try #require(editor.workingRoot).appendingPathComponent("pipeline")
         let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
-        #expect(brief.budgetStopEur == 1)
+        #expect(brief.budgetStopEur == 0.6)
         await #expect(throws: CancellationError.self) {
             try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
                 target: item.package.payload.target, editor: editor, approvedPackage: item.package,
                 requiresVerifiedCeiling: true, batchItem: authorization,
                 quoteLoader: { _, _ in throw CancellationError() })
         }
-        #expect(editor.generationLog.spendEvents.count == 2)
+        #expect(editor.generationLog.spendEvents.count == 4)
         let home = try #require(editor.workingRoot)
         let current = try GenerationBatchStore.load(id: batch.id, home: home)
         let transaction = try #require(reserved.transactionId)
@@ -700,6 +711,66 @@ struct GenerationBatchTests {
                     placeholders: outputEntries, batch: batch)
             }
         }
+    }
+
+    @Test func actualChargeAboveTheReviewedCeilingIsRecordedAndReloads() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let ceiling = try #require(item.package.payload.estimate)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: batchItem, quoteLoader: { _, _ in ceiling })
+        let transaction = try #require(reserved.transactionId)
+        let reservation = try #require(editor.generationLog.spendEvents.first(where: { $0.transactionId == transaction }))
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+        }
+        _ = try GenerationBatchStore.update(submitting, editor: editor) {
+            try $0.recordProviderRequest(itemID: item.id, transactionID: transaction, requestID: "provider-job", resumable: true)
+        }
+        let authorization = GenerationAuthorization(transactionId: transaction, target: reserved.target,
+            estimate: reserved.estimate, projectMutationScope: reserved.projectMutationScope,
+            generationPackage: item.package, batchItem: batchItem)
+        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+            providerRequestId: "provider-job", providerRequestResumable: true, money: ceiling)
+
+        let authority = try GenerationExecutionAuthorityStore.live()
+        let recordURL = authority.root.appendingPathComponent(authority.hostID, isDirectory: true)
+            .appendingPathComponent(batch.payload.projectKey, isDirectory: true)
+            .appendingPathComponent(batch.id, isDirectory: true)
+            .appendingPathComponent("record.json")
+        let priorBytes = try Data(contentsOf: recordURL)
+        let prior = try authority.load(projectKey: batch.payload.projectKey, batchID: batch.id)
+        #expect(try GenerationPackageV1.canonicalData(prior) == priorBytes)
+
+        let drifted = GenerationPackageFixture.money(0.40)
+        let target = item.package.payload.target
+        for kind in [GenerationSpendEvent.Kind.reserved, .submitted] {
+            let overCeiling = GenerationSpendEvent(transactionId: transaction, kind: kind, model: target.modelId,
+                provider: target.provider, transport: target.transport, endpoint: target.endpoint,
+                providerRequestId: kind == .submitted ? "provider-job" : nil, money: drifted)
+            #expect(throws: (any Error).self) { try authority.recordSpendEvent(overCeiling, authorization: batchItem) }
+        }
+        try editor.recordSpendEvent(authorization: authorization, kind: .charged, money: drifted)
+
+        let charge = try #require(editor.generationLog.spendEvents.last)
+        #expect(charge.kind == .charged)
+        #expect(charge.money == drifted)
+        let reloaded = try authority.load(projectKey: batch.payload.projectKey, batchID: batch.id)
+        #expect(reloaded.spendEvents.last == charge)
+        #expect(Array(reloaded.spendEvents.prefix(prior.spendEvents.count)) == prior.spendEvents)
+        #expect(try GenerationPackageV1.canonicalData(reloaded) == Data(contentsOf: recordURL))
+        let home = try #require(editor.workingRoot)
+        let persisted = try JSONDecoder().decode(GenerationLog.self,
+            from: Data(contentsOf: home.appendingPathComponent(Project.generationLogFilename)))
+        #expect(persisted.spendEvents.contains(charge))
+        #expect(try GenerationBudgetGuard.spendSnapshot(log: persisted, generatedInputs: []).verifiedEur == drifted.eurAmount)
+        let snapshot = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(snapshot.authoritySpendEvents.contains(charge))
     }
 
     @Test func overrideDoesNotReuseCanceledExecutionOrAChangedReview() async throws {
