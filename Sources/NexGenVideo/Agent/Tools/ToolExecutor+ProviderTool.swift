@@ -207,7 +207,9 @@ extension ToolExecutor {
         let jobID = MCPGenerationLifecycle.submission(from: payloads).jobID.flatMap { $0.isEmpty ? nil : $0 }
         let queryable = jobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil
         guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else {
-            return ProviderToolOutcome(jobID: jobID, queryable: queryable, ended: jobID == nil)
+            // A missing status is a plain answer; a null or non-string status is an unconfirmed one.
+            let plainAnswer = jobID == nil && !MCPGenerationLifecycle.declaresStatus(in: payloads)
+            return ProviderToolOutcome(jobID: jobID, queryable: queryable, ended: plainAnswer)
         }
         switch MCPGenerationLifecycle.status(from: payloads) {
         case .succeeded, .failed:

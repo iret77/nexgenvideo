@@ -137,6 +137,18 @@ enum MCPGenerationLifecycle {
         firstString(keys: ["status", "state", "phase"], in: jsonObjects(payloads))
     }
 
+    /// True when a status field is present at all, even as JSON null or another non-string value.
+    static func declaresStatus(in payloads: [String]) -> Bool {
+        func declares(_ value: Any) -> Bool {
+            if let object = value as? [String: Any] {
+                return ["status", "state", "phase"].contains(where: { object[$0] != nil }) || object.values.contains(where: declares)
+            }
+            if let array = value as? [Any] { return array.contains(where: declares) }
+            return false
+        }
+        return jsonObjects(payloads).contains(where: declares)
+    }
+
     static func status(
         from payloads: [String],
         allowRootURL: Bool = false

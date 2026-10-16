@@ -722,6 +722,11 @@ struct ProviderStatusTests {
         #expect(outcome("Background removed: https://output.invalid/cutout.png")
             == .init(jobID: nil, queryable: false, ended: true))
         #expect(outcome(#"{"status":"queued"}"#) == .init(jobID: nil, queryable: false, ended: false))
+        #expect(outcome(#"{"status":null}"#) == .init(jobID: nil, queryable: false, ended: false))
+        #expect(outcome(#"{"status":7,"url":"https://output.invalid/x.png"}"#)
+            == .init(jobID: nil, queryable: false, ended: false))
+        #expect(outcome(#"{"url":"https://output.invalid/plain.png"}"#)
+            == .init(jobID: nil, queryable: false, ended: true))
         #expect(outcome(#"{"job_id":"j-5","status":"queued"}"#, tools: [])
             == .init(jobID: "j-5", queryable: false, ended: false))
     }
