@@ -19,6 +19,12 @@ final class ToolHarness {
         },
         modelCatalog: ModelCatalog = .shared,
         productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        catalogReadiness: @escaping ToolExecutor.CatalogReadiness = {
+            await CatalogDiscovery.ensureCurrent()
+        },
+        isModelEnabled: @escaping @MainActor (String) -> Bool = {
+            ModelPreferences.shared.isEnabled($0)
+        },
         phaseMutationRecorder: @escaping ToolExecutor.PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         let editor = EditorViewModel()
@@ -30,6 +36,8 @@ final class ToolHarness {
             providerActivation: providerActivation,
             modelCatalog: modelCatalog,
             productionRouteCandidates: productionRouteCandidates,
+            catalogReadiness: catalogReadiness,
+            isModelEnabled: isModelEnabled,
             phaseMutationRecorder: phaseMutationRecorder
         )
     }

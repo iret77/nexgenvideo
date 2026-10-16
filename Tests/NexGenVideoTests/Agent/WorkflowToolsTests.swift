@@ -22,6 +22,12 @@ struct WorkflowToolsTests {
         },
         productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
             ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        },
+        catalogReadiness: @escaping ToolExecutor.CatalogReadiness = {
+            await CatalogDiscovery.ensureCurrent()
+        },
+        isModelEnabled: @escaping @MainActor (String) -> Bool = {
+            ModelPreferences.shared.isEnabled($0)
         }
     ) throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory
@@ -32,7 +38,9 @@ struct WorkflowToolsTests {
             ToolHarness(
                 enforceHardGates: enforceHardGates,
                 providerActivation: providerActivation,
-                productionRouteCandidates: productionRouteCandidates
+                productionRouteCandidates: productionRouteCandidates,
+                catalogReadiness: catalogReadiness,
+                isModelEnabled: isModelEnabled
             ),
             dataRoot,
             tmp
@@ -482,7 +490,7 @@ struct WorkflowToolsTests {
         _ = try PipelineShotlistWriter.write(
             shotlist,
             executionInputs: inputs,
-            routes: [],
+            referenceCheck: .activatedRoutes([], discoveryComplete: true),
             dataRoot: dataRoot,
             declaredPack: nil
         )
@@ -3032,6 +3040,613 @@ struct WorkflowToolsTests {
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
         #expect(importedShotlist.shots.first?.productionPlan == nil)
+    }
+
+    private struct PublishedReferenceRoute {
+        let semanticJobID: String
+        let inputSlotID: String
+        let modality: String
+        let modeID: String
+        let resolution: VideoResolution
+    }
+
+    private struct ReferenceShotlistProject {
+        let harness: ToolHarness
+        let dataRoot: URL
+        let cleanup: URL
+        let binding: ProjectPackBinding
+        let activation: ProviderActivation
+        let candidates: ProductionRouteCandidateProvider
+        let route: PublishedReferenceRoute
+    }
+
+    /// Bible entity id → (image sheet view, project path).
+    private static let referenceSheets: [String: (view: String, path: String)] = [
+        "mouse": ("front", "bible/mouse-front.png"),
+        "street": ("wide", "bible/street-wide.png"),
+        "cheese": ("hero", "bible/cheese-hero.png"),
+    ]
+
+    private static let referenceShots: [(id: String, steps: [String], entities: [String])] = [
+        ("s001", ["intro.01", "intro.02"], ["mouse", "street"]),
+        ("s002", ["intro.03"], ["street", "cheese"]),
+        ("s003", ["intro.04"], ["mouse", "cheese", "street"]),
+    ]
+
+    /// Contract anchor plus a published route that takes three anchors in a 4 s 16:9 shot.
+    private func publishedReferenceRoute(
+        _ harness: ToolHarness,
+        dataRoot: URL
+    ) async throws -> PublishedReferenceRoute {
+        let stateObject = try await harness.runOK(
+            "get_project_state",
+            args: ["project_dir": dataRoot.path]
+        )
+        let state = try #require(stateObject as? [String: Any])
+        let contract = try #require(state["execution_input_contract"] as? [String: Any])
+        let anchor = try #require(contract["reference_anchor"] as? [String: String])
+        let semanticJobID = try #require(anchor["semantic_job_id"])
+        let slotID = try #require(anchor["input_slot_id"])
+        let modality = try #require(anchor["modality"])
+        let modelsObject = try await harness.runOK("list_models")
+        let models = try #require(modelsObject as? [String: Any])
+        let routes = try #require(models["production_routes"] as? [[String: Any]])
+        let anchorsPerShot = Self.referenceShots.map { $0.entities.count }.max() ?? 0
+        let reservedModes: Set<String> = ["edit", "video-edit", "extend", "video-extend"]
+        var choices: [(offeringID: String, mode: String, resolution: VideoResolution)] = []
+        for route in routes {
+            guard let capabilities = route["capabilities"] as? [String: Any],
+                  let offering = capabilities["offering"] as? [String: Any],
+                  offering["modality"] as? String == "video",
+                  let offeringID = offering["offering_id"] as? String,
+                  let effective = capabilities["effective"] as? [String: Any],
+                  let fields = effective["fields"] as? [String: Any],
+                  let slots = route["input_slots"] as? [[String: Any]],
+                  let slot = slots.first(where: {
+                      $0["id"] as? String == slotID && $0["modality"] as? String == modality
+                  }),
+                  let published = (slot["mode_ids"] as? [String])?
+                      .filter({ !reservedModes.contains($0) }).sorted(),
+                  let mode = published.first(where: { $0.contains("reference") }) ?? published.first else {
+                continue
+            }
+            func value(_ group: String, _ field: String) -> Any? {
+                ((fields[group] as? [String: Any])?[field] as? [String: Any])?["value"]
+            }
+            func strings(_ field: String) -> [String] { value("strings", field) as? [String] ?? [] }
+            func integer(_ field: String) -> Int { (value("integers", field) as? NSNumber)?.intValue ?? 0 }
+            func decimal(_ field: String) -> Double? { (value("decimals", field) as? NSNumber)?.doubleValue }
+            let durations = (value("integer_lists", CapabilityFieldIDV1.durationValues) as? [NSNumber])?
+                .map(\.doubleValue) ?? []
+            let fitsDuration = durations.isEmpty
+                ? (decimal(CapabilityFieldIDV1.durationMinimum) ?? .infinity) <= 4
+                    && (decimal(CapabilityFieldIDV1.durationMaximum) ?? 0) >= 4
+                : durations.contains(4)
+            let kinds = strings(CapabilityFieldIDV1.inputKinds)
+            guard kinds.isEmpty || kinds.contains(modality),
+                  strings(CapabilityFieldIDV1.aspectRatios).contains("16:9"),
+                  let resolution = ["720p", "1080p"]
+                      .first(where: strings(CapabilityFieldIDV1.resolutions).contains)
+                      .flatMap(VideoResolution.init(rawValue:)),
+                  integer(CapabilityFieldIDV1.visibleCharacters) >= 1,
+                  integer(CapabilityFieldIDV1.referenceImages) >= anchorsPerShot,
+                  integer(CapabilityFieldIDV1.totalReferences) >= anchorsPerShot,
+                  fitsDuration else {
+                continue
+            }
+            choices.append((offeringID, mode, resolution))
+        }
+        let choice = try #require(
+            choices.sorted { $0.offeringID < $1.offeringID }.first,
+            "No published route takes \(anchorsPerShot) image anchors in a 4 s 16:9 shot."
+        )
+        return PublishedReferenceRoute(
+            semanticJobID: semanticJobID,
+            inputSlotID: slotID,
+            modality: modality,
+            modeID: choice.mode,
+            resolution: choice.resolution
+        )
+    }
+
+    /// Hard-gated Musicvideo project approved through a Bible with a character, a location and a prop.
+    private func prepareReferenceShotlistProject() async throws -> ReferenceShotlistProject {
+        let routing = falRoutingDependencies()
+        let (setup, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates,
+            catalogReadiness: { true },
+            isModelEnabled: { _ in true }
+        )
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let harness = ToolHarness(
+            enforceHardGates: true,
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates,
+            catalogReadiness: { true },
+            isModelEnabled: { _ in true }
+        )
+        let route = try await publishedReferenceRoute(harness, dataRoot: dataRoot)
+
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await setup.runOK("write_analysis_interpretation", args: [
+            "project_dir": dataRoot.path,
+            "tempo_multiplier": 1.0,
+            "section_labels": [
+                ["index": 0, "label": "intro", "confidence": 0.9],
+                ["index": 1, "label": "verse", "confidence": 0.9],
+            ],
+            "anomalies": [],
+            "overall_character": "Measured pulse with a clear opening and development.",
+        ])
+        try recordAnalysisLineage(dataRoot: dataRoot)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            try Brief(
+                project: "demo",
+                generated: "2026-10-16T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "YouTube",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                figures: .othersOnly,
+                lyricsIntegration: .metaphorical,
+                finalResolution: route.resolution
+            ),
+            to: PipelineLayout.briefFile
+        )
+        try recordLineage("brief", dataRoot: dataRoot)
+
+        _ = try await setup.runOK("write_production_design", args: [
+            "project_dir": dataRoot.path,
+            "visual_medium": "2d_animation",
+            "refs": [],
+            "color_script": [["section": "intro", "description": "Muted blue dawn."]],
+        ])
+        try recordLineage("production_design", dataRoot: dataRoot)
+
+        _ = try await setup.runOK("write_treatment", args: [
+            "project_dir": dataRoot.path,
+            "origin": "agent_proposal",
+            "summary_oneline": "A mouse crosses a quiet street at dawn.",
+            "body_markdown": "The empty street holds until the mouse arrives for the cheese.",
+            "causality_plan": [
+                "mode": "narrative", "applicationReason": "A single establishing beat opens this section.",
+                "beats": [["id": "arrival", "sceneID": "street", "excerpt": "The empty street holds until the mouse arrives for the cheese.", "elementIDs": []]],
+                "chronology": ["arrival"], "edges": [], "elements": [], "stateChanges": [], "unresolvedDecisions": [],
+                "changeReview": [
+                    "reviewer": "test director", "upstreamCause": "The approved brief calls for a quiet opening.",
+                    "downstreamConsequence": "The street establishes the later chase.", "affectedBeatIDs": ["arrival"],
+                    "checks": StoryCausalityDraftV1.ReviewQuestion.allCases.map {
+                        ["question": $0.rawValue, "verdict": "notApplicable", "explanation": "This initial single-beat section contains no subplot or revision dependency."]
+                    },
+                ],
+            ],
+        ])
+        try recordLineage("treatment", dataRoot: dataRoot)
+
+        let steps: [[String: Any]] = (1...4).map { index in
+            [
+                "id": "intro.\(String(format: "%02d", index))",
+                "function": index == 1 ? "transition" : "story",
+                "source_mode": "generated",
+                "subject": "The mouse crosses the empty street toward the cheese.",
+                "camera": "Wide static frame.",
+                "setting_hint": "street, from the curb",
+                "location_view_request": "wide",
+                "character_view_request": [],
+                "prop_request": [],
+                "framing": "wide",
+                "visible_zones": ["street_main"],
+                "zone_introduces": index == 1 ? ["street_main"] : [],
+                "camera_setup": ["height": "eye_level", "angle": "frontal", "lens_hint": "wide"],
+                "character_blocking": [],
+            ]
+        }
+        _ = try await setup.runOK("write_storyboard", args: [
+            "project_dir": dataRoot.path,
+            "origin": "agent_proposal",
+            "summary_oneline": "The street wakes.",
+            "causality_bindings": steps.map {
+                ["stepID": $0["id"]!, "beatIDs": ["arrival"], "reason": "Coverage of the approved arrival beat."]
+            },
+            "sections": [[
+                "id": "intro", "label": "intro", "time_start": 0, "time_end": 12,
+                "energy": "low", "function": "aufbau", "steps": steps,
+            ]],
+        ])
+        try recordLineage("storyboard", dataRoot: dataRoot)
+
+        var proofEntries: [String: PipelineAssetProofEntry] = [:]
+        for (entity, sheet) in Self.referenceSheets {
+            let url = dataRoot.appendingPathComponent(sheet.path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("\(entity)-\(sheet.view)".utf8).write(to: url)
+            proofEntries[sheet.path] = PipelineAssetProofEntry(
+                path: sheet.path,
+                sha256: try FileDigest.sha256(of: url),
+                providerPrompt: "Compiled provider prompt for \(entity)",
+                generationModel: "image-model",
+                sourceMediaId: "bible-\(entity)"
+            )
+        }
+        try savePipelineAssetProof(
+            PipelineAssetProof(project: "demo", scope: "bible", entries: proofEntries),
+            dataRoot: dataRoot
+        )
+        func entity(_ id: String, name: String, prompt: String) -> [String: Any] {
+            let sheet = Self.referenceSheets[id]!
+            return [
+                "id": id,
+                "name": name,
+                "visual_prompt": prompt,
+                "attributes": [],
+                "reference_images": [],
+                "sheets": [["view": sheet.view, "path": sheet.path]],
+            ]
+        }
+        var location = entity("street", name: "Street", prompt: "A quiet hand-drawn street at blue hour.")
+        location["view_purpose"] = [["view": "wide", "purpose": "establishing"]]
+        location["floorplan"] = ""
+        location["zones"] = [[
+            "id": "street_main",
+            "description": "Main street",
+            "status": "clean",
+            "bible_assets": [Self.referenceSheets["street"]!.path],
+        ]]
+        location["scene3d"] = ["panorama": "", "provider": "", "povs": []]
+        _ = try await setup.runOK("write_bible", args: [
+            "project_dir": dataRoot.path,
+            "look": ["style": "restrained hand-drawn animation"],
+            "characters": [entity("mouse", name: "Mouse", prompt: "A small grey hand-drawn mouse.")],
+            "ensembles": [],
+            "props": [entity("cheese", name: "Cheese", prompt: "A yellow wedge of cheese.")],
+            "locations": [location],
+        ])
+        try recordLineage("bible", dataRoot: dataRoot)
+
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in ["project_init", "analysis", "brief", "production_design", "treatment", "storyboard"] {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        _ = try await harness.runGateOK("approve_gate", args: [
+            "project_dir": dataRoot.path, "phase": "bible",
+        ])
+        return ReferenceShotlistProject(
+            harness: harness,
+            dataRoot: dataRoot,
+            cleanup: cleanup,
+            binding: binding,
+            activation: routing.activation,
+            candidates: routing.candidates,
+            route: route
+        )
+    }
+
+    /// write_shotlist arguments whose reference demands copy only published contract and route values.
+    private func referenceShotlistArguments(_ route: PublishedReferenceRoute) -> [String: Any] {
+        var shots: [[String: Any]] = []
+        var executions: [[String: Any]] = []
+        for (index, planned) in Self.referenceShots.enumerated() {
+            let start = Double(index) * 4
+            let sheets = planned.entities.map { (entity: $0, sheet: Self.referenceSheets[$0]!) }
+            shots.append([
+                "id": planned.id,
+                "section": "intro",
+                "time_start": start,
+                "time_end": start + 4,
+                "duration_s": 4,
+                "type": "performance",
+                "source_mode": "generated",
+                "description": "The mouse crosses the street toward the cheese.",
+                "visual_prompt": "At t=0 the hand-drawn street waits in a wide blue-hour frame.",
+                "mood": "restrained",
+                "character_refs": planned.entities.contains("mouse") ? ["mouse"] : [],
+                "character_views": [],
+                "keyframe_strategy": "none",
+                "visible_zones": ["street_main"],
+                "zone_introduces": [],
+                "character_blocking": [],
+                "prop_refs": planned.entities.contains("cheese") ? ["cheese"] : [],
+                "prop_views": [],
+                "redo": false,
+                "scene_video_provider": "fal",
+                "seedance_input_mode": "reference",
+                "reference_image_refs": sheets.map { $0.sheet.path },
+                "chain_with_previous_end": false,
+                "transition_in": "hard_cut",
+                "transition_out": "hard_cut",
+                "production_plan": [
+                    "primary_action": "The mouse crosses the street.",
+                    "camera_movement": "static",
+                    "narrative_beat": "establish",
+                    "renderability": "green",
+                    "risks": [],
+                    "continuity_locks": [],
+                    "blocking_anchors": [],
+                ],
+            ])
+            let demands: [[String: Any]] = sheets.map { item in
+                [
+                    "id": "\(planned.id)-\(item.entity)",
+                    "asset_path": item.sheet.path,
+                    "modality": route.modality,
+                    "semantic_job_id": route.semanticJobID,
+                    "is_required": true,
+                    "priority": 0,
+                    "preservation_scope_ids": [],
+                    "exclusion_demand_ids": [],
+                    "input_slot_id": route.inputSlotID,
+                    "mode_id": route.modeID,
+                    "identity_lock": false,
+                    "entity_id": item.entity,
+                    "canon_ids": [],
+                    "view_id": item.sheet.view,
+                ]
+            }
+            executions.append([
+                "id": planned.id,
+                "storyboard_step_ids": planned.steps,
+                "source_mode": ExecutionSourceModeV1.generated.rawValue,
+                "start_state": ["summary": "The street is empty.", "entity_state_ids": []],
+                "end_state": ["summary": "The mouse has crossed.", "entity_state_ids": []],
+                "blocking": [],
+                "timed_action_beats": [],
+                "acceptance": [[
+                    "id": "accept-\(planned.id)",
+                    "requirement": "Every anchored entity stays recognizable.",
+                    "severity": "required",
+                ]],
+                "generation_requirement": [
+                    "modality_id": CapabilityModalityV1.video.rawValue,
+                    "mode_ids": [route.modeID],
+                    "duration": ["minimum_seconds": 4, "maximum_seconds": 4, "allows_automatic": false],
+                    "requires_output_audio": false,
+                ],
+                "core_inputs": [:],
+                "reference_demands": demands,
+                "conditioning": [
+                    "strategy": ConditioningStrategyKindV1.referenceAnchor.rawValue,
+                    "rationale": "Hold the Bible identities of every anchored entity.",
+                    "mode_ids": [route.modeID],
+                    "anchor_demand_ids": demands.compactMap { $0["id"] as? String },
+                ],
+            ])
+        }
+        return [
+            "shots": shots,
+            "execution_shots": executions,
+            "musicvideo_plan": [
+                "performance_segments": [],
+                "final_mix": [
+                    "original_song_timeline_start_seconds": 0,
+                    "original_song_occurrences": 1,
+                    "provider_song_audio_muted": true,
+                    "approved_additional_layer_ids": [],
+                ],
+                "visual_arc": [
+                    "concept": "The street opens from stillness into the crossing.",
+                    "motifs": [[
+                        "id": "street-threshold",
+                        "description": "The curb remains the section anchor.",
+                        "setup_ids": [],
+                    ]],
+                    "sections": [[
+                        "section_id": "intro",
+                        "musical_function": "opening",
+                        "visual_function": "establish the street before the crossing",
+                        "motif_ids": ["street-threshold"],
+                        "shot_ids": Self.referenceShots.map { $0.id },
+                        "constants": [[
+                            "kind": "guidance",
+                            "target_id": "s001",
+                            "value": "Hold the empty street before the crossing.",
+                            "rationale": "The opening establishes the section's visual baseline.",
+                        ]],
+                        "variations": [],
+                        "lyrics_relation": "unused",
+                        "change_explanation": "The crossing changes the held opening frame.",
+                    ]],
+                ],
+                "coverage": [],
+            ],
+        ]
+    }
+
+    @Test("get_project_state and list_models publish the reference contract and routed input slots")
+    func referenceContractIsPublished() async throws {
+        let routing = falRoutingDependencies()
+        let (h, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates,
+            catalogReadiness: { true },
+            isModelEnabled: { _ in true }
+        )
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let stateObject = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path])
+        let state = try #require(stateObject as? [String: Any])
+        let contract = try #require(state["execution_input_contract"] as? [String: Any])
+        #expect(contract["identifier_pattern"] as? String == PipelineExecutionIdentifierContract.pattern)
+        let anchor = try #require(contract["reference_anchor"] as? [String: String])
+        #expect(anchor["semantic_job_id"] == CoreReferenceSemanticJobIDV1.referenceAnchor)
+        #expect(anchor["input_slot_id"] == CoreReferenceInputSlotIDV1.referenceImage)
+        #expect(anchor["modality"] == AssetPhysicalModalityV1.image.rawValue)
+        let roles = try #require(contract["reference_roles"] as? [String: [String]])
+        #expect(Set(roles.keys) == Set(ProductionReferenceDemandSemanticsV1.selectableModalities.keys))
+        #expect(roles[CoreReferenceSemanticJobIDV1.referenceAnchor] == ["image"])
+        #expect(roles[CoreReferenceSemanticJobIDV1.voiceReference] == ["audio"])
+        let retired = try #require(contract["retired_input_slots"] as? [String: String])
+        #expect(retired["reference.image.anchor"] == CoreReferenceInputSlotIDV1.referenceImage)
+        #expect((contract["capability_discovery"] as? String)?.contains("one activated video route") == true)
+
+        let modelsObject = try await h.runOK("list_models")
+        let models = try #require(modelsObject as? [String: Any])
+        #expect(models["execution_input_contract"] as? [String: Any] != nil)
+        let routes = try #require(models["production_routes"] as? [[String: Any]])
+        #expect(!routes.isEmpty)
+        for route in routes {
+            #expect(route["provider_activated"] as? Bool == true)
+            #expect(route["live_available"] as? Bool == true)
+            for slot in route["input_slots"] as? [[String: Any]] ?? [] {
+                #expect((slot["id"] as? String)?.contains(".") == true)
+                #expect((slot["mode_ids"] as? [String])?.isEmpty == false)
+            }
+        }
+        #expect(routes.contains { route in
+            (route["input_slots"] as? [[String: Any]] ?? []).contains {
+                $0["id"] as? String == CoreReferenceInputSlotIDV1.referenceImage
+            }
+        })
+    }
+
+    @Test("Autonomous Bible to Shot List run binds published references without a dialog or re-approval")
+    func autonomousBibleToShotlistRun() async throws {
+        let project = try await prepareReferenceShotlistProject()
+        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        let h = project.harness
+        let dataRoot = project.dataRoot
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        let earlier = [
+            "project_init", "analysis", "brief", "production_design",
+            "treatment", "storyboard", "bible",
+        ]
+        let gatesBefore = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        #expect(earlier.allSatisfy { gatesBefore.get($0).approved })
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+
+        _ = try await h.runOK("write_shotlist", args: referenceShotlistArguments(project.route).merging(
+            ["project_dir": dataRoot.path]
+        ) { _, new in new })
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
+        #expect(h.editor.agentService.pendingDialog == nil)
+        let gatesAfter = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in earlier {
+            #expect(gatesAfter.get(phase) == gatesBefore.get(phase), "gate \(phase) changed")
+        }
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: dataRoot)
+        let readiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: "shotlist",
+            declaredPack: "musicvideo",
+            declaredBinding: project.binding,
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        ).approval
+        #expect(readiness.isReady, "\(readiness.blocker ?? "")")
+
+        // Render tools belong to later phases; this harness only checks per-shot routability.
+        let render = ToolHarness(
+            providerActivation: { project.activation },
+            productionRouteCandidates: project.candidates,
+            catalogReadiness: { true },
+            isModelEnabled: { _ in true }
+        )
+        for (entity, sheet) in Self.referenceSheets {
+            render.editor.mediaAssets.append(MediaAsset(
+                id: "bible-\(entity)",
+                url: dataRoot.appendingPathComponent(sheet.path),
+                type: .image,
+                name: entity
+            ))
+        }
+        let home = FrameInventory.projectHome(of: dataRoot)
+        for planned in Self.referenceShots {
+            let nextObject = try await render.runOK("next_render_shot", args: [
+                "project_dir": dataRoot.path, "phase": "preview",
+            ])
+            let next = try #require(nextObject as? [String: Any])
+            #expect(next["shot_id"] as? String == planned.id)
+            #expect(next["production_route"] as? [String: Any] != nil)
+            #expect(next["optional_reference_drops"] == nil)
+            let bound = (next["reference_plan"] as? [[String: Any]] ?? []).compactMap {
+                $0["demand_id"] as? String
+            }
+            #expect(Set(bound) == Set(planned.entities.map { "\(planned.id)-\($0)" }))
+            let routing = try PipelineProductionRouting.requireCurrent(
+                shotID: planned.id,
+                dataRoot: dataRoot,
+                activation: project.activation,
+                candidateProvider: project.candidates
+            )
+            try addGeneratedVideo(
+                "\(planned.id)-video",
+                at: home.appendingPathComponent("\(planned.id).mp4"),
+                to: render,
+                dataRoot: dataRoot,
+                shotId: planned.id,
+                currentRouting: routing
+            )
+            _ = try await render.runOK("record_render", args: [
+                "project_dir": dataRoot.path, "phase": "preview", "shot_id": planned.id,
+                "output": "\(planned.id)-video", "cost_eur": 1.0,
+            ])
+        }
+        let done = try await render.runOK("next_render_shot", args: [
+            "project_dir": dataRoot.path, "phase": "preview",
+        ]) as? [String: Any]
+        #expect(done?["done"] as? Bool == true)
+    }
+
+    @Test("write_shotlist schema rejects invented roles; the writer rejects retired and unroutable slots")
+    func writeShotlistRejectsGuessedReferenceIdentifiers() async throws {
+        let project = try await prepareReferenceShotlistProject()
+        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        let h = project.harness
+        let dataRoot = project.dataRoot
+        let valid = referenceShotlistArguments(project.route).merging(
+            ["project_dir": dataRoot.path]
+        ) { _, new in new }
+        func firstDemandChanged(_ field: String, to value: String) throws -> [String: Any] {
+            var arguments = valid
+            var executions = try #require(arguments["execution_shots"] as? [[String: Any]])
+            var demands = try #require(executions[0]["reference_demands"] as? [[String: Any]])
+            demands[0][field] = value
+            executions[0]["reference_demands"] = demands
+            arguments["execution_shots"] = executions
+            return arguments
+        }
+        func rejected(_ arguments: [String: Any]) async -> String {
+            h.executor.resetPipelineRepairAttempts()
+            let result = await h.runRaw("write_shotlist", args: arguments)
+            #expect(result.isError)
+            #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+            #expect(h.editor.agentService.pendingDialog == nil)
+            return ToolHarness.textOf(result)
+        }
+
+        for role in ["location", "environment", "core.location", "foo.bar"] {
+            let arguments = try firstDemandChanged("semantic_job_id", to: role)
+            let text = await rejected(arguments)
+            #expect(text.contains("execution_shots[0].reference_demands[0].semantic_job_id"), "\(text)")
+            #expect(text.contains("expected one of"), "\(text)")
+            #expect(text.contains(CoreReferenceSemanticJobIDV1.referenceAnchor), "\(text)")
+        }
+
+        let retiredSlot = try firstDemandChanged("input_slot_id", to: "reference.image.anchor")
+        let retired = await rejected(retiredSlot)
+        #expect(retired.contains("execution_shot[s001].reference_demands[0].input_slot_id"), "\(retired)")
+        #expect(retired.contains("retired"), "\(retired)")
+        #expect(retired.contains(CoreReferenceInputSlotIDV1.referenceImage), "\(retired)")
+
+        let videoSlot = try firstDemandChanged("input_slot_id", to: CoreReferenceInputSlotIDV1.referenceVideo)
+        let unroutable = await rejected(videoSlot)
+        #expect(unroutable.contains("execution_shot[s001].reference_demands[0].input_slot_id"), "\(unroutable)")
+        #expect(unroutable.contains("no activated video route offers"), "\(unroutable)")
+
+        let undeclaredMode = try firstDemandChanged("mode_id", to: "fixture-unoffered")
+        let foreignMode = await rejected(undeclaredMode)
+        #expect(foreignMode.contains("execution_shot[s001].generation_requirement.mode_ids"), "\(foreignMode)")
+        #expect(foreignMode.contains("fixture-unoffered"), "\(foreignMode)")
+
+        _ = try await h.runOK("write_shotlist", args: valid)
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
     }
 
     @Test("planning writers reject project-path symlink escapes")

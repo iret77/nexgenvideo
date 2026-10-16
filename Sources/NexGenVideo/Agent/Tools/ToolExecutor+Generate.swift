@@ -1725,7 +1725,7 @@ extension ToolExecutor {
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        await CatalogDiscovery.ensureCurrent()
+        _ = await catalogReadiness()
         let productionDesign = try productionDesignImageBinding(tool: .generateImage, editor: editor)
         let productionDesignSnapshot = try productionDesign.map {
             try Self.productionDesignReferenceSnapshot(dataRoot: $0.dataRoot)
@@ -2523,11 +2523,11 @@ extension ToolExecutor {
                 "External MCP sessions cannot own an in-app dialog. Ask in the MCP client or start the request from an in-app chat."
             )
         }
-        if lastPipelineWriteFailed,
-           let data = try? JSONSerialization.data(withJSONObject: args, options: .sortedKeys),
-           let text = String(data: data, encoding: .utf8),
-           ["semantic_job_id", "input_slot_id", "mode_id", "preservation_scope_ids"].contains(where: { text.contains($0) }) {
-            throw ToolError("Internal execution identifiers are not a user decision. Read get_project_state.execution_input_contract and list_models.production_routes; correct the rejected field using host definitions. Do not present a technical recovery questionnaire.")
+        if let identifier = Self.internalIdentifierQuestion(
+            in: args,
+            afterFailedWrite: lastPipelineWriteFailed
+        ) {
+            throw ToolError("Internal execution identifiers are not a user decision; this dialog asks about \(identifier). Read get_project_state.execution_input_contract and list_models.production_routes; correct the rejected field using host definitions. Do not present a technical recovery questionnaire.")
         }
         let dialog = try AgentDialog.parse(args)
         try validateDialogMediaChoices(dialog, editor: editor)
@@ -2541,6 +2541,68 @@ extension ToolExecutor {
             editor.inspectedObject = .shot(shot)
         }
         return .suspended("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP — the user's structured answer arrives as the next semantic user turn; do not act on this step until then.")
+    }
+
+    /// Names the internal execution identifier a dialog asks the user about, if any.
+    nonisolated static func internalIdentifierQuestion(
+        in args: [String: Any],
+        afterFailedWrite: Bool
+    ) -> String? {
+        let hostIdentifiers = Set((
+            Array(ProductionReferenceDemandSemanticsV1.selectableModalities.keys)
+                + Array(ProductionReferenceDemandSemanticsV1.dedicatedSemanticJobIDs)
+                + [
+                    CoreReferenceInputSlotIDV1.referenceImage,
+                    CoreReferenceInputSlotIDV1.referenceVideo,
+                    CoreReferenceInputSlotIDV1.referenceAudio,
+                    CoreReferenceInputSlotIDV1.referenceGeometry,
+                    CoreReferenceInputSlotIDV1.firstFrame,
+                    CoreReferenceInputSlotIDV1.lastFrame,
+                    CoreReferenceInputSlotIDV1.sourceVideo,
+                    CoreReferenceInputSlotIDV1.audioTiming,
+                ]
+                + Array(ProductionInputSlotAliasV1.retiredSlotIDs.keys)
+        ).map(ProductionIdentifierNormalizerV1.canonical))
+        var fieldPhrases = [
+            "semantic job", "semantic jobs", "input slot", "input slots",
+            "preservation scope", "preservation scopes", "exclusion demand", "exclusion demands",
+            "reference demand", "reference demands",
+        ]
+        // "mode" alone is a legitimate creative question; "mode id" is only internal after a rejected write.
+        if afterFailedWrite { fieldPhrases += ["mode id", "mode ids"] }
+        for text in dialogStrings(args) {
+            let tokens = text.lowercased().split {
+                !($0.isLetter || $0.isNumber || $0 == "." || $0 == "_" || $0 == "-")
+            }
+            for token in tokens {
+                let candidate = String(token).trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+                if hostIdentifiers.contains(ProductionIdentifierNormalizerV1.canonical(candidate)) {
+                    return candidate
+                }
+            }
+            var spaced = ""
+            var previous: Character?
+            for character in text {
+                if character.isUppercase, let previous, previous.isLowercase || previous.isNumber {
+                    spaced.append(" ")
+                }
+                spaced.append(character)
+                previous = character
+            }
+            let words = spaced.lowercased().split { !($0.isLetter || $0.isNumber) }
+            let normalized = " " + words.joined(separator: " ") + " "
+            if let phrase = fieldPhrases.first(where: { normalized.contains(" \($0) ") }) {
+                return phrase
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func dialogStrings(_ value: Any) -> [String] {
+        if let string = value as? String { return [string] }
+        if let array = value as? [Any] { return array.flatMap(dialogStrings) }
+        if let object = value as? [String: Any] { return object.values.flatMap(dialogStrings) }
+        return []
     }
 
     private func validateDialogMediaChoices(
@@ -2932,10 +2994,9 @@ extension ToolExecutor {
         // user hasn't disabled it in Settings → Models. Never surface a model that would fail at
         // request time (no key) or one the user turned off; the resolver, not the LLM, owns which
         // provider runs it.
-        let prefs = ModelPreferences.shared
         out = out.filter { info in
             guard let id = info["id"] as? String else { return false }
-            return prefs.isEnabled(id) && ProviderResolver.resolve(
+            return isModelEnabled(id) && ProviderResolver.resolve(
                 bindings: ProviderManifest.bindings(
                     forModelId: id,
                     catalog: modelCatalog
@@ -2973,7 +3034,7 @@ extension ToolExecutor {
             "loaded": modelCatalog.isLoaded,
         ]
         let routes = productionRouteCandidates(activation).filter {
-            $0.candidate.providerActivated && $0.candidate.liveAvailable && prefs.isEnabled($0.modelID)
+            $0.candidate.providerActivated && $0.candidate.liveAvailable && isModelEnabled($0.modelID)
         }.map(\.candidate)
         if let data = try? JSONEncoder().encode(routes),
            let encoded = try? JSONSerialization.jsonObject(with: data) {

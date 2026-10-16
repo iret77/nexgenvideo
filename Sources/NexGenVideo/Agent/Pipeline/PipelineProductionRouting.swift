@@ -1000,7 +1000,7 @@ enum PipelineProductionRouting {
                   ).isEmpty,
                   binding.assetVersion > 0,
                   validSHA256(binding.sha256),
-                  let inputSlot = slotsByID[binding.inputSlotID],
+                  let inputSlot = ProductionInputSlotAliasV1.slot(binding.inputSlotID, in: slotsByID),
                   inputSlot.modality == binding.modality,
                   Set(inputSlot.modeIDs.map(
                       ProductionIdentifierNormalizerV1.canonical
@@ -1752,7 +1752,7 @@ enum PipelineProductionRouting {
         )
         var requestOrder: [Int] = []
         for planned in referencePlan.bindings {
-            guard let slot = slots[planned.inputSlotID],
+            guard let slot = ProductionInputSlotAliasV1.slot(planned.inputSlotID, in: slots),
                   slot.modality == planned.modality,
                   Set(slot.modeIDs.map(
                       ProductionIdentifierNormalizerV1.canonical
