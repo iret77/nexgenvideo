@@ -561,26 +561,59 @@ struct AgentPanelView: View {
     @ViewBuilder
     private var modelPicker: some View {
         if service.backend == .anthropicAPI && service.hasApiKey {
+            let groups = AnthropicModelSelection.pickerGroups(service.availableModels)
+            let isEnabled = !groups.current.isEmpty
             Menu {
-                ForEach(service.availableModels, id: \.self) { m in
-                    Button(m.displayName) { service.model = m }
+                ForEach(groups.current) { model in
+                    modelMenuItem(model)
+                }
+                if !groups.older.isEmpty {
+                    Divider()
+                    Menu("Older Models") {
+                        ForEach(groups.older) { model in
+                            modelMenuItem(model)
+                        }
+                    }
                 }
             } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
-                    Text(service.effectiveModel.displayName)
+                    Text(modelPickerTitle)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .foregroundStyle(isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.disabledControlColor)
                     Image(systemName: "chevron.down")
                         .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .foregroundStyle(isEnabled ? AppTheme.Text.tertiaryColor : AppTheme.Text.disabledControlColor)
                 }
+                .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabledControl)
             }
             .menuStyle(.borderlessButton)
-            .tint(AppTheme.Text.secondaryColor)
+            .tint(isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.disabledControlColor)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Model for this conversation · Anthropic API key")
+            .disabled(!isEnabled)
+            .help(isEnabled
+                ? "Model for this conversation · Anthropic API key"
+                : "No model list available yet · Anthropic API key")
         }
+    }
+
+    private func modelMenuItem(_ model: AnthropicModelInfo) -> some View {
+        Button {
+            service.selectModel(model)
+        } label: {
+            if model.id == service.effectiveModel?.id {
+                Label(model.displayName, systemImage: "checkmark")
+            } else {
+                Text(model.displayName)
+            }
+        }
+    }
+
+    private var modelPickerTitle: String {
+        if let selected = service.effectiveModel {
+            return service.availableModels.first { $0.id == selected.id }?.displayName ?? selected.displayName
+        }
+        return service.isDiscoveringModels ? "Loading Models…" : "No Models"
     }
 
     private var toolResults: [String: ToolRunResult] {

@@ -31,7 +31,7 @@ enum AnthropicKeychain {
 
 struct AnthropicClient: AgentClient {
     let apiKey: String
-    let model: AnthropicModel
+    let model: AnthropicModelInfo
     var maxTokens: Int? = nil
 
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!

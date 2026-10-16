@@ -16,6 +16,9 @@ final class AgentService {
     private let runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)?
     private let runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)?
+    private let modelCatalogStore: AnthropicModelCatalogStore
+    private let modelDiscoveryTransport: AnthropicModelsAPI.Transport
+    private var modelDiscoveryGeneration = 0
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -30,9 +33,17 @@ final class AgentService {
         embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil,
         runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)? = nil,
         runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
-        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil
+        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil,
+        modelCatalogDefaults: UserDefaults = .standard,
+        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport
     ) {
         self.backend = backend
+        let store = AnthropicModelCatalogStore(defaults: modelCatalogDefaults)
+        self.modelCatalogStore = store
+        self.modelDiscoveryTransport = modelDiscoveryTransport
+        self.availableModels = store.cachedModels()
+        self.model = store.storedModelID
+        self.modelFamily = store.storedFamily
         self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
         self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
         self.runtimeAdapterFactory = runtimeAdapterFactory
@@ -96,6 +107,37 @@ final class AgentService {
             self.apiKey = key
             self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
+            if !key.isEmpty { await self.refreshModelCatalog() }
+        }
+    }
+
+    /// Never blocks the chat: a failed discovery keeps the last successful list.
+    func refreshModelCatalog() async {
+        await refreshModelCatalog(apiKey: apiKey)
+    }
+
+    func refreshModelCatalog(apiKey key: String) async {
+        guard !key.isEmpty else { return }
+        modelDiscoveryGeneration &+= 1
+        let generation = modelDiscoveryGeneration
+        isDiscoveringModels = true
+        let transport = modelDiscoveryTransport
+        let result: Result<[AnthropicModelInfo], Error>
+        do {
+            result = .success(try await AnthropicModelsAPI.fetchAll(apiKey: key, transport: transport))
+        } catch {
+            result = .failure(error)
+        }
+        guard modelDiscoveryGeneration == generation else { return }
+        isDiscoveringModels = false
+        switch result {
+        case .success(let models):
+            availableModels = models
+            modelDiscoveryError = nil
+            modelCatalogStore.saveCatalog(models)
+        case .failure(let error):
+            modelDiscoveryError = error.localizedDescription
+            Log.agent.notice("model discovery failed: \(error.localizedDescription)")
         }
     }
 
@@ -216,27 +258,32 @@ final class AgentService {
         isCheckingClaude = false
     }
 
-    var availableModels: [AnthropicModel] { AnthropicModel.allCases }
+    /// Discovered (or last cached) models as the provider listed them.
+    private(set) var availableModels: [AnthropicModelInfo]
+    private(set) var isDiscoveringModels = false
+    private(set) var modelDiscoveryError: String?
+    /// The user's choice, persisted as a plain model id.
+    private(set) var model: String?
+    private(set) var modelFamily: String?
+
+    func selectModel(_ info: AnthropicModelInfo) {
+        model = info.id
+        modelFamily = info.family
+        modelCatalogStore.storedModelID = info.id
+        modelCatalogStore.storedFamily = info.family
+    }
 
     private func selectClient() -> (any AgentClient)? {
-        guard hasApiKey else { return nil }
-        return AnthropicClient(apiKey: apiKey, model: effectiveModel)
+        guard hasApiKey, let selected = effectiveModel else { return nil }
+        return AnthropicClient(apiKey: apiKey, model: selected)
     }
 
-    var effectiveModel: AnthropicModel {
-        let available = availableModels
-        if available.contains(model) { return model }
-        return available.first ?? .sonnet46
-    }
-
-    var model: AnthropicModel = {
-        if let raw = UserDefaults.standard.string(forKey: "agentModel"),
-           let m = AnthropicModel(rawValue: raw) {
-            return m
-        }
-        return .sonnet46
-    }() {
-        didSet { UserDefaults.standard.set(model.rawValue, forKey: "agentModel") }
+    var effectiveModel: AnthropicModelInfo? {
+        AnthropicModelSelection.resolve(
+            storedID: model,
+            storedFamily: modelFamily,
+            models: availableModels
+        )
     }
 
     var sessions: [ChatSession] = []
@@ -3488,7 +3535,14 @@ final class AgentService {
         let providerConfiguration: String
         switch backend {
         case .anthropicAPI:
-            providerConfiguration = "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+            let selected = effectiveModel
+            providerConfiguration = [
+                selected?.id ?? "",
+                String(selected?.supportsAdaptiveThinking ?? false),
+                String(selected?.supportsHighEffort ?? false),
+                String(selected?.maxOutputTokens ?? 0),
+                String(apiKeyGeneration),
+            ].joined(separator: ":")
         case .codexAppServer:
             providerConfiguration = CodexAppServerContract.cliVersion
         case .claudeCode:
@@ -3681,8 +3735,14 @@ final class AgentService {
                let index = assistantMessageIndex(id: defaultAssistantID) {
                 messages[index].isIncompleteAPIResponse = true
             }
+            if outcome == .completed(.refusal) {
+                streamError = .upstream(Self.refusalMessage)
+            }
         }
     }
+
+    static let refusalMessage =
+        "Claude declined this request. Rephrase it, or choose another model and send it again."
 
     private func assistantID(
         providerMessageID: String?,
@@ -3743,6 +3803,15 @@ final class AgentService {
         } catch {
             streamError = .upstream(error.localizedDescription)
             return
+        }
+        if backend == .anthropicAPI, runtimeAdapterFactory == nil, effectiveModel == nil {
+            await refreshModelCatalog()
+            guard effectiveModel != nil else {
+                streamError = .upstream(
+                    "Couldn't load the Claude model list. Check the connection and the API key, then try again."
+                )
+                return
+            }
         }
         let runtimeMessages = await runtimeMessages(transientImages: transientImages)
         guard !Task.isCancelled,
