@@ -77,6 +77,8 @@ final class GenerationService {
     private var generationTasks: [String: Task<Void, Never>] = [:]
     private var batchResumeTasks: [String: Task<Void, Error>] = [:]
     var reconciliation = ProviderRunReconciliation()
+    /// Provider receipts whose write failed; retried before the run closes.
+    private var pendingReceipts: [String: (authorization: GenerationAuthorization, requestID: String, resumable: Bool)] = [:]
     var lastReconciliation: [URL: Date] = [:]
     var reconcilingHomes: Set<URL> = []
 
@@ -1110,29 +1112,49 @@ final class GenerationService {
         failJob(placeholders, message, onFailure)
     }
 
-    private func markSubmitted(
+    /// True once the receipt is durable; a failed write keeps the id for a retry, never a resubmission.
+    @discardableResult
+    func markSubmitted(
         authorization: GenerationAuthorization,
         providerRequestId: String,
         resumable: Bool = false,
         editor: EditorViewModel
-    ) {
+    ) -> Bool {
         do {
-            try editor.recordSpendEvent(
-                authorization: authorization,
-                kind: .submitted,
-                providerRequestId: providerRequestId,
-                providerRequestResumable: resumable,
-                money: authorization.estimate
-            )
+            if let transactionID = authorization.transactionId,
+               !editor.generationLog.spendEvents.contains(where: {
+                   $0.transactionId == transactionID && $0.kind == .submitted
+               }) {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .submitted,
+                    providerRequestId: providerRequestId,
+                    providerRequestResumable: resumable,
+                    money: authorization.estimate
+                )
+            }
             if let transactionID = authorization.transactionId {
                 try authorization.batchItem?.recordProviderRequest(transactionID: transactionID,
                     requestID: providerRequestId, resumable: resumable, editor: editor)
+                pendingReceipts.removeValue(forKey: transactionID)
             }
+            return true
         } catch {
             Log.generation.error(
                 "could not record provider request \(providerRequestId): \(error.localizedDescription)"
             )
+            if let transactionID = authorization.transactionId {
+                pendingReceipts[transactionID] = (authorization, providerRequestId, resumable)
+            }
+            return false
         }
+    }
+
+    /// Writes a receipt that failed earlier, so a closing event or an open run keeps its provider id.
+    private func retryPendingReceipt(for transactionID: String?, editor: EditorViewModel) {
+        guard let transactionID, let pending = pendingReceipts[transactionID] else { return }
+        markSubmitted(authorization: pending.authorization, providerRequestId: pending.requestID,
+            resumable: pending.resumable, editor: editor)
     }
 
     private func failSubmittedJob(
@@ -1240,6 +1262,7 @@ final class GenerationService {
         authorization: GenerationAuthorization,
         editor: EditorViewModel
     ) {
+        retryPendingReceipt(for: authorization.transactionId, editor: editor)
         guard Self.providerRunEnded(after: error) else {
             Log.generation.notice("provider run outcome unconfirmed; it stays in flight: \(message)")
             return
@@ -1258,6 +1281,7 @@ final class GenerationService {
         note: String? = nil,
         editor: EditorViewModel
     ) {
+        retryPendingReceipt(for: authorization.transactionId, editor: editor)
         do {
             if let billed {
                 try editor.recordSpendEvent(
@@ -1538,14 +1562,16 @@ final class GenerationService {
         editor: EditorViewModel
     ) {
         guard !state.receiptBooked else { return }
-        state.recordReceipt()
         let usableJobID = jobID.flatMap { $0.isEmpty ? nil : $0 }
-        markSubmitted(
+        // A failed write keeps polling in memory; later calls retry it and the job is never resubmitted.
+        if markSubmitted(
             authorization: authorization,
             providerRequestId: usableJobID ?? requestID,
             resumable: usableJobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil,
             editor: editor
-        )
+        ) {
+            state.recordReceipt()
+        }
     }
 
     nonisolated static func classifyMCPFailure(

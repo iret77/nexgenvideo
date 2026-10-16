@@ -627,4 +627,42 @@ struct ProviderStatusTests {
         #expect(await service.reconcileOpenRuns(editor: editor) == 0)
         #expect(closing("mcp-dark", in: editor) == nil)
     }
+
+    @MainActor
+    @Test func aFailedReceiptWriteIsRetriedBeforeTheRunClosesOrStaysOpen() async throws {
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let service = editor.generationService
+        let target = ResolvedGenerationTarget(modelId: "fal-ai/veo3", provider: .fal, endpoint: "fal-ai/veo3", binding: nil)
+        let finished = GenerationAuthorization(transactionId: "receipt-finished", target: target, estimate: nil)
+        let unknown = GenerationAuthorization(transactionId: "receipt-unknown", target: target, estimate: nil)
+        func reserved(_ transaction: String) -> GenerationSpendEvent {
+            GenerationSpendEvent(transactionId: transaction, kind: .reserved, model: "fal-ai/veo3", provider: .fal,
+                transport: .api, endpoint: "fal-ai/veo3")
+        }
+
+        // Without a reservation the ledger refuses the receipt, standing in for any failed write.
+        #expect(!service.markSubmitted(authorization: finished, providerRequestId: "fal-finished", resumable: true,
+            editor: editor))
+        #expect(!service.markSubmitted(authorization: unknown, providerRequestId: "fal-unknown", resumable: true,
+            editor: editor))
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        editor.generationLog.spendEvents = [reserved("receipt-finished"), reserved("receipt-unknown")]
+
+        service.markFinished(authorization: finished, editor: editor)
+        service.recordSubmittedRunFailure(
+            FalClient.SubmissionOutcomeUnknownError(ledgerRequestID: "fal-unknown", message: "No receipt"),
+            message: "No receipt", authorization: unknown, editor: editor)
+
+        let finishedEvents = editor.generationLog.spendEvents.filter { $0.transactionId == "receipt-finished" }
+        #expect(finishedEvents.map(\.kind) == [.reserved, .submitted, .settled])
+        #expect(finishedEvents.first { $0.kind == .submitted }?.providerRequestId == "fal-finished")
+        let unknownEvents = editor.generationLog.spendEvents.filter { $0.transactionId == "receipt-unknown" }
+        #expect(unknownEvents.map(\.kind) == [.reserved, .submitted])
+        #expect(GenerationService.reconcilableRuns(in: editor.generationLog, excluding: []).map(\.requestID)
+            == ["fal-unknown"])
+        #expect(service.markSubmitted(authorization: unknown, providerRequestId: "fal-unknown", resumable: true,
+            editor: editor))
+        #expect(editor.generationLog.spendEvents.filter { $0.kind == .submitted }.count == 2)
+    }
 }
