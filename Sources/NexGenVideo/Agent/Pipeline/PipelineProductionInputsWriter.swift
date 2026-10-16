@@ -44,6 +44,83 @@ enum PipelineProductionInputsWriter {
         }
     }
 
+    enum CoreInputJob: CaseIterable {
+        case firstFrame
+        case lastFrame
+        case predecessorLastFrame
+        case sourceVideo
+        case audioTiming
+
+        var semanticJobID: String {
+            switch self {
+            case .firstFrame: CoreReferenceSemanticJobIDV1.firstFrame
+            case .lastFrame: CoreReferenceSemanticJobIDV1.lastFrame
+            case .predecessorLastFrame: CoreReferenceSemanticJobIDV1.predecessorLastFrame
+            case .sourceVideo: CoreReferenceSemanticJobIDV1.sourceVideo
+            case .audioTiming: CoreReferenceSemanticJobIDV1.audioTiming
+            }
+        }
+
+        var inputSlotID: String {
+            switch self {
+            case .firstFrame, .predecessorLastFrame: CoreReferenceInputSlotIDV1.firstFrame
+            case .lastFrame: CoreReferenceInputSlotIDV1.lastFrame
+            case .sourceVideo: CoreReferenceInputSlotIDV1.sourceVideo
+            case .audioTiming: CoreReferenceInputSlotIDV1.audioTiming
+            }
+        }
+
+        var modality: AssetPhysicalModalityV1 {
+            switch self {
+            case .firstFrame, .lastFrame, .predecessorLastFrame: .image
+            case .sourceVideo: .video
+            case .audioTiming: .audio
+            }
+        }
+
+        func demandID(shotID: String) -> String {
+            switch self {
+            case .firstFrame: "core-first-frame-\(shotID)"
+            case .lastFrame: "core-last-frame-\(shotID)"
+            case .predecessorLastFrame: "core-predecessor-last-frame-\(shotID)"
+            case .sourceVideo: "core-source-video-\(shotID)"
+            case .audioTiming: "core-audio-timing-\(shotID)"
+            }
+        }
+
+        func modeID(in modes: ProductionCoreInputModesV1) -> String? {
+            switch self {
+            case .firstFrame: modes.firstFrameModeID
+            case .lastFrame: modes.lastFrameModeID
+            case .predecessorLastFrame: modes.predecessorLastFrameModeID
+            case .sourceVideo: modes.sourceVideoModeID
+            case .audioTiming: modes.audioTimingModeID
+            }
+        }
+    }
+
+    static func coreDemand(
+        _ job: CoreInputJob,
+        shotID: String,
+        assetID: String,
+        modeID: String,
+        durationSeconds: Double? = nil,
+        expectedSourceShotID: String? = nil
+    ) -> ReferenceDemandV1 {
+        ReferenceDemandV1(
+            id: job.demandID(shotID: shotID),
+            assetID: assetID,
+            modality: job.modality,
+            semanticJobID: job.semanticJobID,
+            isRequired: true,
+            priority: 0,
+            inputSlotID: job.inputSlotID,
+            modeID: modeID,
+            durationSeconds: durationSeconds,
+            expectedSourceShotID: expectedSourceShotID
+        )
+    }
+
     private struct Publication: Codable, Equatable {
         static let schemaVersion = "production-inputs-publication/v1"
 
@@ -363,14 +440,10 @@ enum PipelineProductionInputsWriter {
                 assetsByPath: &assetsByPath,
                 dataRoot: dataRoot
             )
-            currentDemands.append(ReferenceDemandV1(
-                id: "core-first-frame-\(shotID)",
+            currentDemands.append(coreDemand(
+                .firstFrame,
+                shotID: shotID,
                 assetID: asset.id,
-                modality: .image,
-                semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame,
-                isRequired: true,
-                priority: 0,
-                inputSlotID: CoreReferenceInputSlotIDV1.firstFrame,
                 modeID: modeID
             ))
         }
@@ -395,14 +468,10 @@ enum PipelineProductionInputsWriter {
                 assetsByPath: &assetsByPath,
                 dataRoot: dataRoot
             )
-            currentDemands.append(ReferenceDemandV1(
-                id: "core-last-frame-\(shotID)",
+            currentDemands.append(coreDemand(
+                .lastFrame,
+                shotID: shotID,
                 assetID: asset.id,
-                modality: .image,
-                semanticJobID: CoreReferenceSemanticJobIDV1.lastFrame,
-                isRequired: true,
-                priority: 0,
-                inputSlotID: CoreReferenceInputSlotIDV1.lastFrame,
                 modeID: modeID
             ))
         }
@@ -429,14 +498,10 @@ enum PipelineProductionInputsWriter {
                 assetsByPath: &assetsByPath,
                 dataRoot: dataRoot
             )
-            currentDemands.append(ReferenceDemandV1(
-                id: "core-predecessor-last-frame-\(shotID)",
+            currentDemands.append(coreDemand(
+                .predecessorLastFrame,
+                shotID: shotID,
                 assetID: asset.id,
-                modality: .image,
-                semanticJobID: CoreReferenceSemanticJobIDV1.predecessorLastFrame,
-                isRequired: true,
-                priority: 0,
-                inputSlotID: CoreReferenceInputSlotIDV1.firstFrame,
                 modeID: modeID,
                 expectedSourceShotID: predecessorShotID
             ))
@@ -503,14 +568,10 @@ enum PipelineProductionInputsWriter {
                 assetsByPath: &assetsByPath,
                 dataRoot: dataRoot
             )
-            currentDemands.append(ReferenceDemandV1(
-                id: "core-audio-timing-\(shotID)",
+            currentDemands.append(coreDemand(
+                .audioTiming,
+                shotID: shotID,
                 assetID: asset.id,
-                modality: .audio,
-                semanticJobID: CoreReferenceSemanticJobIDV1.audioTiming,
-                isRequired: true,
-                priority: 0,
-                inputSlotID: CoreReferenceInputSlotIDV1.audioTiming,
                 modeID: modeID,
                 durationSeconds: segment.durationSeconds
             ))

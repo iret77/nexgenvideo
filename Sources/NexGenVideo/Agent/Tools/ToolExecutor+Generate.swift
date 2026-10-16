@@ -1725,7 +1725,7 @@ extension ToolExecutor {
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        await CatalogDiscovery.ensureCurrent()
+        _ = await catalogReadiness()
         let productionDesign = try productionDesignImageBinding(tool: .generateImage, editor: editor)
         let productionDesignSnapshot = try productionDesign.map {
             try Self.productionDesignReferenceSnapshot(dataRoot: $0.dataRoot)
@@ -2932,10 +2932,9 @@ extension ToolExecutor {
         // user hasn't disabled it in Settings → Models. Never surface a model that would fail at
         // request time (no key) or one the user turned off; the resolver, not the LLM, owns which
         // provider runs it.
-        let prefs = ModelPreferences.shared
         out = out.filter { info in
             guard let id = info["id"] as? String else { return false }
-            return prefs.isEnabled(id) && ProviderResolver.resolve(
+            return isModelEnabled(id) && ProviderResolver.resolve(
                 bindings: ProviderManifest.bindings(
                     forModelId: id,
                     catalog: modelCatalog
@@ -2973,7 +2972,7 @@ extension ToolExecutor {
             "loaded": modelCatalog.isLoaded,
         ]
         let routes = productionRouteCandidates(activation).filter {
-            $0.candidate.providerActivated && $0.candidate.liveAvailable && prefs.isEnabled($0.modelID)
+            $0.candidate.providerActivated && $0.candidate.liveAvailable && isModelEnabled($0.modelID)
         }.map(\.candidate)
         if let data = try? JSONEncoder().encode(routes),
            let encoded = try? JSONSerialization.jsonObject(with: data) {

@@ -5,7 +5,7 @@ enum PipelineShotlistWriter {
     static func write(
         _ shotlist: Shotlist,
         executionInputs: [PipelineExecutionShotInput],
-        routes: [ProductionRouteCandidateV1],
+        referenceCheck: PipelineReferenceRouteContract.Check,
         dataRoot: URL,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
@@ -20,7 +20,7 @@ enum PipelineShotlistWriter {
             declaredBinding: declaredBinding,
             disciplineSidecar: disciplineSidecar
         )
-        try PipelineReferenceRouteContract.validate(executionInputs, routes: routes)
+        try PipelineReferenceRouteContract.validate(executionInputs, check: referenceCheck)
         let version = (latestShotlistVersion(dataRoot: dataRoot) ?? 0) + 1
         let shotlistPath = PipelineLayout.shotlistVersionFile(version)
         let shotlistURL = PipelineLayout.url(shotlistPath, in: dataRoot)
@@ -334,6 +334,7 @@ enum PipelineShotlistWriter {
         _ = try write(
             shotlist,
             executionInputs: executionInputs,
+            referenceCheck: .storedDemands,
             dataRoot: dataRoot,
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,

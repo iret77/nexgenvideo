@@ -72,14 +72,12 @@ struct ProductionRecoveryTests {
 
     @Test("Shot List writer accepts only host reference roles with their modalities")
     func referenceRoleVocabulary() throws {
+        let route = videoRoute("styled", inputKinds: ["video"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceVideo, .video, order: 3),
+        ])
         var style = demandObject(role: CoreReferenceSemanticJobIDV1.styleReference, modality: "video")
         style["input_slot_id"] = CoreReferenceInputSlotIDV1.referenceVideo
         let styled = try generatedInput(demands: [style])
-        let route = try videoRoute(slots: [ProductionInputSlotCapabilityV1(
-            id: CoreReferenceInputSlotIDV1.referenceVideo, modality: .video,
-            modeIDs: ["reference-to-video"], requestOrder: 3, countsTowardModalityBudget: true,
-            countsTowardTotalBudget: true, countsTowardCombinedDuration: true
-        )])
         try PipelineReferenceRouteContract.validate([styled], routes: [route])
         for (role, modality, field) in [
             ("core.location", "image", "semantic_job_id"),
@@ -106,11 +104,9 @@ struct ProductionRecoveryTests {
     func referenceDemandsMatchActivatedRoutes() throws {
         let anchor = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
         let input = try generatedInput(demands: [anchor])
-        let route = try videoRoute(slots: [ProductionInputSlotCapabilityV1(
-            id: CoreReferenceInputSlotIDV1.referenceImage, modality: .image,
-            modeIDs: ["reference-to-video"], requestOrder: 2, countsTowardModalityBudget: true,
-            countsTowardTotalBudget: true, countsTowardCombinedDuration: false
-        )])
+        let route = videoRoute("anchored", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
         try PipelineReferenceRouteContract.validate([input], routes: [route])
 
         do {
@@ -121,15 +117,170 @@ struct ProductionRecoveryTests {
             #expect(error.localizedDescription.contains("activate a provider"))
         }
 
-        var unrouted = anchor
-        unrouted["input_slot_id"] = "reference.image.anchor"
-        let guessed = try generatedInput(demands: [unrouted])
+        var otherMode = anchor
+        otherMode["mode_id"] = "image-to-video"
+        let unoffered = try generatedInput(demands: [otherMode], modes: [Self.mode, "image-to-video"])
         do {
-            try PipelineReferenceRouteContract.validate([guessed], routes: [route])
-            Issue.record("An unoffered input slot was accepted")
+            try PipelineReferenceRouteContract.validate([unoffered], routes: [route])
+            Issue.record("A mode the slot does not offer was accepted")
         } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001]"))
+        }
+
+        var retired = anchor
+        retired["input_slot_id"] = "reference.image.anchor"
+        let legacy = try generatedInput(demands: [retired])
+        do {
+            try PipelineReferenceRouteContract.validate([legacy], routes: [route])
+            Issue.record("The retired anchor slot was accepted for a new write")
+        } catch {
+            #expect(error.localizedDescription.contains("reference_demands[0].input_slot_id"))
+            #expect(error.localizedDescription.contains("retired"))
             #expect(error.localizedDescription.contains(CoreReferenceInputSlotIDV1.referenceImage))
         }
+    }
+
+    @Test("A shot's demands must bind together on one activated route")
+    func referenceDemandsBindPerShot() throws {
+        let imageOnly = videoRoute("image-only", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        let videoOnly = videoRoute("video-only", inputKinds: ["video"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceVideo, .video, order: 3),
+        ])
+        var motion = demandObject(role: CoreReferenceSemanticJobIDV1.motionReference, modality: "video")
+        motion["id"] = "walk"
+        motion["asset_path"] = "bible/walk.mp4"
+        motion["input_slot_id"] = CoreReferenceInputSlotIDV1.referenceVideo
+        let input = try generatedInput(demands: [
+            demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image"),
+            motion,
+        ])
+
+        do {
+            try PipelineReferenceRouteContract.validate([input], routes: [imageOnly, videoOnly])
+            Issue.record("Demands split across two routes were accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001]:"))
+            #expect(error.localizedDescription.contains("no single activated video route"))
+            #expect(error.localizedDescription.contains(
+                ProductionRouteDeficitCodeV1.inputSlotUnsupported.rawValue
+            ))
+        }
+        let both = videoRoute("both", inputKinds: ["image", "video"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+            slot(CoreReferenceInputSlotIDV1.referenceVideo, .video, order: 3),
+        ])
+        try PipelineReferenceRouteContract.validate([input], routes: [imageOnly, videoOnly, both])
+    }
+
+    @Test("Shot modes and core inputs are checked against the same route")
+    func requirementModesAndCoreInputsRoute() throws {
+        let anchor = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
+        let route = videoRoute("anchored", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        let unsupportedMode = try generatedInput(demands: [anchor], modes: [Self.mode, "fixture-unsupported"])
+        do {
+            try PipelineReferenceRouteContract.validate([unsupportedMode], routes: [route])
+            Issue.record("A generation mode no route supports was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001].generation_requirement.mode_ids"))
+        }
+
+        var undeclared = anchor
+        undeclared["mode_id"] = "fixture-undeclared"
+        let foreignMode = try generatedInput(demands: [undeclared])
+        do {
+            try PipelineReferenceRouteContract.validate([foreignMode], routes: [route])
+            Issue.record("A demand mode outside generation_requirement.mode_ids was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("reference_demands[0].mode_id"))
+        }
+
+        let keyframed = try generatedInput(demands: [anchor], coreInputs: ["first_frame_mode_id": Self.mode])
+        do {
+            try PipelineReferenceRouteContract.validate([keyframed], routes: [route])
+            Issue.record("A first frame the route cannot take was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001].core_inputs.first_frame_mode_id"))
+            #expect(error.localizedDescription.contains(CoreReferenceInputSlotIDV1.firstFrame))
+        }
+        let framed = videoRoute("framed", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.firstFrame, .image, order: 0),
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        try PipelineReferenceRouteContract.validate([keyframed], routes: [framed])
+    }
+
+    @Test("Unfinished catalog discovery is retryable and never asks for a provider")
+    func pendingDiscoveryIsRetryable() throws {
+        let input = try generatedInput(demands: [
+            demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image"),
+        ])
+        do {
+            try PipelineReferenceRouteContract.validate([input], routes: [], discoveryComplete: false)
+            Issue.record("An unknown route set was treated as a verdict")
+        } catch let error as ToolError {
+            #expect(error.kind == .hostBusy)
+            #expect(error.message.contains("write_shotlist"))
+            #expect(!error.message.contains("activate a provider"))
+        }
+        let route = videoRoute("anchored", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        try PipelineReferenceRouteContract.validate([input], routes: [route], discoveryComplete: false)
+        try PipelineReferenceRouteContract.validate([input], check: .storedDemands)
+    }
+
+    @Test("Render resolves the retired anchor slot to the offered reference-image slot")
+    func retiredAnchorSlotResolvesForRender() throws {
+        #expect(ProductionInputSlotAliasV1.isRetired("reference.image.anchor"))
+        #expect(!ProductionInputSlotAliasV1.isRetired(CoreReferenceInputSlotIDV1.referenceImage))
+        #expect(ProductionInputSlotAliasV1.routedSlotID("reference.image.anchor")
+            == CoreReferenceInputSlotIDV1.referenceImage)
+        let route = videoRoute("anchored", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        let requirement = ProductionRequirementV1(
+            modalityID: "video",
+            modeIDs: [Self.mode],
+            visibleEntityCount: 0
+        )
+        func demand(_ slotID: String) -> ReferenceDemandV1 {
+            ReferenceDemandV1(
+                id: "street", assetID: "asset-street", modality: .image,
+                semanticJobID: CoreReferenceSemanticJobIDV1.referenceAnchor,
+                isRequired: true, priority: 0,
+                inputSlotID: slotID, modeID: Self.mode
+            )
+        }
+        let legacy = ProductionRequirementResolverV1.slotAndModeEvaluations(
+            requirement: requirement,
+            demands: [demand("reference.image.anchor")],
+            candidates: [route]
+        )
+        #expect(legacy.map(\.deficits) == [[]])
+        let unknown = ProductionRequirementResolverV1.slotAndModeEvaluations(
+            requirement: requirement,
+            demands: [demand("fixture.input.anchor")],
+            candidates: [route]
+        )
+        #expect(unknown.first?.deficits.map(\.code) == [.inputSlotUnsupported])
+    }
+
+    private static let mode = "reference-to-video"
+
+    private func slot(
+        _ id: String,
+        _ modality: AssetPhysicalModalityV1,
+        order: Int
+    ) -> ProductionInputSlotCapabilityV1 {
+        ProductionInputSlotCapabilityV1(
+            id: id, modality: modality, modeIDs: [Self.mode], requestOrder: order,
+            countsTowardModalityBudget: true, countsTowardTotalBudget: true,
+            countsTowardCombinedDuration: modality != .image
+        )
     }
 
     private func demandObject(role: String, modality: String) -> [String: Any] {
@@ -138,12 +289,16 @@ struct ProductionRecoveryTests {
             "semantic_job_id": role, "is_required": true, "priority": 0,
             "preservation_scope_ids": [], "exclusion_demand_ids": [],
             "input_slot_id": CoreReferenceInputSlotIDV1.referenceImage,
-            "mode_id": "reference-to-video", "identity_lock": false,
+            "mode_id": Self.mode, "identity_lock": false,
             "entity_id": "main_street", "canon_ids": [],
         ]
     }
 
-    private func generatedInput(demands: [[String: Any]]) throws -> PipelineExecutionShotInput {
+    private func generatedInput(
+        demands: [[String: Any]],
+        modes: [String] = [Self.mode],
+        coreInputs: [String: String] = [:]
+    ) throws -> PipelineExecutionShotInput {
         let value: [String: Any] = [
             "id": "s001",
             "source_mode": ExecutionSourceModeV1.generated.rawValue,
@@ -154,11 +309,11 @@ struct ProductionRecoveryTests {
             "acceptance": [["id": "street", "requirement": "The street stays recognizable.", "severity": "required"]],
             "generation_requirement": [
                 "modality_id": "video",
-                "mode_ids": ["reference-to-video"],
+                "mode_ids": modes,
                 "duration": ["allows_automatic": true],
                 "requires_output_audio": false,
             ],
-            "core_inputs": [:],
+            "core_inputs": coreInputs,
             "reference_demands": demands,
         ]
         return try JSONDecoder().decode(
@@ -167,13 +322,41 @@ struct ProductionRecoveryTests {
         )
     }
 
-    private func videoRoute(slots: [ProductionInputSlotCapabilityV1]) throws -> ProductionRouteCandidateV1 {
-        let resolver = try #require(CatalogCapabilityRuntime.resolver)
-        let capabilities = try #require(FalModelRegistry.entries
-            .flatMap { (try? ModelCatalog.offeringCapabilities(for: $0, resolver: resolver)) ?? [] }
-            .first { $0.offering.modality == .video })
+    private func videoRoute(
+        _ offeringID: String,
+        inputKinds: [String],
+        slots: [ProductionInputSlotCapabilityV1]
+    ) -> ProductionRouteCandidateV1 {
+        let origin = ResolvedCapabilityOriginV1(kind: .exact, profileID: "fixture-\(offeringID)")
+        func value<Value>(_ value: Value) -> ResolvedCapabilityValueV1<Value>
+        where Value: Codable & Sendable & Equatable {
+            ResolvedCapabilityValueV1(value: value, semantics: .hardAPILimit, origin: origin, evidence: [])
+        }
+        let profile = ResolvedCapabilityProfileV1(
+            requestedIdentity: nil,
+            resolvedIdentity: nil,
+            defensiveProfileID: nil,
+            researchNeeded: false,
+            fields: ResolvedCapabilityFieldsV1(strings: [
+                CapabilityFieldIDV1.modes: value([Self.mode]),
+                CapabilityFieldIDV1.inputKinds: value(inputKinds),
+            ])
+        )
         return ProductionRouteCandidateV1(
-            capabilities: capabilities, providerActivated: true, liveAvailable: true, inputSlots: slots
+            capabilities: ResolvedOfferingCapabilityProfileV1(
+                offering: CapabilityOfferingIdentityV1(
+                    providerID: "fixture",
+                    offeringID: offeringID,
+                    endpointID: "\(offeringID)-endpoint",
+                    catalogModelID: "fixture/\(offeringID)",
+                    modality: .video
+                ),
+                intrinsic: profile,
+                effective: profile
+            ),
+            providerActivated: true,
+            liveAvailable: true,
+            inputSlots: slots
         )
     }
 

@@ -375,6 +375,83 @@ struct ProductionRequirementRoutingTests {
         ])
     }
 
+    @Test("a stored retired anchor slot routes and plans as the reference-image slot")
+    func retiredAnchorSlotRoutesForRender() throws {
+        let fixture = try makeFixture([
+            Input(
+                id: "anchor",
+                modality: .image,
+                isRequired: true,
+                inputSlotID: "reference.image.anchor"
+            ),
+        ])
+        defer { fixture.remove() }
+        let requirement = makeRequirement(referenceDemandIDs: fixture.demandIDs)
+        let slot = ProductionInputSlotCapabilityV1(
+            id: CoreReferenceInputSlotIDV1.referenceImage,
+            modality: .image,
+            modeIDs: ["text-to-video"],
+            requestOrder: 2,
+            countsTowardModalityBudget: true,
+            countsTowardTotalBudget: true,
+            countsTowardCombinedDuration: false
+        )
+        let candidate = ProductionRouteCandidateV1(
+            capabilities: makeCapabilities(offeringID: "anchored", imageCount: 1, totalCount: 1),
+            providerActivated: true,
+            liveAvailable: true,
+            inputSlots: [slot]
+        )
+
+        let resolution = try ProductionRequirementResolverV1.resolve(
+            requirement: requirement,
+            demandSet: fixture.demandSet,
+            assetGraph: fixture.graph,
+            dataRoot: fixture.dataRoot,
+            candidates: [candidate]
+        )
+        guard case .matched(let route, _) = resolution else {
+            Issue.record("expected the stored anchor to route through the reference-image slot")
+            return
+        }
+        let plan = try planned(
+            id: "plan-retired-anchor",
+            fixture: fixture,
+            route: route,
+            requirement: requirement,
+            candidate: candidate
+        )
+        #expect(plan.bindings.map(\.demandID) == ["anchor"])
+        #expect(plan.bindings.map(\.inputSlotID) == ["reference.image.anchor"])
+        #expect(plan.optionalDrops.isEmpty)
+        try ReferencePlannerV2.validate(
+            plan,
+            dataRoot: fixture.dataRoot,
+            route: route,
+            requirement: requirement,
+            demandSet: fixture.demandSet,
+            graph: fixture.graph,
+            candidate: candidate
+        )
+
+        let unknown = try makeFixture([
+            Input(id: "anchor", modality: .image, isRequired: true, inputSlotID: "fixture.input.anchor"),
+        ])
+        defer { unknown.remove() }
+        let unrouted = try ProductionRequirementResolverV1.resolve(
+            requirement: makeRequirement(referenceDemandIDs: unknown.demandIDs),
+            demandSet: unknown.demandSet,
+            assetGraph: unknown.graph,
+            dataRoot: unknown.dataRoot,
+            candidates: [candidate]
+        )
+        guard case .noMatch(let noMatch) = unrouted else {
+            Issue.record("an unknown slot must not be aliased")
+            return
+        }
+        #expect(noMatch.evaluations[0].deficits.map(\.code) == [.inputSlotUnsupported])
+    }
+
     @Test("no-match resolution does not rewrite or reduce the requirement")
     func noMatchPreservesRequirement() throws {
         let fixture = try makeFixture([])

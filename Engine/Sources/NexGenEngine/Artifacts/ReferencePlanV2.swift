@@ -398,7 +398,7 @@ public enum ReferencePlannerV2 {
             )
             if deficits.isEmpty {
                 guard let asset = assets[demand.assetID],
-                      let inputSlot = inputSlots[demand.inputSlotID] else {
+                      let inputSlot = ProductionInputSlotAliasV1.slot(demand.inputSlotID, in: inputSlots) else {
                     throw ReferencePlanValidationErrorV2.demandBindingMismatch
                 }
                 selected.append(demand)
@@ -459,7 +459,7 @@ public enum ReferencePlannerV2 {
             )
             if deficits.isEmpty {
                 guard let asset = assets[candidate.assetID],
-                      let inputSlot = inputSlots[candidate.inputSlotID] else {
+                      let inputSlot = ProductionInputSlotAliasV1.slot(candidate.inputSlotID, in: inputSlots) else {
                     throw ReferencePlanValidationErrorV2.demandBindingMismatch
                 }
                 selected.append(candidate)
@@ -484,8 +484,8 @@ public enum ReferencePlannerV2 {
             uniqueKeysWithValues: selected.enumerated().map { ($0.element.id, $0.offset) }
         )
         let orderedSelected = selected.sorted {
-            let leftOrder = inputSlots[$0.inputSlotID]?.requestOrder ?? Int.max
-            let rightOrder = inputSlots[$1.inputSlotID]?.requestOrder ?? Int.max
+            let leftOrder = ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?.requestOrder ?? Int.max
+            let rightOrder = ProductionInputSlotAliasV1.slot($1.inputSlotID, in: inputSlots)?.requestOrder ?? Int.max
             if leftOrder != rightOrder { return leftOrder < rightOrder }
             let leftSelection = selectionOrder[$0.id] ?? Int.max
             let rightSelection = selectionOrder[$1.id] ?? Int.max
@@ -692,7 +692,7 @@ public enum ReferencePlannerV2 {
                 scopeID: "reference.exclusions"
             ))
         }
-        guard let inputSlot = inputSlots[demand.inputSlotID],
+        guard let inputSlot = ProductionInputSlotAliasV1.slot(demand.inputSlotID, in: inputSlots),
               inputSlot.modality == demand.modality,
               Set(inputSlot.modeIDs.map(ProductionIdentifierNormalizerV1.canonical)).contains(
                   ProductionIdentifierNormalizerV1.canonical(demand.modeID)

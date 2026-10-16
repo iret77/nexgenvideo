@@ -97,9 +97,13 @@ final class ToolExecutor {
         _ declaredBinding: ProjectPackBinding?
     ) async throws -> Void
 
+    typealias CatalogReadiness = @MainActor () async -> Bool
+
     private let editorProvider: () -> EditorViewModel?
     let providerActivation: () -> ProviderActivation
     let productionRouteCandidates: ProductionRouteCandidateProvider
+    let catalogReadiness: CatalogReadiness
+    let isModelEnabled: @MainActor (String) -> Bool
     let modelCatalog: ModelCatalog
     private let phaseMutationRecorder: PhaseMutationRecorder
     var editor: EditorViewModel? { editorProvider() }
@@ -115,12 +119,16 @@ final class ToolExecutor {
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
         modelCatalog: ModelCatalog = .shared,
         productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        catalogReadiness: @escaping CatalogReadiness = { await CatalogDiscovery.ensureCurrent() },
+        isModelEnabled: @escaping @MainActor (String) -> Bool = { ModelPreferences.shared.isEnabled($0) },
         phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
         self.modelCatalog = modelCatalog
+        self.catalogReadiness = catalogReadiness
+        self.isModelEnabled = isModelEnabled
         self.phaseMutationRecorder = phaseMutationRecorder
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
@@ -133,12 +141,16 @@ final class ToolExecutor {
         providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
         modelCatalog: ModelCatalog = .shared,
         productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
+        catalogReadiness: @escaping CatalogReadiness = { await CatalogDiscovery.ensureCurrent() },
+        isModelEnabled: @escaping @MainActor (String) -> Bool = { ModelPreferences.shared.isEnabled($0) },
         phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
     ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
         self.providerActivation = providerActivation
         self.modelCatalog = modelCatalog
+        self.catalogReadiness = catalogReadiness
+        self.isModelEnabled = isModelEnabled
         self.phaseMutationRecorder = phaseMutationRecorder
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
@@ -915,24 +927,24 @@ final class ToolExecutor {
         case .showBlocks: return try showBlocks(args)
         case .compilePrompt: return try await compilePrompt(editor, args)
         case .generateVideo:
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             return try await generate(editor, args, type: .video, origin: origin)
         case .generateImage:
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             return try await generate(editor, args, type: .image, origin: origin)
         case .prepareGenerationBatch:
             return try await prepareGenerationBatch(editor, args, origin: origin)
         case .getGenerationBatches:
             return try await getGenerationBatches(editor, args)
         case .generateAudio:
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             return try await generateAudio(editor, args, origin: origin)
         case .upscaleMedia:
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             return try await upscaleMedia(editor, args, origin: origin)
         case .importMedia:   return try await importMedia(editor, args)
         case .listModels:
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             return listModels(args)
         case .listFolders:   return listFolders(editor)
         case .createFolder:  return try createFolder(editor, args)

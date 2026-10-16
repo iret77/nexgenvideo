@@ -1667,7 +1667,7 @@ extension ToolExecutor {
         if phase != "frames",
            shot.sourceMode != .imported,
            deliveryMode != .timelineAnimatedStill {
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             do {
                 try await PipelineProductionInputsWriter.refresh(
                     shotID: shotId,

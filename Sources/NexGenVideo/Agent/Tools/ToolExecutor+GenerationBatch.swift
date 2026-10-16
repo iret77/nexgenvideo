@@ -71,7 +71,7 @@ extension ToolExecutor {
             throw ToolError("Finish the current native decision or generation before preparing a batch.")
         }
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
-        await CatalogDiscovery.ensureCurrent()
+        _ = await catalogReadiness()
         let collector = GenerationBatchPreparation()
         var items: [GenerationBatch.Item] = []
         var recoveries: [String: GenerationBatchRecovery] = [:]

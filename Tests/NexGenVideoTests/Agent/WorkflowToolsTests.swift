@@ -482,7 +482,7 @@ struct WorkflowToolsTests {
         _ = try PipelineShotlistWriter.write(
             shotlist,
             executionInputs: inputs,
-            routes: [],
+            referenceCheck: .activatedRoutes([], discoveryComplete: true),
             dataRoot: dataRoot,
             declaredPack: nil
         )

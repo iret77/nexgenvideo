@@ -630,7 +630,7 @@ extension ToolExecutor {
         } else {
             musicvideoPlan = nil
         }
-        let routes = await activatedProductionRoutes(for: executionInputs)
+        let referenceCheck = await activatedProductionRoutes(for: executionInputs)
         let declaration = try mutationPackDeclaration(
             editor,
             dataRoot: root
@@ -659,7 +659,7 @@ extension ToolExecutor {
             let url = try PipelineShotlistWriter.write(
                 shotlist,
                 executionInputs: executionInputs,
-                routes: routes,
+                referenceCheck: referenceCheck,
                 dataRoot: stagingRoot,
                 declaredPack: declaration.packName,
                 declaredBinding: declaration.binding,
@@ -1035,18 +1035,16 @@ extension ToolExecutor {
 
     private func activatedProductionRoutes(
         for executionInputs: [PipelineExecutionShotInput]
-    ) async -> [ProductionRouteCandidateV1] {
-        guard executionInputs.contains(where: {
-            $0.sourceMode != .imported
-                && $0.generationRequirement?.modalityID == .video
-                && !$0.referenceDemands.isEmpty
-        }) else { return [] }
-        await CatalogDiscovery.ensureCurrent()
-        let preferences = ModelPreferences.shared
-        return productionRouteCandidates(providerActivation()).filter {
+    ) async -> PipelineReferenceRouteContract.Check {
+        guard executionInputs.contains(where: PipelineReferenceRouteContract.requiresRoute) else {
+            return .activatedRoutes([], discoveryComplete: true)
+        }
+        let discoveryComplete = await catalogReadiness()
+        let routes = productionRouteCandidates(providerActivation()).filter {
             $0.candidate.providerActivated && $0.candidate.liveAvailable
-                && preferences.isEnabled($0.modelID)
+                && isModelEnabled($0.modelID)
         }.map(\.candidate)
+        return .activatedRoutes(routes, discoveryComplete: discoveryComplete)
     }
 
     func archiveExisting(_ relative: String, dataRoot: URL) throws {

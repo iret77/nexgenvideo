@@ -378,6 +378,28 @@ public enum ProductionReferenceDemandSemanticsV1 {
     }
 }
 
+/// Input slot IDs an earlier execution contract published; stored demands keep them, new writes may not.
+public enum ProductionInputSlotAliasV1 {
+    public static let retiredSlotIDs: [String: String] = [
+        "reference.image.anchor": CoreReferenceInputSlotIDV1.referenceImage,
+    ]
+
+    public static func isRetired(_ inputSlotID: String) -> Bool {
+        retiredSlotIDs[ProductionIdentifierNormalizerV1.canonical(inputSlotID)] != nil
+    }
+
+    public static func routedSlotID(_ inputSlotID: String) -> String {
+        retiredSlotIDs[ProductionIdentifierNormalizerV1.canonical(inputSlotID)] ?? inputSlotID
+    }
+
+    public static func slot(
+        _ inputSlotID: String,
+        in slots: [String: ProductionInputSlotCapabilityV1]
+    ) -> ProductionInputSlotCapabilityV1? {
+        slots[inputSlotID] ?? slots[routedSlotID(inputSlotID)]
+    }
+}
+
 public enum ProductionRequirementResolverV1 {
     public static func fingerprints(
         requirement: ProductionRequirementV1,
@@ -649,38 +671,44 @@ public enum ProductionRequirementResolverV1 {
         }
     }
 
-    private static func deficits(
+    /// Render's modality, mode and input-slot checks for exactly the given demands.
+    public static func slotAndModeEvaluations(
         requirement: ProductionRequirementV1,
-        demandSet: ReferenceDemandSetV1,
-        assetGraph: AssetGraphV1,
+        demands: [ReferenceDemandV1],
+        candidates: [ProductionRouteCandidateV1]
+    ) -> [ProductionRouteEvaluationV1] {
+        candidates.filter(isValid).map { candidate -> ProductionRouteEvaluationV1 in
+            let found: [ProductionRouteDeficitV1]
+            if let modality = modalityDeficit(requirement: requirement, candidate: candidate) {
+                found = [modality]
+            } else {
+                found = modeDeficits(requirement: requirement, candidate: candidate)
+                    + inputSlotDeficits(demands: demands, candidate: candidate)
+            }
+            return ProductionRouteEvaluationV1(candidate: candidate, deficits: found)
+        }
+    }
+
+    private static func modalityDeficit(
+        requirement: ProductionRequirementV1,
+        candidate: ProductionRouteCandidateV1
+    ) -> ProductionRouteDeficitV1? {
+        let offering = candidate.capabilities.offering
+        guard offering.modality.rawValue != requirement.modalityID else { return nil }
+        return ProductionRouteDeficitV1(
+            code: .modalityUnsupported,
+            requiredValue: requirement.modalityID,
+            availableValue: offering.modality.rawValue
+        )
+    }
+
+    private static func modeDeficits(
+        requirement: ProductionRequirementV1,
         candidate: ProductionRouteCandidateV1
     ) -> [ProductionRouteDeficitV1] {
         var result: [ProductionRouteDeficitV1] = []
         let profile = candidate.capabilities.effective
         let offering = candidate.capabilities.offering
-        if !candidate.providerActivated {
-            result.append(ProductionRouteDeficitV1(
-                code: .providerNotActivated,
-                requiredValue: offering.providerID,
-                availableValue: "inactive"
-            ))
-        }
-        if !candidate.liveAvailable {
-            result.append(ProductionRouteDeficitV1(
-                code: .offerUnavailable,
-                requiredValue: offering.offeringID,
-                availableValue: "unavailable"
-            ))
-        }
-        guard offering.modality.rawValue == requirement.modalityID else {
-            result.append(ProductionRouteDeficitV1(
-                code: .modalityUnsupported,
-                requiredValue: requirement.modalityID,
-                availableValue: offering.modality.rawValue
-            ))
-            return result
-        }
-
         let requiredModes = Set(requirement.modeIDs.map(
             ProductionIdentifierNormalizerV1.canonical
         ))
@@ -709,6 +737,69 @@ public enum ProductionRequirementResolverV1 {
                 ))
             }
         }
+        return result
+    }
+
+    private static func inputSlotDeficits(
+        demands: [ReferenceDemandV1],
+        candidate: ProductionRouteCandidateV1
+    ) -> [ProductionRouteDeficitV1] {
+        var result: [ProductionRouteDeficitV1] = []
+        let inputSlots = Dictionary(
+            candidate.inputSlots.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for demand in demands {
+            guard let slot = ProductionInputSlotAliasV1.slot(demand.inputSlotID, in: inputSlots),
+                  slot.modality == demand.modality,
+                  Set(slot.modeIDs.map(ProductionIdentifierNormalizerV1.canonical)).contains(
+                      ProductionIdentifierNormalizerV1.canonical(demand.modeID)
+                  ) else {
+                result.append(ProductionRouteDeficitV1(
+                    code: .inputSlotUnsupported,
+                    requiredValue: "\(demand.inputSlotID):\(demand.modality.rawValue):\(demand.modeID)",
+                    availableValue: candidate.inputSlots.map(\.id).sorted()
+                        .joined(separator: ",")
+                ))
+                continue
+            }
+        }
+        validateInputKinds(
+            demands: demands,
+            profile: candidate.capabilities.effective,
+            into: &result
+        )
+        return result
+    }
+
+    private static func deficits(
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        assetGraph: AssetGraphV1,
+        candidate: ProductionRouteCandidateV1
+    ) -> [ProductionRouteDeficitV1] {
+        var result: [ProductionRouteDeficitV1] = []
+        let profile = candidate.capabilities.effective
+        let offering = candidate.capabilities.offering
+        if !candidate.providerActivated {
+            result.append(ProductionRouteDeficitV1(
+                code: .providerNotActivated,
+                requiredValue: offering.providerID,
+                availableValue: "inactive"
+            ))
+        }
+        if !candidate.liveAvailable {
+            result.append(ProductionRouteDeficitV1(
+                code: .offerUnavailable,
+                requiredValue: offering.offeringID,
+                availableValue: "unavailable"
+            ))
+        }
+        if let modality = modalityDeficit(requirement: requirement, candidate: candidate) {
+            result.append(modality)
+            return result
+        }
+        result.append(contentsOf: modeDeficits(requirement: requirement, candidate: candidate))
         let visibleField = offering.modality == .image
             ? CapabilityFieldIDV1.imageVisibleCharacters
             : CapabilityFieldIDV1.visibleCharacters
@@ -738,35 +829,19 @@ public enum ProductionRequirementResolverV1 {
         let inputSlots = Dictionary(
             uniqueKeysWithValues: candidate.inputSlots.map { ($0.id, $0) }
         )
-        for demand in requiredDemands {
-            guard let slot = inputSlots[demand.inputSlotID],
-                  slot.modality == demand.modality,
-                  Set(slot.modeIDs.map(ProductionIdentifierNormalizerV1.canonical)).contains(
-                      ProductionIdentifierNormalizerV1.canonical(demand.modeID)
-                  ) else {
-                result.append(ProductionRouteDeficitV1(
-                    code: .inputSlotUnsupported,
-                    requiredValue: "\(demand.inputSlotID):\(demand.modality.rawValue):\(demand.modeID)",
-                    availableValue: candidate.inputSlots.map(\.id).sorted()
-                        .joined(separator: ",")
-                ))
-                continue
-            }
-        }
+        result.append(contentsOf: inputSlotDeficits(demands: requiredDemands, candidate: candidate))
         let modalityBudgetedDemands = requiredDemands.filter {
-            inputSlots[$0.inputSlotID]?.countsTowardModalityBudget == true
+            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
+                .countsTowardModalityBudget == true
         }
         let totalBudgetedDemands = requiredDemands.filter {
-            inputSlots[$0.inputSlotID]?.countsTowardTotalBudget == true
+            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
+                .countsTowardTotalBudget == true
         }
         let durationBudgetedDemands = requiredDemands.filter {
-            inputSlots[$0.inputSlotID]?.countsTowardCombinedDuration == true
+            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
+                .countsTowardCombinedDuration == true
         }
-        validateInputKinds(
-            demands: requiredDemands,
-            profile: profile,
-            into: &result
-        )
         let counts = Dictionary(grouping: modalityBudgetedDemands, by: \.modality)
             .mapValues(\.count)
         for modality in AssetPhysicalModalityV1.allCases {
