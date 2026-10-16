@@ -568,7 +568,7 @@ struct AgentPanelView: View {
                     modelMenuItem(model)
                 }
                 if !groups.older.isEmpty {
-                    Divider()
+                    Divider() // app-theme: native-menu-divider
                     Menu("Older Models") {
                         ForEach(groups.older) { model in
                             modelMenuItem(model)
