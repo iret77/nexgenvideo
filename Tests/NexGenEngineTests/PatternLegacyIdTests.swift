@@ -3,8 +3,7 @@ import Testing
 @testable import MusicvideoPlugin
 @testable import NexGenEngine
 
-/// Stored projects keep a retired pattern id in `brief.director_pattern` and `section.pattern_override`.
-/// Those files are never rewritten, so every lookup has to resolve the retired id itself.
+/// Stored projects keep retired pattern ids, so every lookup must resolve them.
 @Suite("Pattern legacy ids", .serialized)
 struct PatternLegacyIdTests {
     private static let retired = "visual-album-khalil-joseph"
