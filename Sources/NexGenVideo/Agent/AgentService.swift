@@ -99,6 +99,7 @@ final class AgentService {
         apiKeyGeneration &+= 1
         let generation = apiKeyGeneration
         isCheckingAPIKey = true
+        modelListIsCurrent = false
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
                 AnthropicKeychain.load() ?? ""
