@@ -129,6 +129,64 @@ struct AnthropicRuntimeAdapterTests {
         #expect(replay.last?["type"] as? String == "tool_use")
     }
 
+    @Test("each request reports its prefix digest and joins consecutive same-role turns")
+    func requestDigestAndJoinedWire() async throws {
+        let thinking = try AnthropicThinkingBlock(json: [
+            "type": "thinking", "thinking": "", "signature": "bound==",
+        ])
+        let client = ScriptedAnthropicClient(scripts: [
+            [
+                .event(.thinkingComplete(thinking)),
+                .event(.toolUseComplete(id: "tool-1", name: "host_tool", inputJSON: "{}")),
+                .event(.messageStop(stopReason: .toolUse)),
+            ],
+            [.event(.textDelta("Done.")), .event(.messageStop(stopReason: .endTurn))],
+        ])
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        let hostContext = testHostContext()
+        try adapter.start(testSessionRequest(
+            sessionID: sessionID,
+            hostContext: hostContext,
+            executeTool: { _, _, _ in .ok("done") }
+        ))
+        let earlier = AgentRuntimeMessage(role: .user, content: [
+            .toolResult(id: "old", content: [.text("old result")], isError: false),
+        ])
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Continue")])
+        let events = await collectAnthropicEvents(try adapter.send(.init(
+            sessionID: sessionID,
+            turnID: UUID(),
+            messages: [earlier, current],
+            currentMessage: current
+        )))
+        let digests = events.compactMap { envelope -> String? in
+            guard case .providerRequest(let digest) = envelope.event else { return nil }
+            return digest
+        }
+        let calls = client.recordedCalls
+        #expect(calls.count == 2)
+        #expect(calls.first?.messages.count == 1)
+        #expect(calls.first?.messages.first?.content.count == 2)
+        let assistant = AgentRuntimeMessage(role: .assistant, content: [
+            .thinking(thinking), .toolUse(id: "tool-1", name: "host_tool", inputJSON: "{}"),
+        ])
+        let results = AgentRuntimeMessage(role: .user, content: [
+            .toolResult(id: "tool-1", content: [.text("done")], isError: false),
+        ])
+        #expect(digests == [
+            AnthropicPrefixDigest.of(
+                system: hostContext.systemInstructions, tools: hostContext.toolSchemas,
+                messages: [earlier, current]
+            ),
+            AnthropicPrefixDigest.of(
+                system: hostContext.systemInstructions, tools: hostContext.toolSchemas,
+                messages: [earlier, current, assistant, results]
+            ),
+        ])
+        #expect(digests[0] != digests[1])
+    }
+
     @Test("host owns the Anthropic tool round trip and executes each call once")
     func hostRoundTripExecutesOneToolExactlyOnce() async throws {
         let usage = AgentRuntimeUsage(

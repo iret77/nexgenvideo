@@ -48,7 +48,7 @@ struct AnthropicThinkingTests {
         let restored = try JSONDecoder().decode(AgentMessage.self, from: saved)
         #expect(restored.blocks == blocks)
         let body = AnthropicRequestBody.build(
-            model: .sonnet46, system: "Edit a film.", tools: [], messages: [
+            model: AnthropicModelFixtures.info(AnthropicModelFixtures.sonnet46), system: "Edit a film.", tools: [], messages: [
                 .init(role: .assistant, content: restored.blocks
                     .compactMap(AgentService.runtimeContent)
                     .map(AnthropicRuntimeAdapter.anthropicContent)),
@@ -77,7 +77,7 @@ struct AnthropicThinkingTests {
         ]
         for block in blocks {
             let body = AnthropicRequestBody.build(
-                model: .opus48, system: "Edit.", tools: [],
+                model: AnthropicModelFixtures.info(AnthropicModelFixtures.opus55), system: "Edit.", tools: [],
                 messages: [.init(role: .assistant, content: [block])]
             )
             let messages = try #require(body["messages"] as? [[String: Any]])
@@ -162,7 +162,7 @@ struct AnthropicThinkingTests {
         _ = await service.runPendingToolUses(assistantID: restored.id, origin: .direct)
         #expect(service.messages.count == 3)
         #expect(service.messages[1].blocks == partial.blocks)
-        let replay = await service.runtimeMessages(transientImages: [])
+        let replay = await service.runtimeMessages()
         #expect(replay.count == 2)
         #expect(replay.allSatisfy { $0.role == .user })
         #expect(restored.isIncompleteAPIResponse)
@@ -217,18 +217,21 @@ struct AnthropicThinkingTests {
         #expect(!activity.isRunning)
     }
 
-    @Test("request policy budgets adaptive thinking and preserves the legacy Haiku dialect")
+    @Test("request policy budgets adaptive thinking and preserves the budget-only dialect")
     func requestPolicy() throws {
-        for model in [AnthropicModel.sonnet46, .opus48] {
+        for entry in [AnthropicModelFixtures.sonnet46, AnthropicModelFixtures.opus55] {
+            let model = AnthropicModelFixtures.info(entry)
             let body = AnthropicRequestBody.build(model: model, system: "Edit.", tools: [], messages: [])
             #expect(body["max_tokens"] as? Int == 64000)
             #expect(body["thinking"] as? [String: String] == ["type": "adaptive", "display": "summarized"])
             #expect(body["output_config"] as? [String: String] == ["effort": "high"])
         }
-        let haiku = AnthropicRequestBody.build(model: .haiku45, system: "Edit.", tools: [], messages: [])
+        let haiku = AnthropicRequestBody.build(
+            model: AnthropicModelFixtures.info(AnthropicModelFixtures.haiku45), system: "Edit.", tools: [], messages: []
+        )
         #expect(haiku["thinking"] == nil)
         #expect(haiku["output_config"] == nil)
-        #expect(haiku["max_tokens"] as? Int == 8192)
+        #expect(haiku["max_tokens"] as? Int == 64000)
     }
 
     @Test("thinking stays in ordered activity details, never in the result or host status")

@@ -41,6 +41,31 @@ struct ModelRouterTests {
         #expect(!deep.escalated)  // already at ceiling — nothing to escalate to
     }
 
+    // MARK: - tiers name families, never concrete ids
+
+    @Test("shipped tiers name model families and match the router golden")
+    func tiersNameFamilies() throws {
+        #expect(ModelRouter.defaultManifest == ["fast": "haiku", "medium": "sonnet", "deep": "opus"])
+        #expect(try ModelRouter.resolve("planning").model == "opus")
+        #expect(try ModelRouter.resolve("assembly", escalate: true).model == "opus")
+        let golden = try GoldenHarnessTests.golden("router")
+        #expect(golden["tiers"] as? [String: String] == ModelRouter.defaultManifest)
+        let classes = try #require(golden["task_classes"] as? [String: [String: String]])
+        for taskClass in ModelRouter.taskClasses {
+            #expect(classes[taskClass.name] == ["tier": taskClass.tier, "effort": taskClass.effort])
+        }
+    }
+
+    @Test("a project manifest may pin a concrete model id over a family")
+    func manifestPinsConcreteID() throws {
+        let dataRoot = try tempDataRoot()
+        defer { try? FileManager.default.removeItem(at: dataRoot.deletingLastPathComponent().deletingLastPathComponent()) }
+        let manifestURL = dataRoot.appendingPathComponent(ModelRouter.manifestFilename)
+        try "deep: claude-opus-4-8\n".write(to: manifestURL, atomically: true, encoding: .utf8)
+        #expect(try ModelRouter.resolve("planning", dataRoot: dataRoot).model == "claude-opus-4-8")
+        #expect(try ModelRouter.resolve("review", dataRoot: dataRoot).model == "sonnet")
+    }
+
     // MARK: - test_unknown_task_class_raises
 
     @Test("unknown task class throws")

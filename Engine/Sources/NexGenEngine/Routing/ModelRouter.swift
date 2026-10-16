@@ -3,17 +3,18 @@ import Yams
 
 /// Deliberate compute: which model and how much thinking a task gets is assigned
 /// by **task class** — a fixed floor per class, with a bounded one-step
-/// escalation. Tiers (not model ids) resolve through a manifest naming the
-/// latest model of each family; a project's `models.yaml` overrides the shipped
-/// defaults. Port of `core/router.py`.
+/// escalation. Tiers resolve through a manifest naming a model family; the host
+/// resolves a family to the newest model the provider offers at runtime. A
+/// project's `models.yaml` overrides the shipped defaults and may pin a concrete
+/// model id. Port of `core/router.py`.
 public enum ModelRouter {
     public static let tiers: [String] = ["fast", "medium", "deep"]
 
-    /// Shipped tier→model floors. Port of `router.py::DEFAULT_MANIFEST`.
+    /// Shipped tier→family floors; never concrete ids, so new releases need no update.
     public static let defaultManifest: [String: String] = [
-        "fast": "claude-haiku-4-5",
-        "medium": "claude-sonnet-5",
-        "deep": "claude-opus-4-8",
+        "fast": "haiku",
+        "medium": "sonnet",
+        "deep": "opus",
     ]
 
     /// Per-class `(tier, effort)` floor. Ordered so `describe` can emit it in the

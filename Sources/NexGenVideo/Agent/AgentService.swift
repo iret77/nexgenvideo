@@ -16,6 +16,9 @@ final class AgentService {
     private let runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)?
     private let runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)?
+    private let modelCatalogStore: AnthropicModelCatalogStore
+    private let modelDiscoveryTransport: AnthropicModelsAPI.Transport
+    private var modelDiscoveryGeneration = 0
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -30,9 +33,17 @@ final class AgentService {
         embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil,
         runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)? = nil,
         runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
-        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil
+        runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil,
+        modelCatalogDefaults: UserDefaults = .standard,
+        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport
     ) {
         self.backend = backend
+        let store = AnthropicModelCatalogStore(defaults: modelCatalogDefaults)
+        self.modelCatalogStore = store
+        self.modelDiscoveryTransport = modelDiscoveryTransport
+        self.availableModels = store.cachedModels()
+        self.model = store.storedModelID
+        self.modelFamily = store.storedFamily
         self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
         self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
         self.runtimeAdapterFactory = runtimeAdapterFactory
@@ -88,6 +99,7 @@ final class AgentService {
         apiKeyGeneration &+= 1
         let generation = apiKeyGeneration
         isCheckingAPIKey = true
+        modelListIsCurrent = false
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
                 AnthropicKeychain.load() ?? ""
@@ -96,6 +108,38 @@ final class AgentService {
             self.apiKey = key
             self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
+            if !key.isEmpty { await self.refreshModelCatalog() }
+        }
+    }
+
+    /// Never blocks the chat: a failed discovery keeps the last successful list.
+    func refreshModelCatalog() async {
+        await refreshModelCatalog(apiKey: apiKey)
+    }
+
+    func refreshModelCatalog(apiKey key: String) async {
+        guard !key.isEmpty else { return }
+        modelDiscoveryGeneration &+= 1
+        let generation = modelDiscoveryGeneration
+        isDiscoveringModels = true
+        let transport = modelDiscoveryTransport
+        let result: Result<[AnthropicModelInfo], Error>
+        do {
+            result = .success(try await AnthropicModelsAPI.fetchAll(apiKey: key, transport: transport))
+        } catch {
+            result = .failure(error)
+        }
+        guard modelDiscoveryGeneration == generation else { return }
+        isDiscoveringModels = false
+        switch result {
+        case .success(let models):
+            availableModels = models
+            modelListIsCurrent = true
+            modelDiscoveryError = nil
+            modelCatalogStore.saveCatalog(models)
+        case .failure(let error):
+            modelDiscoveryError = error.localizedDescription
+            Log.agent.notice("model discovery failed: \(error.localizedDescription)")
         }
     }
 
@@ -216,27 +260,42 @@ final class AgentService {
         isCheckingClaude = false
     }
 
-    var availableModels: [AnthropicModel] { AnthropicModel.allCases }
+    /// Discovered (or last cached) models as the provider listed them.
+    private(set) var availableModels: [AnthropicModelInfo]
+    private(set) var isDiscoveringModels = false
+    private(set) var modelDiscoveryError: String?
+    /// True once this session discovered the list; until then the cache cannot retire a stored id.
+    private(set) var modelListIsCurrent = false
+    /// The user's choice, persisted as a plain model id.
+    private(set) var model: String?
+    private(set) var modelFamily: String?
+
+    func selectModel(_ info: AnthropicModelInfo) {
+        model = info.id
+        modelFamily = info.family
+        modelCatalogStore.storedModelID = info.id
+        modelCatalogStore.storedFamily = info.family
+    }
 
     private func selectClient() -> (any AgentClient)? {
-        guard hasApiKey else { return nil }
-        return AnthropicClient(apiKey: apiKey, model: effectiveModel)
+        guard hasApiKey, let selected = effectiveModel else { return nil }
+        return AnthropicClient(apiKey: apiKey, model: selected)
     }
 
-    var effectiveModel: AnthropicModel {
-        let available = availableModels
-        if available.contains(model) { return model }
-        return available.first ?? .sonnet46
+    var effectiveModel: AnthropicModelInfo? {
+        AnthropicModelSelection.resolve(
+            storedID: model,
+            storedFamily: modelFamily,
+            models: availableModels,
+            listIsCurrent: modelListIsCurrent
+        )
     }
 
-    var model: AnthropicModel = {
-        if let raw = UserDefaults.standard.string(forKey: "agentModel"),
-           let m = AnthropicModel(rawValue: raw) {
-            return m
-        }
-        return .sonnet46
-    }() {
-        didSet { UserDefaults.standard.set(model.rawValue, forKey: "agentModel") }
+    /// The list offered in the picker; a stored id the stale cache lacks stays selectable.
+    var pickerModels: [AnthropicModelInfo] {
+        guard let selected = effectiveModel,
+              !availableModels.contains(where: { $0.id == selected.id }) else { return availableModels }
+        return availableModels + [selected]
     }
 
     var sessions: [ChatSession] = []
@@ -2195,7 +2254,10 @@ final class AgentService {
             mentions: [],
             hidden: true,
             allowWhileBlocked: true,
-            runtimeImages: Self.runtimeImages(from: followUp.imageBlocks)
+            runtimeImages: Self.imagesMissingFromToolResults(
+                Self.runtimeImages(from: followUp.imageBlocks),
+                in: messages
+            )
         )
         if started {
             pendingSpendFollowUps.remove(at: followUpIndex)
@@ -2934,7 +2996,7 @@ final class AgentService {
     private var runtimeGenerationID: UUID?
 
     @ObservationIgnored
-    private var pendingTurnImages: [AgentRuntimeImage] = []
+    private var pendingProviderPrefixDigest: String?
 
     private(set) var lastRuntimeUsage: AgentRuntimeUsage?
 
@@ -3249,12 +3311,11 @@ final class AgentService {
         messages.append(AgentMessage(
             role: .user, blocks: [.text(trimmed)],
             mentions: referencedMentions, contextHint: contextHint, hidden: hidden,
-            userPresentation: presentation
+            userPresentation: presentation, attachedImages: runtimeImages
         ))
         if !hidden || presentation != nil { recordUserDirection() }
         checkpointCurrentSession()
         streamError = nil
-        pendingTurnImages = runtimeImages
         kickOffRuntimeTurn()
         return true
     }
@@ -3488,7 +3549,14 @@ final class AgentService {
         let providerConfiguration: String
         switch backend {
         case .anthropicAPI:
-            providerConfiguration = "\(effectiveModel.rawValue):\(apiKeyGeneration)"
+            let selected = effectiveModel
+            providerConfiguration = [
+                selected?.id ?? "",
+                String(selected?.supportsAdaptiveThinking ?? false),
+                String(selected?.supportsHighEffort ?? false),
+                String(selected?.maxOutputTokens ?? 0),
+                String(apiKeyGeneration),
+            ].joined(separator: ":")
         case .codexAppServer:
             providerConfiguration = CodexAppServerContract.cliVersion
         case .claudeCode:
@@ -3612,6 +3680,8 @@ final class AgentService {
             case .codexAppServer:
                 runtimeContextSignature = nil
             }
+        case .providerRequest(let prefixDigest):
+            pendingProviderPrefixDigest = prefixDigest
         case .text(let messageID, let value, _):
             recordActivity("Receiving agent response")
             let id = assistantID(
@@ -3681,8 +3751,14 @@ final class AgentService {
                let index = assistantMessageIndex(id: defaultAssistantID) {
                 messages[index].isIncompleteAPIResponse = true
             }
+            if outcome == .completed(.refusal) {
+                streamError = .upstream(Self.refusalMessage)
+            }
         }
     }
+
+    static let refusalMessage =
+        "Claude declined this request. Rephrase it, or choose another model and send it again."
 
     private func assistantID(
         providerMessageID: String?,
@@ -3695,7 +3771,9 @@ final class AgentService {
         if providerMessageID == nil, let defaultAssistantID {
             return defaultAssistantID
         }
-        let message = AgentMessage(role: .assistant, blocks: [])
+        var message = AgentMessage(role: .assistant, blocks: [])
+        message.providerPrefixDigest = pendingProviderPrefixDigest
+        pendingProviderPrefixDigest = nil
         messages.append(message)
         if let providerMessageID {
             messageIDs[providerMessageID] = message.id
@@ -3716,13 +3794,9 @@ final class AgentService {
         stoppedAgent = false
         isStreaming = true
         let boundSessionID = currentSessionId
-        let transientImages = pendingTurnImages
-        pendingTurnImages = []
+        pendingProviderPrefixDigest = nil
         currentTask = Task { [weak self] in
-            await self?.runRuntimeTurn(
-                sessionID: boundSessionID,
-                transientImages: transientImages
-            )
+            await self?.runRuntimeTurn(sessionID: boundSessionID)
             guard !Task.isCancelled,
                   let self,
                   self.currentSessionId == boundSessionID else { return }
@@ -3732,10 +3806,7 @@ final class AgentService {
         }
     }
 
-    private func runRuntimeTurn(
-        sessionID: UUID?,
-        transientImages: [AgentRuntimeImage]
-    ) async {
+    private func runRuntimeTurn(sessionID: UUID?) async {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
@@ -3744,7 +3815,16 @@ final class AgentService {
             streamError = .upstream(error.localizedDescription)
             return
         }
-        let runtimeMessages = await runtimeMessages(transientImages: transientImages)
+        if backend == .anthropicAPI, runtimeAdapterFactory == nil, effectiveModel == nil {
+            await refreshModelCatalog()
+            guard effectiveModel != nil else {
+                streamError = .upstream(
+                    "Couldn't load the Claude model list. Check the connection and the API key, then try again."
+                )
+                return
+            }
+        }
+        let runtimeMessages = await runtimeMessages(hostContext: hostContext)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
               let inputMessage = messages.last,
@@ -4091,9 +4171,10 @@ final class AgentService {
         }
     }
 
-    func runtimeMessages(transientImages: [AgentRuntimeImage]) async -> [AgentRuntimeMessage] {
-        var result: [AgentRuntimeMessage] = []
-        for (index, msg) in messages.enumerated() {
+    /// Rebuilds the provider history; with a host context, invalidated thinking is left out.
+    func runtimeMessages(hostContext: AgentRuntimeHostContext? = nil) async -> [AgentRuntimeMessage] {
+        var entries: [AnthropicReplay.Entry] = []
+        for msg in messages {
             if msg.isIncompleteAPIResponse { continue }
             var content = msg.blocks.compactMap(Self.runtimeContent)
 
@@ -4104,13 +4185,20 @@ final class AgentService {
                 content.insert(contentsOf: Self.runtimeImages(from: inlined.blocks).map(AgentRuntimeContent.image), at: 0)
                 content.insert(.text("<app-context>\(hint)</app-context>"), at: 0)
             }
-            if index == messages.indices.last, msg.role == .user {
-                content.append(contentsOf: transientImages.map(AgentRuntimeContent.image))
+            if msg.role == .user {
+                content.append(contentsOf: msg.attachedImages.map(AgentRuntimeContent.image))
             }
             guard !content.isEmpty else { continue }
-            result.append(AgentRuntimeMessage(role: msg.role, content: content))
+            entries.append(.init(role: msg.role, content: content, recordedPrefixDigest: msg.providerPrefixDigest))
         }
-        return result
+        guard let hostContext else {
+            return entries.map { AgentRuntimeMessage(role: $0.role, content: $0.content) }
+        }
+        return AnthropicReplay.strippingInvalidatedThinking(
+            entries,
+            system: hostContext.systemInstructions,
+            tools: hostContext.toolSchemas
+        )
     }
 
     private func inlineImageBlocks(for mentions: [AgentMention]) async -> AgentMentionContext.InlinedMentions {
@@ -4164,6 +4252,23 @@ final class AgentService {
         case .toolResult(let toolUseId, let content, let isError):
             return .toolResult(id: toolUseId, content: content, isError: isError)
         }
+    }
+
+    /// The replaced tool result already carries these images; repeating them would persist twice.
+    static func imagesMissingFromToolResults(
+        _ images: [AgentRuntimeImage],
+        in messages: [AgentMessage]
+    ) -> [AgentRuntimeImage] {
+        var carried: Set<String> = []
+        for message in messages {
+            for block in message.blocks {
+                guard case .toolResult(_, let content, _) = block else { continue }
+                for item in content {
+                    if case .image(let base64, _) = item { carried.insert(base64) }
+                }
+            }
+        }
+        return images.filter { !carried.contains($0.base64) }
     }
 
     private static func runtimeImages(from blocks: [[String: Any]]) -> [AgentRuntimeImage] {
@@ -4233,6 +4338,10 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
     /// Host-authored tool-call metadata that never becomes provider-facing user content.
     var hostStateRecords: [AgentHostStateRecord]
     var isIncompleteAPIResponse: Bool = false
+    /// Images sent with this turn; replayed on every later request so the history stays append-only.
+    var attachedImages: [AgentRuntimeImage] = []
+    /// Prefix digest of the API request that produced this assistant turn.
+    var providerPrefixDigest: String?
 
 
     init(
@@ -4243,7 +4352,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         contextHint: String? = nil,
         hidden: Bool = false,
         userPresentation: AgentUserPresentation? = nil,
-        hostStateRecords: [AgentHostStateRecord] = []
+        hostStateRecords: [AgentHostStateRecord] = [],
+        attachedImages: [AgentRuntimeImage] = []
     ) {
         self.id = id
         self.role = role
@@ -4253,11 +4363,12 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
         self.hidden = hidden
         self.userPresentation = userPresentation
         self.hostStateRecords = hostStateRecords
+        self.attachedImages = attachedImages
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, role, blocks, mentions, contextHint, hidden, userPresentation, hostStateRecords, isIncompleteAPIResponse
-
+        case attachedImages, providerPrefixDigest
     }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
@@ -4276,6 +4387,8 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
             forKey: .hostStateRecords
         ) ?? []
         isIncompleteAPIResponse = try c.decodeIfPresent(Bool.self, forKey: .isIncompleteAPIResponse) ?? false
+        attachedImages = try c.decodeIfPresent([AgentRuntimeImage].self, forKey: .attachedImages) ?? []
+        providerPrefixDigest = try c.decodeIfPresent(String.self, forKey: .providerPrefixDigest)
 
     }
 }

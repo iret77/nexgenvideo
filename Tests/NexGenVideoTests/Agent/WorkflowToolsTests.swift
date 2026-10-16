@@ -2294,7 +2294,12 @@ struct WorkflowToolsTests {
         #expect(distill?["tier"] as? String == "fast")
         #expect(distill?["effort"] as? String == "low")
         #expect(distill?["escalated"] as? Bool == false)
-        #expect(distill?["model"] as? String == ModelRouter.defaultManifest["fast"])
+        #expect(distill?["family"] as? String == "haiku")
+        if distill?["model_discovered"] as? Bool == true {
+            #expect((distill?["model"] as? String)?.isEmpty == false)
+        } else {
+            #expect(distill?["model"] as? String == ModelRouter.defaultManifest["fast"])
+        }
 
         let escalated = try await h.runOK("resolve_model", args: ["task_class": "distill", "escalate": true]) as? [String: Any]
         #expect(escalated?["tier"] as? String == "medium")

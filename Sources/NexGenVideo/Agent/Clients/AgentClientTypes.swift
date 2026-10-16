@@ -2,20 +2,6 @@ import Foundation
 
 // MARK: - Shared value types
 
-enum AnthropicModel: String, CaseIterable, Sendable {
-    case sonnet46 = "claude-sonnet-4-6"
-    case opus48 = "claude-opus-4-8"
-    case haiku45 = "claude-haiku-4-5-20251001"
-
-    var displayName: String {
-        switch self {
-        case .sonnet46: "Sonnet 4.6"
-        case .opus48: "Opus 4.8"
-        case .haiku45: "Haiku 4.5"
-        }
-    }
-}
-
 enum AnthropicStopReason: String, Sendable {
     case endTurn = "end_turn"
     case toolUse = "tool_use"
@@ -209,8 +195,11 @@ enum AnthropicSSE {
 // MARK: - Request body builder
 
 enum AnthropicRequestBody {
+    static let maxOutputTokensCeiling = 64000
+    static let unknownModelMaxTokens = 8192
+
     static func build(
-        model: AnthropicModel,
+        model: AnthropicModelInfo,
         maxTokens: Int? = nil,
         system: String,
         tools: [AnthropicToolSchema],
@@ -238,15 +227,19 @@ enum AnthropicRequestBody {
             lastMsg["content"] = content
             messageBlocks.append(lastMsg)
         }
+        let modelLimit = model.maxOutputTokens.map { min(maxOutputTokensCeiling, $0) }
         var body: [String: Any] = [
-            "model": model.rawValue,
-            "max_tokens": maxTokens ?? (model == .haiku45 ? 8192 : 64000),
+            "model": model.id,
+            "max_tokens": maxTokens ?? modelLimit ?? unknownModelMaxTokens,
             "stream": true,
             "system": [["type": "text", "text": system, "cache_control": ["type": "ephemeral"]]],
             "messages": messageBlocks,
         ]
-        if model != .haiku45 {
+        // Budget-only thinking models keep the request without a thinking parameter.
+        if model.supportsAdaptiveThinking {
             body["thinking"] = ["type": "adaptive", "display": "summarized"]
+        }
+        if model.supportsHighEffort {
             body["output_config"] = ["effort": "high"]
         }
         if !toolBlocks.isEmpty { body["tools"] = toolBlocks }

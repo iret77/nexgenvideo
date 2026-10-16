@@ -1,8 +1,8 @@
 {
     "tiers": {
-        "fast": "claude-haiku-4-5",
-        "medium": "claude-sonnet-5",
-        "deep": "claude-opus-4-8"
+        "fast": "haiku",
+        "medium": "sonnet",
+        "deep": "opus"
     },
     "task_classes": {
         "distill": {
