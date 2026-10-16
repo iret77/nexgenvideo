@@ -1058,7 +1058,7 @@ enum WorkspaceUIAcceptance {
             let expected: [String: String] = isGenerated ? [
                 "Model ID": "native-image-fixture", "Provider": item.family == "generated" ? "fal.ai" : "Higgsfield",
                 "Route": item.family == "generated" ? "API" : "MCP", "Generation receipt": "Unavailable",
-                "Booked cost": item.family == "generated" ? "0.25 EUR" : "0.50 EUR",
+                "Billed cost": item.family == "generated" ? "0.25 EUR" : "0.50 EUR",
                 "Provider job": "native-job-\(asset.id)",
             ] : ["Source": "Imported media", "Generation route": "Not applicable"]
             expectedRows = Dictionary(uniqueKeysWithValues: expected.map { (prefix + "origin." + $0.key, $0.value) })
@@ -1089,7 +1089,7 @@ enum WorkspaceUIAcceptance {
             guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else { reject("could not capture provenance") }
             screenshots.append(name)
             if isGenerated {
-                guard await revealProbe(prefix + "origin.Booked cost", in: window) else { reject("recorded cost is unreachable") }
+                guard await revealProbe(prefix + "origin.Billed cost", in: window) else { reject("recorded cost is unreachable") }
                 let costName = "scale-\(scaleLabel(scale))-provenance-\(item.family)-cost.png"
                 guard snapshot(host, at: evidenceURL.appendingPathComponent(costName)) else { reject("could not capture recorded cost") }
                 screenshots.append(costName)
@@ -1158,7 +1158,8 @@ enum WorkspaceUIAcceptance {
                 providerRequestId: "native-job-fixture-\(index)",
                 money: GenerationMoney(nativeAmount: index == 492 ? 0.25 : 0.5, nativeCurrency: "EUR",
                     eurAmount: index == 492 ? 0.25 : 0.5, eurPerNativeUnit: 1,
-                    exchangeRateDate: "2026-01-01", pricingSource: "synthetic acceptance fixture",
+                    exchangeRateDate: "2026-01-01",
+                    pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=native-job-fixture-\(index)",
                     exchangeRateSource: "identity")))
         }
         try JSONEncoder().encode(manifest).write(to: manifestURL)

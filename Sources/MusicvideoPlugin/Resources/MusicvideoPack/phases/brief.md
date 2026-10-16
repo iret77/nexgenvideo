@@ -186,11 +186,11 @@ explain the affected approvals and use an explicit rewind before rewriting it.
    the brief; the shotlist/render phases resolve it against the live
    `nexgen` generation catalog.
 
-8. **Planning budget and hard spending limit EUR.** Ask for the planning target
-   (25 | 50 default | 100 | Other numeric) and store it as `budget_eur`. Then
-   ask whether that amount is also a hard stop. If yes, write the same amount
-   to `budget_stop_eur`; if no, state that the planning target does not block
-   spending and leave `budget_stop_eur` empty. Never call `budget_eur` a cap.
+8. **Planning budget EUR.** Ask for the planning target (25 | 50 default |
+   100 | Other numeric) and store it as `budget_eur`. It is a display figure
+   for the budget picture, never a limit: spend is shown but never stops
+   work. Paid runs still need the user's approval; one approval can cover a
+   whole phase. Never call `budget_eur` a cap.
 
 9. **Image-model routing** (phase F + K5 bible sheets) — exactly 4
    options (Other automatic):
@@ -272,14 +272,15 @@ explain the affected approvals and use an explicit rewind before rewriting it.
     then ask. Concretely:
 
     a) **Show the budget picture** (before asking the question): call
-       `estimate_cost(project_dir)` and present `budget_eur`,
-       `budget_stop_eur`, `spent_eur`, and `remaining_eur`. If
-       `spend_complete=false`, present `verified_spend_eur` as a lower bound
-       and state that remaining amounts are unavailable. A per-shot forward estimate
-       only
-       exists only once a shotlist exists. Before Brief approval, use the
-       known planning budget and explain that a per-shot estimate is not yet
-       available.
+       `estimate_cost(project_dir)` and present `budget_eur` as the planning
+       figure, `verified_spend_eur` as proven spend ("at least" when
+       `spend_complete=false`), any `provider_credits` in each provider's own
+       unit, and the counts of runs with unknown cost (`unknown_cost_runs`),
+       legacy runs (`legacy_generations`) and runs in flight
+       (`in_flight_runs`). Never convert credits into money and never state
+       a remaining amount. A per-shot forward estimate exists only once a
+       shotlist exists. Before Brief approval, use the known planning budget
+       and explain that a per-shot estimate is not yet available.
 
     b) **Reason about the recommendation** (fact-based) from:
        - shot count (≥15: large enough for a preview)

@@ -2463,7 +2463,8 @@ struct WorkflowToolsTests {
         #expect(cost?["project"] as? String == "demo")
         #expect(cost?["budget_eur"] as? Double == 50.0)
         #expect(cost?["spent_eur"] as? Double == 0.0)
-        #expect(cost?["remaining_eur"] as? Double == 50.0)
+        #expect(cost?["budget_stop_eur"] is NSNull)
+        #expect(cost?["remaining_eur"] is NSNull)
         #expect(cost?["over_budget"] as? Bool == false)
         #expect(cost?["spend_complete"] as? Bool == true)
         #expect(cost?["verified_spend_eur"] as? Double == 0.0)
@@ -2501,8 +2502,9 @@ struct WorkflowToolsTests {
         #expect(cost?["spend_complete"] as? Bool == false)
         #expect(cost?["spent_eur"] is NSNull)
         #expect(cost?["remaining_eur"] is NSNull)
-        #expect(cost?["over_budget"] is NSNull)
-        #expect(cost?["unpriced_transactions"] as? Int == 1)
+        #expect(cost?["over_budget"] as? Bool == false)
+        #expect(cost?["in_flight_runs"] as? Int == 1)
+        #expect(cost?["unknown_cost_runs"] as? Int == 0)
         #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["budget_remaining_eur"] is NSNull)
     }
@@ -2545,12 +2547,139 @@ struct WorkflowToolsTests {
             args: ["project_dir": dataRoot.path]
         ) as? [String: Any]
 
-        #expect(state?["budget_spent_eur"] as? Double == 10)
-        #expect(state?["budget_remaining_eur"] as? Double == 40)
-        #expect(state?["spend_complete"] as? Bool == true)
+        #expect(state?["budget_spent_eur"] as? Double == 0)
+        #expect(state?["budget_remaining_eur"] is NSNull)
+        #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["active_reservations"] as? Int == 1)
-        #expect(cost?["verified_spend_eur"] as? Double == 10)
-        #expect(cost?["remaining_eur"] as? Double == 40)
+        #expect(state?["in_flight_runs"] as? Int == 1)
+        #expect(cost?["verified_spend_eur"] as? Double == 0)
+        #expect(cost?["in_flight_runs"] as? Int == 1)
+        #expect(cost?["remaining_eur"] is NSNull)
+    }
+
+    @Test("estimate_cost keeps its keys but never reports a limit, even with a stored stop")
+    func estimateCostIgnoresStoredBudgetStop() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        func money(_ eur: Double) -> GenerationMoney {
+            GenerationMoney(nativeAmount: eur, nativeCurrency: "EUR", eurAmount: eur, eurPerNativeUnit: 1,
+                exchangeRateDate: "2026-10-16", pricingSource: "https://provider.example/pricing",
+                exchangeRateSource: "https://www.ecb.europa.eu/")
+        }
+        let brief = try Brief(project: "demo", generated: "2026-10-16", mission: .demo,
+            targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", budgetStopEur: 8,
+            conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+        var log = GenerationLog()
+        log.spendEvents = [GenerationSpendEvent(transactionId: "priced-render", kind: .reserved,
+            model: "video/final", provider: .fal, transport: .api, endpoint: "video/final", money: money(10))]
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot).appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let raw = try await h.runOK("estimate_cost", args: ["project_dir": dataRoot.path])
+        let result = try #require(raw as? [String: Any])
+        for key in ["budget_eur", "budget_stop_eur", "spent_eur", "verified_spend_eur", "remaining_eur",
+                    "hard_stop_remaining_eur", "over_budget", "spend_complete", "active_reservations",
+                    "unpriced_transactions", "legacy_generations", "next_phase", "in_flight_runs",
+                    "unknown_cost_runs", "provider_credits"] {
+            #expect(result.keys.contains(key), "estimate_cost dropped \(key)")
+        }
+        #expect(result["budget_stop_eur"] is NSNull)
+        #expect(result["over_budget"] as? Bool == false)
+        #expect(result["remaining_eur"] is NSNull)
+        #expect(result["hard_stop_remaining_eur"] is NSNull)
+    }
+
+    @Test("estimate_cost and project state show billed money, provider credits and unknown runs honestly")
+    func estimateCostShowsHonestSpendPicture() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        func money(_ eur: Double, source: String) -> GenerationMoney {
+            GenerationMoney(nativeAmount: eur, nativeCurrency: "EUR", eurAmount: eur, eurPerNativeUnit: 1,
+                exchangeRateDate: "2026-10-16", pricingSource: source, exchangeRateSource: "https://www.ecb.europa.eu/")
+        }
+        func event(_ tx: String, _ kind: GenerationSpendEvent.Kind, _ provider: GenerationProvider,
+                   money: GenerationMoney? = nil, request: String? = nil,
+                   cost: GenerationProviderCost? = nil) -> GenerationSpendEvent {
+            GenerationSpendEvent(transactionId: tx, kind: kind, model: "\(provider.rawValue)/m", provider: provider,
+                transport: .api, endpoint: "\(provider.rawValue)/m", providerRequestId: request, money: money,
+                providerCost: cost)
+        }
+        let estimate = money(1, source: "https://fal.ai/models/m/pricing")
+        let bill = money(2.5, source: "https://api.fal.ai/v1/models/billing-events?request_id=fal-job")
+        var log = GenerationLog()
+        log.spendEvents = [
+            event("billed", .reserved, .fal, money: estimate),
+            event("billed", .submitted, .fal, money: estimate, request: "fal-job"),
+            event("billed", .charged, .fal, money: bill),
+            event("credits", .reserved, .runway),
+            event("credits", .submitted, .runway, request: "task"),
+            event("credits", .settled, .runway,
+                  cost: GenerationProviderCost(amount: 60, unit: "credits", source: "Runway GET /v1/tasks/{id} cost.credits")),
+            event("unknown", .reserved, .higgsfield),
+            event("unknown", .submitted, .higgsfield, request: "mcp-job"),
+            event("unknown", .settled, .higgsfield),
+            event("running", .reserved, .fal, money: estimate),
+        ]
+        log.entries = [GenerationLogEntry(model: "legacy/image", costCredits: 12, createdAt: Date())]
+        log.stampVersion()
+        try JSONEncoder().encode(log).write(
+            to: FrameInventory.projectHome(of: dataRoot).appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+
+        let rawCost = try await h.runOK("estimate_cost", args: ["project_dir": dataRoot.path])
+        let cost = try #require(rawCost as? [String: Any])
+        #expect(cost["verified_spend_eur"] as? Double == 2.5)
+        #expect(cost["spend_complete"] as? Bool == false)
+        #expect(cost["spent_eur"] is NSNull)
+        #expect(cost["unknown_cost_runs"] as? Int == 1)
+        #expect(cost["in_flight_runs"] as? Int == 1)
+        #expect(cost["legacy_generations"] as? Int == 1)
+        #expect(cost["over_budget"] as? Bool == false)
+        #expect(cost["remaining_eur"] is NSNull)
+        let credits = try #require(cost["provider_credits"] as? [[String: Any]])
+        #expect(credits.count == 1)
+        #expect(credits.first?["provider"] as? String == "runway")
+        #expect(credits.first?["unit"] as? String == "credits")
+        #expect(credits.first?["amount"] as? Double == 60)
+        #expect(credits.first?["runs"] as? Int == 1)
+
+        let rawState = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path])
+        let state = try #require(rawState as? [String: Any])
+        let decoded = try JSONDecoder().decode(
+            ProjectStateData.self,
+            from: JSONSerialization.data(withJSONObject: state)
+        )
+        #expect(decoded.budgetSpentEur == 2.5)
+        #expect(!decoded.spendComplete)
+        #expect(decoded.unknownCostRuns == 1)
+        #expect(decoded.inFlightRuns == 1)
+        #expect(decoded.legacyGenerations == 1)
+        #expect(decoded.providerCredits.map(\.amount) == [60])
+        #expect(decoded.budgetRemainingEur == nil)
+    }
+
+    @Test("Project Activity labels billed, reported and estimated costs distinctly")
+    func projectActivityCostLabels() {
+        let entry = GenerationLogEntry(model: "m", costCredits: 12, createdAt: nil, spendTransactionId: "tx")
+        let bill = GenerationMoney(nativeAmount: 0.5, nativeCurrency: "USD", eurAmount: 0.42, eurPerNativeUnit: 0.84,
+            exchangeRateDate: "2026-10-16", pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=r",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
+        func outcome(billed: GenerationMoney? = nil, cost: GenerationProviderCost? = nil) -> GenerationSpendOutcome {
+            GenerationSpendOutcome(transactionId: "tx", model: "m", provider: .fal, status: .finished,
+                billedMoney: billed, estimate: nil, providerCost: cost)
+        }
+        #expect(ProjectActivityView.costLabel(entry: entry, outcome: outcome(billed: bill)) == "€0.42")
+        #expect(ProjectActivityView.costLabel(
+            entry: entry,
+            outcome: outcome(cost: GenerationProviderCost(amount: 60, unit: "credits", source: "fixture"))
+        ) == "60 credits")
+        #expect(ProjectActivityView.costLabel(entry: entry, outcome: outcome()) == "est. 12 credits")
+        let unpriced = GenerationLogEntry(model: "m", costCredits: nil, createdAt: nil, spendTransactionId: "tx")
+        #expect(ProjectActivityView.costLabel(entry: unpriced, outcome: outcome()) == "Cost unknown")
     }
 
     @Test("storyboard writer rejects declared direction-only set anchors")

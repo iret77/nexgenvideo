@@ -11,6 +11,11 @@ actor ElevenLabsClient {
         self.apiKey = apiKey
     }
 
+    struct Audio: Sendable {
+        let data: Data
+        let cost: GenerationProviderCost?
+    }
+
     private static let base = "https://api.elevenlabs.io/v1"
     private static let outputFormat = "mp3_44100_128"
 
@@ -20,7 +25,7 @@ actor ElevenLabsClient {
     // MARK: - Generation
 
     /// POST /v1/text-to-speech/{voice_id} — body { text, model_id }, returns audio bytes.
-    func textToSpeech(text: String, voiceName: String) async throws -> Data {
+    func textToSpeech(text: String, voiceName: String) async throws -> Audio {
         let voiceId = try await resolveVoiceId(named: voiceName)
         return try await post(
             path: "text-to-speech/\(voiceId)",
@@ -29,7 +34,7 @@ actor ElevenLabsClient {
     }
 
     /// POST /v1/sound-generation — body { text, duration_seconds? (0.5–30, nil = auto) }.
-    func soundEffect(text: String, durationSeconds: Double?) async throws -> Data {
+    func soundEffect(text: String, durationSeconds: Double?) async throws -> Audio {
         var body: [String: Any] = ["text": text]
         if let durationSeconds {
             body["duration_seconds"] = min(30.0, max(0.5, durationSeconds))
@@ -38,7 +43,7 @@ actor ElevenLabsClient {
     }
 
     /// POST /v1/music — body { prompt, music_length_ms (3000–600000), force_instrumental }.
-    func music(prompt: String, lengthMs: Int, forceInstrumental: Bool) async throws -> Data {
+    func music(prompt: String, lengthMs: Int, forceInstrumental: Bool) async throws -> Audio {
         try await post(path: "music", body: [
             "prompt": prompt,
             "music_length_ms": min(600_000, max(3000, lengthMs)),
@@ -73,7 +78,7 @@ actor ElevenLabsClient {
 
     // MARK: - HTTP
 
-    private func post(path: String, body: [String: Any]) async throws -> Data {
+    private func post(path: String, body: [String: Any]) async throws -> Audio {
         guard let url = URL(string: "\(Self.base)/\(path)?output_format=\(Self.outputFormat)") else {
             throw GenerationBackendError.transport("Invalid ElevenLabs endpoint: \(path)")
         }
@@ -91,17 +96,21 @@ actor ElevenLabsClient {
         }
         var request = URLRequest(url: url)
         request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
-        return try await send(request)
+        return try await send(request).data
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest) async throws -> Audio {
         let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             // Error bodies are JSON ({"detail": …}); surface them so failures are diagnosable.
             let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
             throw GenerationBackendError.transport("ElevenLabs HTTP \(status): \(detail)")
         }
-        return data
+        return Audio(
+            data: data,
+            cost: ProviderReportedCost.elevenLabs(characterCost: http?.value(forHTTPHeaderField: "character-cost"))
+        )
     }
 }
