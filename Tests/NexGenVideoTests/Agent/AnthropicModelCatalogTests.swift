@@ -43,6 +43,58 @@ struct AnthropicModelCatalogTests {
         }
     }
 
+    private func pageWithoutCursor() throws -> Data {
+        let body: [String: Any] = ["data": [F.sonnet55], "has_more": true]
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    @Test("more pages without a usable cursor or past the page limit fail discovery")
+    func incompletePaginationFails() async throws {
+        let missingCursor = RecordingModelsTransport(pages: [.success(try pageWithoutCursor())])
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.incompletePagination) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: missingCursor.transport)
+        }
+        let repeatedCursor = RecordingModelsTransport(pages: [
+            .success(try F.page([F.sonnet55], hasMore: true)),
+            .success(try F.page([F.opus55, F.sonnet55], hasMore: true)),
+            .success(try F.page([F.sonnet55], hasMore: true)),
+        ])
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.incompletePagination) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: repeatedCursor.transport)
+        }
+        #expect(repeatedCursor.recorded.count == 2)
+        let endless = RecordingModelsTransport(pages: try (0..<AnthropicModelsAPI.maximumPages).map {
+            index -> Result<Data, Error> in
+            .success(try F.page([F.entry(id: "claude-page-\(index)", name: "Page \(index)",
+                created: "2026-01-01T00:00:00Z", line: "page")], hasMore: true))
+        })
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.pageLimitReached) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: endless.transport)
+        }
+        #expect(endless.recorded.count == AnthropicModelsAPI.maximumPages)
+    }
+
+    @Test("an incomplete model list keeps the cached list and the stored choice")
+    func incompleteListIsNotCurrent() async throws {
+        let defaults = F.isolatedDefaults()
+        let cached = F.models([F.sonnet46, F.opus55])
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(cached)
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let partial = RecordingModelsTransport(pages: [.success(try pageWithoutCursor())])
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: partial.transport
+        )
+        await service.refreshModelCatalog(apiKey: "sk-test")
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(service.modelDiscoveryError != nil)
+        #expect(defaults.string(forKey: "agentModel") == "claude-opus-4-8")
+        #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels() == cached)
+    }
+
     @Test("parsing reads line, release date, output limit, and capability leaves")
     func parsing() throws {
         let sonnet = F.info(F.sonnet55)
