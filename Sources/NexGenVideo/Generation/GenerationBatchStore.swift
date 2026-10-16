@@ -245,16 +245,16 @@ enum GenerationBatchStore {
         }
     }
 
-    /// Transactions whose batch item delivered every output; read-only proof that a run finished.
+    /// Transactions a validated, project-local journal of this project's own batch proves finished.
     nonisolated static func completedTransactionIDs(home: URL) -> Set<String> {
+        guard let projectKey = projectIdentity(home: home) else { return [] }
         let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
         guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
         var completed: Set<String> = []
         for id in ids where !id.hasPrefix(".") {
-            let url = folder.appendingPathComponent(id, isDirectory: true).appendingPathComponent("journal.json")
-            guard let data = try? Data(contentsOf: url),
-                  let journal = try? JSONDecoder().decode(GenerationBatchJournal.self, from: data) else { continue }
-            for execution in journal.executions where execution.state == .complete {
+            guard let snapshot = try? loadProjectIfPresent(id: id, home: home),
+                  snapshot.batch.payload.projectKey == projectKey else { continue }
+            for execution in snapshot.journal.executions where execution.state == .complete {
                 if let transaction = execution.transactionID { completed.insert(transaction) }
             }
         }
