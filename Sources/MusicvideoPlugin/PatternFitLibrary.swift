@@ -206,7 +206,7 @@ public enum PatternFitLibrary {
         let policy = try loadPolicy()
         let (library, coverage) = try loadRecommendableLibrary()
 
-        let project: ProjectFitProfile
+        var project: ProjectFitProfile
         if let projectOverride {
             project = projectOverride
         } else if let brief {
@@ -215,6 +215,10 @@ public enum PatternFitLibrary {
                 excludedPatternIds: excludedPatternIds, affectProfile: affectProfile)
         } else {
             throw PatternFitError.noProjectInput
+        }
+        if var excluded = project.excludedPatternIds {
+            excluded.value = excluded.value.map(Patterns.replacingLegacyId)
+            project.excludedPatternIds = excluded
         }
 
         let projectSha = sha256Hex(try canonicalJSON(project))
