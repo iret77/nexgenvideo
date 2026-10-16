@@ -269,6 +269,36 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image", "job_status"])
     }
 
+    @Test func aJobWithAnyStatusToolNeedsAStatedEndEvenWithoutAUsableResultPath() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"bare-status","status":null,"result":{"url":"https://output.invalid/preview.png"}}"#]],
+        ])
+
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected a preview without a stated end to fail unconfirmed")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.jobID == "bare-status")
+            #expect(!error.providerRunEnded)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await client.calledTools() == ["generate_image"])
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
