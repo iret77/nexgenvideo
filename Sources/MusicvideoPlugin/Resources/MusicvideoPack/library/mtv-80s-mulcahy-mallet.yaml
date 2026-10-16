@@ -3,7 +3,7 @@ name: "80s MTV — Mulcahy / Mallet / MGMM era"
 description: |
   Klassische 80er-MTV-Aesthetik in der Tradition von Russell Mulcahy
   ("Video Killed the Radio Star", Duran Duran-Klassiker) und David
-  Mallet (Queen — Bohemian Rhapsody, David Bowie — Ashes to Ashes).
+  Mallet (Queen — Bicycle Race, David Bowie — Ashes to Ashes).
   Schnelle Cuts auf Beat, Tracking-Shots, Neon-Lichter, Wind-bewegte
   Stoffe, Spot-Color-Akzente, faux-widescreen. Empfohlen fuer
   retro-poppige Tracks oder bewusst nostalgische Performance-Konzepte.
@@ -29,15 +29,12 @@ references:
   - name: "David Mallet"
     role: director
     notable_works:
-      - "Queen — Bohemian Rhapsody (1975)"
-      - "David Bowie — Ashes to Ashes (1980)"
-      - "Blondie — Heart of Glass"
-      - "AC/DC — Highway to Hell"
+      - "Queen — Bicycle Race (1978)"
+      - "David Bowie — Ashes to Ashes (1980, co-directed with Bowie)"
+      - "Queen and David Bowie — Under Pressure (1981)"
     sources:
       - label: "Wikipedia — David Mallet (director)"
         url: "https://en.wikipedia.org/wiki/David_Mallet_(director)"
-      - label: "Den of Geek — Video Killed The Radio Star DVD"
-        url: "https://www.denofgeek.com/movies/video-killed-the-radio-star-dvd/"
 
 section_arc:
   - role: establishing
