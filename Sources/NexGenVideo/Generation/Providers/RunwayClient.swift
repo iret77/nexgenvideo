@@ -317,7 +317,10 @@ actor RunwayClient {
             switch state {
             case "SUCCEEDED":
                 guard let output = json?["output"] as? [String], !output.isEmpty else {
-                    throw TerminalTaskError(message: "Runway returned no output.")
+                    throw TerminalTaskError(
+                        message: "Runway returned no output.",
+                        cost: ProviderReportedCost.runway(terminalTask: json)
+                    )
                 }
                 return TaskResult(urls: output, cost: ProviderReportedCost.runway(terminalTask: json))
             case "FAILED", "CANCELLED":
