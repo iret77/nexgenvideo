@@ -241,10 +241,11 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image", "job_status", "job_status", "job_status"])
     }
 
-    @Test func anAcceptedAsyncJobWithMediaButNoStatusKeepsPollingItsID() async throws {
+    @Test(arguments: [false, true])
+    func anAcceptedAsyncJobWithMediaButNoStatusKeepsPollingItsID(declaresMediaOutput: Bool) async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
-        ])
+        ], outputSchema: declaresMediaOutput ? mediaOutputSchema : nil)
         let status = tool("job_status", properties: [
             "job_id": .object(["type": .string("string")]),
         ], outputSchema: mediaOutputSchema)
