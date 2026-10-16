@@ -34,70 +34,51 @@ struct ProjectBudgetView: View {
     }
 }
 
+/// The budget is a display, never a limit: billed money, provider credits in their own unit, and
+/// counts of runs whose cost is unknown. Nothing here signals an error because a cost is unknown.
 private struct ProjectBudgetCard: View {
     let data: ProjectStateData
 
     var body: some View {
-        let warn = data.budgetWarning
-        let barColor = warn ? AppTheme.Status.errorColor : AppTheme.Status.successColor
-        return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text("BUDGET")
-                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                    .tracking(AppTheme.Tracking.wide)
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                Spacer(minLength: AppTheme.Spacing.none)
-                if !data.spendComplete {
-                    Label("Spend incomplete", systemImage: "exclamationmark.triangle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Status.errorColor)
-                } else if warn {
-                    Label((data.budgetRemainingEur ?? 0) <= 0 ? "Over budget" : "Low budget",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Status.errorColor)
-                }
-            }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+            Text("BUDGET")
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                .tracking(AppTheme.Tracking.wide)
+                .foregroundStyle(AppTheme.Text.mutedColor)
 
-            budgetBar(fraction: data.spentFraction, color: barColor)
+            budgetBar(fraction: data.spentFraction)
 
             if let next = data.nextPhaseName, let remaining = data.budgetRemainingEur {
-                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", remaining)) planning budget available")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            } else if !data.spendComplete {
-                Text("Project spend includes unpriced or legacy generation. Remaining amounts are unavailable.")
+                Text("Next up: \(PhaseDisplay.label(next)) — \(Self.euro(remaining)) of the planning budget unused")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
 
             VStack(spacing: AppTheme.Spacing.smMd) {
-                amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
-                if let stop = data.budgetStopEur {
-                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
+                textRow(label: "Planning budget", value: Self.euro(data.budgetEur))
+                textRow(label: "Billed spend",
+                        value: data.spendComplete ? Self.euro(data.budgetSpentEur) : "at least \(Self.euro(data.budgetSpentEur))",
+                        emphasized: true)
+                ForEach(data.providerCredits) { credit in
+                    textRow(label: "\(credit.providerName) \(credit.unit)",
+                            value: "\(Self.amount(credit.amount)) · \(Self.runs(credit.runs))")
                 }
-                amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
-                          amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
-                if data.activeReservations > 0 {
-                    textRow(label: "Active reservations", value: String(data.activeReservations),
-                            color: AppTheme.Text.secondaryColor)
+                if data.unknownCostRuns > 0 {
+                    textRow(label: "Unknown cost", value: Self.runs(data.unknownCostRuns))
                 }
-                AppDivider()
-                if let remaining = data.budgetRemainingEur {
-                    amountRow(label: "Planning remaining", amount: remaining,
-                              color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                              emphasized: true)
-                } else {
-                    textRow(label: "Planning remaining", value: "Unavailable",
-                            color: AppTheme.Status.errorColor, emphasized: true)
+                if data.legacyGenerations > 0 {
+                    textRow(label: "Legacy runs", value: Self.runs(data.legacyGenerations))
                 }
-                if let remaining = data.hardStopRemainingEur {
-                    amountRow(label: "Hard stop remaining", amount: remaining,
-                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                              emphasized: true)
+                if data.inFlightRuns > 0 {
+                    textRow(label: "Running", value: Self.runs(data.inFlightRuns))
                 }
+            }
+
+            if !data.providerCredits.isEmpty || data.unknownCostRuns > 0 || data.legacyGenerations > 0 {
+                Text("Credits and characters are each provider's own unit. Unknown costs are not estimated.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -112,36 +93,20 @@ private struct ProjectBudgetCard: View {
         )
     }
 
-    private func budgetBar(fraction: Double, color: Color) -> some View {
+    private func budgetBar(fraction: Double) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
                     .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
                 RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                    .fill(color)
+                    .fill(AppTheme.Accent.primary)
                     .frame(width: max(0, min(1, fraction)) * geo.size.width)
             }
         }
         .frame(height: AppTheme.Spacing.smMd)
     }
 
-    private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
-        HStack {
-            Text(label)
-                .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.regular)
-                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
-            Spacer()
-            Text(String(format: "€%.2f", amount))
-                .interfaceFont(size: AppTheme.Typography.ui,
-                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func textRow(label: String, value: String, color: Color, emphasized: Bool = false) -> some View {
+    private func textRow(label: String, value: String, emphasized: Bool = false) -> some View {
         HStack {
             Text(label)
                 .interfaceFont(size: AppTheme.Typography.ui,
@@ -150,10 +115,26 @@ private struct ProjectBudgetCard: View {
             Spacer()
             Text(value)
                 .interfaceFont(size: AppTheme.Typography.ui,
-                              weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
-                .foregroundStyle(color)
+                               weight: emphasized ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+                .monospacedDigit()
+                .foregroundStyle(emphasized ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
         }
     }
 
+    static func euro(_ amount: Double) -> String {
+        String(format: "€%.2f", amount)
+    }
+
+    static func amount(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)))
+    }
+
+    static func runs(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 run") : String(localized: "\(count) runs")
+    }
+}
+
+extension ProviderCreditData: Identifiable {
+    var id: String { provider + "|" + unit }
 }

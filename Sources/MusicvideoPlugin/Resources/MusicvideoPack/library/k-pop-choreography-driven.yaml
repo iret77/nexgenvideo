@@ -9,30 +9,31 @@ description: |
 
 references:
   - name: "Kyle Hanagami"
-    role: director
+    role: choreographer
     notable_works:
-      - "BLACKPINK — Boombayah choreography (2016)"
-      - "Lisa — Rockstar (2024, MTV VMA Best Choreography + Best Direction nominations)"
-      - "TWICE, aespa, Red Velvet choreographies"
+      - "BLACKPINK — Kill This Love (choreography; 2020 iHeartRadio Music Award, Favorite Music Video Choreography)"
     sources:
-      - label: "Billboard — Meet the Choreographer Behind Your Favorite K-Pop Moves"
-        url: "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
-      - label: "AllKpop — Kyle Hanagami reveals he was inspired by BLACKPINK for Mean Girls 2024 choreography"
-        url: "https://www.allkpop.com/article/2024/01/choreographer-kyle-hanagami-reveals-he-was-inspired-by-blackpink-for-the-choreography-of-the-movie-mean-girls-2024"
-      - label: "Yahoo Entertainment — BLACKPINK Choreographer Reveals Iconic Cameo Plans at Coachella Set"
-        url: "https://www.yahoo.com/entertainment/music/articles/blackpink-choreographer-reveals-iconic-act-165318262.html"
-  - name: "Stray Kids (JYP Entertainment / 3RACHA)"
+      - label: "Kyle Hanagami — official site (credits, 2020 iHeartRadio Music Award for Kill This Love)"
+        url: "https://www.kylehanagami.com/"
+  - name: "Stray Kids and LISA (concept-driven K-pop music videos)"
     role: music_video
     notable_works:
-      - "Stray Kids — concept-driven music video sequence (2019-)"
-      - "Stray Kids — MTV VMA Best K-Pop nominations"
+      - "Stray Kids — 神메뉴 (God's Menu) M/V (2020, official upload by JYP Entertainment)"
+      - "LISA — Rockstar (2024; MTV VMA nominations for Best K-Pop, Best Choreography (Sean Bankhead), Best Art Direction, Best Editing)"
     sources:
-      - label: "Wikipedia — Stray Kids"
-        url: "https://en.wikipedia.org/wiki/Stray_Kids"
-      - label: "Yahoo Entertainment — MTV VMA 2024: Jungkook, Lisa, Stray Kids & More Earn Best K-Pop Nominations"
-        url: "https://www.yahoo.com/entertainment/mtv-vma-2024-jungkook-lisa-064149393.html"
-      - label: "The Bias List — The Top 10 K-Pop Choreography of 2024"
-        url: "https://thebiaslist.com/2024/12/23/the-top-10-k-pop-choreography-of-2024/"
+      - label: "JYP Entertainment (YouTube) — Stray Kids 神메뉴(God's Menu) M/V"
+        url: "https://www.youtube.com/watch?v=TQTlCHxyuu8"
+      - label: "Seoulbeats — Stray Kids Cook Up a Dizzying MV with 'God's Menu' (2020)"
+        url: "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
+      - label: "TVLine — 2024 VMAs nominations (LISA Rockstar, Stray Kids LALALALA)"
+        url: "https://tvline.com/lists/vmas-2024-nominations-full-list-nominees-mtv-video-music-awards"
+  - name: "Han Sa-min (K-pop music video director)"
+    role: director
+    notable_works:
+      - "BIGBANG — Love Song (4-point wire camera setup on four cranes)"
+    sources:
+      - label: "HallyuTones — Inside K-Pop: Behind The Lens With Director Han Sa-min (2025)"
+        url: "https://hallyutones.com/2025/12/09/interview-inside-k-pop-behind-the-lens-with-director-han-sa-min/"
 
 section_arc:
   - role: establishing
@@ -61,7 +62,7 @@ framing_mix:
   aerial_pct: 0
   basis: inferred
   sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
 
 asl_range:
   min_s: 0.8
@@ -69,39 +70,39 @@ asl_range:
   typical_s: 1.5
   basis: inferred
   sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
 
 camera:
   vocabulary:
-    - "orbital crane around dance formation"
-    - "rapid push-in on Lead"
-    - "synchronized whip pan between performers"
-    - "drone reveal above choreography"
+    - "transition cut precisely on the beat"
+    - "camera following the members' eyelines"
     - "match-cut on choreographed beat"
   basis: inferred
   sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
 
 lighting:
   description: |
-    saturated set-piece keys (single bold accent colour per concept),
-    strong frontal soft key with rim/back light separation, neon/LED
-    practicals as part of choreographed visuals, frequent concept-
-    driven colour shifts mid-section.
+    set, colour palette and lighting are set per concept and change
+    between sections: a chaotic array of settings, outfits and
+    characters rather than one fixed stage.
   basis: inferred
   sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
+    - "https://hallyutones.com/2025/12/09/interview-inside-k-pop-behind-the-lens-with-director-han-sa-min/"
 
 color:
-  description: "One saturated accent per concept with deliberate mid-section colour shifts."
+  description: "A concept-specific colour palette that changes between sections."
   basis: inferred
   sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
+    - "https://hallyutones.com/2025/12/09/interview-inside-k-pop-behind-the-lens-with-director-han-sa-min/"
 
 craft_signature:
-  - technique: "Choreographed LED separation"
-    directive: "Use a frontal soft key, rim/back-light separation, and LED practicals that participate in the choreography."
+  - technique: "Concept-specific palette per section"
+    directive: "Give each section its own set, colour palette and lighting, and change them between sections instead of holding one stage look."
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+    - "https://seoulbeats.com/2020/06/stray-kids-cook-up-a-dizzying-mv-with-gods-menu/"
+    - "https://hallyutones.com/2025/12/09/interview-inside-k-pop-behind-the-lens-with-director-han-sa-min/"

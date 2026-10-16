@@ -20,6 +20,12 @@ struct GenerationLog: Codable, Sendable, Equatable {
         case entries
         case spendEvents
     }
+
+    /// Version 3 marks settled runs and provider costs; logs without them stay readable by older builds.
+    mutating func stampVersion() {
+        let needsSettlement = spendEvents.contains { $0.kind == .settled || $0.providerCost != nil }
+        version = max(version, needsSettlement ? GenerationSpendLedger.settledLogVersion : 2)
+    }
 }
 
 /// One row in the Project Activity log.
@@ -99,6 +105,12 @@ extension EditorViewModel {
         generationLog.entries.reduce(0) { $0 + ($1.costCredits ?? 0) }
     }
 
+    /// Ledger outcome per spend transaction, for labelling each Project Activity row honestly.
+    var generationSpendOutcomes: [String: GenerationSpendOutcome] {
+        let outcomes = (try? GenerationSpendLedger.outcomes(log: generationLog, generatedInputs: [])) ?? []
+        return Dictionary(outcomes.map { ($0.transactionId, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     func appendGenerationLog(for asset: MediaAsset) {
         guard let gen = asset.generationInput else { return }
         generationLog.entries.append(GenerationLogEntry(
@@ -129,12 +141,12 @@ extension EditorViewModel {
         providerRequestId: String? = nil,
         providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
+        providerCost: GenerationProviderCost? = nil,
         note: String? = nil
     ) throws {
         guard let transactionId = authorization.transactionId else { return }
         try authorization.projectMutationScope?.requireCurrent(editor: self)
         let previousLog = generationLog
-        generationLog.version = 2
         let event = GenerationSpendEvent(
             transactionId: transactionId,
             kind: kind,
@@ -145,14 +157,15 @@ extension EditorViewModel {
             providerRequestId: providerRequestId,
             providerRequestResumable: providerRequestResumable,
             money: money,
-            note: note
+            note: note,
+            providerCost: providerCost
         )
         generationLog.spendEvents.append(event)
+        generationLog.stampVersion()
         do {
-            _ = try GenerationBudgetGuard.verifiedSpend(
+            try GenerationBudgetGuard.validateLedger(
                 log: generationLog,
-                generatedAssets: mediaAssets,
-                requireCompleteMoney: false
+                generatedAssets: mediaAssets
             )
             if let batch = authorization.batchItem {
                 try GenerationBatchStore.recordSpendEvent(event, authorization: batch, editor: self)

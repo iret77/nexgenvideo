@@ -320,4 +320,49 @@ struct RunwayClientTests {
         }
         #expect(FixtureURLProtocol.requests().filter { $0.method == "DELETE" }.count == 1)
     }
+
+    // Documented shape only (docs.dev.runwayml.com openapi.json, 2026-10-16); not yet confirmed by a live call.
+    @Test func terminalTaskReportsItsCreditsAsProviderCost() async throws {
+        FixtureURLProtocol.reset()
+        FixtureURLProtocol.enqueue(
+            method: "GET",
+            pathSuffix: "/tasks/task-cost",
+            result: .response(
+                status: 200,
+                body: #"{"id":"task-cost","status":"SUCCEEDED","createdAt":"2026-10-16T10:00:00.000Z","output":["https://example.com/render.mp4"],"cost":{"credits":60}}"#
+            )
+        )
+        FixtureURLProtocol.enqueue(
+            method: "GET",
+            pathSuffix: "/tasks/task-no-cost",
+            result: .response(
+                status: 200,
+                body: #"{"id":"task-no-cost","status":"SUCCEEDED","output":["https://example.com/render.mp4"]}"#
+            )
+        )
+        FixtureURLProtocol.enqueue(
+            method: "GET",
+            pathSuffix: "/tasks/task-refunded",
+            result: .response(
+                status: 200,
+                body: #"{"id":"task-refunded","status":"FAILED","failure":"Content moderation","cost":{"credits":0}}"#
+            )
+        )
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = RunwayClient(apiKey: "runway-secret", session: testSession, pollIntervalNanoseconds: 0)
+
+        let priced = try await client.result(taskId: "task-cost")
+        #expect(priced.urls == ["https://example.com/render.mp4"])
+        #expect(priced.cost == GenerationProviderCost(
+            amount: 60, unit: "credits", source: "Runway GET /v1/tasks/{id} cost.credits"))
+        #expect(try await client.result(taskId: "task-no-cost").cost == nil)
+        do {
+            _ = try await client.result(taskId: "task-refunded")
+            Issue.record("Expected a failed Runway task to throw")
+        } catch let failure as RunwayClient.TaskFailure {
+            #expect(failure.message == "Content moderation")
+            #expect(failure.cost?.amount == 0)
+        }
+    }
 }

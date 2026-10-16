@@ -490,7 +490,6 @@ extension ToolExecutor {
         ].joined(separator: ", ")
         var extra: [String] = []
         if b.budgetEur != 50.0 { extra.append("budget_eur=\(b.budgetEur)") }
-        if let stop = b.budgetStopEur { extra.append("budget_stop_eur=\(stop)") }
         if b.finalResolution != .res1080p { extra.append("final_resolution=\(b.finalResolution.rawValue)") }
         if b.previewMode != .skip { extra.append("preview_mode=\(b.previewMode.rawValue)") }
         if b.cutHandlesMode != .withOverlap { extra.append("cut_handles_mode=\(b.cutHandlesMode.rawValue)") }
@@ -1227,8 +1226,8 @@ extension ToolExecutor {
             "phase": pending.phase,
             "requested_phase": requestedPhase,
             "approval_surface": "Tasks",
-            "review_surface": PipelineSurfaceRouting.route(for: pending.phase, contract: editor?.uiContract,
-                availablePackSurfaces: editor?.availableCockpitPackSurfaces ?? [])?.destinationLabel ?? "Pipeline",
+            "review_surface": PipelineSurfaceRouting.reviewDestinationLabel(for: pending.phase,
+                contract: editor?.uiContract, availablePackSurfaces: editor?.availableCockpitPackSurfaces ?? []),
             "new_request": request.isNew,
             "message": message,
         ])
@@ -1300,6 +1299,7 @@ extension ToolExecutor {
                 reset = try GatesOperations.rewindTo(&$0, target: approval.phase, order: order)
             }
             editor.onPipelineChanged?()
+            editor.phaseSpendApproval.reconcile(editor: editor)
             let payload = try NativeCockpitReader.serialize(["target": approval.phase, "reset_phases": reset])
             return String(decoding: payload, as: UTF8.self)
         }
@@ -1351,6 +1351,7 @@ extension ToolExecutor {
             throw ToolError(error.localizedDescription, kind: .approvalStructure)
         }
         editor.onPipelineChanged?()
+        editor.phaseSpendApproval.reconcile(editor: editor)
         let gate = gates.get(approval.phase)
         guard let payload = Self.jsonString([
             "request_id": approval.id,
@@ -1557,10 +1558,13 @@ extension ToolExecutor {
         let dataRoot = try? resolveDataRoot(args, editor: editor)
         do {
             let r = try ModelRouter.resolve(taskClass, escalate: escalate, dataRoot: dataRoot)
+            let route = AnthropicModelCatalogStore().resolveRoute(r.model)
             return try jsonResult([
                 "task_class": r.taskClass,
                 "tier": r.tier,
-                "model": r.model,
+                "family": route.family.map { $0 as Any } ?? NSNull(),
+                "model": route.modelID ?? r.model,
+                "model_discovered": route.modelID != nil,
                 "effort": r.effort,
                 "escalated": r.escalated,
             ])
@@ -1667,7 +1671,7 @@ extension ToolExecutor {
         if phase != "frames",
            shot.sourceMode != .imported,
            deliveryMode != .timelineAnimatedStill {
-            await CatalogDiscovery.ensureCurrent()
+            _ = await catalogReadiness()
             do {
                 try await PipelineProductionInputsWriter.refresh(
                     shotID: shotId,
@@ -5209,7 +5213,7 @@ private func briefValidationViolation(_ error: Brief.ValidationError) -> String 
     case .budgetNotPositive(let value):
         return "field `budget_eur`: must be greater than 0 (got \(value))."
     case .budgetStopNotPositive(let value):
-        return "field `budget_stop_eur`: must be greater than 0 when set (got \(value)); omit it for no hard stop."
+        return "field `budget_stop_eur`: must be greater than 0 when set (got \(value)); the field is ignored; omit it."
     case .visualMediumNotesRequired(let medium):
         return "field `visual_medium_notes` is required when `visual_medium` is `\(medium.rawValue)` (a stylized medium — give a concrete style note)."
     }

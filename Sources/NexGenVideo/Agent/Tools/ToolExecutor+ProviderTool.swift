@@ -132,6 +132,11 @@ extension ToolExecutor {
                                 arguments: arguments
                             )
                             await approvedClient.disconnect()
+                            try? editor.recordSpendEvent(
+                                authorization: authorization,
+                                kind: .settled,
+                                note: "The provider tool reported no cost for this run."
+                            )
                             let body = texts.joined(separator: "\n")
                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                             if body.isEmpty {
@@ -144,6 +149,11 @@ extension ToolExecutor {
                             )
                         } catch {
                             await approvedClient.disconnect()
+                            try? editor.recordSpendEvent(
+                                authorization: authorization,
+                                kind: .settled,
+                                note: "The provider tool ended without a result: \(error.localizedDescription)"
+                            )
                             return .error(
                                 "\(current.name) on \(provider.displayName) failed after submission: \(error.localizedDescription)"
                             )

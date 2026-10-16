@@ -22,12 +22,8 @@ references:
         url: "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
       - label: "No Film School — 5 Best Makoto Shinkai Films"
         url: "https://nofilmschool.com/best-makoto-shinkai-movies"
-      - label: "Foro3D — Makoto Shinkai: the extreme realism that turns landscapes into obsession"
-        url: "https://foro3d.com/en/2026/mayo/makoto-shinkai-el-realismo-extremo-que-convierte-paisajes-en-obsesion.html"
-      - label: "FandomWire — Every Makoto Shinkai Movie, Ranked by Animation"
-        url: "https://fandomwire.com/every-makoto-shinkai-movie-ranked-by-animation/"
-      - label: "Elements of Screen Arts — Intricately Interwoven: The Makoto Shinkai Experience"
-        url: "https://screenarts2019.home.blog/2019/05/24/intricately-interwoven-the-makoto-shinkai-experience/"
+      - label: "Wikipedia — Makoto Shinkai (photography and color design credits on The Garden of Words, Your Name, Weathering with You)"
+        url: "https://en.wikipedia.org/wiki/Makoto_Shinkai"
   - name: "Studio Ghibli (Hayao Miyazaki, Isao Takahata)"
     role: director
     notable_works:

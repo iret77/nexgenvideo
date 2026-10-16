@@ -14,13 +14,13 @@ struct GateApprovalCard: View {
     @State private var showsDiagnostics = false
     @State private var showsChanges = false
 
-    private var reviewRoute: PipelineSurfaceRouting.Route? {
-        PipelineSurfaceRouting.route(for: approval.phase, contract: editor.uiContract,
+    private var reviewDestination: String {
+        PipelineSurfaceRouting.reviewDestinationLabel(for: approval.phase, contract: editor.uiContract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces)
     }
 
     private var reviewHint: String {
-        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewRoute?.destinationLabel ?? "Pipeline"), then respond here in Tasks."
+        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewDestination), then respond here in Tasks."
     }
 
     var body: some View {
@@ -31,11 +31,12 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            Button("Open \(reviewRoute?.destinationLabel ?? "Pipeline")") {
+            Button("Open \(reviewDestination)") {
                 editor.revealReviewSurface(for: approval.phase)
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(isWorking || isBlocked)
+            .background { acceptanceProbe("open", enabled: !(isWorking || isBlocked), text: reviewDestination) }
             if let blocker = review.blocker, !isBlocked {
                 Text(blocker)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -196,6 +197,7 @@ struct GateApprovalCard: View {
             Button("Not yet") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
+                .background { acceptanceProbe("decline", enabled: !(isWorking || isBlocked)) }
             if horizontal { Spacer() }
             Button {
                 Task {
@@ -212,10 +214,23 @@ struct GateApprovalCard: View {
             }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(isWorking || isBlocked || !review.isReady)
+                .background {
+                    acceptanceProbe("approve", enabled: !(isWorking || isBlocked || !review.isReady),
+                        text: review.isReady ? nil : review.blocker)
+                }
                 .focused($approveFocused)
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""
                 )
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ part: String, enabled: Bool, text: String? = nil) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "agent.gate.\(part)", acceptanceState: enabled, acceptanceText: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
         }
     }
 }
@@ -226,7 +241,7 @@ extension EditorViewModel {
             availablePackSurfaces: availableCockpitPackSurfaces)
         switch route?.destination {
         case .tab(let tab): revealCockpit(tab)
-        case .pack(let id):
+        case .pack(let id, _):
             revealCockpit(.pipeline)
             cockpitPackSurfaceID = id
         case .chat:

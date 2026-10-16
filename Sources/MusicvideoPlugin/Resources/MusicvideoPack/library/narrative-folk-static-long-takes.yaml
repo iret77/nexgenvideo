@@ -2,37 +2,35 @@ id: narrative-folk-static-long-takes
 name: "Narrative Folk — static long takes, story over performance"
 description: |
   Geschichten-getrieben, lange Einstellungen, ruhige Kamera, klarer
-  Schauplatz-Wechsel pro Section. Vorbild: das Direktor-Trio aus dem
-  Directors-Label-Kanon (Michel Gondry, Spike Jonze, Chris Cunningham)
-  fuer narrative Musikvideos, in Folk- und Indie-Rock-Anwendungen.
+  Schauplatz-Wechsel pro Section. Vorbild: Michel Gondry und Spike
+  Jonze aus dem Directors-Label-Kanon fuer narrative Musikvideos, in
+  Folk- und Indie-Rock-Anwendungen.
 
 references:
   - name: "Michel Gondry"
     role: director
     notable_works:
-      - "Daft Punk — Around the World (single-take continuous shot)"
-      - "Björk — Bachelorette (story-within-story)"
+      - "Daft Punk — Around the World (platform set with five groups of choreographed characters)"
+      - "Björk — Bachelorette"
       - "The White Stripes — Fell in Love with a Girl"
     sources:
-      - label: "BRAEID — Music Video Masterclass: Lessons from Cunningham, Jonze, and Gondry"
-        url: "https://www.braeid.com/article/music-video-masterclass"
+      - label: "Wikipedia — Around the World (Daft Punk song)"
+        url: "https://en.wikipedia.org/wiki/Around_the_World_(Daft_Punk_song)"
       - label: "Wikipedia — Directors Label"
         url: "https://en.wikipedia.org/wiki/Directors_Label"
       - label: "IMDb — The Work of Director Michel Gondry"
         url: "https://www.imdb.com/title/tt0384700/"
-      - label: "The Tribune — Deep Cuts: Michel Gondry music videos"
-        url: "https://www.thetribune.ca/a-e/deep-cuts-michel-gondry-music-videos-79456/"
   - name: "Spike Jonze"
     role: director
     notable_works:
-      - "Fatboy Slim — Praise You"
+      - "Fatboy Slim — Praise You (guerrilla-style in front of the Fox Bruin Theater, US$800 budget; 1999 MTV VMA Best Direction)"
       - "The Pharcyde — Drop"
       - "Weezer — Buddy Holly"
     sources:
+      - label: "Wikipedia — Praise You"
+        url: "https://en.wikipedia.org/wiki/Praise_You"
       - label: "IMDb — The Work of Director Spike Jonze"
         url: "https://www.imdb.com/title/tt0386124/"
-      - label: "BRAEID — Music Video Masterclass: Lessons from Cunningham, Jonze, and Gondry"
-        url: "https://www.braeid.com/article/music-video-masterclass"
 
 section_arc:
   - role: establishing
@@ -61,7 +59,8 @@ framing_mix:
   aerial_pct: 0
   basis: inferred
   sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"
 
 asl_range:
   min_s: 3.0
@@ -69,7 +68,8 @@ asl_range:
   typical_s: 6.0
   basis: inferred
   sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"
 
 camera:
   vocabulary:
@@ -79,7 +79,8 @@ camera:
     - "long-take handheld follow"
   basis: inferred
   sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"
 
 lighting:
   description: |
@@ -87,13 +88,15 @@ lighting:
     bias toward overcast or golden-hour, low contrast, single key source.
   basis: inferred
   sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"
 
 color:
   description: "Overcast or golden-hour natural colour with low contrast."
   basis: inferred
   sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"
 
 craft_signature:
   - technique: "Natural single-source restraint"
@@ -101,4 +104,5 @@ craft_signature:
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://www.braeid.com/article/music-video-masterclass"
+    - "https://en.wikipedia.org/wiki/Praise_You"
+    - "https://en.wikipedia.org/wiki/Directors_Label"

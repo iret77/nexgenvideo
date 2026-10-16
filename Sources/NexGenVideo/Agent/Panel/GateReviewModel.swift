@@ -2,9 +2,10 @@ import Foundation
 import NexGenEngine
 import Observation
 
-struct StoryboardReviewSnapshot: Sendable {
+struct StoryboardReviewSnapshot: Sendable, Equatable {
     let storyboard: Storyboard
     let bytes: Data
+    let sha256: String
 
     static func read(root: URL) throws -> Self {
         let base = root.resolvingSymlinksInPath().standardizedFileURL
@@ -21,7 +22,7 @@ struct StoryboardReviewSnapshot: Sendable {
               let storyboard = try? YAMLCoding.decode(Storyboard.self, from: text) else {
             throw ReviewError.unreadable
         }
-        return Self(storyboard: storyboard, bytes: bytes)
+        return Self(storyboard: storyboard, bytes: bytes, sha256: FileDigest.sha256(of: bytes))
     }
 
     enum ReviewError: LocalizedError {
@@ -35,18 +36,34 @@ struct StoryboardReviewSnapshot: Sendable {
     }
 }
 
+/// How the storyboard on screen relates to the open approval request.
+enum StoryboardReviewBinding: String, Sendable {
+    case unrelated
+    case current
+    /// Also covers a storyboard that vanished or became unreadable after the request.
+    case changed
+
+    static func resolve(approval: GateApproval?, dataRoot: URL, shown: StoryboardReviewSnapshot?) -> Self {
+        guard let approval, approval.phase == "storyboard", !approval.isRewind,
+              approval.dataRoot?.standardizedFileURL.path == dataRoot.standardizedFileURL.path else { return .unrelated }
+        guard let shown, let fingerprint = approval.artifactFingerprint,
+              fingerprint.path == PipelineLayout.storyboardCurrentFile,
+              shown.sha256 == fingerprint.sha256,
+              fingerprint.matches(dataRoot: dataRoot) else { return .changed }
+        return .current
+    }
+}
+
 @MainActor @Observable
 final class GateReviewModel {
     private(set) var isReady = false
     private(set) var blocker: String? = "Checking the current phase…"
-    private(set) var storyboard: Storyboard?
     private var generation = 0
 
     func refresh(approval: GateApproval, editor: EditorViewModel) async {
         generation += 1
         let token = generation
         isReady = false
-        storyboard = nil
         blocker = "Checking the current phase…"
         guard let root = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: root),
@@ -82,6 +99,11 @@ final class GateReviewModel {
                 blocker = error.localizedDescription
                 return
             }
+            guard token == generation, !Task.isCancelled else { return }
+            guard StoryboardReviewBinding.resolve(approval: approval, dataRoot: dataRoot, shown: snapshot) == .current else {
+                blocker = "This revision changed. Request a new approval for the updated artifact."
+                return
+            }
         }
         let readiness = await NativeGateWriter.controlReadiness(
             projectDir: root,
@@ -104,7 +126,6 @@ final class GateReviewModel {
                 blocker = "The storyboard changed during review. Open it again before approving."
                 return
             }
-            storyboard = snapshot.storyboard
         }
         guard editor.workingRoot == root,
               editor.declaredPluginBinding == approval.declaredBinding else {

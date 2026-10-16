@@ -354,6 +354,51 @@ struct AgentServiceRuntimeContractTests {
         #expect(service.streamError == nil)
     }
 
+    @Test("the request digest binds the assistant turn it produced, once")
+    func requestDigestStampsAssistantTurn() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+        let thinking = try AnthropicThinkingBlock(json: ["type": "thinking", "thinking": "", "signature": "s=="])
+
+        #expect(service.send(text: "Plan", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        adapter.emit(.providerRequest(prefixDigest: "first-request"), for: turn)
+        adapter.emit(.thinking(messageID: nil, block: thinking), for: turn)
+        adapter.emit(.toolCall(messageID: nil, id: "tool-1", name: "inspect", inputJSON: "{}"), for: turn)
+        adapter.emit(.toolResult(id: "tool-1", content: [.text("ok")], isError: false), for: turn)
+        adapter.emit(.providerRequest(prefixDigest: "second-request"), for: turn)
+        adapter.emit(.text(messageID: nil, value: "Done.", isDelta: true), for: turn)
+        adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+        adapter.finish(turn)
+        await waitUntil { !service.isStreaming }
+
+        let assistants = service.messages.filter { $0.role == .assistant }
+        #expect(assistants.map(\.providerPrefixDigest) == ["first-request", "second-request"])
+        let saved = try JSONDecoder().decode(
+            AgentMessage.self,
+            from: JSONEncoder().encode(try #require(assistants.first))
+        )
+        #expect(saved.providerPrefixDigest == "first-request")
+    }
+
+    @Test("a refusal stop reason is surfaced instead of ending silently")
+    func refusalIsSurfaced() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+        let service = makeService(backend: .anthropicAPI, adapter: adapter)
+
+        #expect(service.send(text: "Start", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        adapter.emit(.text(messageID: nil, value: "Partial", isDelta: true), for: turn)
+        adapter.emit(.terminal(.completed(.refusal)), for: turn)
+        adapter.finish(turn)
+        await waitUntil { !service.isStreaming }
+
+        #expect(service.streamError?.errorDescription == AgentService.refusalMessage)
+        #expect(service.messages.last?.isIncompleteAPIResponse == true)
+    }
+
     @Test("Anthropic API authentication failures preserve the API error")
     func anthropicAuthenticationFailureIsNotRelabeledAsClaudeCode() async throws {
         let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)

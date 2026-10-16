@@ -277,14 +277,10 @@ enum PipelineExecutionPlanComposer {
             if input.sourceMode == .aiEnhanced,
                let sourceAssetID,
                let modeID = coreInputs.sourceVideoModeID {
-                demands.append(ReferenceDemandV1(
-                    id: "core-source-video-\(shot.id)",
+                demands.append(PipelineProductionInputsWriter.coreDemand(
+                    .sourceVideo,
+                    shotID: shot.id,
                     assetID: sourceAssetID,
-                    modality: .video,
-                    semanticJobID: CoreReferenceSemanticJobIDV1.sourceVideo,
-                    isRequired: true,
-                    priority: 0,
-                    inputSlotID: CoreReferenceInputSlotIDV1.sourceVideo,
                     modeID: modeID
                 ))
             }

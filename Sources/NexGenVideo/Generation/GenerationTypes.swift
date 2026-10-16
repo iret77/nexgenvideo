@@ -134,11 +134,20 @@ struct GenerationMoney: Codable, Sendable, Equatable {
     let exchangeRateSource: String
 }
 
+/// A cost the provider reported for one finished run in its own unit (credits, characters), never money.
+struct GenerationProviderCost: Codable, Sendable, Equatable {
+    let amount: Double
+    let unit: String
+    let source: String
+}
+
 struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     enum Kind: String, Codable, Sendable {
         case reserved
         case submitted
         case charged
+        /// The run finished; money and provider cost are optional because many providers report neither.
+        case settled
         case released
     }
 
@@ -154,6 +163,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     let money: GenerationMoney?
     let note: String?
     let createdAt: Date
+    let providerCost: GenerationProviderCost?
 
     init(
         id: String = UUID().uuidString,
@@ -167,7 +177,8 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
         note: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        providerCost: GenerationProviderCost? = nil
     ) {
         self.id = id
         self.transactionId = transactionId
@@ -181,6 +192,7 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
         self.money = money
         self.note = note
         self.createdAt = createdAt
+        self.providerCost = providerCost
     }
 }
 

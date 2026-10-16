@@ -11,14 +11,6 @@ enum GenerationBudgetError: LocalizedError {
     }
 }
 
-struct ProjectSpendSnapshot: Sendable, Equatable {
-    let verifiedEur: Double
-    let isComplete: Bool
-    let activeReservationCount: Int
-    let unpricedTransactionCount: Int
-    let legacyGenerationCount: Int
-}
-
 @MainActor
 enum GenerationBudgetGuard {
     typealias QuoteLoader = @MainActor (
@@ -56,19 +48,28 @@ enum GenerationBudgetGuard {
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
-                    "Budget stop could not access the live project working copy. "
+                    "The live project working copy is unavailable. "
                     + "Restore or reopen the project before generating."
                 )
             }
-            if let ceiling = approvedPackage?.payload.estimate {
-                let current = try await quoteLoader(target, input)
-                try validate(current)
-                guard current.eurAmount <= ceiling.eurAmount else {
-                    throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
-                }
-                return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
+            guard let ceiling = approvedPackage?.payload.estimate else {
+                return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
             }
-            return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
+            let current: GenerationMoney?
+            do {
+                let quoted = try await quoteLoader(target, input)
+                try validate(quoted)
+                current = quoted
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                current = nil
+            }
+            if let current, current.eurAmount > ceiling.eurAmount {
+                throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
+            }
+            return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
         }
         let mutationScope = try GenerationProjectMutationScope(
             projectHome: workingRoot,
@@ -90,10 +91,9 @@ enum GenerationBudgetGuard {
             pricingFailure = .classified(error, provider: target.provider, endpoint: target.endpoint)
         }
 
-        if let ceiling = approvedPackage?.payload.estimate {
-            guard let estimate, estimate.eurAmount <= ceiling.eurAmount else {
-                throw GenerationBudgetError.blocked("The current price is unavailable or exceeds the reviewed estimate. Prepare and review the generation again.")
-            }
+        // A known higher price changes what the user approved; a missing price never blocks.
+        if let ceiling = approvedPackage?.payload.estimate, let estimate, estimate.eurAmount > ceiling.eurAmount {
+            throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
         }
 
         guard editor.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL else {
@@ -102,32 +102,8 @@ enum GenerationBudgetGuard {
             )
         }
         try mutationScope.requireCurrent(editor: editor)
-        let stop = try budgetStop(in: workingRoot)
-        var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        let existingSpend = try verifiedSpend(
-            log: log,
-            generatedAssets: editor.mediaAssets,
-            requireCompleteMoney: stop != nil && !acceptsUnknownPrice
-                && !(try batchItem?.hasPricingOverride(editor: editor) ?? false)
-        )
-
-        if let stop, !acceptsUnknownPrice {
-            guard let estimate else {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop: \(target.provider.displayName) did not provide a verified monetary "
-                    + "estimate for \(target.endpoint). No provider request was sent. "
-                    + (pricingFailure?.localizedDescription ?? "Pricing is unavailable.")
-                )
-            }
-            let projected = existingSpend + estimate.eurAmount
-            guard projected <= stop else {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop reached. This request is estimated at "
-                    + euro(estimate.eurAmount) + "; verified project spend plus reservations would be "
-                    + euro(projected) + ", above the limit of " + euro(stop) + "."
-                )
-            }
-        }
+        let log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
+        try validateLedger(log: log, generatedAssets: editor.mediaAssets)
 
         try Task.checkCancellation()
         let transactionId = UUID().uuidString
@@ -171,7 +147,7 @@ enum GenerationBudgetGuard {
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
-                    "Budget stop could not access the live project working copy. "
+                    "The live project working copy is unavailable. "
                     + "Restore or reopen the project before running provider tools."
                 )
             }
@@ -182,19 +158,8 @@ enum GenerationBudgetGuard {
             editor: editor
         )
 
-        let stop = try budgetStop(in: workingRoot)
-        var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        _ = try verifiedSpend(
-            log: log,
-            generatedAssets: editor.mediaAssets,
-            requireCompleteMoney: stop != nil
-        )
-        if stop != nil {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: \(provider.displayName) does not expose a verified monetary estimate "
-                + "for \(endpoint). No provider request was sent."
-            )
-        }
+        let log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
+        try validateLedger(log: log, generatedAssets: editor.mediaAssets)
 
         let authorization = GenerationAuthorization(
             transactionId: UUID().uuidString,
@@ -211,150 +176,26 @@ enum GenerationBudgetGuard {
         return authorization
     }
 
-    static func verifiedSpend(
+    static func validateLedger(
         log: GenerationLog,
-        generatedAssets: [MediaAsset],
-        requireCompleteMoney: Bool
-    ) throws -> Double {
-        let snapshot = try spendSnapshot(
+        generatedAssets: [MediaAsset]
+    ) throws {
+        _ = try spendSnapshot(
             log: log,
             generatedInputs: generatedAssets.compactMap(\.generationInput)
         )
-        if requireCompleteMoney, snapshot.legacyGenerationCount > 0 {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: existing generation history has no verified monetary ledger. "
-                    + "No provider request was sent."
-            )
-        }
-        if requireCompleteMoney, snapshot.unpricedTransactionCount > 0 {
-            throw GenerationBudgetError.blocked(
-                "Budget stop: project spend contains an unpriced provider request. "
-                    + "No provider request was sent."
-            )
-        }
-        return snapshot.verifiedEur
     }
 
     nonisolated static func spendSnapshot(
         log: GenerationLog,
-        generatedInputs: [GenerationInput]
+        generatedInputs: [GenerationInput],
+        completedTransactionIDs: Set<String> = []
     ) throws -> ProjectSpendSnapshot {
-        guard (1...2).contains(log.version) else {
-            throw corrupt("generation-log.json uses unsupported version \(log.version)")
-        }
-        var states: [String: SpendState] = [:]
-        var eventIds: Set<String> = []
-        for event in log.spendEvents {
-            guard eventIds.insert(event.id).inserted else {
-                throw corrupt("generation-log.json contains duplicate event \(event.id)")
-            }
-            guard !event.transactionId.isEmpty,
-                  !event.model.isEmpty,
-                  !event.endpoint.isEmpty else {
-                throw corrupt("generation-log.json contains an incomplete spend event")
-            }
-            try validate(event.money)
-            if var state = states[event.transactionId] {
-                guard state.model == event.model,
-                      state.provider == event.provider,
-                      state.transport == event.transport,
-                      state.endpoint == event.endpoint else {
-                    throw corrupt("transaction \(event.transactionId) changes provider or model")
-                }
-                try state.apply(event)
-                states[event.transactionId] = state
-            } else {
-                guard event.kind == .reserved else {
-                    throw corrupt("transaction \(event.transactionId) does not start with a reservation")
-                }
-                states[event.transactionId] = SpendState(event)
-            }
-        }
-
-        for entry in log.entries {
-            guard let transactionId = entry.spendTransactionId else { continue }
-            guard let state = states[transactionId], state.kind != .released else {
-                throw corrupt("activity entry \(entry.id) has no active spend transaction")
-            }
-        }
-        for input in generatedInputs {
-            guard let transactionId = input.spendTransactionId else { continue }
-            guard let state = states[transactionId], state.kind != .released else {
-                throw corrupt("generated media has no active spend transaction")
-            }
-        }
-
-        var total = 0.0
-        var unpricedTransactionCount = 0
-        var activeReservationCount = 0
-        for state in states.values where state.kind != .released {
-            if state.kind != .charged {
-                activeReservationCount += 1
-            }
-            guard let money = state.effectiveMoney else {
-                unpricedTransactionCount += 1
-                continue
-            }
-            total += money.eurAmount
-        }
-        guard total.isFinite, total >= 0 else {
-            throw corrupt("project spend total is invalid")
-        }
-        let legacyTransactionIDs = Set(
-            log.entries.compactMap { entry in
-                entry.spendTransactionId == nil ? entry.id : nil
-            }
+        try GenerationSpendLedger.snapshot(
+            log: log,
+            generatedInputs: generatedInputs,
+            completedTransactionIDs: completedTransactionIDs
         )
-        let legacyAssetIDs = Set(
-            generatedInputs.enumerated().compactMap { index, input in
-                input.spendTransactionId == nil ? "asset:\(index)" : nil
-            }
-        )
-        let legacyGenerationCount = max(
-            legacyTransactionIDs.count,
-            legacyAssetIDs.count
-        )
-        return ProjectSpendSnapshot(
-            verifiedEur: total,
-            isComplete: unpricedTransactionCount == 0
-                && legacyGenerationCount == 0,
-            activeReservationCount: activeReservationCount,
-            unpricedTransactionCount: unpricedTransactionCount,
-            legacyGenerationCount: legacyGenerationCount
-        )
-    }
-
-    private static func budgetStop(in workingRoot: URL) throws -> Double? {
-        let dataRoot: URL?
-        if let resolved = DataRootResolver.dataRoot(of: workingRoot) {
-            dataRoot = resolved
-        } else {
-            let pipeline = workingRoot.appendingPathComponent(DataRootResolver.pipelineDirname)
-            let nestedBrief = PipelineLayout.url(PipelineLayout.briefFile, in: pipeline)
-            let flatBrief = PipelineLayout.url(PipelineLayout.briefFile, in: workingRoot)
-            if FileManager.default.fileExists(atPath: nestedBrief.path) {
-                dataRoot = pipeline
-            } else if FileManager.default.fileExists(atPath: flatBrief.path) {
-                dataRoot = workingRoot
-            } else {
-                dataRoot = nil
-            }
-        }
-        guard let dataRoot else { return nil }
-        let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        do {
-            let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
-                Brief.self,
-                at: PipelineLayout.briefFile
-            )
-            try brief.validate()
-            return brief.budgetStopEur
-        } catch {
-            throw GenerationBudgetError.blocked(
-                "Budget stop could not validate brief.yaml. Repair or restore it before generating."
-            )
-        }
     }
 
     private static func loadGenerationLog(from workingRoot: URL) throws -> GenerationLog? {
@@ -368,82 +209,11 @@ enum GenerationBudgetGuard {
     }
 
     nonisolated private static func validate(_ money: GenerationMoney?) throws {
-        guard let money else { return }
-        guard money.nativeAmount.isFinite, money.nativeAmount >= 0,
-              money.eurAmount.isFinite, money.eurAmount >= 0,
-              money.eurPerNativeUnit.isFinite, money.eurPerNativeUnit > 0,
-              money.nativeCurrency.count == 3,
-              !money.exchangeRateDate.isEmpty,
-              !money.pricingSource.isEmpty,
-              !money.exchangeRateSource.isEmpty else {
-            throw corrupt("generation-log.json contains invalid monetary data")
-        }
+        try GenerationSpendLedger.validate(money)
     }
 
     nonisolated private static func corrupt(_ detail: String) -> GenerationBudgetError {
-        .blocked("Budget stop could not verify project spend: \(detail). No provider request was sent.")
-    }
-
-    private static func euro(_ amount: Double) -> String {
-        String(format: "€%.2f", amount)
-    }
-
-    private struct SpendState {
-        let model: String
-        let provider: GenerationProvider
-        let transport: ProviderTransport
-        let endpoint: String
-        var kind: GenerationSpendEvent.Kind
-        var reservedMoney: GenerationMoney?
-        var chargedMoney: GenerationMoney?
-
-        init(_ event: GenerationSpendEvent) {
-            model = event.model
-            provider = event.provider
-            transport = event.transport
-            endpoint = event.endpoint
-            kind = event.kind
-            reservedMoney = event.money
-            chargedMoney = nil
-        }
-
-        var effectiveMoney: GenerationMoney? { chargedMoney ?? reservedMoney }
-
-        mutating func apply(_ event: GenerationSpendEvent) throws {
-            switch (kind, event.kind) {
-            case (_, .reserved):
-                throw GenerationBudgetGuard.corrupt(
-                    "transaction \(event.transactionId) has multiple reservations"
-                )
-            case (.reserved, .submitted):
-                guard event.providerRequestId?.isEmpty == false else {
-                    throw GenerationBudgetGuard.corrupt(
-                        "transaction \(event.transactionId) has no provider request id"
-                    )
-                }
-                guard event.money == reservedMoney else {
-                    throw GenerationBudgetGuard.corrupt(
-                        "transaction \(event.transactionId) changes its submitted amount"
-                    )
-                }
-                kind = .submitted
-            case (.submitted, .charged):
-                guard let money = event.money else {
-                    throw GenerationBudgetGuard.corrupt(
-                        "transaction \(event.transactionId) has an unpriced charge"
-                    )
-                }
-                chargedMoney = money
-                kind = .charged
-            case (.reserved, .released):
-                kind = .released
-            default:
-                throw GenerationBudgetGuard.corrupt(
-                    "transaction \(event.transactionId) has invalid \(kind.rawValue) → "
-                    + event.kind.rawValue + " transition"
-                )
-            }
-        }
+        GenerationSpendLedger.corrupt(detail)
     }
 }
 

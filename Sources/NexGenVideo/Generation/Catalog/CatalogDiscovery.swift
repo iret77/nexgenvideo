@@ -122,7 +122,7 @@ enum CatalogDiscovery {
 
     private static var running = false
     private static var queued = false
-    private static var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private static var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private static var lastCompletedAt: Date?
     private static var observer: NSObjectProtocol?
     private static var detailCache: [DetailCacheKey: DetailCacheValue] = [:]
@@ -161,7 +161,7 @@ enum CatalogDiscovery {
             lastCompletedAt = Date()
             let completedWaiters = waiters.values
             waiters.removeAll()
-            for waiter in completedWaiters { waiter.resume() }
+            for waiter in completedWaiters { waiter.resume(returning: true) }
         }
     }
 
@@ -170,17 +170,19 @@ enum CatalogDiscovery {
         detailCache.removeAll()
     }
 
+    /// False when the wait ended before a discovery pass completed, so the catalog may still change.
+    @discardableResult
     static func ensureCurrent(
         maxAge: TimeInterval = 60,
         maxWait: TimeInterval = 60
-    ) async {
+    ) async -> Bool {
         if let lastCompletedAt,
            !running,
            Date().timeIntervalSince(lastCompletedAt) <= maxAge {
-            return
+            return true
         }
         let waiterID = UUID()
-        await withCheckedContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             waiters[waiterID] = continuation
             if !running { refresh() }
             Task { @MainActor in
@@ -194,7 +196,7 @@ enum CatalogDiscovery {
                 Log.generation.notice(
                     "catalog readiness wait ended after \(boundedWait)s; discovery continues"
                 )
-                waiter.resume()
+                waiter.resume(returning: false)
             }
         }
     }

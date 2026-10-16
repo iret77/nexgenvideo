@@ -393,6 +393,7 @@ final class GenerationService {
         let task = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
+            var recoveredCost: GenerationProviderCost?
             do {
                 if completedIDs.count < execution.placeholders.count {
                     let urls: [String]
@@ -401,8 +402,14 @@ final class GenerationService {
                         let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
                         let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
                         urls = FalOutput.urls(from: data, shape: shape)
-                    case .runway: urls = try await RunwayClient(apiKey: key).output(taskId: requestID)
-                    case .marble: urls = MarbleOutput.urls(from: try await MarbleClient(apiKey: key).result(operationId: requestID))
+                    case .runway:
+                        let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
+                        urls = result.urls
+                        recoveredCost = result.cost
+                    case .marble:
+                        let operation = try await MarbleClient(apiKey: key).result(operationId: requestID)
+                        urls = MarbleOutput.urls(from: operation)
+                        recoveredCost = ProviderReportedCost.marble(operation: operation)
                     default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
                     }
                     try scope.requireCurrent(editor: editor)
@@ -416,11 +423,18 @@ final class GenerationService {
                     let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
                     let recoveredAuthorization = GenerationAuthorization(transactionId: transaction, target: target,
                         estimate: reserved, projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
-                    if target.provider == .fal {
-                        if let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key) {
-                            self.markCharged(authorization: recoveredAuthorization, money: billed, editor: editor)
+                    let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
+                    switch target.provider {
+                    case .fal:
+                        let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key)
+                        if billed != nil || !settled {
+                            self.markFinished(authorization: recoveredAuthorization, billed: billed, editor: editor)
                         }
-                    } else { self.markCharged(authorization: recoveredAuthorization, editor: editor) }
+                    default:
+                        if !settled {
+                            self.markFinished(authorization: recoveredAuthorization, providerCost: recoveredCost, editor: editor)
+                        }
+                    }
                 }
             } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
@@ -1058,20 +1072,47 @@ final class GenerationService {
         }
     }
 
-    private func markCharged(
+    private func failSubmittedJob(
+        _ placeholders: [MediaAsset],
+        _ message: String,
+        providerCost: GenerationProviderCost? = nil,
         authorization: GenerationAuthorization,
-        money: GenerationMoney? = nil,
+        editor: EditorViewModel,
+        onFailure: (@MainActor () -> Void)?
+    ) {
+        markFinished(authorization: authorization, providerCost: providerCost,
+            note: "The provider job ended without a result: \(message)", editor: editor)
+        failJob(placeholders, message, onFailure)
+    }
+
+    /// Closes a finished run: billed money becomes a charge; otherwise the run settles with whatever
+    /// cost the provider reported in its own unit, or none. An estimate is never booked as spend.
+    private func markFinished(
+        authorization: GenerationAuthorization,
+        billed: GenerationMoney? = nil,
+        providerCost: GenerationProviderCost? = nil,
+        note: String? = nil,
         editor: EditorViewModel
     ) {
-        guard let charged = money ?? authorization.estimate else { return }
         do {
-            try editor.recordSpendEvent(
-                authorization: authorization,
-                kind: .charged,
-                money: charged
-            )
+            if let billed {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .charged,
+                    money: billed,
+                    providerCost: providerCost,
+                    note: note
+                )
+            } else {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .settled,
+                    providerCost: providerCost,
+                    note: note ?? (providerCost == nil ? "The provider reported no cost for this run." : nil)
+                )
+            }
         } catch {
-            Log.generation.error("could not record generation charge: \(error.localizedDescription)")
+            Log.generation.error("could not record generation result cost: \(error.localizedDescription)")
         }
     }
 
@@ -1133,34 +1174,28 @@ final class GenerationService {
                 endpoint: endpoint,
                 apiKey: apiKey
             )
-            if let billed {
-                markCharged(
-                    authorization: authorization,
-                    money: billed,
-                    editor: editor
-                )
-            }
+            markFinished(authorization: authorization, billed: billed, editor: editor)
         } catch let error as FalClient.SubmissionOutcomeUnknownError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as FalClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             if requestId == nil {
                 failBeforeSubmission(
                     placeholders, "Generation cancelled.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, "Generation cancelled.", onFailure)
+                failSubmittedJob(placeholders, "Generation cancelled.", authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if requestId == nil {
@@ -1168,7 +1203,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1285,7 +1320,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             }
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
             if let failure = error as? MCPGenerationExecutor.JobFailure {
@@ -1303,7 +1338,7 @@ final class GenerationService {
                 modelName: model
             ) {
             case .failJob(let message):
-                failJob(placeholders, message, onFailure)
+                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
                     placeholders,
@@ -1424,30 +1459,33 @@ final class GenerationService {
                 resumable: true,
                 editor: editor
             )
-            let urls = try await client.output(taskId: taskId)
+            let result = try await client.result(taskId: taskId)
             let job = BackendGenerationJob(
-                _id: taskId, status: .succeeded, resultUrls: urls,
+                _id: taskId, status: .succeeded, resultUrls: result.urls,
                 errorMessage: nil, costCredits: nil, completedAt: nil)
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
                 mutationScope: authorization.projectMutationScope,
                 batchItem: authorization.batchItem,
                 onComplete: onComplete, onFailure: onFailure)
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, providerCost: result.cost, editor: editor)
+        } catch let error as RunwayClient.TaskFailure {
+            failSubmittedJob(placeholders, error.localizedDescription, providerCost: error.cost,
+                authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             let message = "Generation cancelled."
             if taskId == nil {
@@ -1459,7 +1497,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } else {
-                failJob(placeholders, message, onFailure)
+                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if taskId == nil {
@@ -1467,7 +1505,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1605,9 +1643,9 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -1954,15 +1992,15 @@ final class GenerationService {
                 providerRequestId: UUID().uuidString,
                 editor: editor
             )
-            let data: Data
+            let audio: ElevenLabsClient.Audio
             switch endpoint {
             case "fal-ai/elevenlabs/tts/multilingual-v2":
-                data = try await client.textToSpeech(text: params.prompt, voiceName: params.voice ?? "Rachel")
+                audio = try await client.textToSpeech(text: params.prompt, voiceName: params.voice ?? "Rachel")
             case "fal-ai/elevenlabs/sound-effects":
-                data = try await client.soundEffect(
+                audio = try await client.soundEffect(
                     text: params.prompt, durationSeconds: params.durationSeconds.map(Double.init))
             case "fal-ai/elevenlabs/music":
-                data = try await client.music(
+                audio = try await client.music(
                     prompt: params.prompt,
                     lengthMs: (params.durationSeconds ?? 90) * 1000,
                     forceInstrumental: params.instrumental)
@@ -1975,7 +2013,7 @@ final class GenerationService {
             // run the same finalize steps downloadAndFinalize performs after its move.
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             try? FileManager.default.removeItem(at: placeholder.url)
-            try data.write(to: placeholder.url, options: .atomic)
+            try audio.data.write(to: placeholder.url, options: .atomic)
             placeholder.generationStatus = .none
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
@@ -1991,9 +2029,9 @@ final class GenerationService {
                 assetType: placeholder.type,
                 count: 1
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, providerCost: audio.cost, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2036,6 +2074,7 @@ final class GenerationService {
             )
             let outputData = try await client.result(operationId: submittedId)
             let urls = MarbleOutput.urls(from: outputData)
+            let reportedCost = ProviderReportedCost.marble(operation: outputData)
             guard !urls.isEmpty else {
                 throw GenerationBackendError.transport("Marble returned no panorama")
             }
@@ -2056,14 +2095,14 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, providerCost: reportedCost, editor: editor)
         } catch {
             if operationId == nil {
                 failBeforeSubmission(
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }

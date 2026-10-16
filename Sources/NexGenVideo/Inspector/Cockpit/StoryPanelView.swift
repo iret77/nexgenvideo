@@ -225,8 +225,6 @@ struct StoryPanelView: View {
         var rows: [BriefRow] = []
         // The engine rejects a budget of 0, so 0 here can only mean the payload didn't carry one.
         Self.add(&rows, "Budget", brief.budgetEur > 0 ? Self.euro(brief.budgetEur) : nil)
-        // Absent = no hard stop at all, which is the default and worth stating.
-        Self.add(&rows, "Hard stop", brief.budgetStopEur.map(Self.euro) ?? "none")
         return rows
     }
 

@@ -1,0 +1,247 @@
+import Foundation
+import NexGenEngine
+import Testing
+@testable import NexGenVideo
+
+@Suite("Anthropic model discovery")
+@MainActor
+struct AnthropicModelCatalogTests {
+    typealias F = AnthropicModelFixtures
+
+    @Test("discovery follows has_more/last_id pagination with the documented headers")
+    func pagination() async throws {
+        let recorder = RecordingModelsTransport(pages: [
+            .success(try F.page([F.sonnet55, F.opus55], hasMore: true)),
+            .success(try F.page([F.haiku55, F.haiku45], hasMore: false)),
+        ])
+        let models = try await AnthropicModelsAPI.fetchAll(apiKey: "sk-test", transport: recorder.transport)
+        #expect(models.map(\.id) == [
+            "claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-haiku-4-5-20251001",
+        ])
+        let requests = recorder.recorded
+        #expect(requests.count == 2)
+        let first = try #require(requests.first.flatMap { $0.url }.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) })
+        let second = try #require(requests.last.flatMap { $0.url }.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) })
+        #expect(first.path == "/v1/models")
+        #expect(first.queryItems?.first(where: { $0.name == "after_id" }) == nil)
+        #expect(first.queryItems?.first(where: { $0.name == "limit" })?.value == "1000")
+        #expect(second.queryItems?.first(where: { $0.name == "after_id" })?.value == "claude-opus-5-5")
+        #expect(requests.first?.value(forHTTPHeaderField: "x-api-key") == "sk-test")
+        #expect(requests.first?.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
+        #expect(requests.first?.httpMethod == "GET")
+    }
+
+    @Test("a failed page or HTTP error fails discovery instead of returning a partial list")
+    func discoveryErrors() async throws {
+        let unauthorized = RecordingModelsTransport(pages: [.success(Data("{}".utf8))], status: 401)
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.http(status: 401)) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: unauthorized.transport)
+        }
+        let empty = RecordingModelsTransport(pages: [.success(try F.page([], hasMore: false))])
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.emptyList) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: empty.transport)
+        }
+    }
+
+    @Test("parsing reads line, release date, output limit, and capability leaves")
+    func parsing() throws {
+        let sonnet = F.info(F.sonnet55)
+        #expect(sonnet.family == "sonnet")
+        #expect(sonnet.displayName == "Claude Sonnet 5.5")
+        #expect(sonnet.maxOutputTokens == 128_000)
+        #expect(sonnet.supportsAdaptiveThinking)
+        #expect(sonnet.supportsHighEffort)
+        #expect(sonnet.createdAt == ISO8601DateFormatter().date(from: "2026-09-29T00:00:00Z"))
+        let haiku = F.info(F.haiku45)
+        #expect(!haiku.supportsAdaptiveThinking)
+        #expect(!haiku.supportsHighEffort)
+        #expect(haiku.createdAt != nil)
+        var unknownLine = F.entry(id: "claude-fable-5-1", name: "Claude Fable 5.1", created: "1970-01-01T00:00:00Z", line: nil)
+        #expect(F.info(unknownLine).family == nil)
+        #expect(F.info(unknownLine).createdAt == nil)
+        unknownLine.removeValue(forKey: "line")
+        unknownLine["capabilities"] = NSNull()
+        let legacy = F.info(unknownLine)
+        #expect(legacy.family == "fable")
+        #expect(!legacy.supportsAdaptiveThinking)
+        #expect(!legacy.supportsHighEffort)
+    }
+
+    @Test("default selection is the newest Sonnet by release date, not by list order")
+    func newestSonnetDefault() {
+        let models = F.models([F.sonnet46, F.opus55, F.sonnet55, F.sonnet5, F.haiku55])
+        let selected = AnthropicModelSelection.resolve(storedID: nil, storedFamily: nil, models: models)
+        #expect(selected?.id == "claude-sonnet-5-5")
+        #expect(AnthropicModelSelection.newest(in: models, family: "haiku")?.id == "claude-haiku-5-5")
+        #expect(AnthropicModelSelection.newest(in: models, family: "opus")?.id == "claude-opus-5-5")
+    }
+
+    @Test("a stored id stays selected while offered and falls back to the newest of its family")
+    func storedIDFallback() {
+        let models = F.models([F.sonnet55, F.opus55, F.haiku55, F.haiku45])
+        #expect(AnthropicModelSelection.resolve(
+            storedID: "claude-haiku-4-5-20251001", storedFamily: nil, models: models
+        )?.id == "claude-haiku-4-5-20251001")
+        #expect(AnthropicModelSelection.resolve(
+            storedID: "claude-opus-4-8", storedFamily: nil, models: models
+        )?.id == "claude-opus-5-5")
+        #expect(AnthropicModelSelection.resolve(
+            storedID: "claude-sonnet-4-6", storedFamily: "sonnet", models: models
+        )?.id == "claude-sonnet-5-5")
+        #expect(AnthropicModelSelection.resolve(
+            storedID: "custom-model", storedFamily: nil, models: models
+        )?.id == "claude-sonnet-5-5")
+        let retired = F.models([F.entry(
+            id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", created: "2026-02-17T00:00:00Z",
+            line: "sonnet", lifecycle: "retired"
+        ), F.sonnet5])
+        #expect(AnthropicModelSelection.resolve(
+            storedID: "claude-sonnet-4-6", storedFamily: nil, models: retired
+        )?.id == "claude-sonnet-5")
+        let offline = AnthropicModelSelection.resolve(storedID: "claude-sonnet-4-6", storedFamily: nil, models: [])
+        #expect(offline?.id == "claude-sonnet-4-6")
+        #expect(offline?.supportsAdaptiveThinking == false)
+        #expect(AnthropicModelSelection.resolve(storedID: nil, storedFamily: nil, models: []) == nil)
+    }
+
+    @Test("an active release outranks a newer deprecated one of the same family")
+    func activePreferred() {
+        let models = F.models([
+            F.entry(id: "claude-sonnet-9", name: "Claude Sonnet 9", created: "2026-10-01T00:00:00Z",
+                    line: "sonnet", lifecycle: "deprecated"),
+            F.sonnet55,
+        ])
+        #expect(AnthropicModelSelection.newest(in: models, family: "sonnet")?.id == "claude-sonnet-5-5")
+    }
+
+    @Test("picker lists the newest model per family first and older releases separately")
+    func pickerGroups() {
+        let groups = AnthropicModelSelection.pickerGroups(
+            F.models([F.sonnet46, F.haiku45, F.opus55, F.sonnet55, F.sonnet5, F.haiku55])
+        )
+        #expect(groups.current.map(\.id) == ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"])
+        #expect(groups.older.map(\.id) == ["claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"])
+        #expect(AnthropicModelSelection.pickerGroups([]).current.isEmpty)
+    }
+
+    @Test("the choice and the last discovered list persist as plain values")
+    func persistence() throws {
+        let defaults = F.isolatedDefaults()
+        defaults.set("claude-haiku-4-5-20251001", forKey: "agentModel")
+        let store = AnthropicModelCatalogStore(defaults: defaults)
+        #expect(store.storedModelID == "claude-haiku-4-5-20251001")
+        let models = F.models([F.sonnet55, F.haiku45])
+        store.saveCatalog(models)
+        #expect(store.cachedModels() == models)
+        let service = AgentService(refreshBackendStatusOnInit: false, modelCatalogDefaults: defaults)
+        #expect(service.availableModels == models)
+        #expect(service.effectiveModel?.id == "claude-haiku-4-5-20251001")
+        service.selectModel(models[0])
+        #expect(defaults.string(forKey: "agentModel") == "claude-sonnet-5-5")
+        #expect(defaults.string(forKey: "agentModelFamily") == "sonnet")
+    }
+
+    @Test("offline discovery keeps the cached list; a later success replaces and persists it")
+    func offlineFallback() async throws {
+        let defaults = F.isolatedDefaults()
+        let cached = F.models([F.sonnet46, F.haiku45])
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(cached)
+        let offline = RecordingModelsTransport(pages: [.failure(URLError(.notConnectedToInternet))])
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: offline.transport
+        )
+        await service.refreshModelCatalog(apiKey: "sk-test")
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-sonnet-4-6")
+        #expect(service.modelDiscoveryError != nil)
+        #expect(!service.isDiscoveringModels)
+
+        let online = RecordingModelsTransport(pages: [.success(try F.page([F.sonnet55, F.sonnet46], hasMore: false))])
+        let refreshed = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: online.transport
+        )
+        await refreshed.refreshModelCatalog(apiKey: "sk-test")
+        #expect(refreshed.effectiveModel?.id == "claude-sonnet-5-5")
+        #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels().map(\.id) == [
+            "claude-sonnet-5-5", "claude-sonnet-4-6",
+        ])
+    }
+
+    @Test("a stored id missing from a stale cache stays in use until a current list retires it")
+    func storedIDSurvivesStaleCache() async throws {
+        let defaults = F.isolatedDefaults()
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(F.models([F.sonnet46, F.opus55]))
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let offline = RecordingModelsTransport(pages: [.failure(URLError(.timedOut))])
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: offline.transport
+        )
+        await service.refreshModelCatalog(apiKey: "sk-test")
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(service.pickerModels.map(\.id).contains("claude-opus-4-8"))
+
+        let online = RecordingModelsTransport(pages: [.success(try F.page([F.sonnet55, F.opus55], hasMore: false))])
+        let current = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: online.transport
+        )
+        #expect(current.effectiveModel?.id == "claude-opus-4-8")
+        await current.refreshModelCatalog(apiKey: "sk-test")
+        #expect(current.effectiveModel?.id == "claude-opus-5-5")
+        #expect(!current.pickerModels.map(\.id).contains("claude-opus-4-8"))
+    }
+
+    @Test("router families resolve to the newest discovered id; pinned ids stay pinned")
+    func routeResolution() throws {
+        let store = AnthropicModelCatalogStore(defaults: F.isolatedDefaults())
+        #expect(store.resolveRoute("haiku").family == "haiku")
+        #expect(store.resolveRoute("haiku").modelID == nil)
+        store.saveCatalog(F.models([F.haiku45, F.haiku55, F.opus55]))
+        #expect(store.resolveRoute("haiku").modelID == "claude-haiku-5-5")
+        #expect(store.resolveRoute("claude-haiku-4-5-20251001").modelID == "claude-haiku-4-5-20251001")
+        #expect(store.resolveRoute("claude-opus-4-8").modelID == nil)
+        #expect(store.resolveRoute("claude-opus-4-8").family == "opus")
+        #expect(store.resolveRoute("sonnet").modelID == nil)
+        let data = try NativeCockpitReader.routerJSON(catalog: store)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["tiers"] as? [String: String] == ModelRouter.defaultManifest)
+        #expect(object["models"] as? [String: String] == ["fast": "claude-haiku-5-5", "deep": "claude-opus-5-5"])
+    }
+
+    @Test("request body follows the selected model's capabilities")
+    func requestBodyPerCapability() throws {
+        let adaptive = AnthropicRequestBody.build(model: F.info(F.opus55), system: "Edit.", tools: [], messages: [])
+        #expect(adaptive["model"] as? String == "claude-opus-5-5")
+        #expect(adaptive["max_tokens"] as? Int == 64000)
+        #expect(adaptive["thinking"] as? [String: String] == ["type": "adaptive", "display": "summarized"])
+        #expect(adaptive["output_config"] as? [String: String] == ["effort": "high"])
+        #expect(adaptive["tool_choice"] == nil)
+
+        let small = AnthropicRequestBody.build(
+            model: F.info(F.entry(id: "claude-small", name: "Small", created: "2026-01-01T00:00:00Z",
+                                  line: "haiku", maxTokens: 32_000, adaptive: true, effort: false)),
+            system: "Edit.", tools: [], messages: []
+        )
+        #expect(small["max_tokens"] as? Int == 32_000)
+        #expect(small["thinking"] != nil)
+        #expect(small["output_config"] == nil)
+
+        let budgetOnly = AnthropicRequestBody.build(model: F.info(F.haiku45), system: "Edit.", tools: [], messages: [])
+        #expect(budgetOnly["thinking"] == nil)
+        #expect(budgetOnly["output_config"] == nil)
+        #expect(budgetOnly["max_tokens"] as? Int == 64000)
+
+        let unknown = AnthropicRequestBody.build(model: .unlisted("claude-next"), system: "Edit.", tools: [], messages: [])
+        #expect(unknown["thinking"] == nil)
+        #expect(unknown["output_config"] == nil)
+        #expect(unknown["max_tokens"] as? Int == AnthropicRequestBody.unknownModelMaxTokens)
+        #expect(unknown["tool_choice"] == nil)
+    }
+}

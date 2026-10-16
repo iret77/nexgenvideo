@@ -47,8 +47,22 @@ actor RunwayClient {
         var errorDescription: String? { message }
     }
 
+    struct TaskResult: Sendable, Equatable {
+        let urls: [String]
+        let cost: GenerationProviderCost?
+    }
+
+    /// A task that ended FAILED or CANCELLED, with the credits Runway still reports for it.
+    struct TaskFailure: LocalizedError, Sendable {
+        let message: String
+        let cost: GenerationProviderCost?
+
+        var errorDescription: String? { message }
+    }
+
     private struct TerminalTaskError: LocalizedError, Sendable {
         let message: String
+        var cost: GenerationProviderCost? = nil
 
         var errorDescription: String? { message }
     }
@@ -132,10 +146,15 @@ actor RunwayClient {
     }
 
     func output(taskId: String) async throws -> [String] {
+        try await result(taskId: taskId).urls
+    }
+
+    /// The finished task's outputs plus the credits Runway reports for it, when it reports them.
+    func result(taskId: String) async throws -> TaskResult {
         do {
             return try await waitForOutput(taskId: taskId)
         } catch let error as TerminalTaskError {
-            throw GenerationBackendError.transport(error.message)
+            throw TaskFailure(message: error.message, cost: error.cost)
         } catch {
             let cancelled = error is CancellationError || Task.isCancelled
             if let failure = await cancelIndependently(taskId: taskId) {
@@ -270,7 +289,7 @@ actor RunwayClient {
         return id
     }
 
-    private func waitForOutput(taskId: String) async throws -> [String] {
+    private func waitForOutput(taskId: String) async throws -> TaskResult {
         let deadline = Date().addingTimeInterval(maxWaitSeconds)
         while true {
             if Date() >= deadline {
@@ -289,10 +308,10 @@ actor RunwayClient {
                 guard let output = json?["output"] as? [String], !output.isEmpty else {
                     throw TerminalTaskError(message: "Runway returned no output.")
                 }
-                return output
+                return TaskResult(urls: output, cost: ProviderReportedCost.runway(terminalTask: json))
             case "FAILED", "CANCELLED":
                 let reason = (json?["failure"] as? String) ?? "Runway generation \(state.lowercased())"
-                throw TerminalTaskError(message: reason)
+                throw TerminalTaskError(message: reason, cost: ProviderReportedCost.runway(terminalTask: json))
             case "PENDING", "THROTTLED", "RUNNING":
                 ProviderStatusSignal.confirmRunning()
                 if Date() >= deadline {

@@ -37,9 +37,16 @@ struct StoryboardDocumentView: View {
                                         field("Blocking", step.characterBlocking.map(describe).joined(separator: "\n"))
                                         field("Notes", step.notes)
                                     }
-                                    .padding(AppTheme.Spacing.lgXl)
+                                    .padding(AppTheme.Spacing.mdLg)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(AppTheme.Background.raisedColor, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+                                    .background(
+                                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                                            .fill(AppTheme.Background.raisedColor)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                                            .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                                    )
                                 }
                             }
                         }
@@ -48,7 +55,8 @@ struct StoryboardDocumentView: View {
                 }
             }
             .interfaceFont(size: AppTheme.Typography.reading)
-            .padding(AppTheme.Spacing.xlXxl)
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

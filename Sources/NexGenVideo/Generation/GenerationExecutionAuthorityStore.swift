@@ -210,7 +210,7 @@ struct GenerationExecutionAuthorityStore: Sendable {
             throw GenerationRequestError.gate("The spend event does not belong to this approved batch item.")
         }
         if let money = event.money, let ceiling = item.package.payload.estimate,
-           [.reserved, .submitted, .charged].contains(event.kind), money.eurAmount > ceiling.eurAmount {
+           [.reserved, .submitted].contains(event.kind), money.eurAmount > ceiling.eurAmount {
             throw GenerationRequestError.gate("The provider spend exceeds the approved batch ceiling.")
         }
         if let existing = current.spendEvents.first(where: { $0.id == event.id }) {
@@ -322,7 +322,7 @@ struct GenerationExecutionAuthorityStore: Sendable {
                 throw GenerationRequestError.storage("The approved generation spend history is invalid.")
             }
             if let money = event.money, let ceiling = item.package.payload.estimate,
-               [.reserved, .submitted, .charged].contains(event.kind), money.eurAmount > ceiling.eurAmount {
+               [.reserved, .submitted].contains(event.kind), money.eurAmount > ceiling.eurAmount {
                 throw GenerationRequestError.storage("The approved generation spend exceeds its ceiling.")
             }
         }

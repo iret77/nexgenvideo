@@ -193,13 +193,22 @@ enum NativeCockpitReader {
         return value
     }
 
-    /// `read.py` "router": `core.router.describe()` — `{tiers:{...}, task_classes:{name:{tier, effort}}}`.
-    static func routerJSON(dataRoot: URL? = nil) throws -> Data {
+    /// `read.py` "router": `{tiers:{tier: family or pinned id}, models:{tier: newest discovered id},
+    /// task_classes:{name:{tier, effort}}}`.
+    static func routerJSON(
+        dataRoot: URL? = nil,
+        catalog: AnthropicModelCatalogStore = AnthropicModelCatalogStore()
+    ) throws -> Data {
         var taskClasses: [String: Any] = [:]
         for tc in ModelRouter.taskClasses {
             taskClasses[tc.name] = ["tier": tc.tier, "effort": tc.effort]
         }
-        return try serialize(["tiers": ModelRouter.manifest(dataRoot: dataRoot), "task_classes": taskClasses])
+        let manifest = ModelRouter.manifest(dataRoot: dataRoot)
+        var models: [String: Any] = [:]
+        for (tier, value) in manifest {
+            if let id = catalog.resolveRoute(value).modelID { models[tier] = id }
+        }
+        return try serialize(["tiers": manifest, "models": models, "task_classes": taskClasses])
     }
 
     // MARK: - Project kinds
@@ -217,10 +226,6 @@ enum NativeCockpitReader {
             throw NativeError.notInitialized
         }
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
         let approvalEvidence = FileDigest.$readinessCache.withValue(
             approvalEvidenceDigests
         ) {
@@ -236,7 +241,6 @@ enum NativeCockpitReader {
         return try serialize(stateDictionary(
             snapshot,
             spend: spend,
-            budgetStopEur: brief?.budgetStopEur,
             approvalEvidence: approvalEvidence,
             confirmedIdentityRecovery: recovery
         ))
@@ -246,7 +250,6 @@ enum NativeCockpitReader {
     static func stateDictionary(
         _ s: ProjectStateBuilder.ProjectState,
         spend: ProjectSpendSnapshot,
-        budgetStopEur: Double?,
         approvalEvidence: [String: PhaseApprovalEvidence] = [:],
         confirmedIdentityRecovery:
             ConfirmedIdentityProvenanceRecoveryStatus? = nil
@@ -266,28 +269,18 @@ enum NativeCockpitReader {
         let remaining: Any = spend.isComplete
             ? max(0.0, s.budgetEur - spend.verifiedEur)
             : NSNull()
-        let stopRemaining: Any
-        if spend.isComplete, let budgetStopEur {
-            stopRemaining = max(0.0, budgetStopEur - spend.verifiedEur)
-        } else {
-            stopRemaining = NSNull()
-        }
         var state: [String: Any] = [
             "project": s.project,
             "mode": s.mode,
             "budget_eur": s.budgetEur,
-            "budget_stop_eur": budgetStopEur.map { $0 as Any } ?? NSNull(),
+            "budget_stop_eur": NSNull(),
             "budget_spent_eur": spend.verifiedEur,
-            "verified_spend_eur": spend.verifiedEur,
             "budget_remaining_eur": remaining,
-            "hard_stop_remaining_eur": stopRemaining,
-            "spend_complete": spend.isComplete,
-            "active_reservations": spend.activeReservationCount,
-            "unpriced_transactions": spend.unpricedTransactionCount,
-            "legacy_generations": spend.legacyGenerationCount,
+            "hard_stop_remaining_eur": NSNull(),
             "phases": phases,
             "next_phase": s.nextPhase.map { $0 as Any } ?? NSNull(),
         ]
+        state.merge(spendFields(spend)) { _, new in new }
         if let confirmedIdentityRecovery {
             state["confirmed_identity_recovery"] = [
                 "affected_targets": confirmedIdentityRecovery.affectedTargets,
@@ -549,40 +542,43 @@ enum NativeCockpitReader {
             throw NativeError.notInitialized
         }
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
         let verifiedTotal: Any = spend.isComplete
             ? spend.verifiedEur
             : NSNull()
-        let remaining: Any = spend.isComplete
-            ? max(0.0, snapshot.budgetEur - spend.verifiedEur)
-            : NSNull()
-        let overBudget: Any = spend.isComplete
-            ? spend.verifiedEur > snapshot.budgetEur
-            : NSNull()
-        let stopRemaining: Any
-        if spend.isComplete, let stop = brief?.budgetStopEur {
-            stopRemaining = max(0.0, stop - spend.verifiedEur)
-        } else {
-            stopRemaining = NSNull()
-        }
-        return [
+        // The budget is a display, never a limit; these keys stay for pinned packs.
+        let base: [String: Any] = [
             "project": snapshot.project,
             "budget_eur": snapshot.budgetEur,
-            "budget_stop_eur": brief?.budgetStopEur.map { $0 as Any }
-                ?? NSNull(),
+            "budget_stop_eur": NSNull(),
             "spent_eur": verifiedTotal,
-            "verified_spend_eur": spend.verifiedEur,
-            "remaining_eur": remaining,
-            "hard_stop_remaining_eur": stopRemaining,
-            "over_budget": overBudget,
-            "spend_complete": spend.isComplete,
-            "active_reservations": spend.activeReservationCount,
-            "unpriced_transactions": spend.unpricedTransactionCount,
-            "legacy_generations": spend.legacyGenerationCount,
+            "remaining_eur": NSNull(),
+            "hard_stop_remaining_eur": NSNull(),
+            "over_budget": false,
             "next_phase": snapshot.nextPhase.map { $0 as Any } ?? NSNull(),
+        ]
+        return base.merging(spendFields(spend)) { _, new in new }
+    }
+
+    /// The honest spend picture shared by `estimate_cost` and the cockpit state: billed money, provider
+    /// credits in their own unit, and counts of runs whose money is unknown, legacy or still running.
+    static func spendFields(_ spend: ProjectSpendSnapshot) -> [String: Any] {
+        [
+            "verified_spend_eur": spend.verifiedEur,
+            "spend_complete": spend.isComplete,
+            "active_reservations": spend.inFlightCount,
+            "in_flight_runs": spend.inFlightCount,
+            "unpriced_transactions": spend.unknownCostCount + spend.creditOnlyCount,
+            "unknown_cost_runs": spend.unknownCostCount,
+            "legacy_generations": spend.legacyGenerationCount,
+            "provider_credits": spend.providerCredits.map { credit -> [String: Any] in
+                [
+                    "provider": credit.provider.rawValue,
+                    "provider_name": credit.provider.displayName,
+                    "unit": credit.unit,
+                    "amount": credit.amount,
+                    "runs": credit.runs,
+                ]
+            },
         ]
     }
 
@@ -619,7 +615,8 @@ enum NativeCockpitReader {
         do {
             return try GenerationBudgetGuard.spendSnapshot(
                 log: log,
-                generatedInputs: generatedInputs
+                generatedInputs: generatedInputs,
+                completedTransactionIDs: GenerationBatchStore.completedTransactionIDs(home: home)
             )
         } catch {
             throw NativeError.load(error.localizedDescription)

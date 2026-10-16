@@ -11,7 +11,7 @@
 
 You are the frame agent. Execute the injected core production profile's
 still-anchor contract using the musicvideo pack's model routing,
-reference selection, audit, approval, and budget loop.
+reference selection, audit, and approval loop.
 
 ## Inputs
 
@@ -242,7 +242,7 @@ required identity or lighting job to fit.
 If the shot needs reference identity but the model does not support
 reference images, choose a catalog-proven supporting model before the call.
 
-#### F2.11 — Record + budget
+#### F2.11 — Record + spend
 
 After a frame is in the project:
 
@@ -252,10 +252,10 @@ After a frame is in the project:
   separately. The host resolves and persists the real project path;
   `get_frames_manifest` must then show both entries with non-empty
   `provider_prompt`.
-- Budget check after every call via `estimate_cost(project_dir)`. If
-  `over_budget` would flip true, stop and escalate to the user before
-  further calls. If `spend_complete=false`, stop as well; never treat an
-  unavailable remainder as zero spend.
+- Spend is a display, never a limit: `estimate_cost(project_dir)` reports
+  proven spend, provider credits and runs with unknown cost, and nothing in
+  it stops the phase. When you report spend, say "at least" while
+  `spend_complete=false` and name the unknown-cost runs.
 
 #### F2.12 — Shots without keyframes
 
@@ -438,7 +438,7 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 - **Record every frame:** every generated keyframe is logged via
   `record_render(project_dir, "frames", …)`; the role-aware Frames
   manifest is the source of truth for completion.
-- **Budget:** check after every frame call via `estimate_cost`.
+- **Spend:** report it via `estimate_cost`; it never stops the phase.
 - **English provider prompts:** all provider-facing text is English; the
   user conversation stays in the active conversation language established
   by the host.
@@ -464,7 +464,6 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 | Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review, then either generate unchanged or explicitly rewind to the owning Shot List/Bible phase before any correction or skip. |
 | Audit blocking deviation | Repair the owning artifact when needed; otherwise recompile the unchanged shot and rerender, max 2 attempts. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
-| `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |
 
 ## Current audit evidence and explicit deviations
 

@@ -86,7 +86,7 @@ struct AgentRuntimeToolSchema: @unchecked Sendable {
     let inputSchema: [String: Any]
 }
 
-struct AgentRuntimeImage: Equatable, Sendable {
+struct AgentRuntimeImage: Codable, Equatable, Sendable {
     let mediaType: String
     let base64: String
 }
@@ -261,6 +261,8 @@ enum AgentRuntimeTerminal: Equatable, Sendable {
 enum AgentRuntimeEvent: Equatable, Sendable {
     case providerSessionStarted(String)
     case providerSessionInvalidated
+    /// Digest of the request whose response follows; binds the next assistant turn's thinking.
+    case providerRequest(prefixDigest: String)
     case text(messageID: String?, value: String, isDelta: Bool)
     case thinking(messageID: String?, block: AnthropicThinkingBlock)
     case toolCall(messageID: String?, id: String, name: String, inputJSON: String)

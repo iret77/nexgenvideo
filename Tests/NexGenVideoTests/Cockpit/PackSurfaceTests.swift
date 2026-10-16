@@ -277,7 +277,7 @@ struct PackSurfaceTests {
                 for: "analysis",
                 contract: c,
                 availablePackSurfaces: c.cockpitSurfaces
-            )?.destination == .pack("analysis")
+            )?.destination == .pack(id: "analysis", title: "Analysis")
         )
         #expect(
             PipelineSurfaceRouting.route(
@@ -304,7 +304,6 @@ struct PackSurfaceTests {
         let unavailable = try #require(PipelineSurfaceRouting.route(for: "production_design",
             contract: reviewContract, availablePackSurfaces: []))
         #expect(unavailable.destination == .chat)
-        #expect(unavailable.label == "Tasks")
         #expect(unavailable.destinationLabel == "Tasks")
         #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
             availablePackSurfaces: [])?.destinationLabel == "Bible")

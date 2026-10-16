@@ -24,15 +24,6 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
     }
 
     @MainActor
-    func hasPricingOverride(editor: EditorViewModel) throws -> Bool {
-        guard let home = editor.workingRoot else { return false }
-        let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
-        guard snapshot.authorityAvailable, snapshot.batch.payload.projectKey == editor.projectId,
-              let overrideIDs = snapshot.journal.pricingOverrideItemIDs else { return false }
-        return !overrideIDs.isEmpty && snapshot.batch.payload.items.contains { $0.id == itemID }
-    }
-
-    @MainActor
     func consume(authorization: GenerationAuthorization, editor: EditorViewModel) throws {
         guard let package = authorization.generationPackage, let transactionID = authorization.transactionId,
               authorization.target == package.payload.target else {
@@ -41,7 +32,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
         try authorization.projectMutationScope?.requireCurrent(editor: editor)
         let snapshot = try current(package: package, editor: editor)
         if let ceiling = package.payload.estimate {
-            guard let quote = authorization.estimate, quote.eurAmount <= ceiling.eurAmount else {
+            if let quote = authorization.estimate, quote.eurAmount > ceiling.eurAmount {
                 throw GenerationRequestError.gate("The batch submission exceeds its reviewed price.")
             }
         } else {

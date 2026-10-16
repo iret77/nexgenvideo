@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -362,6 +363,119 @@ struct AgentDialogSubmissionTests {
 
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("not an image"))
+    }
+
+    @Test func internalIdentifierQuestionnairesAreRecognizedInAnySpelling() {
+        func question(_ label: String, optionIDs: [String] = ["a", "b"]) -> [String: Any] {
+            [
+                "title": "Shot list",
+                "sections": [[
+                    "id": "choice",
+                    "label": label,
+                    "type": "choices",
+                    "options": optionIDs.map { ["id": $0, "label": $0.capitalized] },
+                ]],
+            ]
+        }
+        for variant in [
+            question("Which semantic_job_id should the location use?"),
+            question("Enter valid Semantic Job ID values for character, location and prop"),
+            question("semanticJobId for the prop"),
+            question("Which INPUT_SLOT_ID fits?"),
+            question("Pick the inputSlot"),
+            question("Which preservation scope ids apply?"),
+            question("Which role?", optionIDs: [
+                CoreReferenceSemanticJobIDV1.referenceAnchor, "core.style-reference",
+            ]),
+            question("Which slot?", optionIDs: ["core.input.reference-image", "reference.image.anchor"]),
+            question("Use core.reference_anchor for the street?"),
+        ] {
+            #expect(ToolExecutor.internalIdentifierQuestion(in: variant, afterFailedWrite: false) != nil)
+        }
+        let modeIDField = question("Mode", optionIDs: ["mode_id", "other"])
+        #expect(ToolExecutor.internalIdentifierQuestion(in: modeIDField, afterFailedWrite: true) != nil)
+        #expect(ToolExecutor.internalIdentifierQuestion(in: modeIDField, afterFailedWrite: false) == nil)
+
+        for creative in [
+            question("Which palette carries the chorus?", optionIDs: ["dusk", "neon"]),
+            question("Which project mode fits the song: beat or section?", optionIDs: ["beat", "section"]),
+            question("Which reference image anchors the hero's look?", optionIDs: ["portrait", "profile"]),
+            question("Keep the core style of the opening?", optionIDs: ["keep", "change"]),
+        ] {
+            #expect(ToolExecutor.internalIdentifierQuestion(in: creative, afterFailedWrite: true) == nil)
+        }
+    }
+
+    @Test func showDialogRefusesIdentifierQuestionnairesAndKeepsCreativeQuestions() async throws {
+        let harness = ToolHarness()
+        harness.editor.agentService.newChat()
+        let sessionID = try #require(harness.editor.agentService.currentSessionId)
+        let failedWrite = await harness.executor.execute(
+            name: "write_shotlist",
+            args: [:],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+        #expect(failedWrite.isError)
+
+        let questionnaire = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Shot list — execution-plan blocker",
+                "sections": [[
+                    "id": "values",
+                    "label": "Enter valid semantic job ID values for character, location and prop",
+                    "type": "choices",
+                    "options": [
+                        ["id": "retry", "label": "Keep trying values"],
+                        ["id": "core.reference-anchor", "label": "core.reference-anchor"],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+        #expect(questionnaire.isError)
+        #expect(ToolHarness.textOf(questionnaire).contains("not a user decision"))
+        #expect(ToolHarness.textOf(questionnaire).contains("execution_input_contract"))
+        #expect(harness.editor.agentService.pendingDialog == nil)
+
+        let renamedField = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Shot list",
+                "sections": [[
+                    "id": "inputSlotId",
+                    "label": "Value",
+                    "type": "choices",
+                    "options": [
+                        ["id": "first", "label": "First"],
+                        ["id": "second", "label": "Second"],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+        #expect(renamedField.isError)
+        #expect(harness.editor.agentService.pendingDialog == nil)
+
+        let creative = await harness.executor.execute(
+            name: "show_dialog",
+            args: [
+                "title": "Chorus look",
+                "sections": [[
+                    "id": "palette",
+                    "label": "Which palette carries the chorus?",
+                    "type": "choices",
+                    "options": [
+                        ["id": "dusk", "label": "Dusk blue"],
+                        ["id": "neon", "label": "Neon red"],
+                    ],
+                ]],
+            ],
+            origin: .inAppChat(sessionID: sessionID)
+        )
+        #expect(!creative.isError)
+        #expect(creative.turnDisposition == .suspendTurn)
+        #expect(harness.editor.agentService.pendingDialog?.title == "Chorus look")
     }
 
     @Test func externalMCPDialogCannotCaptureAnInAppChat() async {

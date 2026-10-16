@@ -4,36 +4,28 @@ description: |
   Lo-Fi, einfache Aesthetik aus dem Bedroom-Pop: Self-Recording-
   Look, Macbook-Photo-Booth-Cam, ein Zimmer, sichtbare Imperfektion.
   Vorbild Clairo's "Pretty Girl" (2017, in 30 Minuten im Kinder-
-  zimmer aufgenommen) und Mac DeMarco's Vintage-Bias. Fuer authentisch-
-  intime Indie-Tracks ohne Production-Bombast.
+  zimmer aufgenommen) und Mac DeMarcos zuhause aufgenommenes Salad
+  Days. Fuer authentisch-intime Indie-Tracks ohne Production-Bombast.
 
 references:
   - name: "Clairo (Claire Cottrill)"
     role: music_video
     notable_works:
-      - "Pretty Girl (2017, self-recorded music video, Photo Booth on MacBook in childhood bedroom)"
-      - "Diary 001 (2018)"
+      - "Pretty Girl (2017, self-directed music video, Photo Booth on MacBook in childhood bedroom, about 30 minutes)"
     sources:
       - label: "Wikipedia — Pretty Girl (Clairo song)"
         url: "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
+      - label: "Wikipedia — Bedroom pop (DIY music videos on YouTube, home-recorded lo-fi)"
+        url: "https://en.wikipedia.org/wiki/Bedroom_pop"
       - label: "The FADER — Clairo would like to leave her bedroom now, please"
         url: "https://www.thefader.com/2018/05/24/clairo-diary-001-pretty-girl-4ever-interview"
-      - label: "Hypebeast — New Bedroom Pop Artists You Should Check Out (Clairo, Zack Villere, Rex Orange County)"
-        url: "https://hypebeast.com/2018/10/best-bedroom-pop-music-clairo-zack-villere-rex-orange-county"
-      - label: "Cherwell — The beauty of bedroom pop"
-        url: "https://cherwell.org/2020/07/20/the-beauty-of-bedroom-pop/"
   - name: "Mac DeMarco"
     role: music_video
     notable_works:
-      - "Mac DeMarco — Salad Days (low-budget DIY video style)"
-      - "Mac DeMarco — Chamber of Reflection"
+      - "Salad Days (album, recorded in his Brooklyn apartment on a Fostex A-8)"
     sources:
-      - label: "Medium — Mac DeMarco & Gen Z: Why The Indie Singer Is Conquering a Generation"
-        url: "https://medium.com/@salvadorlopz/mac-demarco-gen-z-why-the-indie-singer-is-conquering-a-generation-ae81f32d2094"
-      - label: "Kore Studios — The Kore Guide to Bedroom Pop"
-        url: "https://www.kore-studios.com/the-kore-guide-to-bedroom-pop/"
-      - label: "Hotel Ugly — What Genre is Mac DeMarco? Guide to His Sound and Style"
-        url: "https://hotelugly.com/news/what-genre-is-mac-demarco-guide-to-his-sound-and-style/"
+      - label: "Wikipedia — Salad Days (Mac DeMarco album)"
+        url: "https://en.wikipedia.org/wiki/Salad_Days_(Mac_DeMarco_album)"
 
 section_arc:
   - role: establishing

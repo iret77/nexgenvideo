@@ -1,33 +1,33 @@
 id: lyric-typography-kinetic
 name: "Lyric Video — kinetic typography"
 description: |
-  Typografie-getriebenes Lyric-Video: Text-Animation auf Beat,
-  Motion-Graphics statt Performance, Kompositions-Logik aus
-  Schrift-Hierarchie statt Kamera-Bewegung. Genre-spezifische
-  Tonalitaeten: Hip-Hop hard-contrast und bold, EDM neon und
-  geometrisch, Indie/Folk hand-drawn und organisch, Rock distress
-  und gritty. Fuer Releases ohne narrative Performance, mit
-  starkem Songtext und Brand-Voice.
+  Typografie-getriebenes Lyric-Video: Text-Animation synchron zum
+  Song, Motion-Graphics statt Performance, Kompositions-Logik aus
+  Schrift-Hierarchie statt Kamera-Bewegung. Fuer Releases ohne
+  narrative Performance, mit starkem Songtext.
 
 references:
-  - name: "Kinetic Typography / Lyric Video tradition"
+  - name: "Lyric video tradition"
     role: music_video
     notable_works:
-      - "Bob Dylan — Subterranean Homesick Blues (1965, proto-kinetic-typography precedent)"
-      - "Genre-spanning lyric videos: hip-hop bold-typography, EDM neon-geometry, indie hand-drawn, rock distressed-fonts"
+      - "Bob Dylan — Subterranean Homesick Blues (1965, cue cards with lyric words, filmed by D. A. Pennebaker for Dont Look Back)"
+      - "Prince — Sign o' the Times (1987, words pulsing alongside abstract geometric shapes)"
+      - "Talking Heads — (Nothing But) Flowers (1988, lyrics superimposed on the band members)"
+      - "George Michael — Praying for Time (1990, lyrics on a black screen)"
     sources:
-      - label: "B2W — Top 25 Kinetic Typography Animation Videos: Uses & Examples"
-        url: "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
-      - label: "PremiumBeat — Create Your Own Lyric Videos with These Kinetic Typography Tutorials"
-        url: "https://www.premiumbeat.com/blog/create-lyric-videos-after-effects/"
-      - label: "Adobe — Make words sing with a lyric video"
-        url: "https://www.adobe.com/creativecloud/video/discover/how-to-make-a-lyric-video.html"
-      - label: "Envato Elements — How to Make a Lyric Video in After Effects (Motion Graphics)"
-        url: "https://elements.envato.com/learn/how-to-make-a-lyric-video-in-after-effects-motion-graphics"
-      - label: "Motion for Music — Lyric Videos creative studio"
-        url: "https://www.motionformusic.com/project_category/lyric-videos/"
-      - label: "Opus — Lyric Video Maker workflow"
-        url: "https://www.opus.pro/agent/workflows/lyric-video-maker"
+      - label: "Wikipedia — Lyric video"
+        url: "https://en.wikipedia.org/wiki/Lyric_video"
+      - label: "Wikipedia — Subterranean Homesick Blues"
+        url: "https://en.wikipedia.org/wiki/Subterranean_Homesick_Blues"
+      - label: "Pérez Rufí, Vivat Academia 144 (2018) — Lyric vídeos: el encuentro del videoclip con el diseño gráfico y la composición tipográfica"
+        url: "https://vivatacademia.net/index.php/vivat/article/view/1071"
+  - name: "Kinetic type in film titles"
+    role: film
+    notable_works:
+      - "Saul Bass — North by Northwest main titles (1959, often credited as the first sequence to use kinetic type)"
+    sources:
+      - label: "Art of the Title — North by Northwest"
+        url: "https://www.artofthetitle.com/title/north-by-northwest"
 
 section_arc:
   - role: establishing
@@ -41,7 +41,7 @@ section_arc:
     notes: "Lyric-Phrasen folgen rhythmisch, Schrift-Hierarchie und Bewegungs-Typ wechseln pro Phrase-Funktion."
   - role: cutaway
     framing_hint: [insert]
-    notes: "Genre-Akzent: Beat-Visualizer (EDM), graffiti-Layer (Hip-Hop), Pinsel-Strich (Indie/Folk), Distressed-Texture (Rock)."
+    notes: "Akzent-Layer: abstrakte Form oder Textur hinter der Schrift."
 
 framing_mix:
   wide_pct: 10
@@ -56,7 +56,7 @@ framing_mix:
   aerial_pct: 0
   basis: inferred
   sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
 
 asl_range:
   min_s: 0.3
@@ -64,7 +64,7 @@ asl_range:
   typical_s: 1.2
   basis: inferred
   sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
 
 camera:
   vocabulary:
@@ -75,28 +75,31 @@ camera:
     - "kinetic letter-reveal"
   basis: inferred
   sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
+    - "https://en.wikipedia.org/wiki/Lyric_video"
 
 lighting:
   description: |
-    flat motion-graphics background — single solid colour or gradient,
-    occasional textured or photographic plate behind type, genre-
-    specific palette (hip-hop: high-contrast bold; EDM: neon-geometric;
-    indie/folk: muted-organic; rock: distressed-monochrome).
+    flat motion-graphics background — single solid colour or black,
+    with an occasional abstract-shape or footage plate behind the
+    type.
   basis: inferred
   sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
+    - "https://en.wikipedia.org/wiki/Lyric_video"
 
 color:
-  description: "A genre-specific palette: bold high contrast, neon geometry, muted organic colour, or distressed monochrome."
+  description: "A flat, limited palette set by the background plate, with high contrast between type and ground."
   basis: inferred
   sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
+    - "https://en.wikipedia.org/wiki/Lyric_video"
 
 craft_signature:
   - technique: "Type-led graphic plate"
-    directive: "Use animated type over a flat solid, gradient, textured, or photographic plate with a genre-specific palette."
+    directive: "Use animated type synchronized to the song over a flat solid, black, or abstract-shape plate."
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+    - "https://vivatacademia.net/index.php/vivat/article/view/1071"
+    - "https://en.wikipedia.org/wiki/Lyric_video"

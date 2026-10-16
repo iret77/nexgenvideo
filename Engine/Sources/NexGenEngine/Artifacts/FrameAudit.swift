@@ -90,7 +90,7 @@ public struct FrameAudit: Codable, Sendable, Equatable {
     /// Binds the audit to the exact file audited.
     public var renderSha256: String
     public var generated: String
-    /// Free identity string, e.g. "orchestrator-claude-opus-4.8", "google-gemini-3-pro".
+    /// Free identity string, e.g. "orchestrator-<model-id>", "<provider>-<model-id>".
     public var auditor: String
     public var checks: [String: AuditCheck]
     public var overall: AuditStatus

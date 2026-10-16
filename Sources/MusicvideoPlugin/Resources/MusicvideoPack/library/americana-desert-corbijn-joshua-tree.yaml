@@ -2,8 +2,9 @@ id: americana-desert-corbijn-joshua-tree
 name: "Americana Desert — Corbijn Joshua-Tree school"
 description: |
   Weite, archetypisch-amerikanische Wuesten-Landschaft als emotionaler
-  Anker. Vorbild Anton Corbijn's U2-Joshua-Tree-Visualbogen (1986)
-  und die seither verbreitete Country-/Indie-Roadmovie-Aesthetik:
+  Anker. Vorbild Anton Corbijns Mojave-Fotoshooting fuer U2s The
+  Joshua Tree (Dezember 1986), die Wuesten-Kurzfilme der Joshua Tree
+  Tour und die seither verbreitete Country-/Indie-Roadmovie-Aesthetik:
   Mojave-Vistas, Death Valley, Twentynine Palms, kleine Motels.
   Performer klein in der Welt, Architektur und Horizont tragen die
   Stimmung. Fuer Country-Rock, Indie-Folk, Americana-Tracks mit
@@ -13,29 +14,26 @@ references:
   - name: "Anton Corbijn (U2 Joshua Tree visual era)"
     role: director
     notable_works:
-      - "U2 — Joshua Tree album visuals (1986-1987, Mojave Desert photography)"
-      - "U2 — Joshua Tree Tour 2018/19 narrative films (with Sebastian Wintero)"
-      - "Joshua Tree photography: Bodie, Harmony Motel Twentynine Palms, Zabriskie Point, Death Valley Junction"
+      - "U2 — The Joshua Tree album photography (December 1986, Mojave Desert and Death Valley: Bodie, Harmony Motel in Twentynine Palms, Zabriskie Point for the cover photograph)"
+      - "U2 — Joshua Tree Tour 2017/2019 (Corbijn's short films of desert landscapes, e.g. a slow tracking shot of a desert highway for Where the Streets Have No Name)"
     sources:
       - label: "Wikipedia — The Joshua Tree (album)"
         url: "https://en.wikipedia.org/wiki/The_Joshua_Tree"
-      - label: "Wikipedia — In God's Country (Joshua Tree)"
-        url: "https://en.wikipedia.org/wiki/In_God's_Country"
+      - label: "Wikipedia — The Joshua Tree Tour 2017"
+        url: "https://en.wikipedia.org/wiki/The_Joshua_Tree_Tour_2017"
       - label: "uDiscoverMusic — The Joshua Tree: How U2 Became Rock's Hottest Ticket"
         url: "https://www.udiscovermusic.com/stories/u2-the-joshua-tree-album/"
       - label: "Albumism — Rediscover U2's 'The Joshua Tree' (1987)"
         url: "https://albumism.com/features/tribute-celebrating-35-years-of-u2-the-joshua-tree"
-      - label: "Sebastian Wintero — U2 Joshua Tree Tour Director Anton Corbijn"
-        url: "https://sebastianw.dk/u2-joshua-tree-tour-films/"
-  - name: "Joshua-Tree location lineage (music-video filming tradition)"
+  - name: "Mojave and Joshua Tree desert music videos"
     role: music_video
     notable_works:
-      - "Joshua Tree National Park as music-video location for desert-vibes shoots (Tom Petty-Feel videos, Pioneertown)"
+      - "Selena — Amor Prohibido (1994, Joshua Tree National Park)"
+      - "Red Hot Chili Peppers — Give It Away (1991, Mojave Desert, black-and-white images)"
+      - "Madonna — Frozen (1998, Cuddeback Lake, Mojave Desert)"
     sources:
-      - label: "The Secret Tours — Every Music Video filmed in Joshua Tree: And at FOUR ACES"
-        url: "https://thesecrettours.com/music-videos-in-joshua-tree-and-at-four-aces/"
-      - label: "The Joshua Tree Earth — Digital Preservation of U2's Iconic Landmark"
-        url: "https://thejoshuatree.earth/"
+      - label: "Alta Journal (Robert Ito, 2022) — desert music videos"
+        url: "https://www.altaonline.com/culture/movies-tv-shows/g42125298/desert-music-videos-robert-ito-pop-culture/"
 
 section_arc:
   - role: establishing
@@ -65,6 +63,7 @@ framing_mix:
   basis: inferred
   sources:
     - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
+    - "https://albumism.com/features/tribute-celebrating-35-years-of-u2-the-joshua-tree"
 
 asl_range:
   min_s: 3.0
@@ -84,18 +83,19 @@ camera:
   basis: inferred
   sources:
     - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
+    - "https://en.wikipedia.org/wiki/The_Joshua_Tree_Tour_2017"
 
 lighting:
   description: |
     natural desert daylight, golden-hour heavy bias, hard shadows
-    with deep contrast, deep blue sky, occasional black-and-white or
-    sepia grade in Corbijn tradition, lens flare on direct sun.
+    with deep contrast, deep blue sky, occasional black-and-white
+    grade, lens flare on direct sun.
   basis: inferred
   sources:
     - "https://en.wikipedia.org/wiki/The_Joshua_Tree"
 
 color:
-  description: "Deep blue sky with occasional black-and-white or sepia grading."
+  description: "Deep blue sky with occasional black-and-white grading."
   basis: inferred
   sources:
     - "https://en.wikipedia.org/wiki/The_Joshua_Tree"

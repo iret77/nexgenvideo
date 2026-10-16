@@ -636,8 +636,8 @@ struct GenerationBatchTests {
         try JSONDecoder().decode(GenerationBatchJournal.self, from: legacyData).validate(batch: original)
     }
 
-    @Test func explicitUnknownCostApprovalReservesUnknownMoneyWithoutDisablingFutureBudgetChecks() async throws {
-        let (root, editor, original) = try await fixture(stop: 1)
+    @Test func unknownCostReservationsNeverLockLaterWorkEvenAboveAStoredStop() async throws {
+        let (root, editor, original) = try await fixture(stop: 0.6)
         defer { cleanup(root) }
         let batch = try await unpricedBatch(original, editor: editor)
         _ = try await GenerationBatchStore.approve(batch, editor: editor, approval: .acceptUnknownPrices)
@@ -666,22 +666,28 @@ struct GenerationBatchTests {
                 requiresVerifiedCeiling: true, batchItem: sibling,
                 quoteLoader: { _, _ in GenerationPackageFixture.money(0.50) })
         }
-        await #expect(throws: (any Error).self) {
-            try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
-                target: known.package.payload.target, editor: editor, approvedPackage: known.package,
-                quoteLoader: { _, _ in GenerationPackageFixture.money() })
-        }
-        #expect(editor.generationLog.spendEvents.count == 2)
+        let laterUnknown = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            quoteLoader: { _, _ in throw GenerationBudgetError.blocked("Pricing unavailable") })
+        #expect(laterUnknown.estimate == nil)
+        _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+            target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        #expect(editor.generationLog.spendEvents.count == 4)
+        _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+            target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        #expect(editor.generationLog.spendEvents.count == 5)
         let dataRoot = try #require(editor.workingRoot).appendingPathComponent("pipeline")
         let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
-        #expect(brief.budgetStopEur == 1)
+        #expect(brief.budgetStopEur == 0.6)
         await #expect(throws: CancellationError.self) {
             try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
                 target: item.package.payload.target, editor: editor, approvedPackage: item.package,
                 requiresVerifiedCeiling: true, batchItem: authorization,
                 quoteLoader: { _, _ in throw CancellationError() })
         }
-        #expect(editor.generationLog.spendEvents.count == 2)
+        #expect(editor.generationLog.spendEvents.count == 5)
         let home = try #require(editor.workingRoot)
         let current = try GenerationBatchStore.load(id: batch.id, home: home)
         let transaction = try #require(reserved.transactionId)
@@ -700,6 +706,91 @@ struct GenerationBatchTests {
                     placeholders: outputEntries, batch: batch)
             }
         }
+    }
+
+    @Test func aReviewedRunWhosePriceBecomesUnavailableStillRuns() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: batchItem,
+            quoteLoader: { _, _ in throw GenerationBudgetError.blocked("Pricing outage") })
+        #expect(reserved.transactionId != nil)
+        #expect(reserved.estimate == nil)
+        #expect(editor.generationLog.spendEvents.first?.money == nil)
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+                target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+                requiresVerifiedCeiling: true, batchItem: batchItem,
+                quoteLoader: { _, _ in GenerationPackageFixture.money(0.50) })
+        }
+        #expect(editor.generationLog.spendEvents.count == 1)
+    }
+
+    @Test func actualChargeAboveTheReviewedCeilingIsRecordedAndReloads() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let ceiling = try #require(item.package.payload.estimate)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: batchItem, quoteLoader: { _, _ in ceiling })
+        let transaction = try #require(reserved.transactionId)
+        let reservation = try #require(editor.generationLog.spendEvents.first(where: { $0.transactionId == transaction }))
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+        }
+        _ = try GenerationBatchStore.update(submitting, editor: editor) {
+            try $0.recordProviderRequest(itemID: item.id, transactionID: transaction, requestID: "provider-job", resumable: true)
+        }
+        let authorization = GenerationAuthorization(transactionId: transaction, target: reserved.target,
+            estimate: reserved.estimate, projectMutationScope: reserved.projectMutationScope,
+            generationPackage: item.package, batchItem: batchItem)
+        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+            providerRequestId: "provider-job", providerRequestResumable: true, money: ceiling)
+
+        let authority = try GenerationExecutionAuthorityStore.live()
+        let recordURL = authority.root.appendingPathComponent(authority.hostID, isDirectory: true)
+            .appendingPathComponent(batch.payload.projectKey, isDirectory: true)
+            .appendingPathComponent(batch.id, isDirectory: true)
+            .appendingPathComponent("record.json")
+        let priorBytes = try Data(contentsOf: recordURL)
+        let prior = try authority.load(projectKey: batch.payload.projectKey, batchID: batch.id)
+        #expect(try GenerationPackageV1.canonicalData(prior) == priorBytes)
+
+        let drifted = GenerationMoney(nativeAmount: 0.44, nativeCurrency: "USD", eurAmount: 0.40,
+            eurPerNativeUnit: 0.40 / 0.44, exchangeRateDate: "2026-10-16",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=provider-job",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
+        let target = item.package.payload.target
+        for kind in [GenerationSpendEvent.Kind.reserved, .submitted] {
+            let overCeiling = GenerationSpendEvent(transactionId: transaction, kind: kind, model: target.modelId,
+                provider: target.provider, transport: target.transport, endpoint: target.endpoint,
+                providerRequestId: kind == .submitted ? "provider-job" : nil, money: drifted)
+            #expect(throws: (any Error).self) { try authority.recordSpendEvent(overCeiling, authorization: batchItem) }
+        }
+        try editor.recordSpendEvent(authorization: authorization, kind: .charged, money: drifted)
+
+        let charge = try #require(editor.generationLog.spendEvents.last)
+        #expect(charge.kind == .charged)
+        #expect(charge.money == drifted)
+        let reloaded = try authority.load(projectKey: batch.payload.projectKey, batchID: batch.id)
+        #expect(reloaded.spendEvents.last == charge)
+        #expect(Array(reloaded.spendEvents.prefix(prior.spendEvents.count)) == prior.spendEvents)
+        #expect(try GenerationPackageV1.canonicalData(reloaded) == Data(contentsOf: recordURL))
+        let home = try #require(editor.workingRoot)
+        let persisted = try JSONDecoder().decode(GenerationLog.self,
+            from: Data(contentsOf: home.appendingPathComponent(Project.generationLogFilename)))
+        #expect(persisted.spendEvents.contains(charge))
+        #expect(try GenerationBudgetGuard.spendSnapshot(log: persisted, generatedInputs: []).verifiedEur == drifted.eurAmount)
+        let snapshot = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(snapshot.authoritySpendEvents.contains(charge))
     }
 
     @Test func overrideDoesNotReuseCanceledExecutionOrAChangedReview() async throws {
@@ -1068,6 +1159,89 @@ struct GenerationBatchTests {
             "generation-packages/\(item.package.id).json").path))
         try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
         #expect(editor.generationLog.spendEvents.contains(reservation))
+    }
+
+    @Test func aCompletedBatchItemProvesItsRunFinished() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let authority = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, authority: authority)
+        let item = batch.payload.items[0]
+        let entries = placeholders(item, transaction: "finished-transaction")
+        _ = try GenerationBatchStore.update(approved, editor: editor, authority: authority) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: "finished-transaction", placeholders: entries, batch: batch)
+            try $0.recordProviderRequest(itemID: item.id, transactionID: "finished-transaction",
+                requestID: "provider-job", resumable: true)
+            try $0.finish(itemID: item.id, outputAssetIDs: entries.map(\.id), batch: batch)
+        }
+        let home = try #require(editor.workingRoot)
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
+    }
+
+    @Test func phaseApprovedBatchesGetTheSameManifestAndAuthorityAsManualApproval() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        editor.generationBatchCoordinator.startsApprovedBatches = false
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            Gates(project: "demo", gates: [
+                "brief": Gate(approved: true, approvedAt: "2026-10-16T08:00:00Z"),
+                "frames": Gate(),
+            ]),
+            to: PipelineLayout.gatesFile
+        )
+        let unpriced = try await unpricedBatch(original, editor: editor)
+        func framesBatch(_ source: GenerationBatch) throws -> GenerationBatch {
+            try GenerationBatch(payload: .init(nonce: UUID(), projectKey: source.payload.projectKey,
+                phase: "frames", items: source.payload.items))
+        }
+        func recoveries(_ batch: GenerationBatch) -> [String: GenerationBatchRecovery] {
+            Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+                (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+            })
+        }
+        let home = try #require(editor.workingRoot)
+        let authority = try GenerationExecutionAuthorityStore.live()
+
+        for source in [original, unpriced] {
+            let manual = try framesBatch(source)
+            try editor.generationBatchCoordinator.present(manual, recoveries: recoveries(manual))
+            await editor.generationBatchCoordinator.approve(editor: editor, expectedBatchID: manual.id,
+                approval: manual.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
+            #expect(editor.generationBatchCoordinator.pending == nil)
+
+            _ = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+            #expect(!editor.agentService.isComposerBlocked)
+            let automatic = try framesBatch(source)
+            let result = try editor.agentService.presentGenerationBatch(automatic, recoveries: recoveries(automatic),
+                origin: .direct, editor: editor)
+            #expect(result.turnDisposition == .suspendTurn)
+            #expect(editor.generationBatchCoordinator.autoApprovingPhase == "frames")
+            for _ in 0..<500 where editor.generationBatchCoordinator.pending != nil {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            #expect(editor.generationBatchCoordinator.pending == nil)
+            #expect(editor.phaseSpendApproval.current?.runs.count == 1)
+
+            let manualRecord = try authority.load(projectKey: manual.payload.projectKey, batchID: manual.id)
+            let automaticRecord = try authority.load(projectKey: automatic.payload.projectKey, batchID: automatic.id)
+            #expect(manualRecord.batch == manual)
+            #expect(automaticRecord.batch == automatic)
+            #expect(automaticRecord.schema == manualRecord.schema)
+            #expect(automaticRecord.retainedFiles == manualRecord.retainedFiles)
+            #expect(automaticRecord.spendEvents.isEmpty && manualRecord.spendEvents.isEmpty)
+            #expect(automaticRecord.journal.pricingOverrideItemIDs == manualRecord.journal.pricingOverrideItemIDs)
+            #expect(automaticRecord.journal.revision == manualRecord.journal.revision)
+            #expect(automaticRecord.journal.executions.map(\.state) == manualRecord.journal.executions.map(\.state))
+            #expect(try GenerationBatchStore.load(id: automatic.id, home: home).authorityAvailable)
+            editor.phaseSpendApproval.withdraw(editor: editor)
+        }
     }
 
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {

@@ -22,8 +22,6 @@ references:
         url: "https://en.wikipedia.org/wiki/Hype_Williams"
       - label: "Wikipedia — Hype Williams videography"
         url: "https://en.wikipedia.org/wiki/Hype_Williams_videography"
-      - label: "Hiphophero — How director Hype Williams changed hip-hop visuals forever"
-        url: "https://hiphophero.com/how-director-hype-williams-changed-hip-hop-visuals-forever/"
       - label: "Billboard — The 20 Best Hype Williams-Directed Music Videos"
         url: "https://www.billboard.com/music/rb-hip-hop/the-20-best-hype-williams-directed-music-videos-8528219/"
       - label: "Raptology — Hype Williams: The Man Who Made Hip-Hop Look Larger Than Life (2026)"
@@ -39,9 +37,12 @@ references:
   - name: "Cole Bennett (Lyrical Lemonade)"
     role: director
     notable_works:
-      - "J. Cole — ATM"
-      - "Baby Keem — Orange Soda"
+      - "Ski Mask the Slump God — Catch Me Outside (2017)"
+      - "Juice WRLD — Lucid Dreams (2018)"
+      - "Jack Harlow — What's Poppin (2020)"
     sources:
+      - label: "Wikipedia — Cole Bennett"
+        url: "https://en.wikipedia.org/wiki/Cole_Bennett"
       - label: "Raptology — Hype Williams legacy in modern hip-hop visual language"
         url: "https://raptology.com/2026/04/23/hype-williams-the-man-who-made-hip-hop-look-larger-than-life/"
 

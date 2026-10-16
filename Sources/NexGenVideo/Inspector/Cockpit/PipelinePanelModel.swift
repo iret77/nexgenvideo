@@ -5,18 +5,32 @@ import Foundation
 // Python snake_case name plus the native host's authoritative money-journal fields. Decoding remains
 // compatible with project state written before those fields existed.
 
+struct ProviderCreditData: Codable, Sendable, Equatable {
+    var provider: String
+    var providerName: String
+    var unit: String
+    var amount: Double
+    var runs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case provider, unit, amount, runs
+        case providerName = "provider_name"
+    }
+}
+
 struct ProjectStateData: Codable, Sendable, Equatable {
     var project: String
     var mode: String
     var budgetEur: Double
-    var budgetStopEur: Double?
     var budgetSpentEur: Double
     var budgetRemainingEur: Double?
-    var hardStopRemainingEur: Double?
     var spendComplete: Bool
     var activeReservations: Int
     var unpricedTransactions: Int
     var legacyGenerations: Int
+    var unknownCostRuns: Int
+    var inFlightRuns: Int
+    var providerCredits: [ProviderCreditData]
     var phases: [ProjectPhase]
     var nextPhase: String?
     var confirmedIdentityRecovery: ConfirmedIdentityRecoveryData?
@@ -24,14 +38,15 @@ struct ProjectStateData: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case project, mode, phases
         case budgetEur = "budget_eur"
-        case budgetStopEur = "budget_stop_eur"
         case budgetSpentEur = "budget_spent_eur"
         case budgetRemainingEur = "budget_remaining_eur"
-        case hardStopRemainingEur = "hard_stop_remaining_eur"
         case spendComplete = "spend_complete"
         case activeReservations = "active_reservations"
         case unpricedTransactions = "unpriced_transactions"
         case legacyGenerations = "legacy_generations"
+        case unknownCostRuns = "unknown_cost_runs"
+        case inFlightRuns = "in_flight_runs"
+        case providerCredits = "provider_credits"
         case nextPhase = "next_phase"
         case confirmedIdentityRecovery = "confirmed_identity_recovery"
     }
@@ -41,14 +56,15 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         project = try c.decodeIfPresent(String.self, forKey: .project) ?? ""
         mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? ""
         budgetEur = try c.decodeIfPresent(Double.self, forKey: .budgetEur) ?? 0
-        budgetStopEur = try c.decodeIfPresent(Double.self, forKey: .budgetStopEur)
         budgetSpentEur = try c.decodeIfPresent(Double.self, forKey: .budgetSpentEur) ?? 0
         budgetRemainingEur = try c.decodeIfPresent(Double.self, forKey: .budgetRemainingEur)
-        hardStopRemainingEur = try c.decodeIfPresent(Double.self, forKey: .hardStopRemainingEur)
         spendComplete = try c.decodeIfPresent(Bool.self, forKey: .spendComplete) ?? true
         activeReservations = try c.decodeIfPresent(Int.self, forKey: .activeReservations) ?? 0
         unpricedTransactions = try c.decodeIfPresent(Int.self, forKey: .unpricedTransactions) ?? 0
         legacyGenerations = try c.decodeIfPresent(Int.self, forKey: .legacyGenerations) ?? 0
+        unknownCostRuns = try c.decodeIfPresent(Int.self, forKey: .unknownCostRuns) ?? unpricedTransactions
+        inFlightRuns = try c.decodeIfPresent(Int.self, forKey: .inFlightRuns) ?? activeReservations
+        providerCredits = try c.decodeIfPresent([ProviderCreditData].self, forKey: .providerCredits) ?? []
         phases = try c.decodeIfPresent([ProjectPhase].self, forKey: .phases) ?? []
         nextPhase = try c.decodeIfPresent(String.self, forKey: .nextPhase)
         confirmedIdentityRecovery = try c.decodeIfPresent(
@@ -77,12 +93,9 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         return Double(currentApprovalCount) / Double(phases.count)
     }
 
-    /// True when the budget is exhausted or spending has crossed into the last 10% of the budget.
-    var budgetWarning: Bool {
-        guard spendComplete else { return true }
-        guard budgetEur > 0 else { return budgetSpentEur > 0 }
-        guard let budgetRemainingEur else { return true }
-        return budgetRemainingEur <= 0 || budgetRemainingEur < budgetEur * 0.1
+    /// Billed spend above the planning figure; informational, the budget never limits work.
+    var spendExceedsPlanningBudget: Bool {
+        budgetEur > 0 && budgetSpentEur > budgetEur
     }
 
     /// Spent as a fraction of budget, clamped to 0…1 for a bar fill.
