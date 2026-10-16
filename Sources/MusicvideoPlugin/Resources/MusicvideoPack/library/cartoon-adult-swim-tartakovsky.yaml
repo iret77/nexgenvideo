@@ -1,12 +1,12 @@
 id: cartoon-adult-swim-tartakovsky
-name: "Cartoon Adult-Swim — Tartakovsky/Roiland school"
+name: "Cartoon Adult-Swim — Tartakovsky school"
 description: |
-  Westliche TV-Animation in der Adult-Swim-Tradition: limitierte
-  2D-Cel-Animation, klare Linien, stark stilisierte Charakter-Designs,
-  irrwitziger oder dunkler Humor, Action-Sequenzen mit "Tartakovsky-
-  Composition" (theatralische Posen, klare Silhouetten). Empfohlen
-  fuer ironische / surreal-komische / dunkel-humoristische Tracks mit
-  cartoonigem Look.
+  Westliche TV-Animation in der Tradition von Genndy Tartakovsky
+  (Samurai Jack, Primal): limitierte 2D-Animation mit langen
+  Haltepunkten und abrupten Pausen, Action, die wie eine Musiksequenz
+  getaktet ist, klare Silhouetten, Kamerapositionen, die die Aktion
+  lesbar halten, und kraeftige, nicht-naturalistische Farben.
+  Empfohlen fuer Tracks mit cartoonigem, grafisch reduziertem Look.
 
 references:
   - name: "Genndy Tartakovsky"
@@ -16,27 +16,19 @@ references:
       - "Genndy Tartakovsky's Primal (2019-)"
       - "Star Wars: Clone Wars (2003-2005)"
     sources:
-      - label: "Variety — Genndy Tartakovsky Teases New Heist Series in Adult Swim Panel (2024)"
-        url: "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
-      - label: "Warner Bros Discovery — Genndy Tartakovsky's Primal Returns to Adult Swim"
-        url: "https://press.wbd.com/us/media-release/epic-saga-continues-emmyr-award-winning-series-genndy-tartakovskys-primal-returns"
-      - label: "Warner Bros Discovery — Adult Swim Annecy International Animation Film Festival"
-        url: "https://press.wbd.com/us/media-release/adult-swim-reveals-new-and-returning-series-and-forthcoming-special-featuring-top"
-  - name: "Adult Swim animated series tradition"
-    role: music_video
-    notable_works:
-      - "Rick and Morty (Justin Roiland, Dan Harmon)"
-      - "Rick and Morty: The Anime (Takashi Sano, 2024)"
-    sources:
-      - label: "Warner Bros Discovery — Rick and Morty Season 8 (2025)"
-        url: "https://press.wbd.com/us/media-release/adult-swim-0/season-eight-adult-swims-global-hit-series-rick-and-morty-arrives-may-25"
-      - label: "Warner Bros Discovery — Rick and Morty: The Anime Premiere"
-        url: "https://press.wbd.com/us/media-release/adult-swim-0/all-new-series-rick-and-morty-anime-premieres-august-15-adult-swim"
+      - label: "Rotten Tomatoes Editorial — Primal creator Genndy Tartakovsky revolutionized animated action"
+        url: "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
+      - label: "Animation Obsessive — The Visual World of 'Samurai Jack'"
+        url: "https://animationobsessive.substack.com/p/the-visual-world-of-samurai-jack"
+      - label: "Animation Obsessive — How They Painted 'Samurai Jack'"
+        url: "https://animationobsessive.substack.com/p/how-they-painted-samurai-jack"
+      - label: "Museum of the Moving Image, Sloan Science & Film — Genndy Tartakovsky's Primal: Art Director Scott Wills"
+        url: "https://scienceandfilm.org/articles/3346/genndy-tartakovskys-primal-art-director-scott-wills"
 
 section_arc:
   - role: establishing
     framing_hint: [wide, full]
-    notes: "Theatralisch komponiertes Establishing — klare Silhouette, oft minimalistisches BG."
+    notes: "Klar komponiertes Establishing — klare Silhouette, oft minimalistisches BG."
   - role: performance
     framing_hint: [ms, mcu]
     notes: "Charakter in Mittel-Distanz, Mimik klar lesbar."
@@ -60,7 +52,7 @@ framing_mix:
   aerial_pct: 0
   basis: inferred
   sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
 
 asl_range:
   min_s: 1.0
@@ -68,39 +60,42 @@ asl_range:
   typical_s: 2.5
   basis: inferred
   sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
 
 camera:
   vocabulary:
-    - "static hold with theatrical staging"
-    - "snap zoom on reaction"
-    - "lateral pan revealing gag"
-    - "match-cut on action"
-    - "freeze-frame punctuation"
+    - "static hold, camera placed where the action reads clearest"
+    - "long hold between action beats"
+    - "abrupt pause after a quick move"
+    - "multi-panel composition for layered action"
   basis: inferred
   sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
+    - "https://animationobsessive.substack.com/p/the-visual-world-of-samurai-jack"
 
 lighting:
   description: |
-    flat cel-lit with bold outlines and limited colour palette, single
-    colour-keyed background per scene, hard cast shadows for dramatic
-    beats, deliberate use of black silhouette against bright colour
-    fields (Tartakovsky signature).
+    characters either light against a dark ground or dark against a
+    light ground, sometimes reduced to simple silhouettes against a
+    single-colour background.
   basis: inferred
   sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
+    - "https://animationobsessive.substack.com/p/how-they-painted-samurai-jack"
 
 color:
-  description: "A limited palette, one colour-keyed background, and black silhouettes against bright fields."
+  description: "Bold, non-naturalistic colour (no green grass, no blue sky), with strong light-against-dark separation between character and ground."
   basis: inferred
   sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://animationobsessive.substack.com/p/the-visual-world-of-samurai-jack"
+    - "https://scienceandfilm.org/articles/3346/genndy-tartakovskys-primal-art-director-scott-wills"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
 
 craft_signature:
   - technique: "Graphic silhouette staging"
-    directive: "Stage black silhouettes against bright colour fields with hard cast shadows and a limited palette."
+    directive: "Stage characters light against dark or dark against light, as simple silhouettes against a single-colour background, in bold non-naturalistic colour."
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+    - "https://editorial.rottentomatoes.com/article/primal-creator-genndy-tartakovsky-revolutionized-animated-action"
+    - "https://scienceandfilm.org/articles/3346/genndy-tartakovskys-primal-art-director-scott-wills"
