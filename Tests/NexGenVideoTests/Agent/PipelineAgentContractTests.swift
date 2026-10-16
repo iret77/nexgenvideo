@@ -180,6 +180,21 @@ struct PipelineAgentContractTests {
         #expect(!document.contains("redo it after K7"))
     }
 
+    @Test("Frames and Render stop only for known spend above the budget stop")
+    func unknownCostNeverStopsFramesOrRender() throws {
+        let frame = try PackKnowledge.phaseDoc(name: "frame")
+        let render = try PackKnowledge.phaseDoc(name: "render")
+        for document in [frame, render] {
+            #expect(document.contains("`over_budget` is true only when known spend exceeds `budget_stop_eur`."))
+            #expect(document.contains("(`unpriced_transactions` + `legacy_generations`)"))
+        }
+        #expect(frame.contains("Unknown costs never stop the phase"))
+        #expect(!frame.contains("If `spend_complete=false`, stop as well"))
+        #expect(render.contains("Unknown costs never abort the loop"))
+        #expect(!render.contains("Abort in the same way when"))
+        #expect(!render.contains("spend_complete=false):** abort"))
+    }
+
     @Test("Bible instructions keep approved images as identity truth")
     func bibleDoesNotRequestRecognitionTrait() throws {
         let document = try PackKnowledge.phaseDoc(name: "bible")
