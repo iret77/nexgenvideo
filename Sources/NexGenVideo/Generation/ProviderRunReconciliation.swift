@@ -88,17 +88,18 @@ extension GenerationService {
         if let last = lastReconciliation[home], now.timeIntervalSince(last) < reconciliation.minimumInterval {
             return 0
         }
+        guard let scope = try? GenerationProjectMutationScope(projectHome: home, editor: editor) else { return 0 }
         lastReconciliation[home] = now
         reconcilingHomes.insert(home)
         defer { reconcilingHomes.remove(home) }
         let skipped = ActiveSpendTransactions.current.union(GenerationBatchStore.batchTransactionIDs(home: home))
         var settled = 0
         for run in Self.reconcilableRuns(in: editor.generationLog, excluding: skipped) {
-            guard editor.workingRoot == home else { break }
+            guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
             guard let status = await providerStatus(of: run), status != .running else { continue }
-            guard editor.workingRoot == home,
-                  !ActiveSpendTransactions.current.contains(run.transactionID) else { continue }
-            if await settleReconciled(run, status: status, editor: editor) { settled += 1 }
+            guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
+            guard !ActiveSpendTransactions.current.contains(run.transactionID) else { continue }
+            if await settleReconciled(run, status: status, scope: scope, editor: editor) { settled += 1 }
         }
         return settled
     }
@@ -136,7 +137,12 @@ extension GenerationService {
         }
     }
 
-    private func settleReconciled(_ run: ReconcilableRun, status: ProviderRunStatus, editor: EditorViewModel) async -> Bool {
+    private func settleReconciled(
+        _ run: ReconcilableRun,
+        status: ProviderRunStatus,
+        scope: GenerationProjectMutationScope,
+        editor: EditorViewModel
+    ) async -> Bool {
         let event = run.reservation
         let binding = event.transport == .api ? nil : ProviderBinding(
             provider: event.provider, transport: event.transport, kind: .generation,
@@ -145,7 +151,8 @@ extension GenerationService {
             transactionId: run.transactionID,
             target: ResolvedGenerationTarget(modelId: event.model, provider: event.provider,
                 endpoint: event.endpoint, binding: binding),
-            estimate: event.money
+            estimate: event.money,
+            projectMutationScope: scope
         )
         switch status {
         case .running:
@@ -155,7 +162,9 @@ extension GenerationService {
             if event.provider == .fal, event.transport == .api, let key = reconciliation.providerKey(.fal) {
                 billed = await reconciliation.falCharge(run.requestID, event.endpoint, key)
             }
-            guard Self.isOpen(run.transactionID, in: editor.generationLog),
+            // The bill lookup awaited; the write must still target the project the query started in.
+            guard (try? scope.requireCurrent(editor: editor)) != nil,
+                  Self.isOpen(run.transactionID, in: editor.generationLog),
                   !ActiveSpendTransactions.current.contains(run.transactionID) else { return false }
             markFinished(authorization: authorization, billed: billed, providerCost: cost,
                 note: "The provider confirmed the run finished; its output never reached NexGenVideo.", editor: editor)

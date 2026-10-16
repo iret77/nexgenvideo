@@ -375,4 +375,65 @@ struct ProviderStatusTests {
         #expect(!GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
             provider: .higgsfield, jobID: "job-failed")))
     }
+
+    private final class GatedCharge: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        var isWaiting: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return continuation != nil
+        }
+
+        func wait() async {
+            await withCheckedContinuation { continuation in park(continuation) }
+        }
+
+        func release() {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            lock.unlock()
+            continuation?.resume()
+        }
+
+        private func park(_ continuation: CheckedContinuation<Void, Never>) {
+            lock.lock()
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    @MainActor
+    @Test func reconciliationNeverWritesIntoAProjectThatReplacedTheQueriedOne() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-other-\(UUID().uuidString).ngv")
+        try Fixtures.prepareProjectPackage(at: other)
+        defer {
+            cleanup(root)
+            cleanup(other)
+        }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let gate = GatedCharge()
+        editor.generationService.reconciliation = reconciliation(session, falCharge: { _, _, _ in
+            await gate.wait()
+            return nil
+        })
+        let events = openRun("fal-shared", .fal, endpoint: "fal-ai/veo3", request: "fal-shared-req", resumable: true)
+        editor.generationLog.spendEvents = events
+        Fixture.stub("GET", "/requests/fal-shared-req/status", .response(status: 200, body: #"{"status":"COMPLETED"}"#))
+
+        let reconciling = Task { await editor.generationService.reconcileOpenRuns(editor: editor) }
+        for _ in 0..<400 where !gate.isWaiting { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(gate.isWaiting)
+        editor.projectURL = other
+        editor.generationLog.spendEvents = events
+        gate.release()
+
+        #expect(await reconciling.value == 0)
+        #expect(closing("fal-shared", in: editor) == nil)
+    }
 }
