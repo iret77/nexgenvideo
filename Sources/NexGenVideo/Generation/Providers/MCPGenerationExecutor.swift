@@ -250,14 +250,7 @@ enum MCPGenerationExecutor {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return nil }
         let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
         let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
-        // Settling needs a status the provider stated; inferred success from media alone is not enough.
-        guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else {
-            throw GenerationBackendError.transport("The provider MCP returned no explicit job status.")
-        }
-        switch MCPGenerationLifecycle.status(
-            from: payloads,
-            allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(statusTool.outputSchema)
-        ) {
+        switch jobStatus(from: payloads, statusTool: statusTool) {
         case .pending:
             return .running
         case .succeeded:
@@ -267,6 +260,18 @@ enum MCPGenerationExecutor {
         case .unknown(let value):
             throw GenerationBackendError.transport("The provider MCP returned an unsupported job status: \(value ?? "<missing>").")
         }
+    }
+
+    /// An accepted job's status poll: success inferred from media alone, or a null status, is unknown.
+    static func jobStatus(
+        from payloads: [String],
+        statusTool: MCPProviderClient.DiscoveredTool
+    ) -> MCPGenerationLifecycle.Status {
+        guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else { return .unknown(nil) }
+        return MCPGenerationLifecycle.status(
+            from: payloads,
+            allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(statusTool.outputSchema)
+        )
     }
 
     private static func poll(
@@ -294,12 +299,7 @@ enum MCPGenerationExecutor {
                 sync: false
             )
             let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
-            switch MCPGenerationLifecycle.status(
-                from: payloads,
-                allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(
-                    statusTool.outputSchema
-                )
-            ) {
+            switch jobStatus(from: payloads, statusTool: statusTool) {
             case .pending:
                 unknownStatuses = 0
                 ProviderStatusSignal.confirmRunning()

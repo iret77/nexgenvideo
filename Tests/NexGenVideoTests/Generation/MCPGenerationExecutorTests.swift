@@ -204,6 +204,43 @@ struct MCPGenerationExecutorTests {
         _ = try? await task.value
     }
 
+    @Test func aNullStatusWithMediaNeverEndsAnAcceptedJobsPolling() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let nullStatus = #"{"job_id":"null-status","status":null,"result":{"url":"https://output.invalid/early.png"}}"#
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"null-status","status":"queued"}"#]],
+            "job_status": [[nullStatus], [nullStatus], [nullStatus]],
+        ])
+
+        if case .unknown = MCPGenerationExecutor.jobStatus(from: [nullStatus], statusTool: status) {
+        } else {
+            Issue.record("A null status with media must read as unknown")
+        }
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                maxPollAttempts: 5,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected polling to refuse a job without an explicit status")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.message.contains("unsupported job status"))
+            #expect(!error.providerRunEnded)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await client.calledTools() == ["generate_image", "job_status", "job_status", "job_status"])
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
