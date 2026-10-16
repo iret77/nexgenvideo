@@ -95,6 +95,50 @@ struct AnthropicModelCatalogTests {
         #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels() == cached)
     }
 
+    @Test("a list fetched with the previous key never becomes current after a key change")
+    func keyChangeInvalidatesInFlightDiscovery() async throws {
+        let defaults = F.isolatedDefaults()
+        let cached = F.models([F.sonnet46, F.opus55])
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(cached)
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let transport = GatedModelsTransport()
+        let keychain = GatedKeyLoader()
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: transport.transport,
+            apiKeyLoader: { await keychain.load() }
+        )
+
+        let old = Task { await service.refreshModelCatalog(apiKey: "sk-old") }
+        await waitUntil { transport.isWaiting("sk-old") }
+        service.reloadAPIKey()
+        await waitUntil { keychain.isWaiting }
+        transport.respond("sk-old", with: .success(try F.page([F.sonnet55, F.opus55], hasMore: false)))
+        await old.value
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+
+        keychain.release("sk-new")
+        await waitUntil { transport.isWaiting("sk-new") }
+        transport.respond("sk-new", with: .failure(URLError(.notConnectedToInternet)))
+        await waitUntil { !service.isCheckingAPIKey && !service.isDiscoveringModels && service.modelDiscoveryError != nil }
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(defaults.string(forKey: "agentModel") == "claude-opus-4-8")
+        #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels() == cached)
+    }
+
+    private func waitUntil(_ predicate: () -> Bool) async {
+        for _ in 0..<500 {
+            if predicate() { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("Timed out waiting for model discovery")
+    }
+
     @Test("parsing reads line, release date, output limit, and capability leaves")
     func parsing() throws {
         let sonnet = F.info(F.sonnet55)
@@ -295,5 +339,73 @@ struct AnthropicModelCatalogTests {
         #expect(unknown["output_config"] == nil)
         #expect(unknown["max_tokens"] as? Int == AnthropicRequestBody.unknownModelMaxTokens)
         #expect(unknown["tool_choice"] == nil)
+    }
+}
+
+private final class GatedModelsTransport: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiting: [String: CheckedContinuation<(Data, URLResponse), Error>] = [:]
+
+    var transport: AnthropicModelsAPI.Transport {
+        { [self] request in
+            let key = request.value(forHTTPHeaderField: "x-api-key") ?? ""
+            return try await withCheckedThrowingContinuation { continuation in
+                self.park(continuation, key: key)
+            }
+        }
+    }
+
+    func isWaiting(_ key: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiting[key] != nil
+    }
+
+    func respond(_ key: String, with result: Result<Data, Error>) {
+        lock.lock()
+        let continuation = waiting.removeValue(forKey: key)
+        lock.unlock()
+        let response = HTTPURLResponse(url: AnthropicModelsAPI.endpoint, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        switch result {
+        case .success(let data): continuation?.resume(returning: (data, response))
+        case .failure(let error): continuation?.resume(throwing: error)
+        }
+    }
+
+    private func park(_ continuation: CheckedContinuation<(Data, URLResponse), Error>, key: String) {
+        lock.lock()
+        waiting[key] = continuation
+        lock.unlock()
+    }
+}
+
+private final class GatedKeyLoader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String?, Never>?
+
+    var isWaiting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuation != nil
+    }
+
+    func load() async -> String? {
+        await withCheckedContinuation { continuation in
+            park(continuation)
+        }
+    }
+
+    func release(_ key: String?) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: key)
+    }
+
+    private func park(_ continuation: CheckedContinuation<String?, Never>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
     }
 }

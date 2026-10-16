@@ -19,6 +19,7 @@ final class AgentService {
     private let modelCatalogStore: AnthropicModelCatalogStore
     private let modelDiscoveryTransport: AnthropicModelsAPI.Transport
     private var modelDiscoveryGeneration = 0
+    private let apiKeyLoader: @Sendable () async -> String?
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -35,12 +36,14 @@ final class AgentService {
         runtimeReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
         runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil,
         modelCatalogDefaults: UserDefaults = .standard,
-        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport
+        modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport,
+        apiKeyLoader: @escaping @Sendable () async -> String? = { AnthropicKeychain.load() }
     ) {
         self.backend = backend
         let store = AnthropicModelCatalogStore(defaults: modelCatalogDefaults)
         self.modelCatalogStore = store
         self.modelDiscoveryTransport = modelDiscoveryTransport
+        self.apiKeyLoader = apiKeyLoader
         self.availableModels = store.cachedModels()
         self.model = store.storedModelID
         self.modelFamily = store.storedFamily
@@ -95,21 +98,30 @@ final class AgentService {
         }
     }
 
-    private func reloadAPIKey() {
+    func reloadAPIKey() {
         apiKeyGeneration &+= 1
         let generation = apiKeyGeneration
         isCheckingAPIKey = true
         modelListIsCurrent = false
+        invalidateModelDiscovery()
+        let loader = apiKeyLoader
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
-                AnthropicKeychain.load() ?? ""
+                await loader() ?? ""
             }.value
             guard let self, self.apiKeyGeneration == generation else { return }
             self.apiKey = key
             self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
+            self.invalidateModelDiscovery()
             if !key.isEmpty { await self.refreshModelCatalog() }
         }
+    }
+
+    /// A list fetched with another key must never become the current one.
+    private func invalidateModelDiscovery() {
+        modelDiscoveryGeneration &+= 1
+        isDiscoveringModels = false
     }
 
     /// Never blocks the chat: a failed discovery keeps the last successful list.
@@ -121,6 +133,7 @@ final class AgentService {
         guard !key.isEmpty else { return }
         modelDiscoveryGeneration &+= 1
         let generation = modelDiscoveryGeneration
+        let keyGeneration = apiKeyGeneration
         isDiscoveringModels = true
         let transport = modelDiscoveryTransport
         let result: Result<[AnthropicModelInfo], Error>
@@ -129,7 +142,7 @@ final class AgentService {
         } catch {
             result = .failure(error)
         }
-        guard modelDiscoveryGeneration == generation else { return }
+        guard modelDiscoveryGeneration == generation, apiKeyGeneration == keyGeneration else { return }
         isDiscoveringModels = false
         switch result {
         case .success(let models):
