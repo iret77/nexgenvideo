@@ -105,7 +105,12 @@ enum PipelineReferenceRouteContract {
             $0.capabilities.offering.modality.rawValue == requirement.modalityID
         }
         let demands = routedDemands(input)
-        if bindable(requirement, demands.map(\.demand), on: candidates) { return }
+        // Render picks the route from required inputs alone and drops optional ones it cannot place.
+        let required = demands.map(\.demand).filter(\.isRequired)
+        let unoffered = demands.first {
+            !offered($0.demand, modalityID: requirement.modalityID, by: candidates)
+        }
+        if unoffered == nil, bindable(requirement, required, on: candidates) { return }
         guard discoveryComplete else { throw catalogPending(shotID: input.id) }
         let shot = "execution_shot[\(input.id)]"
         guard !candidates.isEmpty else {
@@ -123,13 +128,7 @@ enum PipelineReferenceRouteContract {
                     + "Activated routes support: \(offeredModes(candidates))."
             )
         }
-        for item in demands {
-            let alone = ProductionRequirementV1(
-                modalityID: requirement.modalityID,
-                modeIDs: [item.demand.modeID],
-                visibleEntityCount: 0
-            )
-            guard !bindable(alone, [item.demand], on: candidates) else { continue }
+        if let item = unoffered {
             throw PipelineExecutionShotInputValidationError.violation(
                 field: item.slotField,
                 rule: "no activated video route offers \(item.demand.inputSlotID) for "
@@ -139,24 +138,41 @@ enum PipelineReferenceRouteContract {
         }
         let evaluations = ProductionRequirementResolverV1.slotAndModeEvaluations(
             requirement: requirement,
-            demands: demands.map(\.demand),
+            demands: required,
             candidates: candidates
         ).sorted { $0.deficits.count < $1.deficits.count }
         let perRoute = evaluations.prefix(5).map { evaluation in
             evaluation.candidate.capabilities.offering.offeringID + ": "
                 + evaluation.deficits.map { deficit in
-                    "\(deficit.code.rawValue) required \(deficit.requiredValue)"
+                    "\(deficit.code.rawValue)"
+                        + (deficit.capabilityFieldID.map { " \($0)" } ?? "")
+                        + " required \(deficit.requiredValue)"
                         + (deficit.availableValue.map { ", available \($0)" } ?? "")
                 }.joined(separator: "; ")
         }
         throw PipelineExecutionShotInputValidationError.violation(
             field: shot,
-            rule: "no single activated video route binds all reference demands, core_inputs and "
-                + "generation_requirement.mode_ids of this shot together. "
+            rule: "no single activated video route binds all required reference demands, core_inputs "
+                + "and generation_requirement.mode_ids of this shot together within its reference "
+                + "limits. "
                 + perRoute.joined(separator: " | ")
-                + ". Choose one route from list_models.production_routes and use its input_slots "
-                + "and mode_ids for every input of this shot."
+                + ". Choose one route from list_models.production_routes and keep every required "
+                + "input of this shot within its input_slots, mode_ids and reference limits. Render "
+                + "drops an is_required=false reference the chosen route cannot take."
         )
+    }
+
+    private static func offered(
+        _ demand: ReferenceDemandV1,
+        modalityID: String,
+        by candidates: [ProductionRouteCandidateV1]
+    ) -> Bool {
+        let alone = ProductionRequirementV1(
+            modalityID: modalityID,
+            modeIDs: [demand.modeID],
+            visibleEntityCount: 0
+        )
+        return bindable(alone, [demand], on: candidates)
     }
 
     private static func routedDemands(_ input: PipelineExecutionShotInput) -> [RoutedDemand] {

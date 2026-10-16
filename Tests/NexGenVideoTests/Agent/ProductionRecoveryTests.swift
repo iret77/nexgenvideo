@@ -174,6 +174,74 @@ struct ProductionRecoveryTests {
         try PipelineReferenceRouteContract.validate([input], routes: [imageOnly, videoOnly, both])
     }
 
+    @Test("Optional demands never decide the route but must be offered by an activated route")
+    func optionalDemandsFollowRender() throws {
+        let imageOnly = videoRoute("image-only", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ])
+        let videoOnly = videoRoute("video-only", inputKinds: ["video"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceVideo, .video, order: 3),
+        ])
+        let anchor = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
+        var motion = demandObject(role: CoreReferenceSemanticJobIDV1.motionReference, modality: "video")
+        motion["id"] = "walk"
+        motion["asset_path"] = "bible/walk.mp4"
+        motion["input_slot_id"] = CoreReferenceInputSlotIDV1.referenceVideo
+        motion["is_required"] = false
+        let input = try generatedInput(demands: [anchor, motion])
+        try PipelineReferenceRouteContract.validate([input], routes: [imageOnly, videoOnly])
+
+        var invented = motion
+        invented["semantic_job_id"] = "core.location"
+        let inventedRole = try generatedInput(demands: [anchor, invented])
+        do {
+            try PipelineReferenceRouteContract.validate([inventedRole], routes: [imageOnly, videoOnly])
+            Issue.record("An optional demand with an invented role was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("reference_demands[1].semantic_job_id"))
+        }
+
+        var voice = demandObject(role: CoreReferenceSemanticJobIDV1.voiceReference, modality: "audio")
+        voice["id"] = "hum"
+        voice["asset_path"] = "bible/hum.wav"
+        voice["input_slot_id"] = CoreReferenceInputSlotIDV1.referenceAudio
+        voice["is_required"] = false
+        let unoffered = try generatedInput(demands: [anchor, voice])
+        do {
+            try PipelineReferenceRouteContract.validate([unoffered], routes: [imageOnly, videoOnly])
+            Issue.record("An optional demand no activated route offers was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001].reference_demands[1].input_slot_id"))
+            #expect(error.localizedDescription.contains("no activated video route offers"))
+        }
+    }
+
+    @Test("Required references beyond a route's reference limit fail at write as at Render")
+    func requiredReferencesRespectRouteCapacity() throws {
+        let oneImage = videoRoute("one-image", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ], imageCapacity: 1)
+        let street = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
+        var cheese = street
+        cheese["id"] = "cheese"
+        cheese["asset_path"] = "bible/cheese.png"
+        cheese["entity_id"] = "cheese"
+        let overCapacity = try generatedInput(demands: [street, cheese])
+        do {
+            try PipelineReferenceRouteContract.validate([overCapacity], routes: [oneImage])
+            Issue.record("Two required images on a one-image route were accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001]:"))
+            #expect(error.localizedDescription.contains(
+                ProductionRouteDeficitCodeV1.referenceCapacity.rawValue
+            ))
+            #expect(error.localizedDescription.contains(CapabilityFieldIDV1.referenceImages))
+        }
+        cheese["is_required"] = false
+        let optionalSecond = try generatedInput(demands: [street, cheese])
+        try PipelineReferenceRouteContract.validate([optionalSecond], routes: [oneImage])
+    }
+
     @Test("Shot modes and core inputs are checked against the same route")
     func requirementModesAndCoreInputsRoute() throws {
         let anchor = demandObject(role: CoreReferenceSemanticJobIDV1.referenceAnchor, modality: "image")
@@ -326,7 +394,8 @@ struct ProductionRecoveryTests {
     private func videoRoute(
         _ offeringID: String,
         inputKinds: [String],
-        slots: [ProductionInputSlotCapabilityV1]
+        slots: [ProductionInputSlotCapabilityV1],
+        imageCapacity: Int = 3
     ) -> ProductionRouteCandidateV1 {
         let origin = ResolvedCapabilityOriginV1(kind: .exact, profileID: "fixture-\(offeringID)")
         func value<Value>(_ value: Value) -> ResolvedCapabilityValueV1<Value>
@@ -338,10 +407,18 @@ struct ProductionRecoveryTests {
             resolvedIdentity: nil,
             defensiveProfileID: nil,
             researchNeeded: false,
-            fields: ResolvedCapabilityFieldsV1(strings: [
-                CapabilityFieldIDV1.modes: value([Self.mode]),
-                CapabilityFieldIDV1.inputKinds: value(inputKinds),
-            ])
+            fields: ResolvedCapabilityFieldsV1(
+                integers: [
+                    CapabilityFieldIDV1.referenceImages: value(imageCapacity),
+                    CapabilityFieldIDV1.referenceVideos: value(3),
+                    CapabilityFieldIDV1.referenceAudios: value(3),
+                    CapabilityFieldIDV1.totalReferences: value(9),
+                ],
+                strings: [
+                    CapabilityFieldIDV1.modes: value([Self.mode]),
+                    CapabilityFieldIDV1.inputKinds: value(inputKinds),
+                ]
+            )
         )
         return ProductionRouteCandidateV1(
             capabilities: ResolvedOfferingCapabilityProfileV1(
