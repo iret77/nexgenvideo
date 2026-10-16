@@ -434,39 +434,49 @@ final class GenerationService {
             var providerFinished = false
             do {
                 if completedIDs.count < execution.placeholders.count {
-                    if target.transport == .mcp {
-                        throw await self.mcpBatchJobOutcome(provider: target.provider, jobID: requestID)
-                    }
                     let urls: [String]
-                    switch target.provider {
-                    case .fal:
-                        let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                        let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                        urls = FalOutput.urls(from: data, shape: shape)
-                    case .runway:
-                        let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
-                        urls = result.urls
-                        recoveredCost = result.cost
-                    case .marble:
-                        let operation = try await MarbleClient(apiKey: key).result(operationId: requestID)
-                        urls = MarbleOutput.urls(from: operation)
-                        recoveredCost = ProviderReportedCost.marble(operation: operation)
-                    default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                    var inlineOutput: [MCPGenerationLifecycle.OutputMedia] = []
+                    if target.transport == .mcp {
+                        let output = try await self.resumedMCPOutput(provider: target.provider, jobID: requestID)
+                        urls = output.urls
+                        if !output.inlineMedia.isEmpty { inlineOutput = output.media }
+                    } else {
+                        switch target.provider {
+                        case .fal:
+                            let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
+                            let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
+                            urls = FalOutput.urls(from: data, shape: shape)
+                        case .runway:
+                            let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
+                            urls = result.urls
+                            recoveredCost = result.cost
+                        case .marble:
+                            let operation = try await MarbleClient(apiKey: key).result(operationId: requestID)
+                            urls = MarbleOutput.urls(from: operation)
+                            recoveredCost = ProviderReportedCost.marble(operation: operation)
+                        default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                        }
                     }
                     providerFinished = true
                     try scope.requireCurrent(editor: editor)
-                    await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
-                        errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
-                        editor: editor, mutationScope: scope, batchItem: item,
-                        completedAssetIDs: completedIDs, onComplete: nil, onFailure: nil)
+                    if inlineOutput.isEmpty {
+                        await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
+                            errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
+                            editor: editor, mutationScope: scope, batchItem: item,
+                            completedAssetIDs: completedIDs, onComplete: nil, onFailure: nil)
+                    } else {
+                        await self.finalizeMCPMedia(inlineOutput, placeholders: placeholders, editor: editor,
+                            mutationScope: scope, batchItem: item, completedAssetIDs: completedIDs,
+                            onComplete: nil, onFailure: nil)
+                    }
                 }
                 if let transaction = execution.transactionID,
                    !editor.generationLog.spendEvents.contains(where: { $0.transactionId == transaction && $0.kind == .charged }) {
                     let recoveredAuthorization = resumedAuthorization(transaction)
                     let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
                     switch target.provider {
-                    case .fal:
-                        let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key)
+                    case .fal where target.transport == .api:
+                        let billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
                         if billed != nil || !settled {
                             self.markFinished(authorization: recoveredAuthorization, billed: billed, editor: editor)
                         }
@@ -1163,30 +1173,20 @@ final class GenerationService {
         }
     }
 
-    /// One status read for an interrupted MCP batch job; only a stated terminal state ends it.
-    func mcpBatchJobOutcome(provider: GenerationProvider, jobID: String) async -> any Error {
+    /// The media of an interrupted MCP batch job, read through its status or result tool.
+    func resumedMCPOutput(provider: GenerationProvider, jobID: String) async throws -> MCPGenerationLifecycle.Output {
         guard let client = await reconciliation.mcpClient(provider) else {
-            return GenerationRequestError.gate("\(provider.displayName) is not connected. Resume this batch once it is.")
+            throw GenerationRequestError.gate("\(provider.displayName) is not connected. Resume this batch once it is.")
         }
-        var status: ProviderRunStatus?
         do {
             let tools = try await client.discoverTools()
-            status = try await MCPGenerationExecutor.status(jobID: jobID, tools: tools, client: client)
+            let output = try await MCPGenerationExecutor.resumedOutput(jobID: jobID, provider: provider,
+                tools: tools, client: client)
+            await client.disconnect()
+            return output
         } catch {
-            status = nil
-        }
-        await client.disconnect()
-        switch status {
-        case .failed(let message, let cost)?:
-            return ProviderRunEndedError(message: message, cost: cost)
-        case .completed(let cost)?:
-            return ProviderRunEndedError(
-                message: "\(provider.displayName) finished this job, but NexGenVideo can't recover MCP output after an interruption.",
-                cost: cost)
-        case .running?:
-            return GenerationRequestError.gate("The \(provider.displayName) job is still running. Resume this batch later.")
-        case nil:
-            return GenerationRequestError.gate("\(provider.displayName) did not report this job's status. Resume this batch later.")
+            await client.disconnect()
+            throw error
         }
     }
 
@@ -1938,11 +1938,13 @@ final class GenerationService {
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope?,
         batchItem: GenerationBatchAuthorization?,
+        completedAssetIDs: Set<String> = [],
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         var finalized: [MediaAsset] = []
         for (index, placeholder) in placeholders.enumerated() {
+            if completedAssetIDs.contains(placeholder.id) { continue }
             guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
             guard outputMedia.indices.contains(index) else {
                 placeholder.generationStatus = .failed("No media for placeholder")

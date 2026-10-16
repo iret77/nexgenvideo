@@ -109,23 +109,36 @@ struct ProviderStatusTests {
 
     private struct MCPStatusStub: MCPStatusClient {
         let payloads: [String: String]
+        var results: [String: String] = [:]
 
         func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
-            guard let job = payloads.keys.first(where: { arguments.values.contains(.string($0)) }) else {
+            if name == "generate_image" { throw GenerationBackendError.transport("Resume must never submit") }
+            let source = name == "job_result" ? results : payloads
+            guard let job = source.keys.first(where: { arguments.values.contains(.string($0)) }) else {
                 throw GenerationBackendError.transport("Unknown job")
             }
-            return [payloads[job] ?? ""]
+            return [source[job] ?? ""]
         }
 
         func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool] {
-            [MCPProviderClient.DiscoveredTool(
-                name: "job_status",
-                description: nil,
-                inputSchema: .object([
-                    "properties": .object(["job_id": .object(["type": .string("string")])]),
-                    "required": .array([.string("job_id")]),
-                ])
-            )]
+            let jobInput: Value = .object([
+                "properties": .object(["job_id": .object(["type": .string("string")])]),
+                "required": .array([.string("job_id")]),
+            ])
+            let media: Value = .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "result": .object([
+                        "type": .string("object"),
+                        "properties": .object(["url": .object(["type": .string("string")])]),
+                    ]),
+                ]),
+            ])
+            return [
+                MCPProviderClient.DiscoveredTool(name: "job_status", description: nil, inputSchema: jobInput,
+                    outputSchema: media),
+                MCPProviderClient.DiscoveredTool(name: "job_result", description: nil, inputSchema: jobInput),
+            ]
         }
 
         func disconnect() async {}
@@ -354,26 +367,41 @@ struct ProviderStatusTests {
     }
 
     @MainActor
-    @Test func interruptedMCPBatchJobsAreResolvedThroughTheStatusTool() async throws {
+    @Test func interruptedMCPBatchJobsResumeWithTheirMediaAndNeverResubmit() async throws {
         let service = EditorViewModel().generationService
-        let stub = MCPStatusStub(payloads: [
-            "job-failed": #"{"status":"failed","message":"provider rejected the render"}"#,
-            "job-done": #"{"status":"completed"}"#,
-            "job-queued": #"{"status":"queued"}"#,
-        ])
+        let stub = MCPStatusStub(
+            payloads: [
+                "job-media": #"{"status":"completed","result":{"url":"https://output.invalid/resumed.png"}}"#,
+                "job-result": #"{"status":"completed"}"#,
+                "job-failed": #"{"status":"failed","message":"provider rejected the render"}"#,
+                "job-queued": #"{"status":"queued"}"#,
+            ],
+            results: ["job-result": #"{"result":{"url":"https://output.invalid/from-result.png"}}"#]
+        )
         service.reconciliation = ProviderRunReconciliation(mcpClient: { _ in stub })
 
-        let failed = await service.mcpBatchJobOutcome(provider: .higgsfield, jobID: "job-failed")
-        #expect(GenerationService.providerRunEnded(after: failed))
-        #expect(failed.localizedDescription.contains("provider rejected the render"))
-        #expect(GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
-            provider: .higgsfield, jobID: "job-done")))
-        #expect(!GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
-            provider: .higgsfield, jobID: "job-queued")))
+        #expect(try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-media").urls
+            == ["https://output.invalid/resumed.png"])
+        #expect(try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-result").urls
+            == ["https://output.invalid/from-result.png"])
+        do {
+            _ = try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-failed")
+            Issue.record("Expected a failed MCP job to end")
+        } catch {
+            #expect(GenerationService.providerRunEnded(after: error))
+            #expect(error.localizedDescription.contains("provider rejected the render"))
+        }
+        do {
+            _ = try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-queued")
+            Issue.record("Expected a running MCP job to stay open")
+        } catch {
+            #expect(!GenerationService.providerRunEnded(after: error))
+        }
 
         service.reconciliation = ProviderRunReconciliation(mcpClient: { _ in nil })
-        #expect(!GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
-            provider: .higgsfield, jobID: "job-failed")))
+        await #expect(throws: GenerationRequestError.self) {
+            _ = try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-media")
+        }
     }
 
     private final class GatedCharge: @unchecked Sendable {

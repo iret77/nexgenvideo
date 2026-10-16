@@ -262,6 +262,38 @@ enum MCPGenerationExecutor {
         }
     }
 
+    /// One status read for an interrupted accepted job, with its media; never submits anything new.
+    static func resumedOutput(
+        jobID: String,
+        provider: GenerationProvider,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async throws -> MCPGenerationLifecycle.Output {
+        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
+            throw GenerationBackendError.transport("\(provider.displayName)'s MCP exposes no job-status tool.")
+        }
+        let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
+        let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
+        switch jobStatus(from: payloads, statusTool: statusTool) {
+        case .succeeded(let output) where !output.isEmpty:
+            return output
+        case .succeeded:
+            do {
+                return try await fetchResult(jobID: jobID, provider: provider, tools: tools, client: client)
+            } catch {
+                throw ProviderRunEndedError(message: error.localizedDescription)
+            }
+        case .failed(let message):
+            throw ProviderRunEndedError(message: message)
+        case .pending:
+            throw GenerationRequestError.gate("The \(provider.displayName) job is still running. Resume this batch later.")
+        case .unknown(let value):
+            throw GenerationBackendError.transport(
+                "\(provider.displayName)'s MCP returned an unsupported job status: \(value ?? "<missing>")."
+            )
+        }
+    }
+
     /// An accepted job's status poll: success inferred from media alone, or a null status, is unknown.
     static func jobStatus(
         from payloads: [String],
