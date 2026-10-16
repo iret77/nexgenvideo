@@ -318,6 +318,11 @@ jobs:
 
       - uses: ./.github/actions/setup-xcode-27
 
+      # macrunner's system Python is 3.9; dmgbuild 1.6.7 and the release scripts need a current one.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Resolve version + mode
         run: |
           set -euo pipefail
