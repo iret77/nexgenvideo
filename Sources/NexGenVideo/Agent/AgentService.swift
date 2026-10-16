@@ -2393,6 +2393,23 @@ final class AgentService {
         return sessions.first { $0.id == currentSessionId }?.workTime
     }
 
+    var currentTokenUsage: AgentTokenUsage? {
+        guard let currentSessionId,
+              let usage = sessions.first(where: { $0.id == currentSessionId })?.tokenUsage,
+              !usage.isEmpty else { return nil }
+        return usage
+    }
+
+    /// Only the API-key backend reports per-request tokens; other runtimes record none.
+    private func addTokenUsage(_ usage: AgentRuntimeUsage, sessionID: UUID) {
+        guard backend == .anthropicAPI,
+              let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        var total = sessions[index].tokenUsage ?? AgentTokenUsage()
+        total.add(usage)
+        guard !total.isEmpty else { return }
+        sessions[index].tokenUsage = total
+    }
+
     func recordToolTime(_ seconds: Double, failed: Bool, origin: ToolCallOrigin) {
         addWorkTime(seconds, to: .tool, sessionID: origin.chatSessionID, failedAttempt: failed)
     }
@@ -3936,11 +3953,15 @@ final class AgentService {
             ))
             var messageIDs: [String: UUID] = [:]
             var defaultAssistantID: UUID?
+            var usageMeter = AgentRequestUsageMeter()
             for await envelope in stream {
                 guard !Task.isCancelled,
                       currentSessionId == sessionID,
                       fence.accepts(envelope) else { continue }
                 recordActivity()
+                if let finished = usageMeter.observe(envelope.event) {
+                    addTokenUsage(finished, sessionID: sessionID)
+                }
                 applyRuntimeEvent(
                     envelope.event,
                     sessionID: sessionID,
@@ -3948,6 +3969,9 @@ final class AgentService {
                     defaultAssistantID: &defaultAssistantID
                 )
 
+            }
+            if let finished = usageMeter.flush() {
+                addTokenUsage(finished, sessionID: sessionID)
             }
             guard fence.receivedTerminal || Task.isCancelled else {
                 streamError = .upstream("The agent runtime ended without a terminal state.")

@@ -64,21 +64,6 @@ extension AgentClient {
     var supportsToolSearch: Bool { false }
 }
 
-// MARK: - Usage logging
-
-enum AgentUsageLog {
-    static func record(_ usage: [String: Any]) {
-        #if DEBUG
-        let input = usage["input_tokens"] as? Int ?? 0
-        let cacheWrite = usage["cache_creation_input_tokens"] as? Int ?? 0
-        let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
-        let billed = input + cacheWrite + cacheRead
-        let readPct = billed > 0 ? Int((Double(cacheRead) / Double(billed)) * 100) : 0
-        print("[agent cache] input=\(input) cacheWrite=\(cacheWrite) cacheRead=\(cacheRead) (\(readPct)% read)")
-        #endif
-    }
-}
-
 // MARK: - Shared SSE parser
 
 enum AnthropicSSE {
@@ -114,7 +99,6 @@ enum AnthropicSSE {
             case "message_start":
                 if let message = event["message"] as? [String: Any],
                    let usage = message["usage"] as? [String: Any] {
-                    AgentUsageLog.record(usage)
                     return [.usage(AnthropicSSE.runtimeUsage(usage))]
                 }
             case "content_block_start":
@@ -183,7 +167,6 @@ enum AnthropicSSE {
                     stopReason = AnthropicStopReason(rawValue: raw) ?? .other
                 }
                 if let usage = event["usage"] as? [String: Any] {
-                    AgentUsageLog.record(usage)
                     return [.usage(AnthropicSSE.runtimeUsage(usage))]
                 }
             case "message_stop":

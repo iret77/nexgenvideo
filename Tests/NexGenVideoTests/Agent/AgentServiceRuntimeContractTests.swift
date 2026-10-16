@@ -354,6 +354,47 @@ struct AgentServiceRuntimeContractTests {
         #expect(service.streamError == nil)
     }
 
+    @Test("API-key chats sum each request's final usage; other runtimes record none")
+    func tokenUsageAccumulatesPerRequest() async throws {
+        for backend in [AgentBackend.anthropicAPI, .claudeCode] {
+            let adapter = FakeRuntimeAdapter(backend: backend)
+            let service = makeService(backend: backend, adapter: adapter)
+
+            #expect(service.send(text: "Plan", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 1 }
+            let turn = try #require(adapter.sendRequests.first)
+            adapter.emit(.providerRequest(prefixDigest: "first-request"), for: turn)
+            adapter.emit(.usage(AgentRuntimeUsage(
+                inputTokens: 100, outputTokens: 1, cacheCreationInputTokens: 2_000, cacheReadInputTokens: 0
+            )), for: turn)
+            adapter.emit(.usage(AgentRuntimeUsage(outputTokens: 40)), for: turn)
+            adapter.emit(.toolCall(messageID: nil, id: "tool-1", name: "inspect", inputJSON: "{}"), for: turn)
+            adapter.emit(.toolResult(id: "tool-1", content: [.text("ok")], isError: false), for: turn)
+            adapter.emit(.providerRequest(prefixDigest: "second-request"), for: turn)
+            adapter.emit(.usage(AgentRuntimeUsage(
+                inputTokens: 50, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 2_000
+            )), for: turn)
+            adapter.emit(.usage(AgentRuntimeUsage(outputTokens: 10)), for: turn)
+            adapter.emit(.terminal(.completed(.endTurn)), for: turn)
+            adapter.finish(turn)
+            await waitUntil { !service.isStreaming }
+
+            let stored = service.sessions.first { $0.id == service.currentSessionId }?.tokenUsage
+            guard backend == .anthropicAPI else {
+                #expect(stored == nil)
+                #expect(service.currentTokenUsage == nil)
+                continue
+            }
+            let usage = try #require(stored)
+            #expect(usage.inputTokens == 150)
+            #expect(usage.outputTokens == 50)
+            #expect(usage.cacheCreationInputTokens == 2_000)
+            #expect(usage.cacheReadInputTokens == 2_000)
+            #expect(usage.cacheReadShare == 2_000.0 / 4_150.0)
+            #expect(service.currentTokenUsage == usage)
+        }
+    }
+
     @Test("the request digest binds the assistant turn it produced, once")
     func requestDigestStampsAssistantTurn() async throws {
         let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
