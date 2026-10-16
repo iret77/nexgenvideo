@@ -44,6 +44,11 @@ private struct CockpitErrorEnvelope: Decodable {
     let error: String
 }
 
+struct StoryboardReviewRead: Sendable {
+    let result: Result<StoryboardReviewSnapshot?, CockpitError>
+    let binding: StoryboardReviewBinding
+}
+
 enum CockpitDataService {
 
     /// Fetch and decode the Bible for a project. Returns `.success(nil)` when the project simply has
@@ -130,6 +135,28 @@ enum CockpitDataService {
     /// The per-phase UI contract (`contract` read kind, projectless but tolerant of a project arg).
     static func contract(projectDir: URL) async -> Result<ContractData?, CockpitError> {
         await decoded(kind: "contract", projectDir: projectDir, decodeError: "Couldn't read the contract.")
+    }
+
+    /// The canonical storyboard bytes (`.success(nil)` until one exists), bound to `approval` in the same read.
+    static func storyboard(projectDir: URL, approval: GateApproval?) async -> StoryboardReviewRead {
+        await Task.detached(priority: .utility) { () -> StoryboardReviewRead in
+            guard let root = NativeCockpitReader.dataRoot(of: projectDir) else {
+                return StoryboardReviewRead(result: .failure(.notInitialized), binding: .unrelated)
+            }
+            let result: Result<StoryboardReviewSnapshot?, CockpitError>
+            do {
+                result = .success(try StoryboardReviewSnapshot.read(root: root))
+            } catch StoryboardReviewSnapshot.ReviewError.missing {
+                result = .success(nil)
+            } catch {
+                result = .failure(.decode("Couldn't read the storyboard."))
+            }
+            let shown = (try? result.get()) ?? nil
+            return StoryboardReviewRead(
+                result: result,
+                binding: StoryboardReviewBinding.resolve(approval: approval, dataRoot: root, shown: shown)
+            )
+        }.value
     }
 
     /// Shared run + decode for kinds that follow the Bible idiom: literal `null` → `.success(nil)`,
