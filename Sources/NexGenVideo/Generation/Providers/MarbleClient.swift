@@ -85,7 +85,7 @@ actor MarbleClient {
                 let json = Self.parse(data)
                 let done = json.flatMap { Self.flag($0["done"]) }
                 if done == true, let json, let failure = Self.operationError(in: json) {
-                    throw ProviderRunEndedError(message: failure)
+                    throw ProviderRunEndedError(message: failure, cost: ProviderReportedCost.marble(operation: data))
                 }
                 if done == true {
                     return data

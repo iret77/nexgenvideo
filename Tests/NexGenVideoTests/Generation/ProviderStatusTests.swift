@@ -9,7 +9,7 @@ import Testing
 struct ProviderStatusTests {
     final class Fixture: URLProtocol, @unchecked Sendable {
         enum Reply: Sendable {
-            case response(status: Int, body: String)
+            case response(status: Int, body: String, headers: [String: String] = [:])
             case urlError(URLError.Code)
         }
 
@@ -62,9 +62,9 @@ struct ProviderStatusTests {
                 return Self.stubs.remove(at: index)
             }
             switch stub?.reply ?? .urlError(.resourceUnavailable) {
-            case .response(let status, let body):
+            case .response(let status, let body, let headers):
                 let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"])!
+                    headerFields: headers.merging(["Content-Type": "application/json"]) { current, _ in current })!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 client?.urlProtocol(self, didLoad: Data(body.utf8))
                 client?.urlProtocolDidFinishLoading(self)
@@ -435,5 +435,54 @@ struct ProviderStatusTests {
 
         #expect(await reconciling.value == 0)
         #expect(closing("fal-shared", in: editor) == nil)
+    }
+
+    @Test func confirmedProviderFailuresCarryTheCostTheirResponseReports() async throws {
+        Fixture.reset()
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        Fixture.stub("GET", "/operations/op-failed", .response(status: 200,
+            body: #"{"done":true,"error":{"message":"World generation failed"},"cost":{"total_credits":3}}"#))
+        do {
+            _ = try await MarbleClient(apiKey: "marble-secret", session: session).result(operationId: "op-failed")
+            Issue.record("Expected a failed Marble operation to throw")
+        } catch let failure as ProviderRunEndedError {
+            #expect(failure.message == "World generation failed")
+            #expect(failure.cost?.amount == 3)
+        }
+
+        Fixture.stub("POST", "/sound-generation", .response(status: 422, body: #"{"detail":"text too long"}"#,
+            headers: ["character-cost": "18"]))
+        do {
+            _ = try await ElevenLabsClient(apiKey: "eleven-secret", session: session)
+                .soundEffect(text: "Rain on glass", durationSeconds: 2)
+            Issue.record("Expected a rejected ElevenLabs request to throw")
+        } catch let failure as ProviderRunEndedError {
+            #expect(failure.cost?.amount == 18)
+            #expect(failure.cost?.unit == "characters")
+        }
+    }
+
+    @MainActor
+    @Test func aConfirmedFalFailureIsBookedWithItsBill() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let bill = GenerationMoney(nativeAmount: 1.2, nativeCurrency: "USD", eurAmount: 1, eurPerNativeUnit: 1 / 1.2,
+            exchangeRateDate: "2026-10-16",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=fal-failed-req",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
+        editor.generationService.reconciliation = reconciliation(session, falCharge: { _, _, _ in bill })
+        editor.generationLog.spendEvents = openRun("fal-failed", .fal, endpoint: "fal-ai/veo3",
+            request: "fal-failed-req", resumable: true)
+        Fixture.stub("GET", "/requests/fal-failed-req/status", .response(status: 200,
+            body: #"{"status":"FAILED","error":"Out of memory"}"#))
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 1)
+        let closed = try #require(closing("fal-failed", in: editor))
+        #expect(closed.kind == .charged)
+        #expect(closed.money == bill)
     }
 }

@@ -478,8 +478,13 @@ final class GenerationService {
                 }
             } catch {
                 if let transaction = execution.transactionID {
+                    var billed: GenerationMoney?
+                    if target.provider == .fal, target.transport == .api,
+                       providerFinished || Self.providerRunEnded(after: error) {
+                        billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
+                    }
                     self.recordResumedRunFailure(error, providerFinished: providerFinished, cost: recoveredCost,
-                        authorization: resumedAuthorization(transaction), editor: editor)
+                        billed: billed, authorization: resumedAuthorization(transaction), editor: editor)
                 }
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
@@ -1165,6 +1170,7 @@ final class GenerationService {
         _ error: any Error,
         providerFinished: Bool,
         cost: GenerationProviderCost?,
+        billed: GenerationMoney? = nil,
         authorization: GenerationAuthorization,
         editor: EditorViewModel
     ) {
@@ -1172,6 +1178,11 @@ final class GenerationService {
               !editor.generationLog.spendEvents.contains(where: {
                   $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
               }) else { return }
+        if let billed, providerFinished || Self.providerRunEnded(after: error) {
+            markFinished(authorization: authorization, billed: billed, providerCost: cost,
+                note: "The provider job ended without a result: \(error.localizedDescription)", editor: editor)
+            return
+        }
         var outcome: any Error = error
         if providerFinished {
             outcome = ProviderRunEndedError(message: error.localizedDescription, cost: cost)
@@ -1326,12 +1337,20 @@ final class GenerationService {
                 failSubmittedJob(placeholders, "Generation cancelled.", after: CancellationError(), authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
-            if requestId == nil {
+            if let requestId {
+                // fal reports money only through its billing record, never in a status response.
+                if Self.providerRunEnded(after: error),
+                   let billed = await reconciliation.falCharge(requestId, endpoint, apiKey) {
+                    markFinished(authorization: authorization, billed: billed,
+                        note: "The provider job ended without a result: \(error.localizedDescription)", editor: editor)
+                    failJob(placeholders, error.localizedDescription, onFailure)
+                } else {
+                    failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
+                }
+            } else {
                 failBeforeSubmission(
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
-            } else {
-                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }

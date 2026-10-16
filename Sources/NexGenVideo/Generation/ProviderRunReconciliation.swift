@@ -154,25 +154,27 @@ extension GenerationService {
             estimate: event.money,
             projectMutationScope: scope
         )
+        let cost: GenerationProviderCost?
+        let note: String
         switch status {
         case .running:
             return false
-        case .completed(let cost):
-            var billed: GenerationMoney?
-            if event.provider == .fal, event.transport == .api, let key = reconciliation.providerKey(.fal) {
-                billed = await reconciliation.falCharge(run.requestID, event.endpoint, key)
-            }
-            // The bill lookup awaited; the write must still target the project the query started in.
-            guard (try? scope.requireCurrent(editor: editor)) != nil,
-                  Self.isOpen(run.transactionID, in: editor.generationLog),
-                  !ActiveSpendTransactions.current.contains(run.transactionID) else { return false }
-            markFinished(authorization: authorization, billed: billed, providerCost: cost,
-                note: "The provider confirmed the run finished; its output never reached NexGenVideo.", editor: editor)
-        case .failed(let message, let cost):
-            guard Self.isOpen(run.transactionID, in: editor.generationLog) else { return false }
-            markFinished(authorization: authorization, providerCost: cost,
-                note: "The provider confirmed the run ended without a result: \(message)", editor: editor)
+        case .completed(let reported):
+            cost = reported
+            note = "The provider confirmed the run finished; its output never reached NexGenVideo."
+        case .failed(let message, let reported):
+            cost = reported
+            note = "The provider confirmed the run ended without a result: \(message)"
         }
+        var billed: GenerationMoney?
+        if event.provider == .fal, event.transport == .api, let key = reconciliation.providerKey(.fal) {
+            billed = await reconciliation.falCharge(run.requestID, event.endpoint, key)
+        }
+        // The bill lookup awaited; the write must still target the project the query started in.
+        guard (try? scope.requireCurrent(editor: editor)) != nil,
+              Self.isOpen(run.transactionID, in: editor.generationLog),
+              !ActiveSpendTransactions.current.contains(run.transactionID) else { return false }
+        markFinished(authorization: authorization, billed: billed, providerCost: cost, note: note, editor: editor)
         return !Self.isOpen(run.transactionID, in: editor.generationLog)
     }
 

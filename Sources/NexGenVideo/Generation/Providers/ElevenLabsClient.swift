@@ -6,9 +6,11 @@ import Foundation
 /// bytes; we pin mp3_44100_128 so the bytes match the .mp3 placeholder the generation flow creates.
 actor ElevenLabsClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     struct Audio: Sendable {
@@ -103,13 +105,16 @@ actor ElevenLabsClient {
     }
 
     private func send(_ request: URLRequest) async throws -> Audio {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             // Error bodies are JSON ({"detail": …}); surface them so failures are diagnosable.
             let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
-            throw ProviderRunEndedError(message: "ElevenLabs HTTP \(status): \(detail)")
+            throw ProviderRunEndedError(
+                message: "ElevenLabs HTTP \(status): \(detail)",
+                cost: ProviderReportedCost.elevenLabs(characterCost: http?.value(forHTTPHeaderField: "character-cost"))
+            )
         }
         return Audio(
             data: data,
