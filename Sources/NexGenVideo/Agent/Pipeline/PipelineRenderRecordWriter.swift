@@ -1036,7 +1036,8 @@ enum PipelineRenderRecordWriter {
                 }
                 guard renderProofMatchesRouting(
                     entryProof,
-                    generation: routeProof.generation
+                    generation: routeProof.generation,
+                    dataRoot: dataRoot
                 ) else {
                     throw PipelineRenderRecordError.invalidArtifact(
                         "Rendered inputs for \(shotID) do not match the exact ReferencePlan."
@@ -1105,7 +1106,8 @@ enum PipelineRenderRecordWriter {
 
     private static func renderProofMatchesRouting(
         _ renderProof: RenderProofEntry,
-        generation: ProductionGenerationRoutingProofV1
+        generation: ProductionGenerationRoutingProofV1,
+        dataRoot: URL
     ) -> Bool {
         let bindings = generation.orderedBindings
         let source = bindings.filter {
@@ -1143,24 +1145,35 @@ enum PipelineRenderRecordWriter {
                 )
             })
         }
-        func input(_ binding: ProductionGenerationRoutingBindingV1) -> RenderInputProof {
-            RenderInputProof(path: binding.path, sha256: binding.sha256)
+        // Plan paths are data-root relative and render proof paths project-home relative.
+        func file(_ path: String) -> String? {
+            (try? ProjectLocalFile.resolve(path, dataRoot: dataRoot))?
+                .resolvingSymlinksInPath().path
+        }
+        func matches(
+            _ rendered: [RenderInputProof],
+            _ planned: [ProductionGenerationRoutingBindingV1]
+        ) -> Bool {
+            rendered.count == planned.count
+                && zip(rendered, planned).allSatisfy { pair in
+                    let (input, binding) = pair
+                    guard input.sha256 == binding.sha256,
+                          let actual = file(input.path) else { return false }
+                    return actual == file(binding.path)
+                }
+        }
+        func ordinaryBindings(_ modality: AssetPhysicalModalityV1) -> [ProductionGenerationRoutingBindingV1] {
+            ordinary.filter { $0.modalityID == modality.rawValue }
         }
         guard source.count <= 1,
               start.count <= 1,
               end.count <= 1,
-              renderProof.sourceVideo == source.first.map(input),
-              renderProof.startFrame == start.first.map(input),
-              renderProof.endFrame == end.first.map(input),
-              renderProof.referenceImages == ordinary.filter({
-                  $0.modalityID == AssetPhysicalModalityV1.image.rawValue
-              }).map(input),
-              renderProof.referenceVideos == ordinary.filter({
-                  $0.modalityID == AssetPhysicalModalityV1.video.rawValue
-              }).map(input),
-              renderProof.referenceAudio == ordinary.filter({
-                  $0.modalityID == AssetPhysicalModalityV1.audio.rawValue
-              }).map(input) else {
+              matches(renderProof.sourceVideo.map { [$0] } ?? [], source),
+              matches(renderProof.startFrame.map { [$0] } ?? [], start),
+              matches(renderProof.endFrame.map { [$0] } ?? [], end),
+              matches(renderProof.referenceImages, ordinaryBindings(.image)),
+              matches(renderProof.referenceVideos, ordinaryBindings(.video)),
+              matches(renderProof.referenceAudio, ordinaryBindings(.audio)) else {
             return false
         }
         return ordinary.allSatisfy {
