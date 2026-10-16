@@ -24,8 +24,8 @@ extension MusicvideoChecks {
         let library = (try? Patterns.loadAllPatterns()) ?? []
         guard !library.isEmpty else { return out }
         func pattern(id: String?) -> Pattern? {
-            guard let id = id?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return nil }
-            return library.first { $0.id == id }
+            guard let id else { return nil }
+            return Patterns.pattern(withId: id, in: library)
         }
 
         let briefPattern = pattern(id: ctx.brief?.directorPattern)

@@ -60,9 +60,8 @@ public struct MusicvideoPatternProvider: PatternProviding {
     }
 
     public func get(id: String) throws -> Data? {
-        let trimmed = id.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty,
-            let pattern = try Patterns.loadAllPatterns().first(where: { $0.id == trimmed }) else {
+        guard !id.trimmingCharacters(in: .whitespaces).isEmpty,
+            let pattern = Patterns.pattern(withId: id, in: try Patterns.loadAllPatterns()) else {
             return nil
         }
         let encoder = JSONEncoder()

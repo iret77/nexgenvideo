@@ -11,28 +11,25 @@ references:
   - name: "Daniel Askill"
     role: director
     notable_works:
-      - "Sia — Chandelier (2014, 2.8+ billion YouTube views, Maddie Ziegler choreography by Ryan Heffington)"
-      - "Sia — Chandelier (alternative one-take version, 2014)"
-      - "Lady Gaga — Stupid Love (2020)"
+      - "Sia — Chandelier (2014, directed by Sia and Daniel Askill, shot by Sebastian Winterø, choreography by Ryan Heffington; Maddie Ziegler in a deserted, dirty apartment)"
+      - "Sia — Chandelier (alternative one-take version, June 2014)"
+      - "Lady Gaga — Stupid Love (2020, filmed at Trona Pinnacles; colorful, maximalist aesthetic)"
     sources:
       - label: "Wikipedia — Chandelier (song)"
         url: "https://en.wikipedia.org/wiki/Chandelier_(song)"
+      - label: "Wikipedia — Stupid Love (Lady Gaga song)"
+        url: "https://en.wikipedia.org/wiki/Stupid_Love_(Lady_Gaga_song)"
       - label: "Billboard — Sia's Chandelier Video: Dance Moms Star Maddie Ziegler Delivers Dazzling Performance"
         url: "https://www.billboard.com/music/music-news/sia-chandelier-video-dance-moms-maddie-ziegler-6077552/"
       - label: "The Music Network — ARIA-winning Aussie director shoots Lady Gaga's Stupid Love video"
         url: "https://themusicnetwork.com/aussie-director-lady-gaga-video/"
-      - label: "VideoStatic — Sia 'Chandelier' (Sia & Daniel Askill, dir.)"
-        url: "https://www.videostatic.com/watch-it/2014/05/06/sia-chandelier-sia-daniel-askill-dir"
-      - label: "Medium — Aesthetic, mood, and meaning in movement — Official music video for Sia's Chandelier"
-        url: "https://kathrynboland-55843.medium.com/aesthetic-mood-and-meaning-in-movement-and-more-official-music-video-for-sias-chandelier-2d1c31264295"
   - name: "Ryan Heffington (Choreographer)"
     role: choreographer
     notable_works:
       - "Sia — Chandelier choreography (2014)"
-      - "Sia — multiple subsequent collaborations"
     sources:
-      - label: "Billboard — Sia's Chandelier Video, Heffington choreography credit"
-        url: "https://www.billboard.com/music/music-news/sia-chandelier-video-dance-moms-maddie-ziegler-6077552/"
+      - label: "Wikipedia — Chandelier (song), choreography credit"
+        url: "https://en.wikipedia.org/wiki/Chandelier_(song)"
 
 section_arc:
   - role: establishing

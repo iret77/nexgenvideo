@@ -3,40 +3,30 @@ name: "Punk / Hardcore DIY — handheld vérité"
 description: |
   DIY-Hardcore-Punk-Aesthetik: handgehaltene Camera, schnelle
   Cuts auf den Schlag, niedriges Budget als Stilmittel, Konzert-
-  Vérité plus rohe Live-Performance. Grindcore-/Atmospheric-Metal-
-  Verwandte ergaenzen mit langsam-ominoesem Detail-Insert.
-  Fuer Hardcore-, Punk-, Grindcore- und atmospheric-Metal-Tracks
-  ohne Production-Lack.
+  Vérité plus rohe Live-Performance. Auch fuer Grindcore-Verwandte.
+  Fuer Hardcore-, Punk- und Grindcore-Tracks ohne Production-Lack.
 
 references:
-  - name: "Hardcore Punk visual tradition (genre)"
+  - name: "Hardcore punk live documentation"
     role: music_video
     notable_works:
-      - "Hardcore punk live-show videos (DIY tape-trading era 1980s-)"
-      - "Single band member as songwriter + producer + tour manager + T-shirt artist"
+      - "The Decline of Western Civilization (1981, Penelope Spheeris; 16mm, live sets by Black Flag, X, Circle Jerks, Fear, the Germs)"
+      - "Instrument (Jem Cohen, Fugazi; patchwork of Super 8, 16mm and video footage)"
     sources:
+      - label: "Harvard Film Archive — The Decline of Western Civilization"
+        url: "https://harvardfilmarchive.org/calendar/the-decline-of-western-civilization-2011-09"
+      - label: "Harvard Film Archive — Instrument"
+        url: "https://harvardfilmarchive.org/calendar/instrument-2017-04"
       - label: "Wikipedia — Hardcore punk"
         url: "https://en.wikipedia.org/wiki/Hardcore_punk"
-      - label: "MasterClass — Hardcore Punk Music Guide: History and Bands of Hardcore"
-        url: "https://www.masterclass.com/articles/hardcore-punk-music-guide"
-      - label: "DIY Conspiracy — Punk & Hardcore Music, Culture & Politics"
-        url: "https://diyconspiracy.net/"
-      - label: "DIY Conspiracy — 7 Must-Listen DIY Hardcore Punk Records from Early 2025"
-        url: "https://diyconspiracy.net/7-hardcore-punk-records-early-2025/"
-      - label: "IDIOTEQ — Indie & Hardcore Punk Music Webzine"
-        url: "https://idioteq.com/"
-  - name: "Grindcore + atmospheric-metal lineage"
+  - name: "Grindcore lineage"
     role: music_video
     notable_works:
-      - "Grindcore tape-trading DIY tradition (mid-1980s-)"
-      - "Modern DIY releases with relentless thrash riffs + slow atmospheric sections (MEM//BRANE)"
+      - "Napalm Death — Scum (1987)"
+      - "Grindcore tape-trading and DIY production network"
     sources:
       - label: "Wikipedia — Grindcore"
         url: "https://en.wikipedia.org/wiki/Grindcore"
-      - label: "Everything Is Noise — Chaos, or Channeling Artists at the Intersection of Metal and Breakcore"
-        url: "https://everythingisnoise.net/features/chaos-channeling-artists-at-the-intersection-of-metal-and-breakcore/"
-      - label: "Rate Your Music — Hardcore Punk"
-        url: "https://rateyourmusic.com/genre/hardcore-punk/"
 
 section_arc:
   - role: establishing
@@ -50,7 +40,7 @@ section_arc:
     notes: "Schrei-CU, Faust am Hals, blitzschnelle Hand-Inserts."
   - role: cutaway
     framing_hint: [insert, pov]
-    notes: "Crowd-POV, Beton-Wand-Tag, Verschuettete-Bier-Insert; bei atmospheric-metal: lange Landschafts-/Ritus-Insert."
+    notes: "Crowd-POV, Beton-Wand-Tag, Verschuettete-Bier-Insert."
 
 framing_mix:
   wide_pct: 10
@@ -84,23 +74,25 @@ camera:
     - "deliberate blur and grain"
   basis: inferred
   sources:
-    - "https://en.wikipedia.org/wiki/Hardcore_punk"
+    - "https://harvardfilmarchive.org/calendar/the-decline-of-western-civilization-2011-09"
+    - "https://harvardfilmarchive.org/calendar/instrument-2017-04"
 
 lighting:
   description: |
     available stage / venue lighting, single hard key, deep shadow
     blackout, occasional strobe / red wash, deliberately low-budget
-    exposure (sometimes blown highlights, sometimes underexposed),
-    for atmospheric-metal: cold desaturated daylight or ritual practical.
+    exposure (sometimes blown highlights, sometimes underexposed).
   basis: inferred
   sources:
-    - "https://en.wikipedia.org/wiki/Hardcore_punk"
+    - "https://harvardfilmarchive.org/calendar/the-decline-of-western-civilization-2011-09"
+    - "https://harvardfilmarchive.org/calendar/instrument-2017-04"
 
 color:
-  description: "A red stage wash or cold desaturated daylight, with deliberate exposure irregularity."
+  description: "Venue stage colour with an occasional red wash and deliberate exposure irregularity."
   basis: inferred
   sources:
-    - "https://en.wikipedia.org/wiki/Hardcore_punk"
+    - "https://harvardfilmarchive.org/calendar/the-decline-of-western-civilization-2011-09"
+    - "https://harvardfilmarchive.org/calendar/instrument-2017-04"
 
 craft_signature:
   - technique: "Available venue light"
@@ -108,4 +100,5 @@ craft_signature:
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://en.wikipedia.org/wiki/Hardcore_punk"
+    - "https://harvardfilmarchive.org/calendar/the-decline-of-western-civilization-2011-09"
+    - "https://harvardfilmarchive.org/calendar/instrument-2017-04"
