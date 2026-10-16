@@ -14,13 +14,13 @@ struct GateApprovalCard: View {
     @State private var showsDiagnostics = false
     @State private var showsChanges = false
 
-    private var reviewRoute: PipelineSurfaceRouting.Route? {
-        PipelineSurfaceRouting.route(for: approval.phase, contract: editor.uiContract,
+    private var reviewDestination: String {
+        PipelineSurfaceRouting.reviewDestinationLabel(for: approval.phase, contract: editor.uiContract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces)
     }
 
     private var reviewHint: String {
-        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewRoute?.destinationLabel ?? "Pipeline"), then respond here in Tasks."
+        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewDestination), then respond here in Tasks."
     }
 
     var body: some View {
@@ -31,7 +31,7 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            Button("Open \(reviewRoute?.destinationLabel ?? "Pipeline")") {
+            Button("Open \(reviewDestination)") {
                 editor.revealReviewSurface(for: approval.phase)
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
@@ -226,7 +226,7 @@ extension EditorViewModel {
             availablePackSurfaces: availableCockpitPackSurfaces)
         switch route?.destination {
         case .tab(let tab): revealCockpit(tab)
-        case .pack(let id):
+        case .pack(let id, _):
             revealCockpit(.pipeline)
             cockpitPackSurfaceID = id
         case .chat:

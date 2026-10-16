@@ -20,23 +20,32 @@ enum PipelineApprovalControl {
 enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
-        case pack(String)
+        case pack(id: String, title: String)
         case chat
     }
 
     struct Route: Equatable {
         let icon: String
-        let label: String
         let taskClass: String
         let destination: Destination
 
         var destinationLabel: String {
             switch destination {
             case .tab(let tab): tab.rawValue
-            case .pack: label
+            case .pack(_, let title): title
             case .chat: "Tasks"
             }
         }
+    }
+
+    /// The one destination name the approval card, the agent and the Pipeline row show for a phase.
+    static func reviewDestinationLabel(
+        for phase: String,
+        contract: ContractData?,
+        availablePackSurfaces: [CockpitSurfaceData]
+    ) -> String {
+        route(for: phase, contract: contract, availablePackSurfaces: availablePackSurfaces)?.destinationLabel
+            ?? CockpitTab.pipeline.rawValue
     }
 
     static func route(
@@ -48,16 +57,15 @@ enum PipelineSurfaceRouting {
         if let surface = availablePackSurfaces.first(where: { $0.phase == phase }) {
             return Route(
                 icon: surface.symbol,
-                label: surface.title,
                 taskClass: entry.taskClass,
-                destination: .pack(surface.id)
+                destination: .pack(id: surface.id, title: surface.title)
             )
         }
         if contract?.cockpitSurfaces.contains(where: { $0.phase == phase }) == true { return nil }
         return switch entry.surface {
         case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
-        case "prose": Route(icon: "text.cursor", label: phase == "treatment" ? "Treatment" : "Project Brief", taskClass: entry.taskClass, destination: .tab(phase == "treatment" ? .treatment : .story))
-        case "choice": Route(icon: "slider.horizontal.3", label: "Tasks", taskClass: entry.taskClass, destination: .chat)
+        case "prose": Route(icon: "text.cursor", taskClass: entry.taskClass, destination: .tab(phase == "treatment" ? .treatment : .story))
+        case "choice": Route(icon: "slider.horizontal.3", taskClass: entry.taskClass, destination: .chat)
         default: nil
         }
     }
@@ -65,15 +73,15 @@ enum PipelineSurfaceRouting {
     private static func reviewRoute(for phase: String, taskClass: String) -> Route {
         switch phase {
         case "storyboard":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.storyboard))
+            Route(icon: "eye", taskClass: taskClass, destination: .tab(.storyboard))
         case "bible":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.bible))
+            Route(icon: "eye", taskClass: taskClass, destination: .tab(.bible))
         case "shotlist":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.shotlist))
+            Route(icon: "eye", taskClass: taskClass, destination: .tab(.shotlist))
         case "sanity", "frames", "render":
-            Route(icon: "eye", label: "Review", taskClass: taskClass, destination: .tab(.review))
+            Route(icon: "eye", taskClass: taskClass, destination: .tab(.review))
         default:
-            Route(icon: "slider.horizontal.3", label: "Tasks", taskClass: taskClass, destination: .chat)
+            Route(icon: "slider.horizontal.3", taskClass: taskClass, destination: .chat)
         }
     }
 }
@@ -694,8 +702,6 @@ struct PipelinePanelView: View {
         )
     }
 
-    /// Contract-driven routing (docs/UI_UX_CONCEPT.md §7): the phase's declared surface, clickable —
-    /// review phases open Review, prose phases open Story.
     @ViewBuilder
     /// The route to a phase's artifact. It carries a visible LABEL, not just an icon: this is the only
     /// way to read what a gate is about to approve, and a bare glyph made it unfindable in the field.
@@ -708,25 +714,18 @@ struct PipelinePanelView: View {
         ) {
             let isEnabled = route.destination != .chat || approvalPhase == phase
             Button {
-                switch route.destination {
-                case .tab(let target):
-                    editor.cockpitTab = target
-                    editor.cockpitPackSurfaceID = nil
-                case .pack(let id):
-                    editor.cockpitPackSurfaceID = id
-                case .chat:
-                    editor.agentPanelVisible = true
-                    editor.focusedPanel = .agent
-                }
+                editor.revealReviewSurface(for: phase)
             } label: {
-                ActionLabel(title: route.label, systemImage: route.icon,
+                ActionLabel(title: route.destinationLabel, systemImage: route.icon,
                     acceptanceTextIdentifier: "pipeline.overview.surfaceText.\(phase)")
-                    .background { acceptanceProbe("surface.\(phase)", enabled: isEnabled, text: route.label) }
+                    .background {
+                        acceptanceProbe("surface.\(phase)", enabled: isEnabled, text: route.destinationLabel)
+                    }
             }
             .buttonStyle(.inlineAction(.neutral))
             .disabled(!isEnabled)
             .help(isEnabled
-                  ? "Open this step’s artifact or Tasks"
+                  ? "Open \(route.destinationLabel)"
                   : "Tasks are available for the current step")
         }
     }

@@ -1227,8 +1227,8 @@ extension ToolExecutor {
             "phase": pending.phase,
             "requested_phase": requestedPhase,
             "approval_surface": "Tasks",
-            "review_surface": PipelineSurfaceRouting.route(for: pending.phase, contract: editor?.uiContract,
-                availablePackSurfaces: editor?.availableCockpitPackSurfaces ?? [])?.destinationLabel ?? "Pipeline",
+            "review_surface": PipelineSurfaceRouting.reviewDestinationLabel(for: pending.phase,
+                contract: editor?.uiContract, availablePackSurfaces: editor?.availableCockpitPackSurfaces ?? []),
             "new_request": request.isNew,
             "message": message,
         ])
