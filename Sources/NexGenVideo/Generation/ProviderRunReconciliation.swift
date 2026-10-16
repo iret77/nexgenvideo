@@ -37,6 +37,8 @@ extension MCPProviderClient: MCPStatusClient {}
 struct ProviderRunReconciliation: Sendable {
     var session: URLSession = .shared
     var minimumInterval: TimeInterval = 60
+    /// How long a run settled without a fal bill keeps being checked for a late one.
+    var lateBillWindow: TimeInterval = 7 * 24 * 60 * 60
     var providerKey: @Sendable (GenerationProvider) -> String? = { ProviderKeychain.load($0) }
     var falCharge: @Sendable (_ requestID: String, _ endpoint: String, _ apiKey: String) async -> GenerationMoney? = {
         try? await ProviderMoneyClient.shared.falCharge(requestId: $0, endpoint: $1, apiKey: $2)
@@ -54,6 +56,37 @@ struct ReconcilableRun: Sendable, Equatable {
 }
 
 extension GenerationService {
+    /// fal runs settled without money whose bill may still appear, within the look-back window.
+    nonisolated static func unbilledFalRuns(in log: GenerationLog, settledAfter cutoff: Date) -> [ReconcilableRun] {
+        var reservations: [String: GenerationSpendEvent] = [:]
+        var receipts: [String: GenerationSpendEvent] = [:]
+        var settlements: [String: GenerationSpendEvent] = [:]
+        var excluded: Set<String> = []
+        var order: [String] = []
+        for event in log.spendEvents {
+            switch event.kind {
+            case .reserved:
+                guard reservations[event.transactionId] == nil else { continue }
+                reservations[event.transactionId] = event
+                order.append(event.transactionId)
+            case .submitted:
+                receipts[event.transactionId] = event
+            case .settled:
+                if event.money == nil { settlements[event.transactionId] = event } else { excluded.insert(event.transactionId) }
+            case .charged, .released:
+                excluded.insert(event.transactionId)
+            }
+        }
+        return order.compactMap { id in
+            guard !excluded.contains(id), let reservation = reservations[id],
+                  reservation.provider == .fal, reservation.transport == .api,
+                  let settlement = settlements[id], settlement.createdAt >= cutoff,
+                  let receipt = receipts[id], receipt.providerRequestResumable == true,
+                  let requestID = receipt.providerRequestId, !requestID.isEmpty else { return nil }
+            return ReconcilableRun(transactionID: id, reservation: reservation, requestID: requestID)
+        }
+    }
+
     /// Open runs with a real, resumable provider receipt, in ledger order.
     nonisolated static func reconcilableRuns(in log: GenerationLog, excluding skipped: Set<String>) -> [ReconcilableRun] {
         var reservations: [String: GenerationSpendEvent] = [:]
@@ -92,7 +125,8 @@ extension GenerationService {
         lastReconciliation[home] = now
         reconcilingHomes.insert(home)
         defer { reconcilingHomes.remove(home) }
-        let skipped = ActiveSpendTransactions.current.union(GenerationBatchStore.batchTransactionIDs(home: home))
+        let batchItems = GenerationBatchStore.batchItemsByTransaction(home: home)
+        let skipped = ActiveSpendTransactions.current.union(batchItems.keys)
         var settled = 0
         for run in Self.reconcilableRuns(in: editor.generationLog, excluding: skipped) {
             guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
@@ -100,6 +134,26 @@ extension GenerationService {
             guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
             guard !ActiveSpendTransactions.current.contains(run.transactionID) else { continue }
             if await settleReconciled(run, status: status, scope: scope, editor: editor) { settled += 1 }
+        }
+        let cutoff = now.addingTimeInterval(-reconciliation.lateBillWindow)
+        for run in Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff) {
+            guard let key = reconciliation.providerKey(.fal),
+                  (try? scope.requireCurrent(editor: editor)) != nil else { break }
+            guard let bill = await reconciliation.falCharge(run.requestID, run.reservation.endpoint, key) else { continue }
+            // A late bill replaces a settlement that recorded no money; the write stays in the queried project.
+            guard (try? scope.requireCurrent(editor: editor)) != nil,
+                  Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff).contains(run) else { continue }
+            let authorization = GenerationAuthorization(
+                transactionId: run.transactionID,
+                target: ResolvedGenerationTarget(modelId: run.reservation.model, provider: .fal,
+                    endpoint: run.reservation.endpoint, binding: nil),
+                estimate: run.reservation.money,
+                projectMutationScope: scope,
+                batchItem: batchItems[run.transactionID]
+            )
+            markFinished(authorization: authorization, billed: bill, note: "fal billed this run after it settled.",
+                editor: editor)
+            if !Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff).contains(run) { settled += 1 }
         }
         return settled
     }

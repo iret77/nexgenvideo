@@ -538,4 +538,63 @@ struct ProviderStatusTests {
         #expect(Fixture.requests() == ["GET /v1/tasks/task-done", "GET /marble/v1/operations/op-done",
             "GET /v1/tasks/task-lost"])
     }
+
+    private final class BillLookups: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ids: [String] = []
+
+        var recorded: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return ids
+        }
+
+        func record(_ id: String) {
+            lock.lock()
+            ids.append(id)
+            lock.unlock()
+        }
+    }
+
+    @MainActor
+    @Test func aSettledFalRunWithoutMoneyPicksUpALateBill() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let bill = GenerationMoney(nativeAmount: 0.6, nativeCurrency: "USD", eurAmount: 0.5, eurPerNativeUnit: 0.5 / 0.6,
+            exchangeRateDate: "2026-10-16",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=fal-late",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
+        let lookups = BillLookups()
+        editor.generationService.reconciliation = reconciliation(session, falCharge: { requestID, _, _ in
+            lookups.record(requestID)
+            return requestID == "fal-late" ? bill : nil
+        })
+        let start = Date()
+        func settled(_ transaction: String, at date: Date) -> GenerationSpendEvent {
+            GenerationSpendEvent(transactionId: transaction, kind: .settled, model: "fal-ai/veo3", provider: .fal,
+                transport: .api, endpoint: "fal-ai/veo3", createdAt: date)
+        }
+        editor.generationLog.spendEvents =
+            openRun("late", .fal, endpoint: "fal-ai/veo3", request: "fal-late", resumable: true)
+            + [settled("late", at: start)]
+            + openRun("old", .fal, endpoint: "fal-ai/veo3", request: "fal-old", resumable: true)
+            + [settled("old", at: start.addingTimeInterval(-8 * 24 * 60 * 60))]
+            + openRun("unbilled", .fal, endpoint: "fal-ai/veo3", request: "fal-unbilled", resumable: true)
+            + [settled("unbilled", at: start)]
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start) == 1)
+        let charged = try #require(closing("late", in: editor))
+        #expect(charged.kind == .charged)
+        #expect(charged.money == bill)
+        #expect(lookups.recorded == ["fal-late", "fal-unbilled"])
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(30)) == 0)
+        #expect(lookups.recorded == ["fal-late", "fal-unbilled"])
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(61)) == 0)
+        #expect(lookups.recorded == ["fal-late", "fal-unbilled", "fal-unbilled"])
+        #expect(Fixture.requests().isEmpty)
+    }
 }

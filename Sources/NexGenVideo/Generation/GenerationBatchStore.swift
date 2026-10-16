@@ -266,14 +266,22 @@ enum GenerationBatchStore {
 
     /// Every transaction a validated project-local batch journal tracks; batch resume owns those runs.
     nonisolated static func batchTransactionIDs(home: URL) -> Set<String> {
+        Set(batchItemsByTransaction(home: home).keys)
+    }
+
+    /// The batch item each tracked transaction belongs to.
+    nonisolated static func batchItemsByTransaction(home: URL) -> [String: GenerationBatchAuthorization] {
         let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
-        guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
-        var transactions: Set<String> = []
+        guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [:] }
+        var items: [String: GenerationBatchAuthorization] = [:]
         for id in ids where !id.hasPrefix(".") {
             guard let snapshot = try? loadProjectIfPresent(id: id, home: home) else { continue }
-            transactions.formUnion(snapshot.journal.executions.compactMap(\.transactionID))
+            for execution in snapshot.journal.executions {
+                guard let transaction = execution.transactionID else { continue }
+                items[transaction] = GenerationBatchAuthorization(batchID: snapshot.batch.id, itemID: execution.itemID)
+            }
         }
-        return transactions
+        return items
     }
 
     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {
