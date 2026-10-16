@@ -33,18 +33,30 @@ actor RunwayClient {
     private static let versionHeader = "2024-11-06"
     private static let maxRetryDelayNanoseconds: UInt64 = 30_000_000_000
 
-    struct SubmissionAcknowledgedError: LocalizedError, Sendable {
+    struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
+        /// Runway confirmed the cancellation of the accepted task.
+        var providerTaskEnded = false
 
         var errorDescription: String? { message }
+        var providerRunEnded: Bool { providerTaskEnded }
     }
 
-    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable {
+    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
 
         var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
+    }
+
+    /// The local run ended but Runway did not confirm the cancellation; the task may still run.
+    struct CancellationFailedError: LocalizedError, Sendable, ProviderRunEndReporting {
+        let message: String
+
+        var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
     }
 
     struct TaskResult: Sendable, Equatable {
@@ -53,11 +65,12 @@ actor RunwayClient {
     }
 
     /// A task that ended FAILED or CANCELLED, with the credits Runway still reports for it.
-    struct TaskFailure: LocalizedError, Sendable {
+    struct TaskFailure: LocalizedError, Sendable, ProviderRunEndReporting {
         let message: String
         let cost: GenerationProviderCost?
 
         var errorDescription: String? { message }
+        var providerRunEnded: Bool { true }
     }
 
     private struct TerminalTaskError: LocalizedError, Sendable {
@@ -158,8 +171,8 @@ actor RunwayClient {
         } catch {
             let cancelled = error is CancellationError || Task.isCancelled
             if let failure = await cancelIndependently(taskId: taskId) {
-                throw GenerationBackendError.transport(
-                    "\(cancelled ? "Generation was cancelled locally" : error.localizedDescription), but Runway task cancellation failed: \(failure). The provider task may still run and incur charges."
+                throw CancellationFailedError(
+                    message: "\(cancelled ? "Generation was cancelled locally" : error.localizedDescription), but Runway task cancellation failed: \(failure). The provider task may still run and incur charges."
                 )
             }
             if cancelled { throw CancellationError() }
@@ -284,7 +297,8 @@ actor RunwayClient {
             } else {
                 message = "Runway accepted task \(id) before cancellation and then cancelled the provider task."
             }
-            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message)
+            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message,
+                providerTaskEnded: cancellationFailure == nil)
         }
         return id
     }

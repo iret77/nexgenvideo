@@ -30,11 +30,18 @@ enum MCPGenerationExecutor {
         var errorDescription: String? { message }
     }
 
-    struct JobFailure: LocalizedError {
+    struct JobFailure: LocalizedError, ProviderRunEndReporting {
         let jobID: String
         let message: String
+        /// False when the accepted job could not be cancelled and may still run.
+        var providerRunEnded = true
 
         var errorDescription: String? { "Provider job '\(jobID)' failed: \(message)" }
+    }
+
+    private struct AcceptedJobCancellation: Sendable {
+        let message: String
+        let sent: Bool
     }
 
     struct Result: Equatable {
@@ -120,7 +127,8 @@ enum MCPGenerationExecutor {
             )
             throw JobFailure(
                 jobID: jobID,
-                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable asynchronous media result path. \(cancellation)"
+                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable asynchronous media result path. \(cancellation.message)",
+                providerRunEnded: cancellation.sent
             )
         }
         do {
@@ -147,7 +155,8 @@ enum MCPGenerationExecutor {
                 : error.localizedDescription
             throw JobFailure(
                 jobID: jobID,
-                message: "\(reason) \(cancellation)"
+                message: "\(reason) \(cancellation.message)",
+                providerRunEnded: cancellation.sent
             )
         }
     }
@@ -206,9 +215,12 @@ enum MCPGenerationExecutor {
         jobID: String,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async -> String {
+    ) async -> AcceptedJobCancellation {
         guard let cancelTool = MCPGenerationLifecycle.cancelTool(in: tools) else {
-            return "No compatible cancellation tool is available; the provider may still charge for the accepted job."
+            return .init(
+                message: "No compatible cancellation tool is available; the provider may still charge for the accepted job.",
+                sent: false
+            )
         }
         do {
             let arguments = try MCPGenerationArguments.makeJob(
@@ -216,9 +228,12 @@ enum MCPGenerationExecutor {
                 schema: cancelTool.inputSchema
             )
             _ = try await client.callTool(name: cancelTool.name, arguments: arguments)
-            return "NexGenVideo sent a cancellation request for the accepted job."
+            return .init(message: "NexGenVideo sent a cancellation request for the accepted job.", sent: true)
         } catch {
-            return "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job."
+            return .init(
+                message: "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job.",
+                sent: false
+            )
         }
     }
 
@@ -226,7 +241,7 @@ enum MCPGenerationExecutor {
         jobID: String,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async -> String {
+    ) async -> AcceptedJobCancellation {
         let cancellation = Task.detached {
             await cancelAcceptedJob(jobID: jobID, tools: tools, client: client)
         }

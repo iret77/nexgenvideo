@@ -14,6 +14,11 @@ final class FirstOnlyFlag {
     }
 }
 
+/// A post-submission failure that states whether the provider confirmed the run ended.
+protocol ProviderRunEndReporting: Error {
+    var providerRunEnded: Bool { get }
+}
+
 @MainActor
 private final class MCPSubmissionDispatchState {
     private(set) var didDispatch = false
@@ -393,6 +398,11 @@ final class GenerationService {
         let task = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
+            func resumedAuthorization(_ transaction: String) -> GenerationAuthorization {
+                let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
+                return GenerationAuthorization(transactionId: transaction, target: target, estimate: reserved,
+                    projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
+            }
             var recoveredCost: GenerationProviderCost?
             do {
                 if completedIDs.count < execution.placeholders.count {
@@ -420,9 +430,7 @@ final class GenerationService {
                 }
                 if let transaction = execution.transactionID,
                    !editor.generationLog.spendEvents.contains(where: { $0.transactionId == transaction && $0.kind == .charged }) {
-                    let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
-                    let recoveredAuthorization = GenerationAuthorization(transactionId: transaction, target: target,
-                        estimate: reserved, projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
+                    let recoveredAuthorization = resumedAuthorization(transaction)
                     let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
                     switch target.provider {
                     case .fal:
@@ -436,6 +444,15 @@ final class GenerationService {
                         }
                     }
                 }
+            } catch let failure as RunwayClient.TaskFailure {
+                if let transaction = execution.transactionID,
+                   !editor.generationLog.spendEvents.contains(where: {
+                       $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
+                   }) {
+                    self.recordSubmittedRunFailure(failure, message: failure.localizedDescription,
+                        authorization: resumedAuthorization(transaction), editor: editor)
+                }
+                self.failJob(placeholders, failure.localizedDescription, nil)
             } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
@@ -1075,14 +1092,33 @@ final class GenerationService {
     private func failSubmittedJob(
         _ placeholders: [MediaAsset],
         _ message: String,
-        providerCost: GenerationProviderCost? = nil,
+        after error: any Error,
         authorization: GenerationAuthorization,
         editor: EditorViewModel,
         onFailure: (@MainActor () -> Void)?
     ) {
-        markFinished(authorization: authorization, providerCost: providerCost,
-            note: "The provider job ended without a result: \(message)", editor: editor)
+        recordSubmittedRunFailure(error, message: message, authorization: authorization, editor: editor)
         failJob(placeholders, message, onFailure)
+    }
+
+    /// Untyped failures count as ended; only typed unknown outcomes keep a run in flight.
+    nonisolated static func providerRunEnded(after error: any Error) -> Bool {
+        (error as? any ProviderRunEndReporting)?.providerRunEnded ?? true
+    }
+
+    /// Settles a failed submitted run only once the provider confirmed it ended; otherwise it stays in flight.
+    func recordSubmittedRunFailure(
+        _ error: any Error,
+        message: String,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        guard Self.providerRunEnded(after: error) else {
+            Log.generation.notice("provider run outcome unconfirmed; it stays in flight: \(message)")
+            return
+        }
+        markFinished(authorization: authorization, providerCost: (error as? RunwayClient.TaskFailure)?.cost,
+            note: "The provider job ended without a result: \(message)", editor: editor)
     }
 
     /// Closes a finished run: billed money becomes a charge; otherwise the run settles with whatever
@@ -1181,21 +1217,21 @@ final class GenerationService {
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as FalClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             if requestId == nil {
                 failBeforeSubmission(
                     placeholders, "Generation cancelled.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, "Generation cancelled.", authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, "Generation cancelled.", after: CancellationError(), authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if requestId == nil {
@@ -1203,7 +1239,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1338,7 +1374,7 @@ final class GenerationService {
                 modelName: model
             ) {
             case .failJob(let message):
-                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, message, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
                     placeholders,
@@ -1470,7 +1506,7 @@ final class GenerationService {
                 onComplete: onComplete, onFailure: onFailure)
             markFinished(authorization: authorization, providerCost: result.cost, editor: editor)
         } catch let error as RunwayClient.TaskFailure {
-            failSubmittedJob(placeholders, error.localizedDescription, providerCost: error.cost,
+            failSubmittedJob(placeholders, error.localizedDescription, after: error,
                 authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
             markSubmitted(
@@ -1478,14 +1514,14 @@ final class GenerationService {
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             let message = "Generation cancelled."
             if taskId == nil {
@@ -1497,7 +1533,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } else {
-                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, message, after: CancellationError(), authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if taskId == nil {
@@ -1505,7 +1541,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1645,7 +1681,7 @@ final class GenerationService {
             )
             markFinished(authorization: authorization, editor: editor)
         } catch {
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2031,7 +2067,7 @@ final class GenerationService {
             )
             markFinished(authorization: authorization, providerCost: audio.cost, editor: editor)
         } catch {
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2102,7 +2138,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
