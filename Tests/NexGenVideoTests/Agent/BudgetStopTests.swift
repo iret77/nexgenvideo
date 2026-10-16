@@ -1009,11 +1009,22 @@ struct BudgetStopTests {
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.CancellationFailedError(message: "May run")))
         #expect(GenerationService.providerRunEnded(after: RunwayClient.TaskFailure(message: "FAILED", cost: nil)))
         #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.cancellationFailed("offline")))
+        #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.notConnected))
         #expect(GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.toolFailed("rejected")))
-        #expect(!GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(
-            jobID: "job", message: "Cancellation failed", providerRunEnded: false)))
-        #expect(GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(jobID: "job", message: "FAILED")))
-        #expect(GenerationService.providerRunEnded(after: CancellationError()))
+        #expect(!GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(jobID: "job", message: "Timed out")))
+        #expect(GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(
+            jobID: "job", message: "FAILED", providerRunEnded: true)))
+        #expect(GenerationService.providerRunEnded(after: ProviderRunEndedError(message: "FAILED")))
+        #expect(!GenerationService.providerRunEnded(after: CancellationError()))
+        #expect(!GenerationService.providerRunEnded(after: URLError(.timedOut)))
+        #expect(!GenerationService.providerRunEnded(after: GenerationBackendError.transport(
+            "The MCP returned neither a job identifier nor output media.")))
+
+        #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
+            GenerationBackendError.api(status: 400, code: "400", message: "Bad request"))))
+        #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
+            GoogleImageClient.ClientError.noImage("blocked"))))
+        #expect(!GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(URLError(.timedOut))))
     }
 
     @Test("an unknown provider outcome stays in flight; a terminal failure settles with its reported cost")
@@ -1056,13 +1067,16 @@ struct BudgetStopTests {
         let credits = GenerationProviderCost(amount: 7, unit: "credits", source: "fixture")
         service.recordSubmittedRunFailure(RunwayClient.TaskFailure(message: "FAILED", cost: credits),
             message: "FAILED", authorization: terminal, editor: editor)
+        let unclassified = try await submitted("job-poll")
+        service.recordSubmittedRunFailure(GenerationBackendError.transport("Status poll failed"),
+            message: "Status poll failed", authorization: unclassified, editor: editor)
 
         let terminalID = try #require(terminal.transactionId)
         let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
         #expect(settled.map(\.transactionId) == [terminalID])
         #expect(settled.first?.providerCost == credits)
         let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
-        #expect(snapshot.inFlightCount == 2)
+        #expect(snapshot.inFlightCount == 3)
         #expect(snapshot.providerCredits.map(\.amount) == [7])
     }
 

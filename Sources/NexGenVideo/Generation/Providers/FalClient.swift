@@ -267,8 +267,8 @@ actor FalClient {
                 case "FAILED", "ERROR", "CANCELLED":
                     providerReachedTerminalState = true
                     let detail = Self.errorMessage(in: json) ?? "provider reported failure"
-                    throw GenerationBackendError.transport(
-                        "fal.ai generation failed for \(route.application), request \(Self.safeRequestID(requestId)): \(detail)"
+                    throw ProviderRunEndedError(
+                        message: "fal.ai generation failed for \(route.application), request \(Self.safeRequestID(requestId)): \(detail)"
                     )
                 default:
                     invalidStatusResponses += 1
@@ -287,7 +287,7 @@ actor FalClient {
             let message =
                 "fal.ai generation timed out for \(route.application), request \(Self.safeRequestID(requestId))"
             guard !providerReachedTerminalState else {
-                throw GenerationBackendError.transport(message)
+                throw ProviderRunEndedError(message: message)
             }
             let error = await abandonmentError(
                 message,
@@ -295,7 +295,9 @@ actor FalClient {
             )
             throw error
         } catch is CancellationError {
-            guard !providerReachedTerminalState else { throw CancellationError() }
+            guard !providerReachedTerminalState else {
+                throw ProviderRunEndedError(message: "Generation cancelled.")
+            }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
                 throw CancellationFailedError(
                     message: "fal.ai generation was cancelled locally. \(warning)"
@@ -303,7 +305,10 @@ actor FalClient {
             }
             throw CancellationError()
         } catch {
-            guard !providerReachedTerminalState else { throw error }
+            guard !providerReachedTerminalState else {
+                if error is ProviderRunEndedError { throw error }
+                throw ProviderRunEndedError(message: error.localizedDescription)
+            }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
                 throw CancellationFailedError(
                     message: "\(error.localizedDescription) \(warning)"

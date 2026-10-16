@@ -624,12 +624,42 @@ struct MCPGenerationExecutorTests {
             } catch let error as MCPGenerationExecutor.JobFailure {
                 #expect(error.jobID == jobID)
                 #expect(error.message.contains("provider settled the render"))
+                #expect(error.providerRunEnded)
             } catch {
                 Issue.record("Unexpected error: \(error)")
             }
 
             #expect(await client.calledTools() == ["generate_image", "job_status"])
         }
+    }
+
+    @Test func pendingSubmissionWithoutJobIdentifierStaysUnconfirmed() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"status":"queued"}"#]],
+        ])
+
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                maxPollAttempts: 1,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected a pending submission without a job identifier to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("neither a job identifier nor output media"))
+            #expect(!GenerationService.providerRunEnded(after: error))
+        }
+        #expect(await client.calledTools() == ["generate_image"])
     }
 
     @Test func taskCancellationCancelsAcceptedJobExactlyOnce() async {

@@ -33,8 +33,8 @@ enum MCPGenerationExecutor {
     struct JobFailure: LocalizedError, ProviderRunEndReporting {
         let jobID: String
         let message: String
-        /// False when the accepted job could not be cancelled and may still run.
-        var providerRunEnded = true
+        /// True only when the provider itself reported a terminal job state.
+        var providerRunEnded = false
 
         var errorDescription: String? { "Provider job '\(jobID)' failed: \(message)" }
     }
@@ -103,14 +103,17 @@ enum MCPGenerationExecutor {
                         )
                     )
                 } catch {
-                    throw JobFailure(jobID: jobID, message: error.localizedDescription)
+                    throw JobFailure(jobID: jobID, message: error.localizedDescription, providerRunEnded: true)
                 }
             }
+            throw ProviderRunEndedError(
+                message: "\(provider.displayName)'s MCP reported success without output media or a job identifier."
+            )
         case .failed(let message):
             if let jobID = submission.jobID {
-                throw JobFailure(jobID: jobID, message: message)
+                throw JobFailure(jobID: jobID, message: message, providerRunEnded: true)
             }
-            throw GenerationBackendError.transport(message)
+            throw ProviderRunEndedError(message: message)
         case .pending, .unknown:
             break
         }
@@ -143,7 +146,7 @@ enum MCPGenerationExecutor {
             )
             return Result(jobID: jobID, output: output)
         } catch let terminal as TerminalProviderState {
-            throw JobFailure(jobID: jobID, message: terminal.message)
+            throw JobFailure(jobID: jobID, message: terminal.message, providerRunEnded: true)
         } catch {
             let cancellation = await cancelAcceptedJobIndependently(
                 jobID: jobID,

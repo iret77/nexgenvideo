@@ -51,6 +51,9 @@ actor MarbleClient {
             // Transient non-200 on a poll is retried (matches marble.py), not fatal.
             if status == 200 {
                 let json = Self.parse(data)
+                if json?["error"] != nil, let message = Self.errorMessage(in: json) {
+                    throw ProviderRunEndedError(message: message)
+                }
                 if let message = Self.errorMessage(in: json) {
                     throw GenerationBackendError.transport(message)
                 }

@@ -26,7 +26,10 @@ actor ElevenLabsClient {
 
     /// POST /v1/text-to-speech/{voice_id} — body { text, model_id }, returns audio bytes.
     func textToSpeech(text: String, voiceName: String) async throws -> Audio {
-        let voiceId = try await resolveVoiceId(named: voiceName)
+        let voiceId: String
+        // No generation request has been sent yet, so nothing can still run at ElevenLabs.
+        do { voiceId = try await resolveVoiceId(named: voiceName) }
+        catch { throw ProviderRunEndedError(message: error.localizedDescription) }
         return try await post(
             path: "text-to-speech/\(voiceId)",
             body: ["text": text, "model_id": "eleven_multilingual_v2"]
@@ -106,7 +109,7 @@ actor ElevenLabsClient {
         guard (200..<300).contains(status) else {
             // Error bodies are JSON ({"detail": …}); surface them so failures are diagnosable.
             let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
-            throw GenerationBackendError.transport("ElevenLabs HTTP \(status): \(detail)")
+            throw ProviderRunEndedError(message: "ElevenLabs HTTP \(status): \(detail)")
         }
         return Audio(
             data: data,

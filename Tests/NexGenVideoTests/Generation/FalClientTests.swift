@@ -980,6 +980,7 @@ struct FalClientTests {
                 Issue.record("Expected terminal \(providerStatus) failure")
             } catch {
                 #expect(error.localizedDescription.contains("provider stopped"))
+                #expect(GenerationService.providerRunEnded(after: error))
             }
             #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status])
             #expect(FixtureURLProtocol.requests().map(\.method) == ["POST", "GET"])

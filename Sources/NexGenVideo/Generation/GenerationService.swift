@@ -19,6 +19,15 @@ protocol ProviderRunEndReporting: Error {
     var providerRunEnded: Bool { get }
 }
 
+/// The provider confirmed this run reached a terminal state, or answered without a run continuing.
+struct ProviderRunEndedError: LocalizedError, ProviderRunEndReporting {
+    let message: String
+    var cost: GenerationProviderCost?
+
+    var errorDescription: String? { message }
+    var providerRunEnded: Bool { true }
+}
+
 @MainActor
 private final class MCPSubmissionDispatchState {
     private(set) var didDispatch = false
@@ -1101,9 +1110,20 @@ final class GenerationService {
         failJob(placeholders, message, onFailure)
     }
 
-    /// Untyped failures count as ended; only typed unknown outcomes keep a run in flight.
+    /// Only a typed, provider-confirmed end settles a run; anything else keeps it in flight.
     nonisolated static func providerRunEnded(after error: any Error) -> Bool {
-        (error as? any ProviderRunEndReporting)?.providerRunEnded ?? true
+        (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
+    }
+
+    /// Gemini image calls are synchronous: an HTTP answer or a response without an image ends the run.
+    nonisolated static func googleImageOutcome(_ error: any Error) -> any Error {
+        if let error = error as? GoogleImageClient.ClientError {
+            return ProviderRunEndedError(message: error.localizedDescription)
+        }
+        if let error = error as? GenerationBackendError, case .api = error {
+            return ProviderRunEndedError(message: error.localizedDescription)
+        }
+        return error
     }
 
     /// Settles a failed submitted run only once the provider confirmed it ended; otherwise it stays in flight.
@@ -1117,7 +1137,8 @@ final class GenerationService {
             Log.generation.notice("provider run outcome unconfirmed; it stays in flight: \(message)")
             return
         }
-        markFinished(authorization: authorization, providerCost: (error as? RunwayClient.TaskFailure)?.cost,
+        let cost = (error as? RunwayClient.TaskFailure)?.cost ?? (error as? ProviderRunEndedError)?.cost
+        markFinished(authorization: authorization, providerCost: cost,
             note: "The provider job ended without a result: \(message)", editor: editor)
     }
 
@@ -1186,7 +1207,7 @@ final class GenerationService {
             let outputData = try await client.result(endpoint: endpoint, requestId: submittedId)
             let urls = FalOutput.urls(from: outputData, shape: shape)
             guard !urls.isEmpty else {
-                throw GenerationBackendError.transport("fal returned no output")
+                throw ProviderRunEndedError(message: "fal returned no output")
             }
             let job = BackendGenerationJob(
                 _id: submittedId,
@@ -1669,7 +1690,9 @@ final class GenerationService {
                 providerRequestId: UUID().uuidString,
                 editor: editor
             )
-            let images = try await client.geminiImage(prepared: prepared)
+            let images: [Data]
+            do { images = try await client.geminiImage(prepared: prepared) }
+            catch { throw Self.googleImageOutcome(error) }
             await finalizeBytes(
                 images,
                 placeholders: placeholders,
@@ -2021,6 +2044,7 @@ final class GenerationService {
                 placeholders, "Unsupported ElevenLabs model: \(endpoint)",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
+        var delivered: ElevenLabsClient.Audio?
         do {
             let client = ElevenLabsClient(apiKey: apiKey)
             markSubmitted(
@@ -2041,10 +2065,9 @@ final class GenerationService {
                     lengthMs: (params.durationSeconds ?? 90) * 1000,
                     forceInstrumental: params.instrumental)
             default:
-                throw GenerationBackendError.transport(
-                    "Unsupported ElevenLabs model: \(endpoint)"
-                )
+                throw ProviderRunEndedError(message: "Unsupported ElevenLabs model: \(endpoint)")
             }
+            delivered = audio
             // Bytes arrive directly (no result URL) — write to the placeholder's destination and
             // run the same finalize steps downloadAndFinalize performs after its move.
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
@@ -2067,7 +2090,11 @@ final class GenerationService {
             )
             markFinished(authorization: authorization, providerCost: audio.cost, editor: editor)
         } catch {
-            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
+            var outcome: any Error = error
+            if let delivered {
+                outcome = ProviderRunEndedError(message: error.localizedDescription, cost: delivered.cost)
+            }
+            failSubmittedJob(placeholders, error.localizedDescription, after: outcome, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2112,7 +2139,7 @@ final class GenerationService {
             let urls = MarbleOutput.urls(from: outputData)
             let reportedCost = ProviderReportedCost.marble(operation: outputData)
             guard !urls.isEmpty else {
-                throw GenerationBackendError.transport("Marble returned no panorama")
+                throw ProviderRunEndedError(message: "Marble returned no panorama")
             }
             let job = BackendGenerationJob(
                 _id: submittedId,
