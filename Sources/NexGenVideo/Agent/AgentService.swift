@@ -3618,6 +3618,7 @@ final class AgentService {
                 String(selected?.supportsAdaptiveThinking ?? false),
                 String(selected?.supportsHighEffort ?? false),
                 String(selected?.maxOutputTokens ?? 0),
+                String(selected?.supportsToolSearch ?? false),
                 String(apiKeyGeneration),
             ].joined(separator: ":")
         case .codexAppServer:
@@ -3761,6 +3762,15 @@ final class AgentService {
             )
             if let index = assistantMessageIndex(id: id) {
                 messages[index].blocks.append(.thinking(block))
+            }
+        case .serverTool(let messageID, let block):
+            let id = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            if let index = assistantMessageIndex(id: id) {
+                messages[index].blocks.append(.serverTool(block))
             }
         case .toolCall(let messageID, let id, let name, let inputJSON):
             recordActivity(ToolRunPresentation.label(for: name))
@@ -4260,7 +4270,8 @@ final class AgentService {
         return AnthropicReplay.strippingInvalidatedThinking(
             entries,
             system: hostContext.systemInstructions,
-            tools: hostContext.toolSchemas
+            tools: hostContext.toolSchemas,
+            toolSearch: backend == .anthropicAPI && effectiveModel?.supportsToolSearch == true
         )
     }
 
@@ -4307,6 +4318,8 @@ final class AgentService {
         switch block {
         case .thinking(let block):
             return .thinking(block)
+        case .serverTool(let block):
+            return .serverTool(block)
         case .text(let s):
             guard !s.isEmpty else { return nil }
             return .text(s)
@@ -4459,12 +4472,13 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
 enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
     case thinking(AnthropicThinkingBlock)
+    case serverTool(AnthropicServerToolBlock)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)
 
-    private enum Kind: String, Codable { case text, thinking, toolUse, toolResult }
+    private enum Kind: String, Codable { case text, thinking, serverTool, toolUse, toolResult }
     private enum CodingKeys: String, CodingKey {
-        case kind, text, id, name, input, toolUseId, content, isError, thinking
+        case kind, text, id, name, input, toolUseId, content, isError, thinking, serverTool
     }
 
     init(from decoder: Decoder) throws {
@@ -4472,6 +4486,8 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
         switch try c.decode(Kind.self, forKey: .kind) {
         case .thinking:
             self = .thinking(try c.decode(AnthropicThinkingBlock.self, forKey: .thinking))
+        case .serverTool:
+            self = .serverTool(try c.decode(AnthropicServerToolBlock.self, forKey: .serverTool))
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
         case .toolUse:
@@ -4495,6 +4511,9 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
         case .thinking(let block):
             try c.encode(Kind.thinking, forKey: .kind)
             try c.encode(block, forKey: .thinking)
+        case .serverTool(let block):
+            try c.encode(Kind.serverTool, forKey: .kind)
+            try c.encode(block, forKey: .serverTool)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)

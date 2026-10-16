@@ -1,12 +1,15 @@
 import CryptoKit
 import Foundation
 
-/// Fingerprint of everything a thinking block's signature is bound to: system, tools, and the
-/// non-thinking content before it. Insensitive to message merging and to thinking removal.
+/// Fingerprint of everything a thinking block's signature is bound to: system, tools as loaded, and
+/// the non-thinking content before it. Insensitive to message merging and to thinking removal.
 struct AnthropicPrefixDigest {
     private var hasher = SHA256()
+    private let replaysServerTools: Bool
 
-    init(system: String, tools: [AgentRuntimeToolSchema]) {
+    init(system: String, tools: [AgentRuntimeToolSchema], toolSearch: Bool = false) {
+        let loaded = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: toolSearch)
+        replaysServerTools = loaded != nil
         write("system")
         write(system)
         for tool in tools.sorted(by: { $0.name < $1.name }) {
@@ -17,6 +20,14 @@ struct AnthropicPrefixDigest {
                 .map { String(decoding: $0, as: UTF8.self) } ?? ""
             write(schema)
         }
+        if let loaded {
+            write("tool_search")
+            write(AnthropicToolSearch.toolType)
+            for name in loaded.sorted() {
+                write("loaded")
+                write(name)
+            }
+        }
     }
 
     mutating func append(_ message: AgentRuntimeMessage) {
@@ -25,6 +36,9 @@ struct AnthropicPrefixDigest {
             switch content {
             case .thinking:
                 continue
+            case .serverTool(let block):
+                guard replaysServerTools else { continue }
+                write(role); write("server_tool"); write(block.canonicalJSON)
             case .text(let value):
                 write(role); write("text"); write(value)
             case .image(let image):
@@ -54,9 +68,10 @@ struct AnthropicPrefixDigest {
     static func of(
         system: String,
         tools: [AgentRuntimeToolSchema],
+        toolSearch: Bool = false,
         messages: [AgentRuntimeMessage]
     ) -> String {
-        var digest = AnthropicPrefixDigest(system: system, tools: tools)
+        var digest = AnthropicPrefixDigest(system: system, tools: tools, toolSearch: toolSearch)
         for message in messages { digest.append(message) }
         return digest.value
     }
@@ -82,14 +97,15 @@ enum AnthropicReplay {
     static func strippingInvalidatedThinking(
         _ entries: [Entry],
         system: String,
-        tools: [AgentRuntimeToolSchema]
+        tools: [AgentRuntimeToolSchema],
+        toolSearch: Bool = false
     ) -> [AgentRuntimeMessage] {
         var entries = entries
         let carriesThinking = entries.contains { entry in
             entry.role == .assistant && entry.content.contains(where: isThinking)
         }
         if carriesThinking {
-            var digest = AnthropicPrefixDigest(system: system, tools: tools)
+            var digest = AnthropicPrefixDigest(system: system, tools: tools, toolSearch: toolSearch)
             var lastInvalid: Int?
             for (index, entry) in entries.enumerated() {
                 if entry.role == .assistant, entry.recordedPrefixDigest != digest.value {
@@ -109,10 +125,17 @@ enum AnthropicReplay {
     }
 
     /// The Messages API joins consecutive same-role turns; sending them joined keeps every
-    /// later request byte-identical to the one that produced a block.
-    static func wireMessages(_ messages: [AgentRuntimeMessage]) -> [AgentRuntimeMessage] {
+    /// later request byte-identical to the one that produced a block. Without tool search in the
+    /// request, its earlier server steps cannot be replayed.
+    static func wireMessages(
+        _ messages: [AgentRuntimeMessage],
+        keepingServerTools: Bool = true
+    ) -> [AgentRuntimeMessage] {
         var result: [AgentRuntimeMessage] = []
-        for message in messages where !message.content.isEmpty {
+        let sendable = keepingServerTools ? messages : messages.map { message in
+            AgentRuntimeMessage(role: message.role, content: message.content.filter { !isServerTool($0) })
+        }
+        for message in sendable where !message.content.isEmpty {
             if let last = result.last, last.role == message.role {
                 result[result.count - 1] = AgentRuntimeMessage(
                     role: last.role,
@@ -127,6 +150,11 @@ enum AnthropicReplay {
 
     static func isThinking(_ content: AgentRuntimeContent) -> Bool {
         if case .thinking = content { return true }
+        return false
+    }
+
+    static func isServerTool(_ content: AgentRuntimeContent) -> Bool {
+        if case .serverTool = content { return true }
         return false
     }
 }

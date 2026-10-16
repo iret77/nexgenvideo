@@ -27,6 +27,7 @@ struct AnthropicToolSchema: @unchecked Sendable {
 enum AnthropicStreamEvent: Sendable {
     case textDelta(String)
     case thinkingComplete(AnthropicThinkingBlock)
+    case serverToolComplete(AnthropicServerToolBlock)
     case toolUseComplete(id: String, name: String, inputJSON: String)
     case usage(AgentRuntimeUsage)
     case messageStop(stopReason: AnthropicStopReason)
@@ -49,11 +50,18 @@ enum AnthropicClientError: LocalizedError, Sendable {
 // MARK: - Client protocol
 
 protocol AgentClient: Sendable {
+    /// Whether requests defer non-core tools behind server-side tool search.
+    var supportsToolSearch: Bool { get }
+
     func stream(
         system: String,
         tools: [AnthropicToolSchema],
         messages: [AnthropicMessage]
     ) -> AsyncThrowingStream<AnthropicStreamEvent, Error>
+}
+
+extension AgentClient {
+    var supportsToolSearch: Bool { false }
 }
 
 // MARK: - Usage logging
@@ -93,6 +101,7 @@ enum AnthropicSSE {
     struct Decoder {
         private var pendingTools: [Int: (id: String, name: String, json: String)] = [:]
         private var pendingThinking: [Int: [String: Any]] = [:]
+        private var pendingServerTools: [Int: (block: [String: Any], json: String)] = [:]
         private var stopReason: AnthropicStopReason?
         private var stopped = false
 
@@ -118,6 +127,8 @@ enum AnthropicSSE {
                     }
                 case "thinking", "redacted_thinking":
                     pendingThinking[index] = block
+                case "server_tool_use", "tool_search_tool_result":
+                    pendingServerTools[index] = (block, "")
                 default: break
                 }
             case "content_block_delta":
@@ -132,6 +143,11 @@ enum AnthropicSSE {
                           var acc = pendingTools[index] {
                     acc.json += partial
                     pendingTools[index] = acc
+                } else if deltaType == "input_json_delta",
+                          let partial = delta["partial_json"] as? String,
+                          var acc = pendingServerTools[index] {
+                    acc.json += partial
+                    pendingServerTools[index] = acc
                 } else if deltaType == "thinking_delta" || deltaType == "signature_delta" {
                     let key = deltaType == "thinking_delta" ? "thinking" : "signature"
                     guard var block = pendingThinking[index],
@@ -145,6 +161,16 @@ enum AnthropicSSE {
                 guard let index = event["index"] as? Int else { break }
                 if let block = pendingThinking.removeValue(forKey: index) {
                     return [.thinkingComplete(try AnthropicThinkingBlock(json: block))]
+                }
+                if let acc = pendingServerTools.removeValue(forKey: index) {
+                    var block = acc.block
+                    if !acc.json.isEmpty, block["type"] as? String == "server_tool_use" {
+                        guard let input = try? JSONSerialization.jsonObject(with: Data(acc.json.utf8)) as? [String: Any] else {
+                            throw AnthropicClientError.streamError("Server tool input is not a JSON object.")
+                        }
+                        block["input"] = input
+                    }
+                    return [.serverToolComplete(try AnthropicServerToolBlock(json: block))]
                 }
                 if let acc = pendingTools.removeValue(forKey: index) {
                     let json = acc.json.isEmpty ? "{}" : acc.json
@@ -161,7 +187,8 @@ enum AnthropicSSE {
                     return [.usage(AnthropicSSE.runtimeUsage(usage))]
                 }
             case "message_stop":
-                guard let stopReason, pendingThinking.isEmpty, pendingTools.isEmpty else {
+                guard let stopReason, pendingThinking.isEmpty, pendingTools.isEmpty,
+                      pendingServerTools.isEmpty else {
                     throw AnthropicClientError.streamError("The response ended with incomplete content.")
                 }
                 stopped = true
@@ -197,6 +224,9 @@ enum AnthropicSSE {
 enum AnthropicRequestBody {
     static let maxOutputTokensCeiling = 64000
     static let unknownModelMaxTokens = 8192
+    private static let uncacheableBlockTypes: Set<String> = [
+        "thinking", "redacted_thinking", "server_tool_use", "tool_search_tool_result",
+    ]
 
     static func build(
         model: AnthropicModelInfo,
@@ -205,13 +235,16 @@ enum AnthropicRequestBody {
         tools: [AnthropicToolSchema],
         messages: [AnthropicMessage]
     ) -> [String: Any] {
+        let loaded = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: model.supportsToolSearch)
         var toolBlocks: [[String: Any]] = tools.map {
-            ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema]
+            var block: [String: Any] = ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema]
+            if let loaded, !loaded.contains($0.name) { block["defer_loading"] = true }
+            return block
         }
-        // Prompt-cache boundary covers system + tools.
-        if var last = toolBlocks.popLast() {
-            last["cache_control"] = ["type": "ephemeral"]
-            toolBlocks.append(last)
+        if loaded != nil { toolBlocks.insert(AnthropicToolSearch.searchToolBlock, at: 0) }
+        // Prompt-cache boundary covers system + loaded tools; a deferred tool cannot carry one.
+        if let index = toolBlocks.lastIndex(where: { $0["defer_loading"] == nil }) {
+            toolBlocks[index]["cache_control"] = ["type": "ephemeral"]
         }
         // Prompt-cache the conversation prefix
         var messageBlocks: [[String: Any]] = messages.map {
@@ -220,7 +253,7 @@ enum AnthropicRequestBody {
         if var lastMsg = messageBlocks.popLast(),
            var content = lastMsg["content"] as? [[String: Any]],
            var lastBlock = content.popLast() {
-            if !["thinking", "redacted_thinking"].contains(lastBlock["type"] as? String ?? "") {
+            if !Self.uncacheableBlockTypes.contains(lastBlock["type"] as? String ?? "") {
                 lastBlock["cache_control"] = ["type": "ephemeral"]
             }
             content.append(lastBlock)

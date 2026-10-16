@@ -205,6 +205,12 @@ struct AgentTool: @unchecked Sendable {
 }
 
 enum ToolDefinitions {
+    // Nearly every turn reads project state, works the phase gate, asks or reports, or compiles and generates.
+    static let core: Set<ToolName> = [
+        .getTimeline, .getProjectState, .runPhase, .showArtifact, .approveGate, .setGateState,
+        .showDialog, .showBlocks, .compilePrompt, .generateImage, .generateVideo,
+    ]
+
     static let all: [AgentTool] = base + [
         AgentTool(name: .prepareGenerationBatch,
             description: "Prepare multiple image/video requests for one native Approve X requests decision. Does not generate or approve spending. Each request must carry its unchanged compile_prompt output. Use one stable UUID requestID for reconnect retries; changed requests need a new UUID. Only already available references can be included. If prices are unavailable, the native review offers explicit Approve without estimate, Ask agent to revise, pricing retry and optional model change. Only the user can accept unknown costs. Briefly explain what outputs the user will receive and their purpose; always give a constructive next action when blocked. The host stores exact packages and executes approved items without per-item dialogs. Read get_generation_batches for progress; never submit the same items separately.",

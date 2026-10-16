@@ -34,6 +34,7 @@ struct AnthropicThinkingTests {
             for event in try decoder.consume(Data(record.utf8)) {
                 switch event {
                 case .thinkingComplete(let block): blocks.append(.thinking(block))
+                case .serverToolComplete(let block): blocks.append(.serverTool(block))
                 case .textDelta(let text): blocks.append(.text(text))
                 case .toolUseComplete(let id, let name, let input):
                     blocks.append(.toolUse(id: id, name: name, inputJSON: input))

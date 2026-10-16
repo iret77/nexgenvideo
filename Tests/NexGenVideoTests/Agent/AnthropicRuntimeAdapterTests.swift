@@ -14,12 +14,14 @@ private final class ScriptedAnthropicClient: AgentClient, @unchecked Sendable {
         let messages: [AnthropicMessage]
     }
 
+    let supportsToolSearch: Bool
     private let lock = NSLock()
     private var scripts: [[AnthropicTestStep]]
     private var calls: [Call] = []
 
-    init(scripts: [[AnthropicTestStep]]) {
+    init(scripts: [[AnthropicTestStep]], supportsToolSearch: Bool = false) {
         self.scripts = scripts
+        self.supportsToolSearch = supportsToolSearch
     }
 
     var recordedCalls: [Call] {
@@ -463,6 +465,129 @@ struct AnthropicRuntimeAdapterTests {
             message: "Anthropic API error (401): expired"
         ))))
         #expect(anthropicTerminals(events) == [.failed])
+    }
+
+    @Test("tool search steps replay unchanged and the tool set stays byte-stable across turns")
+    func toolSearchStepsReplayWithStableTools() async throws {
+        let use = try AnthropicServerToolBlock(json: [
+            "type": "server_tool_use", "id": "srvtoolu_1", "name": AnthropicToolSearch.toolName,
+            "input": ["pattern": "host"],
+        ])
+        let found = try AnthropicServerToolBlock(json: [
+            "type": "tool_search_tool_result", "tool_use_id": "srvtoolu_1",
+            "content": [
+                "type": "tool_search_tool_search_result",
+                "tool_references": [["type": "tool_reference", "tool_name": "host_tool"]],
+            ],
+        ])
+        let client = ScriptedAnthropicClient(scripts: [
+            [
+                .event(.serverToolComplete(use)),
+                .event(.serverToolComplete(found)),
+                .event(.toolUseComplete(id: "tool-1", name: "host_tool", inputJSON: "{}")),
+                .event(.messageStop(stopReason: .toolUse)),
+            ],
+            [.event(.textDelta("Done.")), .event(.messageStop(stopReason: .endTurn))],
+            [.event(.textDelta("Again.")), .event(.messageStop(stopReason: .endTurn))],
+        ], supportsToolSearch: true)
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        let hostContext = testHostContext(toolNames: ["get_project_state", "host_tool"])
+        try adapter.start(testSessionRequest(
+            sessionID: sessionID,
+            hostContext: hostContext,
+            executeTool: { _, _, _ in .ok("done") }
+        ))
+        let first = AgentRuntimeMessage(role: .user, content: [.text("Find it")])
+        let firstEvents = await collectAnthropicEvents(try adapter.send(.init(
+            sessionID: sessionID, turnID: UUID(), messages: [first], currentMessage: first
+        )))
+        #expect(firstEvents.map(\.event).contains(.serverTool(messageID: nil, block: use)))
+        #expect(firstEvents.map(\.event).contains(.serverTool(messageID: nil, block: found)))
+        let replayed = try #require(client.recordedCalls.last?.messages.dropLast().last?.content)
+        #expect(replayed.compactMap { $0["type"] as? String } == ["server_tool_use", "tool_search_tool_result", "tool_use"])
+        #expect(NSDictionary(dictionary: replayed[0]).isEqual(to: use.json))
+        #expect(NSDictionary(dictionary: replayed[1]).isEqual(to: found.json))
+
+        let second = AgentRuntimeMessage(role: .user, content: [.text("Again")])
+        let history = [
+            first,
+            AgentRuntimeMessage(role: .assistant, content: [
+                .serverTool(use), .serverTool(found), .toolUse(id: "tool-1", name: "host_tool", inputJSON: "{}"),
+            ]),
+            AgentRuntimeMessage(role: .user, content: [.toolResult(id: "tool-1", content: [.text("done")], isError: false)]),
+            AgentRuntimeMessage(role: .assistant, content: [.text("Done.")]),
+            second,
+        ]
+        _ = await collectAnthropicEvents(try adapter.send(.init(
+            sessionID: sessionID, turnID: UUID(), messages: history, currentMessage: second
+        )))
+
+        let model = AnthropicModelFixtures.info(AnthropicModelFixtures.opus55)
+        let toolBytes = try client.recordedCalls.map { call -> Data in
+            let body = AnthropicRequestBody.build(
+                model: model, system: call.system, tools: call.tools, messages: call.messages
+            )
+            return try JSONSerialization.data(withJSONObject: try #require(body["tools"]), options: [.sortedKeys])
+        }
+        #expect(toolBytes.count == 3)
+        #expect(Set(toolBytes).count == 1)
+        #expect(Set(client.recordedCalls.map(\.system)).count == 1)
+    }
+
+    @Test("a paused server turn resumes as-is without an extra user message")
+    func pausedServerTurnResumes() async throws {
+        let use = try AnthropicServerToolBlock(json: [
+            "type": "server_tool_use", "id": "srvtoolu_1", "name": AnthropicToolSearch.toolName,
+            "input": ["pattern": "host"],
+        ])
+        let client = ScriptedAnthropicClient(scripts: [
+            [.event(.textDelta("Searching.")), .event(.serverToolComplete(use)), .event(.messageStop(stopReason: .pauseTurn))],
+            [.event(.textDelta("Done.")), .event(.messageStop(stopReason: .endTurn))],
+        ], supportsToolSearch: true)
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        try adapter.start(testSessionRequest(
+            sessionID: sessionID,
+            hostContext: testHostContext(toolNames: ["get_project_state", "host_tool"])
+        ))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Find it")])
+        let events = await collectAnthropicEvents(try adapter.send(.init(
+            sessionID: sessionID, turnID: UUID(), messages: [current], currentMessage: current
+        )))
+
+        #expect(anthropicTerminals(events) == [.completed(.endTurn)])
+        let calls = client.recordedCalls
+        #expect(calls.count == 2)
+        let resumed = try #require(calls.last?.messages)
+        #expect(resumed.map(\.role) == [.user, .assistant])
+        #expect(resumed.last?.content.compactMap { $0["type"] as? String } == ["text", "server_tool_use"])
+    }
+
+    @Test("repeated pauses stop after the continuation limit")
+    func pauseContinuationIsBounded() async throws {
+        let use = try AnthropicServerToolBlock(json: [
+            "type": "server_tool_use", "id": "srvtoolu_1", "name": AnthropicToolSearch.toolName,
+            "input": [String: Any](),
+        ])
+        let paused: [AnthropicTestStep] = [.event(.serverToolComplete(use)), .event(.messageStop(stopReason: .pauseTurn))]
+        let client = ScriptedAnthropicClient(
+            scripts: Array(repeating: paused, count: AnthropicRuntimeAdapter.maximumPauseContinuations + 2),
+            supportsToolSearch: true
+        )
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        try adapter.start(testSessionRequest(
+            sessionID: sessionID,
+            hostContext: testHostContext(toolNames: ["get_project_state", "host_tool"])
+        ))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Find it")])
+        let events = await collectAnthropicEvents(try adapter.send(.init(
+            sessionID: sessionID, turnID: UUID(), messages: [current], currentMessage: current
+        )))
+
+        #expect(anthropicTerminals(events) == [.completed(.pauseTurn)])
+        #expect(client.recordedCalls.count == AnthropicRuntimeAdapter.maximumPauseContinuations + 1)
     }
 }
 
