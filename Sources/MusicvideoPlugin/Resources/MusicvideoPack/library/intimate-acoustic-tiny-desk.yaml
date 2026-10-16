@@ -1,26 +1,25 @@
 id: intimate-acoustic-tiny-desk
 name: "Intimate Acoustic — single-room performance, close-up bias"
 description: |
-  Single-Location-Performance in einem warm-beleuchteten Raum, Kamera
-  bleibt nah, Schnitt langsam. Vorbild: NPR Tiny Desk und vergleichbare
-  Live-Performance-Formate. Empfohlen fuer ruhige Akustik-Tracks, wo der
-  Performer im Mittelpunkt steht und die Welt drum herum minimal bleibt.
+  Single-Location-Performance in einem hell beleuchteten, echten
+  Buero-Raum, Kamera bleibt bei Gesicht und Haenden, Schnitt ruhig
+  (kein Schnitt mitten in einer Phrase). Vorbild: NPR Tiny Desk und
+  vergleichbare Live-Performance-Formate. Empfohlen fuer ruhige
+  Akustik-Tracks, wo der Performer im Mittelpunkt steht und die Welt
+  drum herum minimal bleibt.
 
 references:
   - name: "NPR Music Tiny Desk Concert series"
     role: music_video
     notable_works:
-      - "Wilco — Tiny Desk Concert (behind-the-scenes 360)"
-      - "Infinity Song — Tiny Desk Concert (2026)"
+      - "Wilco — Tiny Desk Concert (2016)"
     sources:
-      - label: "NPR — Wilco In 360: Behind The Scenes At NPR Music's Tiny Desk"
+      - label: "NPR (Bob Boilen) — Wilco In 360: Behind The Scenes At NPR Music's Tiny Desk"
         url: "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
-      - label: "NPR — Tiny Desk Concert series page"
-        url: "https://www.npr.org/series/tiny-desk-concerts/"
-      - label: "4Filming — Where Is NPR Tiny Desk Filmed?"
-        url: "https://4filming.com/where-is-npr-tiny-desk-filmed/"
-      - label: "Musifie — Tiny Desk Concert overview"
-        url: "https://musifie.com/blogs/tiny-desk-concert-everything-you-need-to-know/"
+      - label: "Pitzer College News — Behind the Camera of NPR's Tiny Desk Concerts (Maia Stern, 2025)"
+        url: "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
+      - label: "The Noise Gate by Podcast Movement — Video Podcast Tips from NPR's Tiny Desk Concerts (Maia Stern, 2025)"
+        url: "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
 
 section_arc:
   - role: establishing
@@ -49,7 +48,8 @@ framing_mix:
   aerial_pct: 0
   basis: inferred
   sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
 
 asl_range:
   min_s: 3.0
@@ -57,35 +57,41 @@ asl_range:
   typical_s: 5.0
   basis: inferred
   sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
 
 camera:
   vocabulary:
-    - "static hold"
-    - "slow push-in"
-    - "subtle handheld breathing"
+    - "static wide hold on a tripod"
+    - "monopod camera moving with the performer"
+    - "face-and-hands framing on the instrument"
+    - "hold the shot through a solo, no cut mid-phrase"
   basis: inferred
   sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
+    - "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
 
 lighting:
   description: |
-    warm tungsten or natural-window key from one side, soft fall-off,
-    visible practical lamps in the room, low contrast, no harsh shadows.
+    bright, even office light: natural window light supplemented by a
+    lighting system that stays out of frame and evens out changing
+    daylight without altering the look of the room.
   basis: inferred
   sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
+    - "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
 
 color:
-  description: "Warm tungsten or neutral window colour with low contrast."
+  description: "Natural window and office colour; the room keeps its own look."
   basis: inferred
   sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
+    - "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
 
 craft_signature:
-  - technique: "Visible practical intimacy"
-    directive: "Use a soft side key from tungsten or window light, visible practical lamps, and gentle fall-off."
+  - technique: "Real room, even light"
+    directive: "Light the room evenly from window light plus unobtrusive fill, keep the office as it looks, and frame face and hands together."
     pipeline_levers: [visual_prompt, bible_look, bible_lighting]
     basis: inferred
     sources:
-    - "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+    - "https://noisegate.podcastmovement.com/p/video-podcast-tips-from-npr-s-tiny-desk-concerts"
+    - "https://www.pitzer.edu/news/maia-stern-tiny-desk-concerts"
