@@ -1004,8 +1004,6 @@ struct BudgetStopTests {
             ledgerRequestID: "runway-unknown", message: "No receipt")))
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
             ledgerRequestID: "task", message: "Cancellation failed")))
-        #expect(GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
-            ledgerRequestID: "task", message: "Cancelled", providerTaskEnded: true)))
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.CancellationFailedError(message: "May run")))
         #expect(GenerationService.providerRunEnded(after: RunwayClient.TaskFailure(message: "FAILED", cost: nil)))
         #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.cancellationFailed("offline")))

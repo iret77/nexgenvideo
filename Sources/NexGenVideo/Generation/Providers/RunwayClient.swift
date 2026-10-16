@@ -36,11 +36,9 @@ actor RunwayClient {
     struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
-        /// Runway confirmed the cancellation of the accepted task.
-        var providerTaskEnded = false
 
         var errorDescription: String? { message }
-        var providerRunEnded: Bool { providerTaskEnded }
+        var providerRunEnded: Bool { false }
     }
 
     struct SubmissionOutcomeUnknownError: LocalizedError, Sendable, ProviderRunEndReporting {
@@ -297,8 +295,7 @@ actor RunwayClient {
             } else {
                 message = "Runway accepted task \(id) before cancellation and then cancelled the provider task."
             }
-            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message,
-                providerTaskEnded: cancellationFailure == nil)
+            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message)
         }
         return id
     }

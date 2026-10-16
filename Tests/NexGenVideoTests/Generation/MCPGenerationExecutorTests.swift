@@ -542,7 +542,7 @@ struct MCPGenerationExecutorTests {
             #expect(error.jobID == "timed-out")
             #expect(error.message.contains("did not finish"))
             #expect(error.message.contains("sent a cancellation request"))
-            #expect(error.providerRunEnded)
+            #expect(!error.providerRunEnded)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
