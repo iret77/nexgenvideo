@@ -12,6 +12,7 @@ struct AnthropicModelInfo: Codable, Sendable, Hashable, Identifiable {
 
     var isRetired: Bool { lifecycle == "retired" }
     var isActive: Bool { lifecycle == nil || lifecycle == "active" }
+    var supportsToolSearch: Bool { AnthropicToolSearch.isDocumented(modelID: id) }
 
     /// A stored id the provider has not listed (yet): no capability is assumed.
     static func unlisted(_ id: String, family: String? = nil) -> AnthropicModelInfo {

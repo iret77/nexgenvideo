@@ -320,28 +320,49 @@ struct AgentPanelView: View {
     }
 
     @ViewBuilder private var workTimeSummary: some View {
-        if let time = service.currentWorkTime, !time.isEmpty {
-            DisclosureGroup("Time in this chat") {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                    Text("Agent \(Self.clock(time.agentSeconds))")
-                    Text("Tools \(Self.clock(time.toolSeconds))")
-                    Text("Provider generation \(Self.clock(time.providerSeconds))")
-                    Text("Waiting for you \(Self.clock(time.waitingSeconds))")
-                    Text("Failed attempts \(time.failedAttempts)")
+        let time = service.currentWorkTime.flatMap { $0.isEmpty ? nil : $0 }
+        let usage = service.currentTokenUsage
+        if time != nil || usage != nil {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                if let time {
+                    DisclosureGroup("Time in this chat") {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                            Text("Agent \(Self.clock(time.agentSeconds))")
+                            Text("Tools \(Self.clock(time.toolSeconds))")
+                            Text("Provider generation \(Self.clock(time.providerSeconds))")
+                            Text("Waiting for you \(Self.clock(time.waitingSeconds))")
+                            Text("Failed attempts \(time.failedAttempts)")
+                        }
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .accessibilityLabel("Time in this chat")
                 }
-                .monospacedDigit()
-                .frame(maxWidth: .infinity, alignment: .leading)
+                if let usage {
+                    Text(Self.tokenSummary(usage))
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.secondaryColor)
             .padding(.horizontal, AppTheme.Spacing.mdLg)
             .padding(.bottom, AppTheme.Spacing.sm)
-            .accessibilityLabel("Time in this chat")
         }
     }
 
     private static func clock(_ seconds: Double) -> String {
         AgentActivityTiming.clock(Int(seconds.rounded()))
+    }
+
+    private static func tokenSummary(_ usage: AgentTokenUsage) -> LocalizedStringKey {
+        let share = (usage.cacheReadShare ?? 0).formatted(.percent.precision(.fractionLength(0)))
+        return "Tokens \(tokens(usage.inputTokens)) in · \(tokens(usage.outputTokens)) out · \(tokens(usage.cacheCreationInputTokens)) cache write · \(tokens(usage.cacheReadInputTokens)) cache read (\(share))"
+    }
+
+    private static func tokens(_ count: Int) -> String {
+        count.formatted(.number.notation(.compactName))
     }
 
     @ViewBuilder private var activityProgress: some View {

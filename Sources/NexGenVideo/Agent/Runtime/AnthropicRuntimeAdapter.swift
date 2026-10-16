@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
+    static let maximumPauseContinuations = 5
+
     private let client: any AgentClient
     private var session: AgentRuntimeSessionRequest?
     private var activeRelay: AgentRuntimeEventRelay?
@@ -75,18 +77,29 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
         relay: AgentRuntimeEventRelay
     ) async {
         var messages = request.messages
+        let pinned = request.toolSearchPinnedTools
         let tools = session.hostContext.toolSchemas.map {
-            AnthropicToolSchema(name: $0.name, description: $0.description, inputSchema: $0.inputSchema)
+            AnthropicToolSchema(
+                name: $0.name, description: $0.description, inputSchema: $0.inputSchema,
+                loadsUpFront: pinned.contains($0.name)
+            )
         }
+        let toolSearch = client.supportsToolSearch
+        let searchActive = AnthropicToolSearch.loadedToolNames(
+            tools.map(\.name), enabled: toolSearch, pinned: pinned
+        ) != nil
+        var pauseContinuations = 0
         do {
             run: while !Task.isCancelled {
                 var assistantContent: [AgentRuntimeContent] = []
                 var toolCalls: [(id: String, name: String, inputJSON: String)] = []
                 var stopReason: AgentRuntimeStopReason?
-                let wire = AnthropicReplay.wireMessages(messages)
+                let wire = AnthropicReplay.wireMessages(messages, keepingServerTools: searchActive)
                 relay.yield(.providerRequest(prefixDigest: AnthropicPrefixDigest.of(
                     system: session.hostContext.systemInstructions,
                     tools: session.hostContext.toolSchemas,
+                    toolSearch: toolSearch,
+                    pinnedTools: pinned,
                     messages: wire
                 )))
                 let stream = client.stream(
@@ -100,6 +113,9 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                     case .thinkingComplete(let block):
                         assistantContent.append(.thinking(block))
                         relay.yield(.thinking(messageID: nil, block: block))
+                    case .serverToolComplete(let block):
+                        assistantContent.append(.serverTool(block))
+                        relay.yield(.serverTool(messageID: nil, block: block))
                     case .textDelta(let value):
                         if case .text(let existing)? = assistantContent.last {
                             assistantContent[assistantContent.count - 1] = .text(existing + value)
@@ -130,6 +146,13 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                         relay: relay
                     )
                     break run
+                }
+                // The server paused its own tool loop; resending the turn as-is lets it resume.
+                if stopReason == .pauseTurn, toolCalls.isEmpty, !assistantContent.isEmpty,
+                   pauseContinuations < Self.maximumPauseContinuations {
+                    pauseContinuations += 1
+                    messages.append(.init(role: .assistant, content: assistantContent))
+                    continue run
                 }
                 guard stopReason == .toolUse else {
                     relay.finish(.completed(stopReason))
@@ -175,6 +198,7 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                     suspended = suspended || result.turnDisposition == .suspendTurn
                 }
                 messages.append(.init(role: .user, content: resultContent))
+                pauseContinuations = 0
                 if suspended {
                     relay.finish(.completed(.toolUse))
                     setStateIfActive(.ready(sessionID: request.sessionID), relay: relay)
@@ -223,6 +247,8 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
     static func anthropicContent(_ content: AgentRuntimeContent) -> [String: Any] {
         switch content {
         case .thinking(let block):
+            block.json
+        case .serverTool(let block):
             block.json
         case .text(let value):
             ["type": "text", "text": value]

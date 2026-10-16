@@ -509,7 +509,7 @@ struct AgentMessageView: View {
                     } else {
                         ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
                     }
-                case .thinking, .toolResult:
+                case .thinking, .serverTool, .toolResult:
                     EmptyView()
                 }
             }

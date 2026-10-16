@@ -237,7 +237,10 @@ enum AgentTranscriptProjection {
                         if case .text = block { return true }
                         return false
                     }
-                    if case .thinking = block { return false }
+                    switch block {
+                    case .thinking, .serverTool: return false
+                    default: break
+                    }
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
                 }
@@ -351,7 +354,7 @@ enum AgentTranscriptProjection {
                         thinkingSummaries: thinkingSummaries
                     ))
                     thinkingSummaries = []
-                case .toolResult:
+                case .serverTool, .toolResult:
                     break
                 }
             }

@@ -34,6 +34,8 @@ struct AnthropicClient: AgentClient {
     let model: AnthropicModelInfo
     var maxTokens: Int? = nil
 
+    var supportsToolSearch: Bool { model.supportsToolSearch }
+
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     func stream(

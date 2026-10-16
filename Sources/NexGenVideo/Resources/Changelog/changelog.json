@@ -19,7 +19,8 @@
             "Questionnaires that ask for internal reference identifiers are refused in any spelling; creative questions stay allowed.",
             "Anthropic API-key mode reads the available Claude models from Anthropic at runtime. New models appear without an update, your choice is kept, and requests use each model's own thinking and effort capabilities.",
             "Conversations in API-key mode replay earlier turns unchanged so thinking stays valid across turns.",
-            "Model tiers resolve to the newest model of their family instead of fixed model names."
+            "Model tiers resolve to the newest model of their family instead of fixed model names.",
+            "In API-key mode the agent loads its core tools up front and finds the others through tool search, which keeps requests smaller. Tools an existing chat already used stay loaded in that chat."
           ]
         },
         {
@@ -36,7 +37,8 @@
             "Runway, Marble and ElevenLabs run costs reported by the provider are recorded with each run.",
             "Approve All in a phase covers every paid agent run of that phase until the phase is approved, sent back, changed or the approval is withdrawn or NexGenVideo quits. Tasks shows the active approval with Withdraw.",
             "Storyboard opens in its cockpit tab with the same loading, empty and error states as the other artifacts, names its destination like the approval card, and marks when its content changed after approval was requested.",
-            "The model picker in API-key mode lists the newest model of each family first and older models in a submenu."
+            "The model picker in API-key mode lists the newest model of each family first and older models in a submenu.",
+            "Tasks shows the tokens each API-key chat used, including cache reads and the cache share."
           ]
         },
         {

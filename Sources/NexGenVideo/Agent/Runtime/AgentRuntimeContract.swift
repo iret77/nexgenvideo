@@ -94,6 +94,7 @@ struct AgentRuntimeImage: Codable, Equatable, Sendable {
 enum AgentRuntimeContent: Equatable, Sendable {
     case text(String)
     case thinking(AnthropicThinkingBlock)
+    case serverTool(AnthropicServerToolBlock)
     case image(AgentRuntimeImage)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(id: String, content: [ToolResult.Block], isError: Bool)
@@ -196,6 +197,8 @@ struct AgentRuntimeTurnRequest: Sendable {
     let messages: [AgentRuntimeMessage]
     /// The current input, split out only for stateful providers that already own prior history.
     let currentMessage: AgentRuntimeMessage
+    /// Non-core tools this chat keeps loaded while tool search defers the rest.
+    var toolSearchPinnedTools: Set<String> = []
 }
 
 struct AgentRuntimeUsage: Equatable, Sendable {
@@ -265,6 +268,7 @@ enum AgentRuntimeEvent: Equatable, Sendable {
     case providerRequest(prefixDigest: String)
     case text(messageID: String?, value: String, isDelta: Bool)
     case thinking(messageID: String?, block: AnthropicThinkingBlock)
+    case serverTool(messageID: String?, block: AnthropicServerToolBlock)
     case toolCall(messageID: String?, id: String, name: String, inputJSON: String)
     case toolResult(id: String, content: [ToolResult.Block], isError: Bool)
     case usage(AgentRuntimeUsage)

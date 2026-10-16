@@ -2393,6 +2393,23 @@ final class AgentService {
         return sessions.first { $0.id == currentSessionId }?.workTime
     }
 
+    var currentTokenUsage: AgentTokenUsage? {
+        guard let currentSessionId,
+              let usage = sessions.first(where: { $0.id == currentSessionId })?.tokenUsage,
+              !usage.isEmpty else { return nil }
+        return usage
+    }
+
+    /// Only the API-key backend reports per-request tokens; other runtimes record none.
+    private func addTokenUsage(_ usage: AgentRuntimeUsage, sessionID: UUID) {
+        guard backend == .anthropicAPI,
+              let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        var total = sessions[index].tokenUsage ?? AgentTokenUsage()
+        total.add(usage)
+        guard !total.isEmpty else { return }
+        sessions[index].tokenUsage = total
+    }
+
     func recordToolTime(_ seconds: Double, failed: Bool, origin: ToolCallOrigin) {
         addWorkTime(seconds, to: .tool, sessionID: origin.chatSessionID, failedAttempt: failed)
     }
@@ -3618,6 +3635,7 @@ final class AgentService {
                 String(selected?.supportsAdaptiveThinking ?? false),
                 String(selected?.supportsHighEffort ?? false),
                 String(selected?.maxOutputTokens ?? 0),
+                String(selected?.supportsToolSearch ?? false),
                 String(apiKeyGeneration),
             ].joined(separator: ":")
         case .codexAppServer:
@@ -3762,6 +3780,15 @@ final class AgentService {
             if let index = assistantMessageIndex(id: id) {
                 messages[index].blocks.append(.thinking(block))
             }
+        case .serverTool(let messageID, let block):
+            let id = assistantID(
+                providerMessageID: messageID,
+                messageIDs: &messageIDs,
+                defaultAssistantID: &defaultAssistantID
+            )
+            if let index = assistantMessageIndex(id: id) {
+                messages[index].blocks.append(.serverTool(block))
+            }
         case .toolCall(let messageID, let id, let name, let inputJSON):
             recordActivity(ToolRunPresentation.label(for: name))
             let assistantID = assistantID(
@@ -3887,6 +3914,8 @@ final class AgentService {
                 return
             }
         }
+        guard currentSessionId == sessionID else { return }
+        let pinnedTools = freezeToolSearchPinnedTools(sessionID: sessionID)
         let runtimeMessages = await runtimeMessages(hostContext: hostContext)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
@@ -3922,15 +3951,20 @@ final class AgentService {
                 sessionID: sessionID,
                 turnID: turnID,
                 messages: runtimeMessages,
-                currentMessage: currentMessage
+                currentMessage: currentMessage,
+                toolSearchPinnedTools: pinnedTools
             ))
             var messageIDs: [String: UUID] = [:]
             var defaultAssistantID: UUID?
+            var usageMeter = AgentRequestUsageMeter()
             for await envelope in stream {
                 guard !Task.isCancelled,
                       currentSessionId == sessionID,
                       fence.accepts(envelope) else { continue }
                 recordActivity()
+                if let finished = usageMeter.observe(envelope.event) {
+                    addTokenUsage(finished, sessionID: sessionID)
+                }
                 applyRuntimeEvent(
                     envelope.event,
                     sessionID: sessionID,
@@ -3938,6 +3972,9 @@ final class AgentService {
                     defaultAssistantID: &defaultAssistantID
                 )
 
+            }
+            if let finished = usageMeter.flush() {
+                addTokenUsage(finished, sessionID: sessionID)
             }
             guard fence.receivedTerminal || Task.isCancelled else {
                 streamError = .upstream("The agent runtime ended without a terminal state.")
@@ -4260,8 +4297,26 @@ final class AgentService {
         return AnthropicReplay.strippingInvalidatedThinking(
             entries,
             system: hostContext.systemInstructions,
-            tools: hostContext.toolSchemas
+            tools: hostContext.toolSchemas,
+            toolSearch: usesToolSearch,
+            pinnedTools: Set(sessions.first { $0.id == currentSessionId }?.toolSearchPinnedTools ?? [])
         )
+    }
+
+    private var usesToolSearch: Bool {
+        backend == .anthropicAPI && effectiveModel?.supportsToolSearch == true
+    }
+
+    /// Grows only when the chat enters tool search with calls no search result surfaced.
+    private func freezeToolSearchPinnedTools(sessionID: UUID) -> Set<String> {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return [] }
+        let stored = Set(sessions[index].toolSearchPinnedTools ?? [])
+        guard usesToolSearch else { return stored }
+        let pinned = stored.union(AnthropicToolSearch.toolsUsedBeforeSurfacing(messages))
+        if sessions[index].toolSearchPinnedTools == nil || pinned != stored {
+            sessions[index].toolSearchPinnedTools = pinned.sorted()
+        }
+        return pinned
     }
 
     private func inlineImageBlocks(for mentions: [AgentMention]) async -> AgentMentionContext.InlinedMentions {
@@ -4307,6 +4362,8 @@ final class AgentService {
         switch block {
         case .thinking(let block):
             return .thinking(block)
+        case .serverTool(let block):
+            return .serverTool(block)
         case .text(let s):
             guard !s.isEmpty else { return nil }
             return .text(s)
@@ -4459,12 +4516,13 @@ struct AgentMessage: Identifiable, Codable, Sendable, Equatable {
 enum AgentContentBlock: Codable, Sendable, Equatable {
     case text(String)
     case thinking(AnthropicThinkingBlock)
+    case serverTool(AnthropicServerToolBlock)
     case toolUse(id: String, name: String, inputJSON: String)
     case toolResult(toolUseId: String, content: [ToolResult.Block], isError: Bool)
 
-    private enum Kind: String, Codable { case text, thinking, toolUse, toolResult }
+    private enum Kind: String, Codable { case text, thinking, serverTool, toolUse, toolResult }
     private enum CodingKeys: String, CodingKey {
-        case kind, text, id, name, input, toolUseId, content, isError, thinking
+        case kind, text, id, name, input, toolUseId, content, isError, thinking, serverTool
     }
 
     init(from decoder: Decoder) throws {
@@ -4472,6 +4530,8 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
         switch try c.decode(Kind.self, forKey: .kind) {
         case .thinking:
             self = .thinking(try c.decode(AnthropicThinkingBlock.self, forKey: .thinking))
+        case .serverTool:
+            self = .serverTool(try c.decode(AnthropicServerToolBlock.self, forKey: .serverTool))
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
         case .toolUse:
@@ -4495,6 +4555,9 @@ enum AgentContentBlock: Codable, Sendable, Equatable {
         case .thinking(let block):
             try c.encode(Kind.thinking, forKey: .kind)
             try c.encode(block, forKey: .thinking)
+        case .serverTool(let block):
+            try c.encode(Kind.serverTool, forKey: .kind)
+            try c.encode(block, forKey: .serverTool)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)
