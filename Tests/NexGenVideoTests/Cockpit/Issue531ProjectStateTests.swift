@@ -34,9 +34,9 @@ struct Issue531ProjectStateTests {
             snapshot,
             spend: ProjectSpendSnapshot(
                 verifiedEur: 0,
-                isComplete: true,
-                activeReservationCount: 0,
-                unpricedTransactionCount: 0,
+                providerCredits: [],
+                unknownCostCount: 0,
+                inFlightCount: 0,
                 legacyGenerationCount: 0
             ),
             approvalEvidence: [

@@ -20,6 +20,12 @@ struct GenerationLog: Codable, Sendable, Equatable {
         case entries
         case spendEvents
     }
+
+    /// Version 3 marks settled runs and provider costs; logs without them stay readable by older builds.
+    mutating func stampVersion() {
+        let needsSettlement = spendEvents.contains { $0.kind == .settled || $0.providerCost != nil }
+        version = max(version, needsSettlement ? GenerationSpendLedger.settledLogVersion : 2)
+    }
 }
 
 /// One row in the Project Activity log.
@@ -129,12 +135,12 @@ extension EditorViewModel {
         providerRequestId: String? = nil,
         providerRequestResumable: Bool? = nil,
         money: GenerationMoney? = nil,
+        providerCost: GenerationProviderCost? = nil,
         note: String? = nil
     ) throws {
         guard let transactionId = authorization.transactionId else { return }
         try authorization.projectMutationScope?.requireCurrent(editor: self)
         let previousLog = generationLog
-        generationLog.version = 2
         let event = GenerationSpendEvent(
             transactionId: transactionId,
             kind: kind,
@@ -145,9 +151,11 @@ extension EditorViewModel {
             providerRequestId: providerRequestId,
             providerRequestResumable: providerRequestResumable,
             money: money,
-            note: note
+            note: note,
+            providerCost: providerCost
         )
         generationLog.spendEvents.append(event)
+        generationLog.stampVersion()
         do {
             try GenerationBudgetGuard.validateLedger(
                 log: generationLog,

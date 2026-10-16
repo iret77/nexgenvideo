@@ -62,6 +62,39 @@ struct BudgetStopTests {
         )
     }
 
+    private func billed(_ eur: Double, request: String = "request") -> GenerationMoney {
+        GenerationMoney(
+            nativeAmount: eur * 1.2,
+            nativeCurrency: "USD",
+            eurAmount: eur,
+            eurPerNativeUnit: 1 / 1.2,
+            exchangeRateDate: "2026-07-23",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=\(request)",
+            exchangeRateSource: "https://www.ecb.europa.eu/"
+        )
+    }
+
+    private func event(
+        _ transaction: String,
+        _ kind: GenerationSpendEvent.Kind,
+        provider: GenerationProvider = .fal,
+        money: GenerationMoney? = nil,
+        request: String? = nil,
+        cost: GenerationProviderCost? = nil
+    ) -> GenerationSpendEvent {
+        GenerationSpendEvent(
+            transactionId: transaction,
+            kind: kind,
+            model: "\(provider.rawValue)/model",
+            provider: provider,
+            transport: .api,
+            endpoint: "\(provider.rawValue)/model",
+            providerRequestId: request,
+            money: money,
+            providerCost: cost
+        )
+    }
+
     private func providerThunkProbe(
         onDispatch: @escaping @MainActor () -> Void
     ) -> GenerationRequest {
@@ -598,11 +631,12 @@ struct BudgetStopTests {
         let snapshot = try GenerationBudgetGuard.spendSnapshot(log: persisted, generatedInputs: [])
         #expect(snapshot.legacyGenerationCount == 1)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.verifiedEur == 1)
+        #expect(snapshot.verifiedEur == 0)
+        #expect(snapshot.inFlightCount == 1)
     }
 
-    @Test("agent-reported render costs do not authorize provider spend")
-    func agentReportedCostsAreNotAuthoritative() throws {
+    @Test("an estimate on a run in flight is never booked as spend")
+    func inFlightEstimateIsNotSpend() throws {
         let tx = UUID().uuidString
         var log = GenerationLog()
         log.spendEvents = [
@@ -627,16 +661,18 @@ struct BudgetStopTests {
             ),
         ]
 
-        let spend = try GenerationBudgetGuard.spendSnapshot(
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
             log: log,
             generatedInputs: []
-        ).verifiedEur
+        )
 
-        #expect(spend == 3)
+        #expect(snapshot.verifiedEur == 0)
+        #expect(snapshot.inFlightCount == 1)
+        #expect(!snapshot.isComplete)
     }
 
-    @Test("the verified charge replaces its reservation")
-    func chargedAmountReplacesReservation() throws {
+    @Test("the billed charge replaces its reservation")
+    func billedChargeReplacesReservation() throws {
         let tx = UUID().uuidString
         var log = GenerationLog()
         log.spendEvents = [
@@ -666,20 +702,21 @@ struct BudgetStopTests {
                 provider: .runway,
                 transport: .api,
                 endpoint: "runway/gen4.5",
-                money: money(4)
+                money: billed(4)
             ),
         ]
 
-        let spend = try GenerationBudgetGuard.spendSnapshot(
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
             log: log,
             generatedInputs: []
-        ).verifiedEur
+        )
 
-        #expect(spend == 4)
+        #expect(snapshot.verifiedEur == 4)
+        #expect(snapshot.isComplete)
     }
 
-    @Test("one ledger totals Bible work, frame roles, retakes and live reservations")
-    func completeProjectSpendSnapshot() throws {
+    @Test("one ledger totals billed Bible work, frame roles and retakes; open runs stay in flight")
+    func billedProjectSpendSnapshot() throws {
         func events(
             _ transaction: String,
             model: String,
@@ -713,7 +750,7 @@ struct BudgetStopTests {
                 provider: .fal,
                 transport: .api,
                 endpoint: model,
-                money: money(amount)
+                money: billed(amount, request: transaction)
             ))
             return result
         }
@@ -758,10 +795,10 @@ struct BudgetStopTests {
             generatedInputs: []
         )
 
-        #expect(snapshot.verifiedEur == 36)
-        #expect(snapshot.isComplete)
-        #expect(snapshot.activeReservationCount == 2)
-        #expect(snapshot.unpricedTransactionCount == 0)
+        #expect(snapshot.verifiedEur == 21)
+        #expect(!snapshot.isComplete)
+        #expect(snapshot.inFlightCount == 2)
+        #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 0)
     }
 
@@ -788,8 +825,172 @@ struct BudgetStopTests {
 
         #expect(snapshot.verifiedEur == 0)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.unpricedTransactionCount == 1)
+        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 1)
+    }
+
+    @Test("a finished run without a reported cost settles instead of staying open")
+    func settledRunWithoutCostIsFinished() throws {
+        var log = GenerationLog()
+        log.spendEvents = [
+            event("settled", .reserved, money: money(3)),
+            event("settled", .submitted, money: money(3), request: "job"),
+            event("settled", .settled),
+        ]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: log, generatedInputs: [])
+        let outcome = try #require(try GenerationSpendLedger.outcomes(log: log, generatedInputs: []).first)
+
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unknownCostCount == 1)
+        #expect(snapshot.verifiedEur == 0)
+        #expect(!snapshot.isComplete)
+        #expect(outcome.status == .finished)
+        #expect(outcome.billedMoney == nil)
+        #expect(outcome.estimate?.eurAmount == 3)
+    }
+
+    @Test("provider credits are kept per provider in their own unit, never converted to money")
+    func settledProviderCostsStayInProviderUnits() throws {
+        let runway = GenerationProviderCost(amount: 120, unit: "credits", source: "runway task cost.credits")
+        let marble = GenerationProviderCost(amount: 1500, unit: "credits", source: "marble operation cost.total_credits")
+        var log = GenerationLog()
+        log.spendEvents = [
+            event("runway-a", .reserved, provider: .runway),
+            event("runway-a", .submitted, provider: .runway, request: "task-a"),
+            event("runway-a", .settled, provider: .runway, cost: runway),
+            event("runway-b", .reserved, provider: .runway),
+            event("runway-b", .submitted, provider: .runway, request: "task-b"),
+            event("runway-b", .settled, provider: .runway, cost: runway),
+            event("marble", .reserved, provider: .marble),
+            event("marble", .submitted, provider: .marble, request: "operation"),
+            event("marble", .settled, provider: .marble, cost: marble),
+        ]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: log, generatedInputs: [])
+
+        #expect(snapshot.verifiedEur == 0)
+        #expect(snapshot.unknownCostCount == 0)
+        let expected = [
+            ProjectSpendSnapshot.ProviderCredits(provider: .runway, unit: "credits", amount: 240, runs: 2),
+            ProjectSpendSnapshot.ProviderCredits(provider: .marble, unit: "credits", amount: 1500, runs: 1),
+        ]
+        #expect(snapshot.providerCredits == expected)
+        #expect(snapshot.creditOnlyCount == 3)
+        #expect(!snapshot.isComplete)
+    }
+
+    @Test("a late provider bill replaces a settlement without money")
+    func lateBillReplacesUnknownSettlement() throws {
+        var log = GenerationLog()
+        log.spendEvents = [
+            event("late", .reserved, money: money(2)),
+            event("late", .submitted, money: money(2), request: "job"),
+            event("late", .settled),
+            event("late", .charged, money: billed(2.5, request: "job")),
+        ]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: log, generatedInputs: [])
+
+        #expect(snapshot.verifiedEur == 2.5)
+        #expect(snapshot.unknownCostCount == 0)
+        #expect(snapshot.isComplete)
+        log.spendEvents.append(event("late", .settled))
+        #expect(throws: GenerationBudgetError.self) {
+            _ = try GenerationBudgetGuard.spendSnapshot(log: log, generatedInputs: [])
+        }
+    }
+
+    @Test("an estimate booked as a charge by older builds is not counted as billed spend")
+    func estimateChargeIsNotBilledSpend() throws {
+        var log = GenerationLog()
+        log.spendEvents = [
+            event("estimate", .reserved, provider: .runway, money: money(1.2)),
+            event("estimate", .submitted, provider: .runway, money: money(1.2), request: "task"),
+            event("estimate", .charged, provider: .runway, money: money(1.2)),
+        ]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: log, generatedInputs: [])
+        let outcome = try #require(try GenerationSpendLedger.outcomes(log: log, generatedInputs: []).first)
+
+        #expect(snapshot.verifiedEur == 0)
+        #expect(snapshot.unknownCostCount == 1)
+        #expect(outcome.status == .finished)
+        #expect(outcome.estimate?.eurAmount == 1.2)
+    }
+
+    @Test("old open runs whose output or batch completed count as finished with unknown cost")
+    func completedOldSubmittedRunsMigrateToFinished() throws {
+        var log = GenerationLog()
+        log.version = 2
+        log.spendEvents = [
+            event("asset-proven", .reserved),
+            event("asset-proven", .submitted, request: "job-a"),
+            event("batch-proven", .reserved, money: money(1)),
+            event("batch-proven", .submitted, money: money(1), request: "job-b"),
+            event("unproven", .reserved),
+            event("unproven", .submitted, request: "job-c"),
+        ]
+        log.entries = [GenerationLogEntry(
+            model: "fal/model",
+            costCredits: nil,
+            createdAt: Date(),
+            spendTransactionId: "asset-proven"
+        )]
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(
+            log: log,
+            generatedInputs: [],
+            completedTransactionIDs: ["batch-proven"]
+        )
+
+        #expect(snapshot.unknownCostCount == 2)
+        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.verifiedEur == 0)
+        #expect(snapshot.legacyGenerationCount == 0)
+    }
+
+    @Test("settled runs stamp log version 3; logs without them keep version 2")
+    func settledLogVersionIsStampedOnlyWhenNeeded() async throws {
+        var plain = GenerationLog()
+        plain.spendEvents = [event("plain", .reserved, money: money(1))]
+        plain.stampVersion()
+        #expect(plain.version == 2)
+
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        let authorization = try await GenerationBudgetGuard.authorize(
+            input: GenerationPricingInput(
+                modelId: "fal-ai/veo3",
+                modality: .video,
+                durationSeconds: 5,
+                outputCount: 1,
+                resolution: nil,
+                quality: nil,
+                promptCharacterCount: 5,
+                generateAudio: true,
+                referenceCount: 0
+            ),
+            target: GenerationService.dispatchTarget(modelId: "fal-ai/veo3"),
+            editor: editor,
+            quoteLoader: { _, _ in money(2) }
+        )
+        #expect(editor.generationLog.version == 2)
+        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+            providerRequestId: "job", money: authorization.estimate)
+        try editor.recordSpendEvent(authorization: authorization, kind: .settled,
+            providerCost: GenerationProviderCost(amount: 7, unit: "credits", source: "fixture"))
+        #expect(editor.generationLog.version == 3)
+        let workingRoot = try #require(editor.workingRoot)
+        let persisted = try JSONDecoder().decode(
+            GenerationLog.self,
+            from: Data(contentsOf: workingRoot.appendingPathComponent(Project.generationLogFilename))
+        )
+        #expect(persisted.version == 3)
+        #expect(try GenerationBudgetGuard.spendSnapshot(log: persisted, generatedInputs: []).providerCredits.count == 1)
+
+        var future = persisted
+        future.version = 4
+        #expect(throws: GenerationBudgetError.self) {
+            _ = try GenerationBudgetGuard.spendSnapshot(log: future, generatedInputs: [])
+        }
     }
 
     @Test("invalid append-only transitions are rejected")

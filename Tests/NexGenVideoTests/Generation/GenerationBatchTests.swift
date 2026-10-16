@@ -764,7 +764,10 @@ struct GenerationBatchTests {
         let prior = try authority.load(projectKey: batch.payload.projectKey, batchID: batch.id)
         #expect(try GenerationPackageV1.canonicalData(prior) == priorBytes)
 
-        let drifted = GenerationPackageFixture.money(0.40)
+        let drifted = GenerationMoney(nativeAmount: 0.44, nativeCurrency: "USD", eurAmount: 0.40,
+            eurPerNativeUnit: 0.40 / 0.44, exchangeRateDate: "2026-10-16",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=provider-job",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
         let target = item.package.payload.target
         for kind in [GenerationSpendEvent.Kind.reserved, .submitted] {
             let overCeiling = GenerationSpendEvent(transactionId: transaction, kind: kind, model: target.modelId,
@@ -1156,6 +1159,28 @@ struct GenerationBatchTests {
             "generation-packages/\(item.package.id).json").path))
         try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
         #expect(editor.generationLog.spendEvents.contains(reservation))
+    }
+
+    @Test func aCompletedBatchItemProvesItsRunFinished() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let authority = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, authority: authority)
+        let item = batch.payload.items[0]
+        let entries = placeholders(item, transaction: "finished-transaction")
+        _ = try GenerationBatchStore.update(approved, editor: editor, authority: authority) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: "finished-transaction", placeholders: entries, batch: batch)
+            try $0.recordProviderRequest(itemID: item.id, transactionID: "finished-transaction",
+                requestID: "provider-job", resumable: true)
+            try $0.finish(itemID: item.id, outputAssetIDs: entries.map(\.id), batch: batch)
+        }
+        let home = try #require(editor.workingRoot)
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
     }
 
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {

@@ -2490,7 +2490,8 @@ struct WorkflowToolsTests {
         #expect(cost?["spent_eur"] is NSNull)
         #expect(cost?["remaining_eur"] is NSNull)
         #expect(cost?["over_budget"] as? Bool == false)
-        #expect(cost?["unpriced_transactions"] as? Int == 1)
+        #expect(cost?["in_flight_runs"] as? Int == 1)
+        #expect(cost?["unknown_cost_runs"] as? Int == 0)
         #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["budget_remaining_eur"] is NSNull)
     }
@@ -2533,11 +2534,13 @@ struct WorkflowToolsTests {
             args: ["project_dir": dataRoot.path]
         ) as? [String: Any]
 
-        #expect(state?["budget_spent_eur"] as? Double == 10)
-        #expect(state?["budget_remaining_eur"] as? Double == 40)
-        #expect(state?["spend_complete"] as? Bool == true)
+        #expect(state?["budget_spent_eur"] as? Double == 0)
+        #expect(state?["budget_remaining_eur"] is NSNull)
+        #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["active_reservations"] as? Int == 1)
-        #expect(cost?["verified_spend_eur"] as? Double == 10)
+        #expect(state?["in_flight_runs"] as? Int == 1)
+        #expect(cost?["verified_spend_eur"] as? Double == 0)
+        #expect(cost?["in_flight_runs"] as? Int == 1)
         #expect(cost?["remaining_eur"] is NSNull)
     }
 
@@ -2566,7 +2569,8 @@ struct WorkflowToolsTests {
         let result = try #require(raw as? [String: Any])
         for key in ["budget_eur", "budget_stop_eur", "spent_eur", "verified_spend_eur", "remaining_eur",
                     "hard_stop_remaining_eur", "over_budget", "spend_complete", "active_reservations",
-                    "unpriced_transactions", "legacy_generations", "next_phase"] {
+                    "unpriced_transactions", "legacy_generations", "next_phase", "in_flight_runs",
+                    "unknown_cost_runs", "provider_credits"] {
             #expect(result.keys.contains(key), "estimate_cost dropped \(key)")
         }
         #expect(result["budget_stop_eur"] is NSNull)

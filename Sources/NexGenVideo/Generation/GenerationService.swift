@@ -393,6 +393,7 @@ final class GenerationService {
         let task = Task { @MainActor [weak self, weak editor] in
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
+            var recoveredCost: GenerationProviderCost?
             do {
                 if completedIDs.count < execution.placeholders.count {
                     let urls: [String]
@@ -416,11 +417,18 @@ final class GenerationService {
                     let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
                     let recoveredAuthorization = GenerationAuthorization(transactionId: transaction, target: target,
                         estimate: reserved, projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
-                    if target.provider == .fal {
-                        if let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key) {
-                            self.markCharged(authorization: recoveredAuthorization, money: billed, editor: editor)
+                    let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
+                    switch target.provider {
+                    case .fal:
+                        let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key)
+                        if billed != nil || !settled {
+                            self.markFinished(authorization: recoveredAuthorization, billed: billed, editor: editor)
                         }
-                    } else { self.markCharged(authorization: recoveredAuthorization, editor: editor) }
+                    default:
+                        if !settled {
+                            self.markFinished(authorization: recoveredAuthorization, providerCost: recoveredCost, editor: editor)
+                        }
+                    }
                 }
             } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
@@ -1058,20 +1066,45 @@ final class GenerationService {
         }
     }
 
-    private func markCharged(
+    private func failSubmittedJob(
+        _ placeholders: [MediaAsset],
+        _ message: String,
         authorization: GenerationAuthorization,
-        money: GenerationMoney? = nil,
+        editor: EditorViewModel,
+        onFailure: (@MainActor () -> Void)?
+    ) {
+        markFinished(authorization: authorization, note: "The provider job ended without a result: \(message)", editor: editor)
+        failJob(placeholders, message, onFailure)
+    }
+
+    /// Closes a finished run: billed money becomes a charge; otherwise the run settles with whatever
+    /// cost the provider reported in its own unit, or none. An estimate is never booked as spend.
+    private func markFinished(
+        authorization: GenerationAuthorization,
+        billed: GenerationMoney? = nil,
+        providerCost: GenerationProviderCost? = nil,
+        note: String? = nil,
         editor: EditorViewModel
     ) {
-        guard let charged = money ?? authorization.estimate else { return }
         do {
-            try editor.recordSpendEvent(
-                authorization: authorization,
-                kind: .charged,
-                money: charged
-            )
+            if let billed {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .charged,
+                    money: billed,
+                    providerCost: providerCost,
+                    note: note
+                )
+            } else {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .settled,
+                    providerCost: providerCost,
+                    note: note ?? (providerCost == nil ? "The provider reported no cost for this run." : nil)
+                )
+            }
         } catch {
-            Log.generation.error("could not record generation charge: \(error.localizedDescription)")
+            Log.generation.error("could not record generation result cost: \(error.localizedDescription)")
         }
     }
 
@@ -1133,34 +1166,28 @@ final class GenerationService {
                 endpoint: endpoint,
                 apiKey: apiKey
             )
-            if let billed {
-                markCharged(
-                    authorization: authorization,
-                    money: billed,
-                    editor: editor
-                )
-            }
+            markFinished(authorization: authorization, billed: billed, editor: editor)
         } catch let error as FalClient.SubmissionOutcomeUnknownError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as FalClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             if requestId == nil {
                 failBeforeSubmission(
                     placeholders, "Generation cancelled.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, "Generation cancelled.", onFailure)
+                failSubmittedJob(placeholders, "Generation cancelled.", authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if requestId == nil {
@@ -1168,7 +1195,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1285,7 +1312,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             }
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
             if let failure = error as? MCPGenerationExecutor.JobFailure {
@@ -1303,7 +1330,7 @@ final class GenerationService {
                 modelName: model
             ) {
             case .failJob(let message):
-                failJob(placeholders, message, onFailure)
+                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
                     placeholders,
@@ -1433,21 +1460,21 @@ final class GenerationService {
                 mutationScope: authorization.projectMutationScope,
                 batchItem: authorization.batchItem,
                 onComplete: onComplete, onFailure: onFailure)
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             let message = "Generation cancelled."
             if taskId == nil {
@@ -1459,7 +1486,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } else {
-                failJob(placeholders, message, onFailure)
+                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if taskId == nil {
@@ -1467,7 +1494,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1605,9 +1632,9 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -1991,9 +2018,9 @@ final class GenerationService {
                 assetType: placeholder.type,
                 count: 1
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2056,14 +2083,14 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            markCharged(authorization: authorization, editor: editor)
+            markFinished(authorization: authorization, editor: editor)
         } catch {
             if operationId == nil {
                 failBeforeSubmission(
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failJob(placeholders, error.localizedDescription, onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
