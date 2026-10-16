@@ -11,8 +11,8 @@ references:
   - name: "Mark Romanek"
     role: director
     notable_works:
-      - "Nine Inch Nails — Closer"
-      - "Johnny Cash — Hurt (2003)"
+      - "Nine Inch Nails — Closer (1994, 19th-century laboratory set, slightly out-of-date film stock with granular grain)"
+      - "Johnny Cash — Hurt (2003, filmed at the run-down House of Cash museum, vanitas imagery)"
       - "Audioslave — Cochise"
       - "Janet Jackson — Got 'til It's Gone"
     sources:
@@ -20,10 +20,10 @@ references:
         url: "https://en.wikipedia.org/wiki/Mark_Romanek"
       - label: "Wikipedia — Mark Romanek videography"
         url: "https://en.wikipedia.org/wiki/Mark_Romanek_videography"
-      - label: "lafilm.edu — 8 Music Video Directors Who Rewrote the Rules of Cinema"
-        url: "https://www.lafilm.edu/blog/8-music-video-directors-rewrote-the-rules-of-cinema/"
-      - label: "Indigo Productions — The Music Videos of Mark Romanek"
-        url: "https://www.indigoprod.com/the-music-videos-of-mark-romanek/"
+      - label: "Wikipedia — Closer (Nine Inch Nails song)"
+        url: "https://en.wikipedia.org/wiki/Closer_(Nine_Inch_Nails_song)"
+      - label: "Wikipedia — Hurt (Nine Inch Nails song)"
+        url: "https://en.wikipedia.org/wiki/Hurt_(Nine_Inch_Nails_song)"
   - name: "Floria Sigismondi"
     role: director
     notable_works:
@@ -33,8 +33,6 @@ references:
     sources:
       - label: "Wikipedia — Floria Sigismondi"
         url: "https://en.wikipedia.org/wiki/Floria_Sigismondi"
-      - label: "lafilm.edu — 8 Music Video Directors Who Rewrote the Rules of Cinema"
-        url: "https://www.lafilm.edu/blog/8-music-video-directors-rewrote-the-rules-of-cinema/"
 
 section_arc:
   - role: establishing
