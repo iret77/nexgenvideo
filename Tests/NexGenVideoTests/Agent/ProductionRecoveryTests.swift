@@ -466,11 +466,16 @@ struct ProductionRecoveryTests {
         )
         let slotID = try #require(anchor["input_slot_id"])
         let frameSlots: Set<String> = [CoreReferenceInputSlotIDV1.firstFrame, CoreReferenceInputSlotIDV1.lastFrame]
-        let imageReferenceSlots = FalModelRegistry.entries
-            .flatMap { (try? ModelCatalog.offeringCapabilities(for: $0, resolver: resolver)) ?? [] }
-            .filter { $0.offering.modality == .video }
-            .flatMap { ModelCatalog.inputSlots(capabilities: $0) }
-            .filter { $0.modality == .image && !frameSlots.contains($0.id) }
+        var videoOfferings: [ResolvedOfferingCapabilityProfileV1] = []
+        for entry in FalModelRegistry.entries {
+            let offerings = (try? ModelCatalog.offeringCapabilities(for: entry, resolver: resolver)) ?? []
+            videoOfferings += offerings.filter { $0.offering.modality == .video }
+        }
+        var imageReferenceSlots: [ProductionInputSlotCapabilityV1] = []
+        for offering in videoOfferings {
+            let slots: [ProductionInputSlotCapabilityV1] = ModelCatalog.inputSlots(capabilities: offering)
+            imageReferenceSlots += slots.filter { $0.modality == .image && !frameSlots.contains($0.id) }
+        }
         #expect(!imageReferenceSlots.isEmpty)
         #expect(imageReferenceSlots.allSatisfy { $0.id == slotID })
     }
