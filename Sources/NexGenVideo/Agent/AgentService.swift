@@ -1720,8 +1720,8 @@ final class AgentService {
         }
 
         suspendToolCalls(from: origin)
-        if let phase = batch.payload.phase, editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil {
-            editor.generationBatchCoordinator.approveUnderPhaseApproval(editor: editor, expectedBatchID: batch.id, phase: phase)
+        if let phase = batch.payload.phase, let grant = editor.phaseSpendApproval.active(phase: phase, editor: editor) {
+            editor.generationBatchCoordinator.approveUnderPhaseApproval(editor: editor, expectedBatchID: batch.id, grant: grant)
         }
         return .suspended(marker)
     }
@@ -1890,23 +1890,25 @@ final class AgentService {
             to: approval
         )
         if let phase = pipelineScope?.phase,
-           editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil,
+           let grant = editor.phaseSpendApproval.active(phase: phase, editor: editor),
            approval.modelRequirement?.unavailableReason == nil,
            let option = approval.options.first(where: { $0.id == approval.recommendedOptionId }) {
-            startPhaseApprovedSpend(option: option, phase: phase, editor: editor)
+            startPhaseApprovedSpend(option: option, grant: grant, editor: editor)
         }
         return .suspended(Self.spendSuspensionText)
     }
 
     /// Runs the pending request with the resolver's default route under the user's phase approval,
     /// through the same preparation and approval path a click takes. Any failure shows the card.
-    private func startPhaseApprovedSpend(option: SpendOption, phase: String, editor: EditorViewModel) {
+    private func startPhaseApprovedSpend(option: SpendOption, grant: PhaseSpendApproval, editor: EditorViewModel) {
         guard let approvalID = pendingSpendApproval?.id else { return }
+        let phase = grant.phase
         autoApprovingSpendPhase = phase
         Task { @MainActor [weak self, weak editor] in
             guard let self else { return }
             defer { if self.autoApprovingSpendPhase == phase { self.autoApprovingSpendPhase = nil } }
-            guard let editor, self.pendingSpendApproval?.id == approvalID else { return }
+            guard let editor, self.pendingSpendApproval?.id == approvalID,
+                  editor.phaseSpendApproval.isActive(grant, editor: editor) else { return }
             var selected = option
             if self.pendingSpendApproval?.requiresGenerationPackage == true {
                 self.prepareSpendOption(option)
@@ -1916,6 +1918,9 @@ final class AgentService {
                       prepared.generationPackage != nil else { return }
                 selected = prepared
             }
+            // The grant may have ended while this task waited; then the card decides.
+            guard self.pendingSpendApproval?.id == approvalID,
+                  editor.phaseSpendApproval.isActive(grant, editor: editor) else { return }
             await self.approveSpendRecordingPhaseRun(selected, approvalID: approvalID, editor: editor,
                 recordSelection: false)
         }

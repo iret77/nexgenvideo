@@ -68,9 +68,11 @@ enum GenerationBatchStore {
             .sorted { $0.journal.approvedAt < $1.journal.approvedAt }
     }
 
+    /// `confirm` runs after the last await, immediately before execution authority is created.
     static func approve(_ batch: GenerationBatch, editor: EditorViewModel,
                         approval: GenerationBatchApproval = .verifiedPrices,
-                        authority supplied: GenerationExecutionAuthorityStore? = nil) async throws -> Snapshot {
+                        authority supplied: GenerationExecutionAuthorityStore? = nil,
+                        confirm: (@MainActor () throws -> Void)? = nil) async throws -> Snapshot {
         guard let home = editor.workingRoot else {
             throw GenerationRequestError.storage("Save this project before approving a generation batch.")
         }
@@ -94,6 +96,7 @@ enum GenerationBatchStore {
             }
             return existing
         }
+        try confirm?()
         for item in batch.payload.items { try item.package.persist(editor: editor) }
         try markDirty(editor: editor)
         let record = try authority.create(batch: batch, journal: snapshot.journal, home: home)

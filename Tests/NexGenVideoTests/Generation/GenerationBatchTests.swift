@@ -1297,6 +1297,65 @@ struct GenerationBatchTests {
         }
     }
 
+    @Test func anEndedPhaseApprovalNeverGrantsBatchAuthority() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        editor.generationBatchCoordinator.startsApprovedBatches = false
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            Gates(project: "demo", gates: [
+                "brief": Gate(approved: true, approvedAt: "2026-10-16T08:00:00Z"),
+                "frames": Gate(),
+            ]),
+            to: PipelineLayout.gatesFile
+        )
+        func framesBatch() throws -> GenerationBatch {
+            try GenerationBatch(payload: .init(nonce: UUID(), projectKey: original.payload.projectKey,
+                phase: "frames", items: original.payload.items))
+        }
+        func recoveries(_ batch: GenerationBatch) -> [String: GenerationBatchRecovery] {
+            Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+                (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+            })
+        }
+        let authority = try GenerationExecutionAuthorityStore.live()
+        let coordinator = editor.generationBatchCoordinator
+
+        let automatic = try framesBatch()
+        _ = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+        _ = try editor.agentService.presentGenerationBatch(automatic, recoveries: recoveries(automatic),
+            origin: .direct, editor: editor)
+        #expect(coordinator.autoApprovingPhase == "frames")
+        editor.phaseSpendApproval.withdraw(editor: editor)
+        for _ in 0..<500 where coordinator.autoApprovingPhase != nil {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(coordinator.pending?.id == automatic.id)
+        #expect(coordinator.error == nil)
+        #expect(try authority.loadIfPresent(projectKey: automatic.payload.projectKey, batchID: automatic.id) == nil)
+        coordinator.decline(editor: editor)
+
+        let late = try framesBatch()
+        try coordinator.present(late, recoveries: recoveries(late))
+        let grant = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+        editor.phaseSpendApproval.withdraw(editor: editor)
+        await coordinator.approve(editor: editor, expectedBatchID: late.id,
+            approval: late.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices, underPhaseApproval: grant)
+        #expect(coordinator.pending?.id == late.id)
+        #expect(coordinator.error == nil)
+        #expect(try authority.loadIfPresent(projectKey: late.payload.projectKey, batchID: late.id) == nil)
+        #expect(!FileManager.default.fileExists(
+            atPath: workingRoot.appendingPathComponent("generation-batches/\(late.id)").path))
+        coordinator.decline(editor: editor)
+
+        await #expect(throws: PhaseSpendApprovalEnded.self) {
+            _ = try await GenerationBatchStore.approve(late, editor: editor, authority: authority,
+                confirm: { throw PhaseSpendApprovalEnded() })
+        }
+        #expect(try authority.loadIfPresent(projectKey: late.payload.projectKey, batchID: late.id) == nil)
+    }
+
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {
         let (root, editor, batch) = try await fixture()
         let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")

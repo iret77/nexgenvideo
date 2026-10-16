@@ -131,18 +131,28 @@ final class GenerationBatchCoordinator {
             + "Do not re-present the same unresolved proposal. Pricing diagnostics:\n" + failures)
     }
 
-    func approve(editor: EditorViewModel, expectedBatchID: String, approval: GenerationBatchApproval = .verifiedPrices) async {
+    /// Under a phase grant, authority is created only while that grant still holds; else the batch stays pending.
+    func approve(editor: EditorViewModel, expectedBatchID: String, approval: GenerationBatchApproval = .verifiedPrices,
+                 underPhaseApproval grant: PhaseSpendApproval? = nil) async {
         guard let manifest = pending, manifest.id == expectedBatchID, !approving, !isRecovering,
               manifest.totalEUR != nil || approval == .acceptUnknownPrices else { return }
         approving = true
         defer { approving = false }
+        var confirm: (@MainActor () throws -> Void)?
+        if let grant {
+            confirm = {
+                guard editor.phaseSpendApproval.isActive(grant, editor: editor) else { throw PhaseSpendApprovalEnded() }
+            }
+        }
         do {
-            _ = try await GenerationBatchStore.approve(manifest, editor: editor, approval: approval)
+            _ = try await GenerationBatchStore.approve(manifest, editor: editor, approval: approval, confirm: confirm)
             pending = nil
             recoveries = [:]
             error = nil
             editor.agentService.noteGenerationBatchStarted(manifest.id)
             if startsApprovedBatches { start(batchID: manifest.id, editor: editor) }
+        } catch is PhaseSpendApprovalEnded {
+            return
         } catch { self.error = error.localizedDescription }
     }
 
@@ -154,24 +164,27 @@ final class GenerationBatchCoordinator {
             error = "This phase can't be approved as a whole right now. Approve this batch on its own."
             return
         }
-        await approveRecordingPhaseRun(manifest, editor: editor)
+        await approveRecordingPhaseRun(manifest, editor: editor, grant: nil)
     }
 
     /// Approves a presented batch under an active phase approval through the same call the approve
     /// button makes, so its manifest and execution authority are identical to a manual approval.
-    func approveUnderPhaseApproval(editor: EditorViewModel, expectedBatchID: String, phase: String) {
+    func approveUnderPhaseApproval(editor: EditorViewModel, expectedBatchID: String, grant: PhaseSpendApproval) {
+        let phase = grant.phase
         autoApprovingPhase = phase
         Task { @MainActor [weak self, weak editor] in
             guard let self else { return }
             defer { if self.autoApprovingPhase == phase { self.autoApprovingPhase = nil } }
-            guard let editor, let manifest = self.pending, manifest.id == expectedBatchID else { return }
-            await self.approveRecordingPhaseRun(manifest, editor: editor)
+            guard let editor, let manifest = self.pending, manifest.id == expectedBatchID,
+                  editor.phaseSpendApproval.isActive(grant, editor: editor) else { return }
+            await self.approveRecordingPhaseRun(manifest, editor: editor, grant: grant)
         }
     }
 
-    private func approveRecordingPhaseRun(_ manifest: GenerationBatch, editor: EditorViewModel) async {
+    private func approveRecordingPhaseRun(_ manifest: GenerationBatch, editor: EditorViewModel,
+                                          grant: PhaseSpendApproval?) async {
         await approve(editor: editor, expectedBatchID: manifest.id,
-            approval: manifest.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
+            approval: manifest.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices, underPhaseApproval: grant)
         guard pending?.id != manifest.id else { return }
         let count = manifest.payload.items.count
         editor.phaseSpendApproval.recordRun(
