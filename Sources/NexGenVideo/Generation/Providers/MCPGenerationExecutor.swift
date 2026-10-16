@@ -55,7 +55,8 @@ enum MCPGenerationExecutor {
         maxPollAttempts: Int = 600,
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
         timeoutSeconds: TimeInterval = 30 * 60,
-        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {}
+        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {},
+        onJobAccepted: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) async throws -> Result {
         let hasLifecycle = hasUsableLifecycle(tools: tools)
         let hasDirectOutput = hasDirectOutputContract(generationTool)
@@ -79,6 +80,8 @@ enum MCPGenerationExecutor {
             from: payloads,
             allowRootURL: allowRootURL
         )
+        // The job id must be on record before any polling an interruption could cut short.
+        if let jobID = submission.jobID, !jobID.isEmpty { await onJobAccepted(jobID) }
         switch MCPGenerationLifecycle.status(
             from: payloads,
             allowRootURL: allowRootURL

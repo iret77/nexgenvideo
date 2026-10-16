@@ -31,9 +31,14 @@ struct ProviderRunEndedError: LocalizedError, ProviderRunEndReporting {
 @MainActor
 private final class MCPSubmissionDispatchState {
     private(set) var didDispatch = false
+    private(set) var receiptBooked = false
 
     func recordDispatch() {
         didDispatch = true
+    }
+
+    func recordReceipt() {
+        receiptBooked = true
     }
 }
 
@@ -1380,12 +1385,15 @@ final class GenerationService {
                 client: client,
                 onSubmissionDispatched: {
                     submissionState.recordDispatch()
+                },
+                onJobAccepted: { jobID in
+                    self.markMCPSubmitted(jobID: jobID, requestID: requestId, tools: tools,
+                        state: submissionState, authorization: authorization, editor: editor)
                 }
             )
             await client.disconnect()
-            // The receipt is booked once the job id is known, so a later status read can find it.
             markMCPSubmitted(jobID: result.jobID, requestID: requestId, tools: tools,
-                authorization: authorization, editor: editor)
+                state: submissionState, authorization: authorization, editor: editor)
             let job = BackendGenerationJob(
                 _id: result.jobID ?? requestId, status: .succeeded,
                 resultUrls: result.output.urls,
@@ -1426,7 +1434,7 @@ final class GenerationService {
             ) {
             case .failJob(let message):
                 markMCPSubmitted(jobID: (error as? MCPGenerationExecutor.JobFailure)?.jobID, requestID: requestId,
-                    tools: discoveredTools, authorization: authorization, editor: editor)
+                    tools: discoveredTools, state: submissionState, authorization: authorization, editor: editor)
                 failSubmittedJob(placeholders, message, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
@@ -1445,9 +1453,12 @@ final class GenerationService {
         jobID: String?,
         requestID: String,
         tools: [MCPProviderClient.DiscoveredTool],
+        state: MCPSubmissionDispatchState,
         authorization: GenerationAuthorization,
         editor: EditorViewModel
     ) {
+        guard !state.receiptBooked else { return }
+        state.recordReceipt()
         let usableJobID = jobID.flatMap { $0.isEmpty ? nil : $0 }
         markSubmitted(
             authorization: authorization,

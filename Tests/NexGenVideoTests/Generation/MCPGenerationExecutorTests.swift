@@ -165,6 +165,45 @@ struct MCPGenerationExecutorTests {
         #expect(calls.filter { $0 == "generate_image" }.count == 1)
     }
 
+    @MainActor
+    private final class JobRecorder {
+        private(set) var jobIDs: [String] = []
+
+        func record(_ jobID: String) {
+            jobIDs.append(jobID)
+        }
+    }
+
+    @Test func acceptedJobIDIsRecordedBeforeTheFirstStatusPoll() async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(
+            responses: ["generate_image": [[#"{"job_id":"job-accepted","status":"queued"}"#]]],
+            suspendedTools: ["job_status"]
+        )
+        let recorder = await JobRecorder()
+        let task = Task {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0,
+                onJobAccepted: { recorder.record($0) }
+            )
+        }
+
+        #expect(await waitForCall("job_status", client: client))
+        #expect(await recorder.jobIDs == ["job-accepted"])
+        task.cancel()
+        _ = try? await task.value
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
