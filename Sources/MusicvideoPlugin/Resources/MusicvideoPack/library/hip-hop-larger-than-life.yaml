@@ -39,9 +39,12 @@ references:
   - name: "Cole Bennett (Lyrical Lemonade)"
     role: director
     notable_works:
-      - "J. Cole — ATM"
-      - "Baby Keem — Orange Soda"
+      - "Ski Mask the Slump God — Catch Me Outside (2017)"
+      - "Juice WRLD — Lucid Dreams (2018)"
+      - "Jack Harlow — What's Poppin (2020)"
     sources:
+      - label: "Wikipedia — Cole Bennett"
+        url: "https://en.wikipedia.org/wiki/Cole_Bennett"
       - label: "Raptology — Hype Williams legacy in modern hip-hop visual language"
         url: "https://raptology.com/2026/04/23/hype-williams-the-man-who-made-hip-hop-look-larger-than-life/"
 
