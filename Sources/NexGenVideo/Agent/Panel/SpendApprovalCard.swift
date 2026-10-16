@@ -7,6 +7,8 @@ private enum SpendApprovalFocusTarget: Hashable {
 }
 
 struct SpendApprovalCard: View {
+    @Environment(EditorViewModel.self) private var editor
+
     let approval: SpendApproval
     let error: String?
     let isWorking: Bool
@@ -18,6 +20,7 @@ struct SpendApprovalCard: View {
     @State private var selectedOptionId: String
     @State private var chosenProvider: GenerationProvider?
     @State private var approvalError: String?
+    @State private var budgetStopIsSet = false
     @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
     init(
@@ -45,6 +48,13 @@ struct SpendApprovalCard: View {
 
     private var selectedOption: SpendOption? {
         availableOptions.first { $0.id == selectedOptionId }
+    }
+
+    private var selectedCostIsUnknown: Bool {
+        guard let selectedOption else { return false }
+        guard approval.requiresGenerationPackage == true else { return selectedOption.credits == nil }
+        guard let package = selectedOption.generationPackage else { return false }
+        return package.payload.estimate == nil
     }
 
     private var availableProviders: [GenerationProvider] {
@@ -111,6 +121,9 @@ struct SpendApprovalCard: View {
         .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
         .task(id: selectedOptionId + "|" + (approval.preparationRevision ?? "")) {
             if approval.requiresGenerationPackage == true, let selectedOption { onPrepare(selectedOption) }
+        }
+        .task(id: editor.workingRoot) {
+            budgetStopIsSet = GenerationBudgetGuard.hasBudgetStop(in: editor.workingRoot)
         }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             onRefresh()
@@ -196,6 +209,12 @@ struct SpendApprovalCard: View {
                 Text("via \(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            if budgetStopIsSet, selectedCostIsUnknown {
+                Text("Cost unknown. Not covered by the budget limit.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Status.warningColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

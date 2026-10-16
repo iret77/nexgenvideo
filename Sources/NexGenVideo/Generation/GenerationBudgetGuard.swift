@@ -288,7 +288,12 @@ enum GenerationBudgetGuard {
         )
     }
 
-    static func budgetStop(in workingRoot: URL) throws -> Double? {
+    static func hasBudgetStop(in workingRoot: URL?) -> Bool {
+        guard let workingRoot else { return false }
+        return (try? budgetStop(in: workingRoot)) != nil
+    }
+
+    private static func budgetStop(in workingRoot: URL) throws -> Double? {
         let dataRoot: URL?
         if let resolved = DataRootResolver.dataRoot(of: workingRoot) {
             dataRoot = resolved
