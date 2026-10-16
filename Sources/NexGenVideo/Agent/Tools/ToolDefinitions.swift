@@ -1387,7 +1387,7 @@ enum ToolDefinitions {
                     "home_dir": ["type": "string", "description": "Optional. Directory to scaffold under; omit to use the open project."],
                     "name": ["type": "string", "description": "Project name."],
                     "mode": ["type": "string", "description": "Cut mode: beat/phrase/section/multicam (default beat)."],
-                    "budget_eur": ["type": "number", "description": "Planning budget in EUR (default 50); this does not enforce a hard stop."],
+                    "budget_eur": ["type": "number", "description": "Planning budget in EUR (default 50); display only, never a limit."],
                 ],
                 required: ["name"]
             )
@@ -1508,7 +1508,7 @@ enum ToolDefinitions {
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Frame role for phase=frames (default start). Omit for video phases."],
                     "output": ["type": "string", "description": "Completed project media asset id or project path (omit if not done)."],
                     "expected_take_id": ["type": "string", "description": "When selecting an existing take, require this exact generation-event/output identity and its accepted native review."],
-                    "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0); not used by the hard budget stop."],
+                    "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0)."],
                     "status": ["type": "string", "enum": ["rendered", "pending", "failed"], "description": "Render status (default rendered)."],
                 ],
                 required: ["phase", "shot_id"]

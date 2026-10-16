@@ -1187,7 +1187,8 @@ struct GenerationBatchTests {
         let (root, editor, original) = try await fixture(stop: 1)
         defer { cleanup(root) }
         editor.generationBatchCoordinator.startsApprovedBatches = false
-        let dataRoot = try #require(DataRootResolver.dataRoot(of: #require(editor.workingRoot)))
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             Gates(project: "demo", gates: [
                 "brief": Gate(approved: true, approvedAt: "2026-10-16T08:00:00Z"),
