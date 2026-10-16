@@ -74,6 +74,21 @@ struct AnthropicModelCatalogTests {
         #expect(endless.recorded.count == AnthropicModelsAPI.maximumPages)
     }
 
+    @Test("a page without a boolean has_more is an invalid response")
+    func hasMoreIsRequired() async throws {
+        for hasMore in [nil, "false", 0] as [Any?] {
+            var body: [String: Any] = ["data": [F.sonnet55], "last_id": "claude-sonnet-5-5"]
+            if let hasMore { body["has_more"] = hasMore }
+            let transport = RecordingModelsTransport(pages: [.success(try JSONSerialization.data(withJSONObject: body))])
+            await #expect(throws: AnthropicModelsAPI.DiscoveryError.invalidResponse) {
+                _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: transport.transport)
+            }
+        }
+        let valid = RecordingModelsTransport(pages: [.success(try F.page([F.sonnet55], hasMore: false))])
+        #expect(try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: valid.transport).map(\.id)
+            == ["claude-sonnet-5-5"])
+    }
+
     @Test("an incomplete model list keeps the cached list and the stored choice")
     func incompleteListIsNotCurrent() async throws {
         let defaults = F.isolatedDefaults()
