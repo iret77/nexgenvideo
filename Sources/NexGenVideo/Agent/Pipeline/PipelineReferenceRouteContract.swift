@@ -136,7 +136,7 @@ enum PipelineReferenceRouteContract {
                     + offeredSlots(candidates, modality: item.demand.modality)
             )
         }
-        let evaluations = ProductionRequirementResolverV1.slotAndModeEvaluations(
+        let evaluations = ProductionRequirementResolverV1.requiredInputEvaluations(
             requirement: requirement,
             demands: required,
             candidates: candidates
@@ -172,7 +172,11 @@ enum PipelineReferenceRouteContract {
             modeIDs: [demand.modeID],
             visibleEntityCount: 0
         )
-        return bindable(alone, [demand], on: candidates)
+        return ProductionRequirementResolverV1.slotAndModeEvaluations(
+            requirement: alone,
+            demands: [demand],
+            candidates: candidates
+        ).contains { $0.deficits.isEmpty }
     }
 
     private static func routedDemands(_ input: PipelineExecutionShotInput) -> [RoutedDemand] {
@@ -224,7 +228,7 @@ enum PipelineReferenceRouteContract {
         _ demands: [ReferenceDemandV1],
         on candidates: [ProductionRouteCandidateV1]
     ) -> Bool {
-        ProductionRequirementResolverV1.slotAndModeEvaluations(
+        ProductionRequirementResolverV1.requiredInputEvaluations(
             requirement: requirement,
             demands: demands,
             candidates: candidates

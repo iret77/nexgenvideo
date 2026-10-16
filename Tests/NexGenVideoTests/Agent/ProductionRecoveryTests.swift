@@ -190,6 +190,11 @@ struct ProductionRecoveryTests {
         motion["is_required"] = false
         let input = try generatedInput(demands: [anchor, motion])
         try PipelineReferenceRouteContract.validate([input], routes: [imageOnly, videoOnly])
+        let noVideoRoom = videoRoute("no-video-room", inputKinds: ["image", "video"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+            slot(CoreReferenceInputSlotIDV1.referenceVideo, .video, order: 3),
+        ], videoCapacity: 0)
+        try PipelineReferenceRouteContract.validate([input], routes: [noVideoRoom])
 
         var invented = motion
         invented["semantic_job_id"] = "core.location"
@@ -395,7 +400,8 @@ struct ProductionRecoveryTests {
         _ offeringID: String,
         inputKinds: [String],
         slots: [ProductionInputSlotCapabilityV1],
-        imageCapacity: Int = 3
+        imageCapacity: Int = 3,
+        videoCapacity: Int = 3
     ) -> ProductionRouteCandidateV1 {
         let origin = ResolvedCapabilityOriginV1(kind: .exact, profileID: "fixture-\(offeringID)")
         func value<Value>(_ value: Value) -> ResolvedCapabilityValueV1<Value>
@@ -410,7 +416,7 @@ struct ProductionRecoveryTests {
             fields: ResolvedCapabilityFieldsV1(
                 integers: [
                     CapabilityFieldIDV1.referenceImages: value(imageCapacity),
-                    CapabilityFieldIDV1.referenceVideos: value(3),
+                    CapabilityFieldIDV1.referenceVideos: value(videoCapacity),
                     CapabilityFieldIDV1.referenceAudios: value(3),
                     CapabilityFieldIDV1.totalReferences: value(9),
                 ],

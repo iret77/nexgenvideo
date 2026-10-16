@@ -594,9 +594,9 @@ struct ProductionRequirementRoutingTests {
         let imageRoute = singleSlotCandidate("image-only", .image)
         let videoRoute = singleSlotCandidate("video-only", .video)
 
-        let shared = ProductionRequirementResolverV1.slotAndModeEvaluations(
+        let shared = ProductionRequirementResolverV1.requiredInputEvaluations(
             requirement: requirement,
-            demands: fixture.demandSet.demands.filter(\.isRequired),
+            demands: fixture.demandSet.demands,
             candidates: [imageRoute, videoRoute]
         )
         #expect(shared.filter(\.deficits.isEmpty).map(\.candidate) == [imageRoute])
@@ -629,6 +629,62 @@ struct ProductionRequirementRoutingTests {
         ])
     }
 
+    @Test("an optional reference without capacity on the only offering route is dropped, not rejected")
+    func optionalReferenceWithoutCapacityIsDropped() throws {
+        let fixture = try makeFixture([
+            Input(id: "anchor", modality: .image, isRequired: true),
+            Input(id: "motion", modality: .video),
+        ])
+        defer { fixture.remove() }
+        let requirement = makeRequirement(referenceDemandIDs: fixture.demandIDs)
+        let candidate = makePlanningCandidate(
+            offeringID: "no-video-room",
+            imageCount: 1,
+            videoCount: 0,
+            totalCount: 2
+        )
+        let optional = try #require(fixture.demandSet.demands.first(where: { !$0.isRequired }))
+
+        let offered = ProductionRequirementResolverV1.slotAndModeEvaluations(
+            requirement: requirement,
+            demands: [optional],
+            candidates: [candidate]
+        )
+        #expect(offered.map(\.deficits) == [[]])
+        let shared = ProductionRequirementResolverV1.requiredInputEvaluations(
+            requirement: requirement,
+            demands: fixture.demandSet.demands,
+            candidates: [candidate]
+        )
+        #expect(shared.map(\.deficits) == [[]])
+        let resolution = try ProductionRequirementResolverV1.resolve(
+            requirement: requirement,
+            demandSet: fixture.demandSet,
+            assetGraph: fixture.graph,
+            dataRoot: fixture.dataRoot,
+            candidates: [candidate]
+        )
+        guard case .matched(let route, _) = resolution else {
+            Issue.record("expected the required image to route")
+            return
+        }
+        let plan = try planned(
+            id: "plan-optional-no-room",
+            fixture: fixture,
+            route: route,
+            requirement: requirement,
+            candidate: candidate
+        )
+        #expect(plan.bindings.map(\.demandID) == ["anchor"])
+        #expect(plan.optionalDrops == [
+            ReferencePlanDropV2(
+                demandID: "motion",
+                reason: .modalityBudget,
+                detail: "reference.video_count"
+            ),
+        ])
+    }
+
     @Test("the shared pre-check rejects required references over capacity exactly like Render")
     func sharedPrecheckMatchesRenderCapacity() throws {
         let fixture = try makeFixture([
@@ -643,7 +699,7 @@ struct ProductionRequirementRoutingTests {
             totalCount: 2
         )
 
-        let shared = ProductionRequirementResolverV1.slotAndModeEvaluations(
+        let shared = ProductionRequirementResolverV1.requiredInputEvaluations(
             requirement: requirement,
             demands: fixture.demandSet.demands,
             candidates: [candidate]

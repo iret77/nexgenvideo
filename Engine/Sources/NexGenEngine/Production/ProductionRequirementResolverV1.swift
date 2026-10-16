@@ -671,7 +671,7 @@ public enum ProductionRequirementResolverV1 {
         }
     }
 
-    /// Render's modality, mode, input-slot and reference-capacity checks for exactly the given demands.
+    /// Render's modality, mode and input-slot checks for exactly the given demands.
     public static func slotAndModeEvaluations(
         requirement: ProductionRequirementV1,
         demands: [ReferenceDemandV1],
@@ -684,9 +684,31 @@ public enum ProductionRequirementResolverV1 {
             } else {
                 found = modeDeficits(requirement: requirement, candidate: candidate)
                     + inputSlotDeficits(demands: demands, candidate: candidate)
-                    + referenceCapacityDeficits(demands: demands, candidate: candidate)
             }
             return ProductionRouteEvaluationV1(candidate: candidate, deficits: found)
+        }
+    }
+
+    /// Render's asset-free route verdict: slot, mode and reference-capacity checks on the required demands only.
+    public static func requiredInputEvaluations(
+        requirement: ProductionRequirementV1,
+        demands: [ReferenceDemandV1],
+        candidates: [ProductionRouteCandidateV1]
+    ) -> [ProductionRouteEvaluationV1] {
+        let required = demands.filter(\.isRequired)
+        return slotAndModeEvaluations(
+            requirement: requirement,
+            demands: required,
+            candidates: candidates
+        ).map { evaluation in
+            guard modalityDeficit(requirement: requirement, candidate: evaluation.candidate) == nil else {
+                return evaluation
+            }
+            return ProductionRouteEvaluationV1(
+                candidate: evaluation.candidate,
+                deficits: evaluation.deficits
+                    + referenceCapacityDeficits(demands: required, candidate: evaluation.candidate)
+            )
         }
     }
 
