@@ -55,8 +55,8 @@ enum MCPGenerationExecutor {
         maxPollAttempts: Int = 600,
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
         timeoutSeconds: TimeInterval = 30 * 60,
-        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {},
-        onJobAccepted: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+        onSubmissionDispatched: (@MainActor @Sendable () -> Void)? = nil,
+        onJobAccepted: (@Sendable (String) async -> Void)? = nil
     ) async throws -> Result {
         let hasLifecycle = hasUsableLifecycle(tools: tools)
         let hasDirectOutput = hasDirectOutputContract(generationTool)
@@ -68,11 +68,17 @@ enum MCPGenerationExecutor {
                 "\(provider.displayName)'s generation tool exposes no proven direct, synchronous, or asynchronous media result path. No job was submitted."
             )
         }
-        let payloads = try await client.callGenerationTool(
-            name: generationTool.name,
-            arguments: arguments,
-            onDispatched: onSubmissionDispatched
-        )
+        // Without a listener nothing waits for the main actor between the submission and its first poll.
+        let payloads: [String]
+        if let onSubmissionDispatched {
+            payloads = try await client.callGenerationTool(
+                name: generationTool.name,
+                arguments: arguments,
+                onDispatched: onSubmissionDispatched
+            )
+        } else {
+            payloads = try await client.callTool(name: generationTool.name, arguments: arguments)
+        }
         let allowRootURL = MCPGenerationLifecycle.outputSchemaAllowsRootURL(
             generationTool.outputSchema
         )
@@ -81,7 +87,7 @@ enum MCPGenerationExecutor {
             allowRootURL: allowRootURL
         )
         // The job id must be on record before any polling an interruption could cut short.
-        if let jobID = submission.jobID, !jobID.isEmpty { await onJobAccepted(jobID) }
+        if let jobID = submission.jobID, !jobID.isEmpty, let onJobAccepted { await onJobAccepted(jobID) }
         let inferred = MCPGenerationLifecycle.status(from: payloads, allowRootURL: allowRootURL)
         // A job id with any status tool needs a stated terminal status; a media schema proves no completion.
         let isAsyncAcceptance = submission.jobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil
