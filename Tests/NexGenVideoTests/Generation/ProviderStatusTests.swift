@@ -485,4 +485,29 @@ struct ProviderStatusTests {
         #expect(closed.kind == .charged)
         #expect(closed.money == bill)
     }
+
+    @MainActor
+    @Test func aResumedRunWithEveryOutputStillReadsItsTerminalCost() async throws {
+        Fixture.reset()
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let service = EditorViewModel().generationService
+        service.reconciliation = ProviderRunReconciliation(session: session)
+        Fixture.stub("GET", "/tasks/task-done", .response(status: 200,
+            body: #"{"id":"task-done","status":"SUCCEEDED","output":["https://example.com/a.mp4"],"cost":{"credits":40}}"#))
+        Fixture.stub("GET", "/operations/op-done", .response(status: 200,
+            body: #"{"done":true,"cost":{"total_credits":9}}"#))
+        Fixture.stub("GET", "/tasks/task-lost", .urlError(.timedOut))
+
+        #expect(await service.terminalCost(provider: .runway, transport: .api, requestID: "task-done",
+            apiKey: "runway-secret")?.amount == 40)
+        #expect(await service.terminalCost(provider: .marble, transport: .api, requestID: "op-done",
+            apiKey: "marble-secret")?.amount == 9)
+        #expect(await service.terminalCost(provider: .runway, transport: .api, requestID: "task-lost",
+            apiKey: "runway-secret") == nil)
+        #expect(await service.terminalCost(provider: .higgsfield, transport: .mcp, requestID: "job",
+            apiKey: "") == nil)
+        #expect(Fixture.requests() == ["GET /v1/tasks/task-done", "GET /marble/v1/operations/op-done",
+            "GET /v1/tasks/task-lost"])
+    }
 }

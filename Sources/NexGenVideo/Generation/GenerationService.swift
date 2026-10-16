@@ -472,6 +472,10 @@ final class GenerationService {
                         }
                     default:
                         if !settled {
+                            if recoveredCost == nil, completedIDs.count >= execution.placeholders.count {
+                                recoveredCost = await self.terminalCost(provider: target.provider,
+                                    transport: target.transport, requestID: requestID, apiKey: key)
+                            }
                             self.markFinished(authorization: recoveredAuthorization, providerCost: recoveredCost, editor: editor)
                         }
                     }
@@ -1136,6 +1140,27 @@ final class GenerationService {
     /// Only a typed, provider-confirmed end settles a run; anything else keeps it in flight.
     nonisolated static func providerRunEnded(after error: any Error) -> Bool {
         (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
+    }
+
+    /// The cost a finished task reports, read once when its outputs arrived before its cost was booked.
+    func terminalCost(
+        provider: GenerationProvider,
+        transport: ProviderTransport,
+        requestID: String,
+        apiKey: String
+    ) async -> GenerationProviderCost? {
+        guard transport == .api else { return nil }
+        let session = reconciliation.session
+        let status: ProviderRunStatus?
+        switch provider {
+        case .runway: status = try? await RunwayClient(apiKey: apiKey, session: session).status(taskId: requestID)
+        case .marble: status = try? await MarbleClient(apiKey: apiKey, session: session).status(operationId: requestID)
+        default: status = nil
+        }
+        switch status {
+        case .completed(let cost)?, .failed(_, let cost)?: return cost
+        case .running?, nil: return nil
+        }
     }
 
     /// One status read for an interrupted MCP batch job; only a stated terminal state ends it.
