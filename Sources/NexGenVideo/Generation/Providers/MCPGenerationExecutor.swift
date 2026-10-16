@@ -238,6 +238,30 @@ enum MCPGenerationExecutor {
         return await cancellation.value
     }
 
+    /// One status call for an accepted job; nil when the provider exposes no status tool.
+    static func status(
+        jobID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async throws -> ProviderRunStatus? {
+        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return nil }
+        let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
+        let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
+        switch MCPGenerationLifecycle.status(
+            from: payloads,
+            allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(statusTool.outputSchema)
+        ) {
+        case .pending:
+            return .running
+        case .succeeded:
+            return .completed(nil)
+        case .failed(let message):
+            return .failed(message, nil)
+        case .unknown(let value):
+            throw GenerationBackendError.transport("The provider MCP returned an unsupported job status: \(value ?? "<missing>").")
+        }
+    }
+
     private static func poll(
         jobID: String,
         provider: GenerationProvider,

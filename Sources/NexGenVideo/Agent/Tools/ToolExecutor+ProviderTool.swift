@@ -115,6 +115,8 @@ extension ToolExecutor {
                                 "\(match.name) is no longer an available prompt-free provider tool."
                             )
                         }
+                        ActiveSpendTransactions.begin(authorization.transactionId)
+                        defer { ActiveSpendTransactions.end(authorization.transactionId) }
                         do {
                             try editor.recordSpendEvent(
                                 authorization: authorization,
@@ -149,11 +151,13 @@ extension ToolExecutor {
                             )
                         } catch {
                             await approvedClient.disconnect()
-                            try? editor.recordSpendEvent(
-                                authorization: authorization,
-                                kind: .settled,
-                                note: "The provider tool ended without a result: \(error.localizedDescription)"
-                            )
+                            if GenerationService.providerRunEnded(after: error) {
+                                try? editor.recordSpendEvent(
+                                    authorization: authorization,
+                                    kind: .settled,
+                                    note: "The provider tool ended without a result: \(error.localizedDescription)"
+                                )
+                            }
                             return .error(
                                 "\(current.name) on \(provider.displayName) failed after submission: \(error.localizedDescription)"
                             )

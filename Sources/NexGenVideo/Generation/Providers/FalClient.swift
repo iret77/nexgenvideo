@@ -318,6 +318,28 @@ actor FalClient {
         }
     }
 
+    /// One status read for a queued request; never retries, cancels or fetches the result.
+    func status(endpoint: String, requestId: String) async throws -> ProviderRunStatus {
+        let url = try Self.route(endpoint: endpoint).lifecycleURL(requestId: requestId, suffix: "status")
+        let request = makeRequest(url: url, method: "GET", body: nil)
+        let response = try await send(request)
+        let json = Self.parse(response.data)
+        try Self.throwIfError(response, request: request, operation: "status", json: json)
+        guard let state = json?["status"] as? String else {
+            throw GenerationBackendError.transport("fal.ai returned no usable request status.")
+        }
+        switch state {
+        case "COMPLETED":
+            return .completed(nil)
+        case "FAILED", "ERROR", "CANCELLED":
+            return .failed(Self.errorMessage(in: json) ?? "fal.ai reported the request as failed", nil)
+        case "IN_QUEUE", "IN_PROGRESS":
+            return .running
+        default:
+            throw GenerationBackendError.transport("fal.ai returned no usable request status.")
+        }
+    }
+
     struct Route: Sendable, Equatable {
         let endpoint: String
         let application: String

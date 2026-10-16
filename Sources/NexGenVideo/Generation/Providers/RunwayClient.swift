@@ -182,6 +182,29 @@ actor RunwayClient {
         }
     }
 
+    /// One status read for a task; never polls, retries or cancels it.
+    func status(taskId: String) async throws -> ProviderRunStatus {
+        let (data, status) = try await send(method: "GET", path: "tasks/\(taskId)", body: nil)
+        guard (200..<300).contains(status) else {
+            throw Self.apiError(data: data, status: status, operation: "task status")
+        }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let state = json?["status"] as? String else {
+            throw GenerationBackendError.transport("Runway returned a malformed task status.")
+        }
+        switch state {
+        case "SUCCEEDED":
+            return .completed(ProviderReportedCost.runway(terminalTask: json))
+        case "FAILED", "CANCELLED":
+            let reason = (json?["failure"] as? String) ?? "Runway reported the task as ended without output"
+            return .failed(reason, ProviderReportedCost.runway(terminalTask: json))
+        case "PENDING", "THROTTLED", "RUNNING":
+            return .running
+        default:
+            throw GenerationBackendError.transport("Runway returned a malformed task status.")
+        }
+    }
+
     // MARK: - Reference hosting
 
     /// `POST /v1/uploads` — host a reference on RUNWAY, so an image-to-video or restyle run needs no

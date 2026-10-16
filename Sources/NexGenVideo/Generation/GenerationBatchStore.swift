@@ -264,6 +264,18 @@ enum GenerationBatchStore {
         return completed
     }
 
+    /// Every transaction a validated project-local batch journal tracks; batch resume owns those runs.
+    nonisolated static func batchTransactionIDs(home: URL) -> Set<String> {
+        let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
+        guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
+        var transactions: Set<String> = []
+        for id in ids where !id.hasPrefix(".") {
+            guard let snapshot = try? loadProjectIfPresent(id: id, home: home) else { continue }
+            transactions.formUnion(snapshot.journal.executions.compactMap(\.transactionID))
+        }
+        return transactions
+    }
+
     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {
         let path = try relativePath(id: id)
         let manifestURL = home.appendingPathComponent(path + "/manifest.json")

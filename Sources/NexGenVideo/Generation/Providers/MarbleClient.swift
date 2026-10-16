@@ -104,6 +104,25 @@ actor MarbleClient {
         }
     }
 
+    /// One status read for an operation; never polls it.
+    func status(operationId: String) async throws -> ProviderRunStatus {
+        guard let url = URL(string: "\(Self.endpointBase)/operations/\(operationId)") else {
+            throw GenerationBackendError.transport("Invalid Marble operation id: \(operationId)")
+        }
+        let (data, status) = try await send(makeRequest(url: url, method: "GET", body: nil))
+        guard status == 200, let json = Self.parse(data) else {
+            throw GenerationBackendError.transport("Marble operation status returned HTTP \(status).")
+        }
+        if json["error"] != nil {
+            let message = Self.errorMessage(in: json) ?? "Marble reported the operation as failed"
+            return .failed(message, ProviderReportedCost.marble(operation: data))
+        }
+        if (json["done"] as? Bool) == true {
+            return .completed(ProviderReportedCost.marble(operation: data))
+        }
+        return .running
+    }
+
     private func makeRequest(url: URL, method: String, body: Data?) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = method

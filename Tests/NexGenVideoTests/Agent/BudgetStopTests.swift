@@ -632,7 +632,7 @@ struct BudgetStopTests {
         #expect(snapshot.legacyGenerationCount == 1)
         #expect(!snapshot.isComplete)
         #expect(snapshot.verifiedEur == 0)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount + snapshot.unresolvedCount == 1)
     }
 
     @Test("an estimate on a run in flight is never booked as spend")
@@ -657,6 +657,7 @@ struct BudgetStopTests {
                 transport: .api,
                 endpoint: "fal-ai/veo3",
                 providerRequestId: "request-1",
+                providerRequestResumable: true,
                 money: money(3)
             ),
         ]
@@ -715,7 +716,7 @@ struct BudgetStopTests {
         #expect(snapshot.isComplete)
     }
 
-    @Test("one ledger totals billed Bible work, frame roles and retakes; open runs stay in flight")
+    @Test("one ledger totals billed Bible work, frame roles and retakes; open runs without a receipt stay unconfirmed")
     func billedProjectSpendSnapshot() throws {
         func events(
             _ transaction: String,
@@ -797,7 +798,8 @@ struct BudgetStopTests {
 
         #expect(snapshot.verifiedEur == 21)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.inFlightCount == 2)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 2)
         #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 0)
     }
@@ -825,7 +827,8 @@ struct BudgetStopTests {
 
         #expect(snapshot.verifiedEur == 0)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 1)
         #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 1)
     }
@@ -941,7 +944,8 @@ struct BudgetStopTests {
         )
 
         #expect(snapshot.unknownCostCount == 2)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 1)
         #expect(snapshot.verifiedEur == 0)
         #expect(snapshot.legacyGenerationCount == 0)
     }
@@ -1031,7 +1035,7 @@ struct BudgetStopTests {
         #expect(!GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(URLError(.timedOut))))
     }
 
-    @Test("an unknown provider outcome stays in flight; a terminal failure settles with its reported cost")
+    @Test("an unknown provider outcome stays open as unconfirmed; a terminal failure settles with its reported cost")
     func unknownProviderOutcomeStaysInFlight() async throws {
         let package = try project(stop: nil)
         defer { cleanup(package) }
@@ -1085,7 +1089,8 @@ struct BudgetStopTests {
         #expect(settled.map(\.transactionId) == [terminalID, panoramalessID])
         #expect(settled.map(\.providerCost) == [credits, reported])
         let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
-        #expect(snapshot.inFlightCount == 3)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 3)
         #expect(snapshot.providerCredits.map(\.amount) == [10])
     }
 

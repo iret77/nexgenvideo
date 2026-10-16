@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 import Testing
 
 @testable import NexGenVideo
@@ -104,5 +105,222 @@ struct ProviderStatusTests {
             _ = try await client.submit(body: Data("{}".utf8))
         }
         #expect(Fixture.requests().count == 3)
+    }
+
+    private struct MCPStatusStub: MCPStatusClient {
+        let payloads: [String: String]
+
+        func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
+            guard let job = payloads.keys.first(where: { arguments.values.contains(.string($0)) }) else {
+                throw GenerationBackendError.transport("Unknown job")
+            }
+            return [payloads[job] ?? ""]
+        }
+
+        func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool] {
+            [MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: nil,
+                inputSchema: .object([
+                    "properties": .object(["job_id": .object(["type": .string("string")])]),
+                    "required": .array([.string("job_id")]),
+                ])
+            )]
+        }
+
+        func disconnect() async {}
+    }
+
+    @MainActor
+    private func projectEditor() throws -> (URL, EditorViewModel) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-reconcile-\(UUID().uuidString).ngv")
+        try Fixtures.prepareProjectPackage(at: root)
+        let editor = EditorViewModel()
+        editor.projectURL = root
+        return (root, editor)
+    }
+
+    @MainActor
+    private func cleanup(_ root: URL) {
+        if let key = ProjectIdentity.existingKey(for: root) { ProjectWorkingCopy.discard(key: key) }
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func openRun(
+        _ transaction: String,
+        _ provider: GenerationProvider,
+        transport: ProviderTransport = .api,
+        endpoint: String,
+        request: String,
+        resumable: Bool
+    ) -> [GenerationSpendEvent] {
+        [
+            GenerationSpendEvent(transactionId: transaction, kind: .reserved, model: endpoint, provider: provider,
+                transport: transport, endpoint: endpoint),
+            GenerationSpendEvent(transactionId: transaction, kind: .submitted, model: endpoint, provider: provider,
+                transport: transport, endpoint: endpoint, providerRequestId: request,
+                providerRequestResumable: resumable),
+        ]
+    }
+
+    @MainActor
+    private func closing(_ transaction: String, in editor: EditorViewModel) -> GenerationSpendEvent? {
+        editor.generationLog.spendEvents.last {
+            $0.transactionId == transaction && [.charged, .settled, .released].contains($0.kind)
+        }
+    }
+
+    @MainActor
+    private func reconciliation(
+        _ session: URLSession,
+        falCharge: @escaping @Sendable (String, String, String) async -> GenerationMoney? = { _, _, _ in nil },
+        mcpClient: @escaping @Sendable (GenerationProvider) async -> (any MCPStatusClient)? = { _ in nil }
+    ) -> ProviderRunReconciliation {
+        ProviderRunReconciliation(session: session, minimumInterval: 60, providerKey: { _ in "provider-key" },
+            falCharge: falCharge, mcpClient: mcpClient)
+    }
+
+    @MainActor
+    @Test func falReconciliationReadsStatusOnlyIsRateLimitedAndBooksTheBill() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let bill = GenerationMoney(nativeAmount: 3, nativeCurrency: "USD", eurAmount: 2.5, eurPerNativeUnit: 2.5 / 3,
+            exchangeRateDate: "2026-10-16",
+            pricingSource: "https://api.fal.ai/v1/models/billing-events?request_id=fal-req",
+            exchangeRateSource: "https://www.ecb.europa.eu/")
+        let service = editor.generationService
+        service.reconciliation = reconciliation(session, falCharge: { _, _, _ in bill })
+        editor.generationLog.spendEvents = openRun("fal-run", .fal, endpoint: "fal-ai/veo3",
+            request: "fal-req", resumable: true)
+        let start = Date()
+
+        Fixture.stub("GET", "/requests/fal-req/status", .response(status: 200, body: #"{"status":"IN_PROGRESS"}"#))
+        #expect(await service.reconcileOpenRuns(editor: editor, now: start) == 0)
+        #expect(closing("fal-run", in: editor) == nil)
+
+        Fixture.stub("GET", "/requests/fal-req/status", .response(status: 200, body: #"{"status":"COMPLETED"}"#))
+        #expect(await service.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(30)) == 0)
+        #expect(Fixture.requests() == ["GET /fal-ai/veo3/requests/fal-req/status"])
+
+        #expect(await service.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(61)) == 1)
+        let closed = try #require(closing("fal-run", in: editor))
+        #expect(closed.kind == .charged)
+        #expect(closed.money == bill)
+        #expect(Fixture.requests().allSatisfy { $0.hasPrefix("GET ") })
+        #expect(Fixture.requests().count == 2)
+    }
+
+    @MainActor
+    @Test func runwayReconciliationSettlesAConfirmedFailureWithItsCreditsAndIgnoresATimeout() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        editor.generationService.reconciliation = reconciliation(session)
+        editor.generationLog.spendEvents =
+            openRun("runway-failed", .runway, endpoint: "runway/gen4", request: "task-failed", resumable: true)
+            + openRun("runway-slow", .runway, endpoint: "runway/gen4", request: "task-slow", resumable: true)
+        Fixture.stub("GET", "/tasks/task-failed", .response(status: 200,
+            body: #"{"id":"task-failed","status":"FAILED","failure":"Content moderation","cost":{"credits":5}}"#))
+        Fixture.stub("GET", "/tasks/task-slow", .urlError(.timedOut))
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 1)
+        let failed = try #require(closing("runway-failed", in: editor))
+        #expect(failed.kind == .settled)
+        #expect(failed.providerCost?.amount == 5)
+        #expect(closing("runway-slow", in: editor) == nil)
+        #expect(Fixture.requests() == ["GET /v1/tasks/task-failed", "GET /v1/tasks/task-slow"])
+    }
+
+    @MainActor
+    @Test func marbleReconciliationSettlesFinishedAndFailedOperationsWithReportedCredits() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        editor.generationService.reconciliation = reconciliation(session)
+        editor.generationLog.spendEvents =
+            openRun("marble-done", .marble, endpoint: "marble/marble-1.1", request: "op-done", resumable: true)
+            + openRun("marble-error", .marble, endpoint: "marble/marble-1.1", request: "op-error", resumable: true)
+            + openRun("marble-running", .marble, endpoint: "marble/marble-1.1", request: "op-running", resumable: true)
+        Fixture.stub("GET", "/operations/op-done", .response(status: 200,
+            body: #"{"done":true,"cost":{"total_credits":12}}"#))
+        Fixture.stub("GET", "/operations/op-error", .response(status: 200,
+            body: #"{"done":true,"error":{"message":"World generation failed"}}"#))
+        Fixture.stub("GET", "/operations/op-running", .response(status: 200, body: #"{"done":false}"#))
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 2)
+        #expect(closing("marble-done", in: editor)?.providerCost?.amount == 12)
+        #expect(closing("marble-error", in: editor)?.kind == .settled)
+        #expect(closing("marble-running", in: editor) == nil)
+    }
+
+    @MainActor
+    @Test func mcpReconciliationUsesTheStatusToolAndSettlesOnlyATerminalJob() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let stub = MCPStatusStub(payloads: [
+            "job-failed": #"{"status":"failed","message":"provider rejected the render"}"#,
+            "job-queued": #"{"status":"queued"}"#,
+        ])
+        editor.generationService.reconciliation = reconciliation(session, mcpClient: { _ in stub })
+        editor.generationLog.spendEvents =
+            openRun("mcp-failed", .higgsfield, transport: .mcp, endpoint: "higgsfield/video",
+                request: "job-failed", resumable: true)
+            + openRun("mcp-queued", .higgsfield, transport: .mcp, endpoint: "higgsfield/video",
+                request: "job-queued", resumable: true)
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 1)
+        #expect(closing("mcp-failed", in: editor)?.kind == .settled)
+        #expect(closing("mcp-queued", in: editor) == nil)
+        #expect(Fixture.requests().isEmpty)
+    }
+
+    @MainActor
+    @Test func runsWithoutAQueryableReceiptStayUnconfirmedAndActiveRunsAreNeverQueried() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        editor.generationService.reconciliation = reconciliation(session)
+        let active = "active-\(UUID().uuidString)"
+        editor.generationLog.spendEvents =
+            openRun("no-receipt", .fal, endpoint: "fal-ai/veo3", request: "unknown-receipt", resumable: false)
+            + openRun(active, .fal, endpoint: "fal-ai/veo3", request: "fal-active", resumable: true)
+        ActiveSpendTransactions.begin(active)
+        defer { ActiveSpendTransactions.end(active) }
+
+        let awaitingApproval = "reserved-\(UUID().uuidString)"
+        defer { ActiveSpendTransactions.end(awaitingApproval) }
+        try editor.recordSpendEvent(
+            authorization: GenerationAuthorization(
+                transactionId: awaitingApproval,
+                target: ResolvedGenerationTarget(modelId: "fal-ai/veo3", provider: .fal, endpoint: "fal-ai/veo3",
+                    binding: nil),
+                estimate: nil
+            ),
+            kind: .reserved
+        )
+
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 0)
+        #expect(Fixture.requests().isEmpty)
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [],
+            activeTransactionIDs: ActiveSpendTransactions.current)
+        #expect(snapshot.unresolvedCount == 1)
+        #expect(snapshot.inFlightCount == 2)
+        #expect(!snapshot.isComplete)
+        let fields = NativeCockpitReader.spendFields(snapshot)
+        #expect(fields["unresolved_runs"] as? Int == 1)
+        #expect(fields["in_flight_runs"] as? Int == 2)
+        #expect(fields["active_reservations"] as? Int == 3)
     }
 }

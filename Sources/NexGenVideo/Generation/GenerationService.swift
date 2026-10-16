@@ -71,6 +71,9 @@ final class GenerationService {
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
     private var generationTasks: [String: Task<Void, Never>] = [:]
     private var batchResumeTasks: [String: Task<Void, Error>] = [:]
+    var reconciliation = ProviderRunReconciliation()
+    var lastReconciliation: [URL: Date] = [:]
+    var reconcilingHomes: Set<URL> = []
 
     @discardableResult
     func generate(
@@ -138,7 +141,9 @@ final class GenerationService {
             return true
         }()
 
+        ActiveSpendTransactions.begin(authorization.transactionId)
         let task = Task { @MainActor [weak self, weak editor] in
+            defer { ActiveSpendTransactions.end(authorization.transactionId) }
             guard let self, let editor else { return }
             var tempToCleanup: [URL] = []
             defer {
@@ -404,7 +409,9 @@ final class GenerationService {
         guard let key = ProviderKeychain.load(target.provider) else {
             throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
         }
+        ActiveSpendTransactions.begin(execution.transactionID)
         let task = Task { @MainActor [weak self, weak editor] in
+            defer { ActiveSpendTransactions.end(execution.transactionID) }
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
             func resumedAuthorization(_ transaction: String) -> GenerationAuthorization {
@@ -1167,7 +1174,7 @@ final class GenerationService {
 
     /// Closes a finished run: billed money becomes a charge; otherwise the run settles with whatever
     /// cost the provider reported in its own unit, or none. An estimate is never booked as spend.
-    private func markFinished(
+    func markFinished(
         authorization: GenerationAuthorization,
         billed: GenerationMoney? = nil,
         providerCost: GenerationProviderCost? = nil,
@@ -1312,12 +1319,15 @@ final class GenerationService {
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
         let submissionState = MCPSubmissionDispatchState()
+        let requestId = UUID().uuidString
+        var discoveredTools: [MCPProviderClient.DiscoveredTool] = []
         var selectedToolName = toolName
         let requiredCandidateNames = PipelineProductionRouting.requiredMCPFieldNames(
             genInput: genInput
         )
         do {
             let tools = try await client.discoverTools()
+            discoveredTools = tools
             // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
             // modality matching for a bootstrap/legacy offer that carried no tool name.
             let tool = toolName.flatMap { name in tools.first { $0.name == name } }
@@ -1330,7 +1340,6 @@ final class GenerationService {
                     authorization: authorization, editor: editor, onFailure: onFailure)
             }
             selectedToolName = tool.name
-            let requestId = UUID().uuidString
             _ = try MCPGenerationArguments.make(
                 for: params,
                 model: modelParam,
@@ -1371,14 +1380,12 @@ final class GenerationService {
                 client: client,
                 onSubmissionDispatched: {
                     submissionState.recordDispatch()
-                    self.markSubmitted(
-                        authorization: authorization,
-                        providerRequestId: requestId,
-                        editor: editor
-                    )
                 }
             )
             await client.disconnect()
+            // The receipt is booked once the job id is known, so a later status read can find it.
+            markMCPSubmitted(jobID: result.jobID, requestID: requestId, tools: tools,
+                authorization: authorization, editor: editor)
             let job = BackendGenerationJob(
                 _id: result.jobID ?? requestId, status: .succeeded,
                 resultUrls: result.output.urls,
@@ -1418,6 +1425,8 @@ final class GenerationService {
                 modelName: model
             ) {
             case .failJob(let message):
+                markMCPSubmitted(jobID: (error as? MCPGenerationExecutor.JobFailure)?.jobID, requestID: requestId,
+                    tools: discoveredTools, authorization: authorization, editor: editor)
                 failSubmittedJob(placeholders, message, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
@@ -1429,6 +1438,23 @@ final class GenerationService {
                 )
             }
         }
+    }
+
+    /// A real job id behind a status tool can later be reconciled; anything else stays a ledger id.
+    private func markMCPSubmitted(
+        jobID: String?,
+        requestID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        let usableJobID = jobID.flatMap { $0.isEmpty ? nil : $0 }
+        markSubmitted(
+            authorization: authorization,
+            providerRequestId: usableJobID ?? requestID,
+            resumable: usableJobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil,
+            editor: editor
+        )
     }
 
     nonisolated static func classifyMCPFailure(
