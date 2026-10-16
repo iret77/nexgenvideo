@@ -248,8 +248,7 @@ enum MCPGenerationExecutor {
         client: any MCPToolCalling
     ) async throws -> ProviderRunStatus? {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return nil }
-        let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
-        let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
+        let payloads = try await statusPayloads(jobID: jobID, statusTool: statusTool, client: client)
         switch jobStatus(from: payloads, statusTool: statusTool) {
         case .pending:
             return .running
@@ -272,8 +271,7 @@ enum MCPGenerationExecutor {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
             throw GenerationBackendError.transport("\(provider.displayName)'s MCP exposes no job-status tool.")
         }
-        let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
-        let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
+        let payloads = try await statusPayloads(jobID: jobID, statusTool: statusTool, client: client)
         switch jobStatus(from: payloads, statusTool: statusTool) {
         case .succeeded(let output) where !output.isEmpty:
             return output
@@ -291,6 +289,20 @@ enum MCPGenerationExecutor {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP returned an unsupported job status: \(value ?? "<missing>")."
             )
+        }
+    }
+
+    /// A failed status query says nothing about the job itself, so it can never end the run.
+    private static func statusPayloads(
+        jobID: String,
+        statusTool: MCPProviderClient.DiscoveredTool,
+        client: any MCPToolCalling
+    ) async throws -> [String] {
+        do {
+            let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
+            return try await client.callTool(name: statusTool.name, arguments: arguments)
+        } catch {
+            throw JobFailure(jobID: jobID, message: error.localizedDescription, providerRunEnded: false)
         }
     }
 

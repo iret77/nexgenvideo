@@ -110,9 +110,13 @@ struct ProviderStatusTests {
     private struct MCPStatusStub: MCPStatusClient {
         let payloads: [String: String]
         var results: [String: String] = [:]
+        var failingStatus: Set<String> = []
 
         func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
             if name == "generate_image" { throw GenerationBackendError.transport("Resume must never submit") }
+            if name == "job_status", failingStatus.contains(where: { arguments.values.contains(.string($0)) }) {
+                throw MCPProviderClient.ClientError.toolFailed("status service unavailable")
+            }
             let source = name == "job_result" ? results : payloads
             guard let job = source.keys.first(where: { arguments.values.contains(.string($0)) }) else {
                 throw GenerationBackendError.transport("Unknown job")
@@ -596,5 +600,31 @@ struct ProviderStatusTests {
         #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(61)) == 0)
         #expect(lookups.recorded == ["fal-late", "fal-unbilled", "fal-unbilled"])
         #expect(Fixture.requests().isEmpty)
+    }
+
+    @MainActor
+    @Test func aFailedStatusQueryNeverEndsAnMCPJob() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let stub = MCPStatusStub(payloads: ["job-dark": #"{"status":"failed","message":"never read"}"#],
+            failingStatus: ["job-dark"])
+        let service = editor.generationService
+        service.reconciliation = reconciliation(session, mcpClient: { _ in stub })
+
+        do {
+            _ = try await service.resumedMCPOutput(provider: .higgsfield, jobID: "job-dark")
+            Issue.record("Expected the failed status query to throw")
+        } catch {
+            #expect(!GenerationService.providerRunEnded(after: error))
+            #expect(error.localizedDescription.contains("status service unavailable"))
+        }
+
+        editor.generationLog.spendEvents = openRun("mcp-dark", .higgsfield, transport: .mcp,
+            endpoint: "higgsfield/video", request: "job-dark", resumable: true)
+        #expect(await service.reconcileOpenRuns(editor: editor) == 0)
+        #expect(closing("mcp-dark", in: editor) == nil)
     }
 }
