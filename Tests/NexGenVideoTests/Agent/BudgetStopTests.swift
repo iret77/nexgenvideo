@@ -1065,17 +1065,22 @@ struct BudgetStopTests {
         let credits = GenerationProviderCost(amount: 7, unit: "credits", source: "fixture")
         service.recordSubmittedRunFailure(RunwayClient.TaskFailure(message: "FAILED", cost: credits),
             message: "FAILED", authorization: terminal, editor: editor)
+        let panoramaless = try await submitted("job-no-output")
+        let reported = GenerationProviderCost(amount: 3, unit: "credits", source: "fixture")
+        service.recordSubmittedRunFailure(ProviderRunEndedError(message: "Marble returned no panorama", cost: reported),
+            message: "Marble returned no panorama", authorization: panoramaless, editor: editor)
         let unclassified = try await submitted("job-poll")
         service.recordSubmittedRunFailure(GenerationBackendError.transport("Status poll failed"),
             message: "Status poll failed", authorization: unclassified, editor: editor)
 
         let terminalID = try #require(terminal.transactionId)
+        let panoramalessID = try #require(panoramaless.transactionId)
         let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
-        #expect(settled.map(\.transactionId) == [terminalID])
-        #expect(settled.first?.providerCost == credits)
+        #expect(settled.map(\.transactionId) == [terminalID, panoramalessID])
+        #expect(settled.map(\.providerCost) == [credits, reported])
         let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
         #expect(snapshot.inFlightCount == 3)
-        #expect(snapshot.providerCredits.map(\.amount) == [7])
+        #expect(snapshot.providerCredits.map(\.amount) == [10])
     }
 
     @Test("invalid append-only transitions are rejected")

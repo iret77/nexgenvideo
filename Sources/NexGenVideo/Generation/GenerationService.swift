@@ -2139,7 +2139,7 @@ final class GenerationService {
             let urls = MarbleOutput.urls(from: outputData)
             let reportedCost = ProviderReportedCost.marble(operation: outputData)
             guard !urls.isEmpty else {
-                throw ProviderRunEndedError(message: "Marble returned no panorama")
+                throw ProviderRunEndedError(message: "Marble returned no panorama", cost: reportedCost)
             }
             let job = BackendGenerationJob(
                 _id: submittedId,
