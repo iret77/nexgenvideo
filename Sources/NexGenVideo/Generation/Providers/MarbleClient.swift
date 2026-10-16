@@ -11,12 +11,32 @@ import Foundation
 /// concurrency; the non-`Sendable` JSON dictionaries live only inside the actor.
 actor MarbleClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     static let defaultModel = "marble-1.1"
+
+    /// The request may have reached Marble but no response arrived; it may still run and bill.
+    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable, ProviderRunEndReporting {
+        let ledgerRequestID: String
+        let message: String
+
+        var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
+    }
+
+    /// Marble accepted the request without a usable operation id; it may still run and bill.
+    struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
+        let ledgerRequestID: String
+        let message: String
+
+        var errorDescription: String? { message }
+        var providerRunEnded: Bool { false }
+    }
 
     private static let endpointBase = "https://api.worldlabs.ai/marble/v1"
     // Marble generation runs ~10 min empirically; poll slowly and allow a wide ceiling.
@@ -29,11 +49,23 @@ actor MarbleClient {
         guard let url = URL(string: "\(Self.endpointBase)/worlds:generate") else {
             throw GenerationBackendError.transport("Invalid Marble endpoint")
         }
-        let (data, status) = try await send(makeRequest(url: url, method: "POST", body: body))
+        let response: (Data, Int)
+        do {
+            response = try await send(makeRequest(url: url, method: "POST", body: body))
+        } catch {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "marble-unknown-\(UUID().uuidString)",
+                message: "Marble did not return a submission receipt. The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
+        let (data, status) = response
         let json = Self.parse(data)
         try Self.throwIfError(status: status, json: json)
         guard let operationId = Self.operationId(in: json) else {
-            throw GenerationBackendError.transport("Marble submit: missing operation id")
+            throw SubmissionAcknowledgedError(
+                ledgerRequestID: "marble-missing-operation-id-\(UUID().uuidString)",
+                message: "Marble accepted the submission without an operation id. The request may still be running, so NexGenVideo will not retry it automatically."
+            )
         }
         return operationId
     }
@@ -83,7 +115,7 @@ actor MarbleClient {
 
     private func send(_ request: URLRequest) async throws -> (Data, Int) {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             return (data, status)
         } catch {

@@ -2159,6 +2159,12 @@ final class GenerationService {
                 onFailure: onFailure
             )
             markFinished(authorization: authorization, providerCost: reportedCost, editor: editor)
+        } catch let error as MarbleClient.SubmissionOutcomeUnknownError {
+            markSubmitted(authorization: authorization, providerRequestId: error.ledgerRequestID, editor: editor)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
+        } catch let error as MarbleClient.SubmissionAcknowledgedError {
+            markSubmitted(authorization: authorization, providerRequestId: error.ledgerRequestID, editor: editor)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch {
             if operationId == nil {
                 failBeforeSubmission(
