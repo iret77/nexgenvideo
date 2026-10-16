@@ -2317,8 +2317,9 @@ final class AgentService {
             mentions: [],
             hidden: true,
             allowWhileBlocked: true,
-            runtimeImages: Self.imagesMissingFromToolResults(
+            runtimeImages: Self.followUpImages(
                 Self.runtimeImages(from: followUp.imageBlocks),
+                backend: backend,
                 in: messages
             )
         )
@@ -4374,6 +4375,15 @@ final class AgentService {
         case .toolResult(let toolUseId, let content, let isError):
             return .toolResult(id: toolUseId, content: content, isError: isError)
         }
+    }
+
+    /// Only the API replays history; stateful runtimes see the current message, so it must carry them.
+    static func followUpImages(
+        _ images: [AgentRuntimeImage],
+        backend: AgentBackend,
+        in messages: [AgentMessage]
+    ) -> [AgentRuntimeImage] {
+        backend == .anthropicAPI ? imagesMissingFromToolResults(images, in: messages) : images
     }
 
     /// The replaced tool result already carries these images; repeating them would persist twice.
