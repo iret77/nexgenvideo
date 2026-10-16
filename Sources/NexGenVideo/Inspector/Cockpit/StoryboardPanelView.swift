@@ -4,88 +4,118 @@ import SwiftUI
 struct StoryboardPanelView: View {
     @Environment(EditorViewModel.self) private var editor
 
-    private enum LoadState: Sendable {
+    private enum LoadState: Equatable {
+        case idle
         case loading
-        case loaded(Storyboard)
-        case missing
-        case failed(String)
+        case loaded(StoryboardReviewSnapshot?)
+        case failed(CockpitError)
     }
 
-    @State private var state: LoadState = .loading
+    /// The project and approval request a finished load was read for.
+    private struct Source: Equatable {
+        let root: URL?
+        let approvalID: String?
+    }
+
+    @State private var state: LoadState = .idle
+    @State private var source: Source?
+    @State private var binding: StoryboardReviewBinding = .unrelated
+    @State private var loadToken = 0
+
+    private var currentSource: Source {
+        Source(root: editor.workingRoot, approvalID: editor.agentService.pendingGateApproval?.id)
+    }
+
+    /// The binding of the read on screen; nil while a read for the current project and request is pending.
+    private var settledBinding: StoryboardReviewBinding? {
+        guard source == currentSource else { return nil }
+        switch state {
+        case .idle, .loading: return nil
+        case .loaded, .failed: return binding
+        }
+    }
 
     var body: some View {
-        Group {
-            switch state {
-            case .loading:
-                statusState(title: "Storyboard", message: nil, isLoading: true)
-            case .loaded(let storyboard):
-                StoryboardDocumentView(storyboard: storyboard)
-            case .missing:
-                statusState(
-                    title: "No Storyboard",
-                    message: "This project does not contain a current Storyboard artifact. Return to the Storyboard phase to create or restore it.",
-                    isLoading: false
-                )
-            case .failed(let message):
-                statusState(
-                    title: "Storyboard Unavailable",
-                    message: "The current Storyboard could not be read. \(message)",
-                    isLoading: false
-                )
+        VStack(spacing: AppTheme.Spacing.none) {
+            if source == currentSource {
+                if settledBinding == .changed { changedNotice }
+                content
+            } else {
+                centeredProgress()
             }
         }
-        .task(id: "\(editor.workingRoot?.path ?? ""): \(editor.engineStateRevision)") { await load() }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background { acceptanceProbe("storyboard.review", text: settledBinding?.rawValue) }
+        .task(id: currentSource) { await load() }
+        .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch state {
+        case .idle, .loading:
+            centeredProgress()
+        case .failed(let error):
+            CockpitStateView.error(error, title: "Couldn't load the storyboard",
+                                   subject: "the storyboard",
+                                   activePack: InstalledPack.named(editor.activePluginName),
+                                   startProduction: { editor.startProduction() },
+                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
+        case .loaded(nil):
+            CockpitStateView.empty(icon: "rectangle.split.3x1", title: "No storyboard yet",
+                                   message: "This project doesn't have a storyboard.")
+        case .loaded(.some(let snapshot)):
+            StoryboardDocumentView(storyboard: snapshot.storyboard)
+                .background { acceptanceProbe("storyboard.document", text: snapshot.sha256) }
+        }
+    }
+
+    private var changedNotice: some View {
+        Label("Storyboard changed after approval was requested. Request a new approval for this version.",
+              systemImage: "exclamationmark.triangle.fill")
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(AppTheme.Status.warningColor)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.top, AppTheme.Spacing.md)
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ identifier: String, text: String?) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: identifier, acceptanceText: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func centeredProgress() -> some View {
+        VStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func load() async {
+        let requested = currentSource
+        loadToken += 1
+        let token = loadToken
+        guard let dir = requested.root else {
+            source = requested
+            binding = .unrelated
+            state = .failed(.noProject)
+            return
+        }
         state = .loading
-        guard let home = editor.workingRoot,
-              let root = DataRootResolver.dataRoot(of: home) else {
-            state = .failed("Open the project again and retry.")
-            return
+        let read = await CockpitDataService.storyboard(
+            projectDir: dir,
+            approval: editor.agentService.pendingGateApproval
+        )
+        guard token == loadToken else { return }
+        source = requested
+        binding = read.binding
+        switch read.result {
+        case .success(let snapshot): state = .loaded(snapshot)
+        case .failure(let error): state = .failed(error)
         }
-        let loaded = await Task.detached(priority: .utility) { () -> LoadState in
-            do {
-                guard let storyboard = try StoryboardStore.load(dataRoot: root) else { return .missing }
-                return .loaded(storyboard)
-            } catch {
-                return .failed(error.localizedDescription)
-            }
-        }.value
-        guard !Task.isCancelled else { return }
-        guard editor.workingRoot == home else {
-            return
-        }
-        state = loaded
-    }
-
-    private func statusState(title: String, message: String?, isLoading: Bool) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
-            HStack {
-                if isLoading {
-                    Text(title)
-                        .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
-                } else {
-                    Label(title, systemImage: "exclamationmark.triangle")
-                        .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
-                }
-                Spacer()
-
-            }
-            if isLoading {
-                ProgressView("Loading Storyboard…")
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let message {
-                Button("Retry") { Task { await load() } }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                Text(message)
-                    .interfaceFont(size: AppTheme.Typography.reading)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(AppTheme.Spacing.xlXxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

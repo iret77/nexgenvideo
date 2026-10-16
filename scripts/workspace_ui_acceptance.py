@@ -122,7 +122,7 @@ def run_scale(executable, output, scale):
     started = time.monotonic()
     case_results = []
     output_chunks = []
-    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates"):
+    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard"):
         case_started = time.monotonic()
         try:
             process = subprocess.run(
@@ -169,7 +169,7 @@ def run_scale(executable, output, scale):
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
     workspaces = {row.get("workspace") for row in workspace_rows}
-    completed = sum(row.get("event") == "completed" for row in rows) == 6
+    completed = sum(row.get("event") == "completed" for row in rows) == 7
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
@@ -180,6 +180,7 @@ def run_scale(executable, output, scale):
     provenance = [row for row in rows if row.get("event") == "asset-provenance"]
     musicvideo = [row for row in rows if row.get("event") == "musicvideo-startup"]
     host_states = [row for row in rows if row.get("event") == "host-state-history"]
+    storyboard = [row for row in rows if row.get("event") == "storyboard-review"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
@@ -198,7 +199,9 @@ def run_scale(executable, output, scale):
         if isinstance(layout, dict)
     ]
     screenshots += [
-        name for row in analysis + provenance + musicvideo + host_states for name in row.get("screenshots", [])
+        name
+        for row in analysis + provenance + musicvideo + host_states + storyboard
+        for name in row.get("screenshots", [])
     ]
     valid_images = all(
         isinstance(name, str)
@@ -267,6 +270,15 @@ def run_scale(executable, output, scale):
             "revisionNamesResetApprovals", "rejectedFirstWriteNotUnverified",
         ))
         and len(host_states[0].get("screenshots", [])) == 1
+        and len(storyboard) == 1
+        and storyboard[0].get("cardDestination") == "Storyboard"
+        and storyboard[0].get("pipelineDestination") == "Storyboard"
+        and all(storyboard[0].get(key) is True for key in (
+            "openedTabWithoutModal", "tabRoundTrip", "pipelineActionSameTarget",
+            "approvalControlsUsable", "shownBytesMatchApproval", "changeMarked",
+            "declinedFromStoryboard", "gatesUnchanged", "savedProjectUnchanged",
+        ))
+        and len(storyboard[0].get("screenshots", [])) == 2
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -278,7 +290,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 23 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 25 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {
