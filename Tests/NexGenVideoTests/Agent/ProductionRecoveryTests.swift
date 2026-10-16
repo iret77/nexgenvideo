@@ -193,9 +193,10 @@ struct ProductionRecoveryTests {
         let foreignMode = try generatedInput(demands: [undeclared])
         do {
             try PipelineReferenceRouteContract.validate([foreignMode], routes: [route])
-            Issue.record("A demand mode outside generation_requirement.mode_ids was accepted")
+            Issue.record("A demand mode no route offers was accepted")
         } catch {
-            #expect(error.localizedDescription.contains("reference_demands[0].mode_id"))
+            #expect(error.localizedDescription.contains("reference_demands[0].input_slot_id"))
+            #expect(error.localizedDescription.contains("fixture-undeclared"))
         }
 
         let keyframed = try generatedInput(demands: [anchor], coreInputs: ["first_frame_mode_id": Self.mode])

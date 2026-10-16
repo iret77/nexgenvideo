@@ -10,7 +10,6 @@ enum PipelineReferenceRouteContract {
 
     private struct RoutedDemand {
         let slotField: String
-        let modeField: String
         let demand: ReferenceDemandV1
     }
 
@@ -106,16 +105,6 @@ enum PipelineReferenceRouteContract {
             $0.capabilities.offering.modality.rawValue == requirement.modalityID
         }
         let demands = routedDemands(input)
-        let shotModes = Set(supplied.modeIDs.map(ProductionIdentifierNormalizerV1.canonical))
-        for item in demands where !shotModes.contains(
-            ProductionIdentifierNormalizerV1.canonical(item.demand.modeID)
-        ) {
-            throw PipelineExecutionShotInputValidationError.violation(
-                field: item.modeField,
-                rule: "\(item.demand.modeID) is not one of this shot's generation_requirement.mode_ids "
-                    + "(\(supplied.modeIDs.joined(separator: ", "))). Every input binds in a mode the shot requests."
-            )
-        }
         if bindable(requirement, demands.map(\.demand), on: candidates) { return }
         guard discoveryComplete else { throw catalogPending(shotID: input.id) }
         let shot = "execution_shot[\(input.id)]"
@@ -176,7 +165,6 @@ enum PipelineReferenceRouteContract {
             let path = "execution_shot[\(input.id)].reference_demands[\(index)]"
             result.append(RoutedDemand(
                 slotField: "\(path).input_slot_id",
-                modeField: "\(path).mode_id",
                 demand: ReferenceDemandV1(
                     id: demand.id,
                     assetID: demand.id,
@@ -204,7 +192,6 @@ enum PipelineReferenceRouteContract {
             let field = "execution_shot[\(input.id)].core_inputs.\(coreInputField(job))"
             result.append(RoutedDemand(
                 slotField: field,
-                modeField: field,
                 demand: PipelineProductionInputsWriter.coreDemand(
                     job,
                     shotID: input.id,

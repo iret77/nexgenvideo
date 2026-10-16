@@ -20,6 +20,11 @@ enum PipelineShotlistWriter {
             declaredBinding: declaredBinding,
             disciplineSidecar: disciplineSidecar
         )
+        if shotlist.shots.map(\.id) == executionInputs.map(\.id) {
+            for (shot, input) in zip(shotlist.shots, executionInputs) {
+                try input.validate(timedBeatMaximumSeconds: shot.durationS)
+            }
+        }
         try PipelineReferenceRouteContract.validate(executionInputs, check: referenceCheck)
         let version = (latestShotlistVersion(dataRoot: dataRoot) ?? 0) + 1
         let shotlistPath = PipelineLayout.shotlistVersionFile(version)

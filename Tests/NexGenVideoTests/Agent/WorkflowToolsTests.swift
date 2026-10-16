@@ -3105,8 +3105,9 @@ struct WorkflowToolsTests {
                   let slot = slots.first(where: {
                       $0["id"] as? String == slotID && $0["modality"] as? String == modality
                   }),
-                  let mode = (slot["mode_ids"] as? [String])?
-                      .filter({ !reservedModes.contains($0) }).sorted().first else {
+                  let published = (slot["mode_ids"] as? [String])?
+                      .filter({ !reservedModes.contains($0) }).sorted(),
+                  let mode = published.first(where: { $0.contains("reference") }) ?? published.first else {
                 continue
             }
             func value(_ group: String, _ field: String) -> Any? {
@@ -3641,7 +3642,8 @@ struct WorkflowToolsTests {
 
         let undeclaredMode = try firstDemandChanged("mode_id", to: "fixture-unoffered")
         let foreignMode = await rejected(undeclaredMode)
-        #expect(foreignMode.contains("execution_shot[s001].reference_demands[0].mode_id"), "\(foreignMode)")
+        #expect(foreignMode.contains("execution_shot[s001].generation_requirement.mode_ids"), "\(foreignMode)")
+        #expect(foreignMode.contains("fixture-unoffered"), "\(foreignMode)")
 
         _ = try await h.runOK("write_shotlist", args: valid)
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
