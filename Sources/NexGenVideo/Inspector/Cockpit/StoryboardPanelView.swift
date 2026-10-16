@@ -71,7 +71,7 @@ struct StoryboardPanelView: View {
     }
 
     private var changedNotice: some View {
-        Label("The storyboard changed after approval was requested. The open request can't approve it.",
+        Label("Storyboard changed after approval was requested. Request a new approval for this version.",
               systemImage: "exclamationmark.triangle.fill")
             .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Status.warningColor)
