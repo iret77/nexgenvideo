@@ -3762,7 +3762,9 @@ final class AgentService {
                 runtimeContextSignature = nil
             }
         case .providerRequest(let prefixDigest):
+            // Every request answers with its own assistant message, also after a paused turn.
             pendingProviderPrefixDigest = prefixDigest
+            defaultAssistantID = nil
         case .text(let messageID, let value, _):
             recordActivity("Receiving agent response")
             let id = assistantID(
