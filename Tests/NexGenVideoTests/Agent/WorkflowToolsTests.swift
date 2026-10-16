@@ -2450,7 +2450,8 @@ struct WorkflowToolsTests {
         #expect(cost?["project"] as? String == "demo")
         #expect(cost?["budget_eur"] as? Double == 50.0)
         #expect(cost?["spent_eur"] as? Double == 0.0)
-        #expect(cost?["remaining_eur"] as? Double == 50.0)
+        #expect(cost?["budget_stop_eur"] is NSNull)
+        #expect(cost?["remaining_eur"] is NSNull)
         #expect(cost?["over_budget"] as? Bool == false)
         #expect(cost?["spend_complete"] as? Bool == true)
         #expect(cost?["verified_spend_eur"] as? Double == 0.0)
@@ -2488,7 +2489,7 @@ struct WorkflowToolsTests {
         #expect(cost?["spend_complete"] as? Bool == false)
         #expect(cost?["spent_eur"] is NSNull)
         #expect(cost?["remaining_eur"] is NSNull)
-        #expect(cost?["over_budget"] is NSNull)
+        #expect(cost?["over_budget"] as? Bool == false)
         #expect(cost?["unpriced_transactions"] as? Int == 1)
         #expect(state?["spend_complete"] as? Bool == false)
         #expect(state?["budget_remaining_eur"] is NSNull)
@@ -2537,7 +2538,76 @@ struct WorkflowToolsTests {
         #expect(state?["spend_complete"] as? Bool == true)
         #expect(state?["active_reservations"] as? Int == 1)
         #expect(cost?["verified_spend_eur"] as? Double == 10)
-        #expect(cost?["remaining_eur"] as? Double == 40)
+        #expect(cost?["remaining_eur"] is NSNull)
+    }
+
+    @Test("estimate_cost judges over_budget and remaining_eur against the budget stop, not the planning budget")
+    func estimateCostMeasuresAgainstBudgetStop() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        func money(_ eur: Double) -> GenerationMoney {
+            GenerationMoney(nativeAmount: eur, nativeCurrency: "EUR", eurAmount: eur, eurPerNativeUnit: 1,
+                exchangeRateDate: "2026-10-16", pricingSource: "https://provider.example/pricing",
+                exchangeRateSource: "https://www.ecb.europa.eu/")
+        }
+        func write(stop: Double?, unpriced: Bool) throws {
+            let brief = try Brief(project: "demo", generated: "2026-10-16", mission: .demo,
+                targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat", budgetStopEur: stop,
+                conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored)
+            try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+            var log = GenerationLog()
+            log.spendEvents = [GenerationSpendEvent(transactionId: "priced-render", kind: .reserved,
+                model: "video/final", provider: .fal, transport: .api, endpoint: "video/final", money: money(10))]
+            if unpriced {
+                log.spendEvents.append(GenerationSpendEvent(transactionId: "unpriced-render", kind: .reserved,
+                    model: "video/other", provider: .runway, transport: .api, endpoint: "video/other"))
+            }
+            try JSONEncoder().encode(log).write(
+                to: FrameInventory.projectHome(of: dataRoot).appendingPathComponent(Project.generationLogFilename),
+                options: .atomic
+            )
+        }
+        func cost() async throws -> [String: Any] {
+            let raw = try await h.runOK("estimate_cost", args: ["project_dir": dataRoot.path])
+            return try #require(raw as? [String: Any])
+        }
+
+        try write(stop: 20, unpriced: false)
+        var result = try await cost()
+        for key in ["budget_eur", "budget_stop_eur", "spent_eur", "verified_spend_eur", "remaining_eur",
+                    "hard_stop_remaining_eur", "over_budget", "spend_complete", "active_reservations",
+                    "unpriced_transactions", "legacy_generations", "next_phase"] {
+            #expect(result.keys.contains(key), "estimate_cost dropped \(key)")
+        }
+        #expect(result["budget_stop_eur"] as? Double == 20)
+        #expect(result["over_budget"] as? Bool == false)
+        #expect(result["remaining_eur"] as? Double == 10)
+        #expect(result["hard_stop_remaining_eur"] as? Double == 10)
+
+        try write(stop: 8, unpriced: false)
+        result = try await cost()
+        #expect(result["over_budget"] as? Bool == true)
+        #expect(result["remaining_eur"] as? Double == 0)
+        #expect(result["spend_complete"] as? Bool == true)
+
+        try write(stop: 20, unpriced: true)
+        result = try await cost()
+        #expect(result["spend_complete"] as? Bool == false)
+        #expect(result["unpriced_transactions"] as? Int == 1)
+        #expect(result["verified_spend_eur"] as? Double == 10)
+        #expect(result["over_budget"] as? Bool == false)
+        #expect(result["remaining_eur"] is NSNull)
+
+        try write(stop: 8, unpriced: true)
+        result = try await cost()
+        #expect(result["over_budget"] as? Bool == true)
+        #expect(result["remaining_eur"] is NSNull)
+
+        try write(stop: nil, unpriced: false)
+        result = try await cost()
+        #expect(result["budget_eur"] as? Double == 50)
+        #expect(result["over_budget"] as? Bool == false)
+        #expect(result["remaining_eur"] is NSNull)
     }
 
     @Test("storyboard writer rejects declared direction-only set anchors")

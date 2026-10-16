@@ -553,17 +553,14 @@ enum NativeCockpitReader {
             Brief.self,
             at: PipelineLayout.briefFile
         )
+        let stop = brief?.budgetStopEur
         let verifiedTotal: Any = spend.isComplete
             ? spend.verifiedEur
             : NSNull()
-        let remaining: Any = spend.isComplete
-            ? max(0.0, snapshot.budgetEur - spend.verifiedEur)
-            : NSNull()
-        let overBudget: Any = spend.isComplete
-            ? spend.verifiedEur > snapshot.budgetEur
-            : NSNull()
+        // `budget_eur` plans; only the stop limits spend, and only known spend can exceed it.
+        let overBudget = stop.map { spend.verifiedEur > $0 } ?? false
         let stopRemaining: Any
-        if spend.isComplete, let stop = brief?.budgetStopEur {
+        if spend.isComplete, let stop {
             stopRemaining = max(0.0, stop - spend.verifiedEur)
         } else {
             stopRemaining = NSNull()
@@ -571,11 +568,10 @@ enum NativeCockpitReader {
         return [
             "project": snapshot.project,
             "budget_eur": snapshot.budgetEur,
-            "budget_stop_eur": brief?.budgetStopEur.map { $0 as Any }
-                ?? NSNull(),
+            "budget_stop_eur": stop.map { $0 as Any } ?? NSNull(),
             "spent_eur": verifiedTotal,
             "verified_spend_eur": spend.verifiedEur,
-            "remaining_eur": remaining,
+            "remaining_eur": stopRemaining,
             "hard_stop_remaining_eur": stopRemaining,
             "over_budget": overBudget,
             "spend_complete": spend.isComplete,
