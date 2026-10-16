@@ -535,6 +535,54 @@ struct AnthropicRuntimeAdapterTests {
         #expect(Set(client.recordedCalls.map(\.system)).count == 1)
     }
 
+    @Test("a chat's frozen tools load up front with an identical tool list on every turn")
+    func pinnedToolsLoadOnEveryTurn() async throws {
+        let client = ScriptedAnthropicClient(scripts: [
+            [.event(.textDelta("One.")), .event(.messageStop(stopReason: .endTurn))],
+            [.event(.textDelta("Two.")), .event(.messageStop(stopReason: .endTurn))],
+        ], supportsToolSearch: true)
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID()
+        let hostContext = testHostContext(toolNames: ["get_project_state", "write_brief", "write_treatment"])
+        try adapter.start(testSessionRequest(sessionID: sessionID, hostContext: hostContext))
+        let first = AgentRuntimeMessage(role: .user, content: [.text("One")])
+        let second = AgentRuntimeMessage(role: .user, content: [.text("Two")])
+        let turns = [
+            [first],
+            [first, AgentRuntimeMessage(role: .assistant, content: [.text("One.")]), second],
+        ]
+        var digests: [String] = []
+        for messages in turns {
+            let events = await collectAnthropicEvents(try adapter.send(.init(
+                sessionID: sessionID, turnID: UUID(), messages: messages,
+                currentMessage: try #require(messages.last), toolSearchPinnedTools: ["write_brief"]
+            )))
+            digests += events.compactMap { envelope -> String? in
+                guard case .providerRequest(let digest) = envelope.event else { return nil }
+                return digest
+            }
+        }
+
+        let model = AnthropicModelFixtures.info(AnthropicModelFixtures.opus55)
+        let bodies = client.recordedCalls.map {
+            AnthropicRequestBody.build(model: model, system: $0.system, tools: $0.tools, messages: $0.messages)
+        }
+        let toolLists = try bodies.map { try #require($0["tools"] as? [[String: Any]]) }
+        #expect(toolLists.count == 2)
+        let deferred = toolLists[0].filter { $0["defer_loading"] as? Bool == true }.compactMap { $0["name"] as? String }
+        #expect(deferred == ["write_treatment"])
+        let encoded = try toolLists.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
+        #expect(Set(encoded).count == 1)
+        #expect(digests.first == AnthropicPrefixDigest.of(
+            system: hostContext.systemInstructions, tools: hostContext.toolSchemas,
+            toolSearch: true, pinnedTools: ["write_brief"], messages: [first]
+        ))
+        #expect(digests.first != AnthropicPrefixDigest.of(
+            system: hostContext.systemInstructions, tools: hostContext.toolSchemas,
+            toolSearch: true, messages: [first]
+        ))
+    }
+
     @Test("a paused server turn resumes as-is without an extra user message")
     func pausedServerTurnResumes() async throws {
         let use = try AnthropicServerToolBlock(json: [

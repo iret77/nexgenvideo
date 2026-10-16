@@ -55,6 +55,47 @@ struct AnthropicToolSearchTests {
         #expect(cached.first == lastLoaded)
     }
 
+    @Test("tools a chat called before any search surfaced them stay loaded")
+    func pinnedToolsStayLoaded() throws {
+        let surfaced = try AnthropicServerToolBlock(json: [
+            "type": "tool_search_tool_result", "tool_use_id": "srvtoolu_1",
+            "content": [
+                "type": "tool_search_tool_search_result",
+                "tool_references": [["type": "tool_reference", "tool_name": "write_treatment"]],
+            ],
+        ])
+        var interrupted = AgentMessage(role: .assistant, blocks: [.toolUse(id: "t5", name: "write_shotlist", inputJSON: "{}")])
+        interrupted.isIncompleteAPIResponse = true
+        let history = [
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "t1", name: "write_brief", inputJSON: "{}")]),
+            AgentMessage(role: .assistant, blocks: [
+                .serverTool(surfaced),
+                .toolUse(id: "t2", name: "write_treatment", inputJSON: "{}"),
+                .toolUse(id: "t3", name: "get_project_state", inputJSON: "{}"),
+            ]),
+            AgentMessage(role: .assistant, blocks: [.toolUse(id: "t4", name: "write_bible", inputJSON: "{}")]),
+            interrupted,
+        ]
+        let used = AnthropicToolSearch.toolsUsedBeforeSurfacing(history)
+        #expect(used == Set(["write_brief", "write_bible"]))
+
+        let names = ["get_project_state", "write_brief", "write_treatment"]
+        let partlyPinned = AnthropicToolSearch.loadedToolNames(names, enabled: true, pinned: ["write_brief", "gone"])
+        #expect(partlyPinned == Set(["get_project_state", "write_brief"]))
+        let fullyPinned = AnthropicToolSearch.loadedToolNames(names, enabled: true, pinned: ["write_brief", "write_treatment"])
+        #expect(fullyPinned == nil)
+
+        let schema: [String: Any] = ["type": "object"]
+        let tools = names.map {
+            AnthropicToolSchema(name: $0, description: $0, inputSchema: schema, loadsUpFront: $0 == "write_brief")
+        }
+        let blocks = try toolBlocks(AnthropicRequestBody.build(
+            model: AnthropicModelFixtures.info(AnthropicModelFixtures.opus55), system: "Edit.", tools: tools,
+            messages: [userTurn]
+        ))
+        #expect(blocks.filter(isDeferred).compactMap { $0["name"] as? String } == ["write_treatment"])
+    }
+
     @Test("an undocumented or unlisted model sends every tool loaded, as before")
     func unsupportedModelFallsBack() throws {
         let tools = hostTools

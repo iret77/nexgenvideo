@@ -3914,6 +3914,8 @@ final class AgentService {
                 return
             }
         }
+        guard currentSessionId == sessionID else { return }
+        let pinnedTools = freezeToolSearchPinnedTools(sessionID: sessionID)
         let runtimeMessages = await runtimeMessages(hostContext: hostContext)
         guard !Task.isCancelled,
               currentSessionId == sessionID,
@@ -3949,7 +3951,8 @@ final class AgentService {
                 sessionID: sessionID,
                 turnID: turnID,
                 messages: runtimeMessages,
-                currentMessage: currentMessage
+                currentMessage: currentMessage,
+                toolSearchPinnedTools: pinnedTools
             ))
             var messageIDs: [String: UUID] = [:]
             var defaultAssistantID: UUID?
@@ -4295,8 +4298,25 @@ final class AgentService {
             entries,
             system: hostContext.systemInstructions,
             tools: hostContext.toolSchemas,
-            toolSearch: backend == .anthropicAPI && effectiveModel?.supportsToolSearch == true
+            toolSearch: usesToolSearch,
+            pinnedTools: Set(sessions.first { $0.id == currentSessionId }?.toolSearchPinnedTools ?? [])
         )
+    }
+
+    private var usesToolSearch: Bool {
+        backend == .anthropicAPI && effectiveModel?.supportsToolSearch == true
+    }
+
+    /// Grows only when the chat enters tool search with calls no search result surfaced.
+    private func freezeToolSearchPinnedTools(sessionID: UUID) -> Set<String> {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return [] }
+        let stored = Set(sessions[index].toolSearchPinnedTools ?? [])
+        guard usesToolSearch else { return stored }
+        let pinned = stored.union(AnthropicToolSearch.toolsUsedBeforeSurfacing(messages))
+        if sessions[index].toolSearchPinnedTools == nil || pinned != stored {
+            sessions[index].toolSearchPinnedTools = pinned.sorted()
+        }
+        return pinned
     }
 
     private func inlineImageBlocks(for mentions: [AgentMention]) async -> AgentMentionContext.InlinedMentions {

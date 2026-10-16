@@ -197,6 +197,8 @@ struct AgentRuntimeTurnRequest: Sendable {
     let messages: [AgentRuntimeMessage]
     /// The current input, split out only for stateful providers that already own prior history.
     let currentMessage: AgentRuntimeMessage
+    /// Non-core tools this chat keeps loaded while tool search defers the rest.
+    var toolSearchPinnedTools: Set<String> = []
 }
 
 struct AgentRuntimeUsage: Equatable, Sendable {

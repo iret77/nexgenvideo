@@ -395,6 +395,70 @@ struct AgentServiceRuntimeContractTests {
         }
     }
 
+    @Test("a chat entering tool search freezes the tools it already called, across turns and reloads")
+    func toolSearchPinnedToolsAreFrozenPerChat() async throws {
+        for legacy in [true, false] {
+            let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)
+            let service = AgentService(
+                backend: .anthropicAPI,
+                refreshBackendStatusOnInit: false,
+                runtimeAdapterFactory: { _ in adapter },
+                runtimeReadinessOverride: { nil },
+                runtimeHostContextOverride: { .hostOwned(tools: []) },
+                modelCatalogDefaults: AnthropicModelFixtures.isolatedDefaults()
+            )
+            service.loadSessions(from: nil)
+            service.selectModel(AnthropicModelFixtures.info(AnthropicModelFixtures.opus55))
+            if legacy {
+                service.messages = [
+                    AgentMessage(role: .user, blocks: [.text("Write the brief")]),
+                    AgentMessage(role: .assistant, blocks: [.toolUse(id: "t1", name: "write_brief", inputJSON: "{}")]),
+                    AgentMessage(role: .user, blocks: [
+                        .toolResult(toolUseId: "t1", content: [.text("ok")], isError: false),
+                    ]),
+                    AgentMessage(role: .assistant, blocks: [.text("Brief written.")]),
+                ]
+            }
+            let expected: Set<String> = legacy ? ["write_brief"] : []
+
+            #expect(service.send(text: "Next phase", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 1 }
+            let first = try #require(adapter.sendRequests.first)
+            #expect(first.toolSearchPinnedTools == expected)
+            let surfaced = try AnthropicServerToolBlock(json: [
+                "type": "tool_search_tool_result", "tool_use_id": "srvtoolu_1",
+                "content": [
+                    "type": "tool_search_tool_search_result",
+                    "tool_references": [["type": "tool_reference", "tool_name": "write_treatment"]],
+                ],
+            ])
+            adapter.emit(.serverTool(messageID: nil, block: surfaced), for: first)
+            adapter.emit(.toolCall(messageID: nil, id: "t2", name: "write_treatment", inputJSON: "{}"), for: first)
+            adapter.emit(.toolResult(id: "t2", content: [.text("ok")], isError: false), for: first)
+            adapter.emit(.terminal(.completed(.endTurn)), for: first)
+            adapter.finish(first)
+            await waitUntil { !service.isStreaming }
+
+            #expect(service.send(text: "Continue", mentions: []))
+            await waitUntil { adapter.sendRequests.count == 2 }
+            let second = adapter.sendRequests[1]
+            #expect(second.toolSearchPinnedTools == expected)
+            adapter.emit(.terminal(.completed(.endTurn)), for: second)
+            adapter.finish(second)
+            await waitUntil { !service.isStreaming }
+
+            let session = try #require(service.sessions.first { $0.id == service.currentSessionId })
+            #expect(session.toolSearchPinnedTools == expected.sorted())
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let restored = try decoder.decode(
+                ChatSession.self,
+                from: try #require(ChatSessionStore.encodeSession(session))
+            )
+            #expect(restored.toolSearchPinnedTools == expected.sorted())
+        }
+    }
+
     @Test("the request digest binds the assistant turn it produced, once")
     func requestDigestStampsAssistantTurn() async throws {
         let adapter = FakeRuntimeAdapter(backend: .anthropicAPI)

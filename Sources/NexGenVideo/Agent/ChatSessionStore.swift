@@ -68,6 +68,8 @@ struct ChatSession: Codable, Identifiable {
     var workTime: AgentWorkTime?
     var approvalEvidence: [GateApprovalEvidence]?
     var tokenUsage: AgentTokenUsage?
+    /// Frozen once the chat runs with tool search, so its tool list never changes mid-chat.
+    var toolSearchPinnedTools: [String]?
 
     var hasPersistedContent: Bool {
         !messages.isEmpty || draft?.isEmpty == false || decision != nil || approvalEvidence?.isEmpty == false
@@ -85,11 +87,12 @@ struct ChatSession: Codable, Identifiable {
         self.workTime = nil
         self.approvalEvidence = nil
         self.tokenUsage = nil
+        self.toolSearchPinnedTools = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, updatedAt, messages, isOpen, claudeSessionId, draft, decision, workTime, approvalEvidence
-        case tokenUsage
+        case tokenUsage, toolSearchPinnedTools
     }
 
     init(from decoder: Decoder) throws {
@@ -105,6 +108,7 @@ struct ChatSession: Codable, Identifiable {
         self.workTime = try c.decodeIfPresent(AgentWorkTime.self, forKey: .workTime)
         self.approvalEvidence = try c.decodeIfPresent([GateApprovalEvidence].self, forKey: .approvalEvidence)
         self.tokenUsage = try c.decodeIfPresent(AgentTokenUsage.self, forKey: .tokenUsage)
+        self.toolSearchPinnedTools = try c.decodeIfPresent([String].self, forKey: .toolSearchPinnedTools)
     }
 }
 

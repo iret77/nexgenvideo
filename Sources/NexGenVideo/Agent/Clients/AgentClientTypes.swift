@@ -22,6 +22,8 @@ struct AnthropicToolSchema: @unchecked Sendable {
     let name: String
     let description: String
     let inputSchema: [String: Any]
+    /// Kept out of deferred loading for this chat even though it is not a core tool.
+    var loadsUpFront = false
 }
 
 enum AnthropicStreamEvent: Sendable {
@@ -218,7 +220,11 @@ enum AnthropicRequestBody {
         tools: [AnthropicToolSchema],
         messages: [AnthropicMessage]
     ) -> [String: Any] {
-        let loaded = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: model.supportsToolSearch)
+        let loaded = AnthropicToolSearch.loadedToolNames(
+            tools.map(\.name),
+            enabled: model.supportsToolSearch,
+            pinned: Set(tools.filter(\.loadsUpFront).map(\.name))
+        )
         var toolBlocks: [[String: Any]] = tools.map {
             var block: [String: Any] = ["name": $0.name, "description": $0.description, "input_schema": $0.inputSchema]
             if let loaded, !loaded.contains($0.name) { block["defer_loading"] = true }

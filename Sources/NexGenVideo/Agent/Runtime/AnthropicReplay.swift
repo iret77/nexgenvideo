@@ -7,8 +7,13 @@ struct AnthropicPrefixDigest {
     private var hasher = SHA256()
     private let replaysServerTools: Bool
 
-    init(system: String, tools: [AgentRuntimeToolSchema], toolSearch: Bool = false) {
-        let loaded = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: toolSearch)
+    init(
+        system: String,
+        tools: [AgentRuntimeToolSchema],
+        toolSearch: Bool = false,
+        pinnedTools: Set<String> = []
+    ) {
+        let loaded = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: toolSearch, pinned: pinnedTools)
         replaysServerTools = loaded != nil
         write("system")
         write(system)
@@ -69,9 +74,12 @@ struct AnthropicPrefixDigest {
         system: String,
         tools: [AgentRuntimeToolSchema],
         toolSearch: Bool = false,
+        pinnedTools: Set<String> = [],
         messages: [AgentRuntimeMessage]
     ) -> String {
-        var digest = AnthropicPrefixDigest(system: system, tools: tools, toolSearch: toolSearch)
+        var digest = AnthropicPrefixDigest(
+            system: system, tools: tools, toolSearch: toolSearch, pinnedTools: pinnedTools
+        )
         for message in messages { digest.append(message) }
         return digest.value
     }
@@ -98,14 +106,17 @@ enum AnthropicReplay {
         _ entries: [Entry],
         system: String,
         tools: [AgentRuntimeToolSchema],
-        toolSearch: Bool = false
+        toolSearch: Bool = false,
+        pinnedTools: Set<String> = []
     ) -> [AgentRuntimeMessage] {
         var entries = entries
         let carriesThinking = entries.contains { entry in
             entry.role == .assistant && entry.content.contains(where: isThinking)
         }
         if carriesThinking {
-            var digest = AnthropicPrefixDigest(system: system, tools: tools, toolSearch: toolSearch)
+            var digest = AnthropicPrefixDigest(
+                system: system, tools: tools, toolSearch: toolSearch, pinnedTools: pinnedTools
+            )
             var lastInvalid: Int?
             for (index, entry) in entries.enumerated() {
                 if entry.role == .assistant, entry.recordedPrefixDigest != digest.value {

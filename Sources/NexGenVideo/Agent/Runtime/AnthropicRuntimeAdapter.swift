@@ -77,11 +77,17 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
         relay: AgentRuntimeEventRelay
     ) async {
         var messages = request.messages
+        let pinned = request.toolSearchPinnedTools
         let tools = session.hostContext.toolSchemas.map {
-            AnthropicToolSchema(name: $0.name, description: $0.description, inputSchema: $0.inputSchema)
+            AnthropicToolSchema(
+                name: $0.name, description: $0.description, inputSchema: $0.inputSchema,
+                loadsUpFront: pinned.contains($0.name)
+            )
         }
         let toolSearch = client.supportsToolSearch
-        let searchActive = AnthropicToolSearch.loadedToolNames(tools.map(\.name), enabled: toolSearch) != nil
+        let searchActive = AnthropicToolSearch.loadedToolNames(
+            tools.map(\.name), enabled: toolSearch, pinned: pinned
+        ) != nil
         var pauseContinuations = 0
         do {
             run: while !Task.isCancelled {
@@ -93,6 +99,7 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                     system: session.hostContext.systemInstructions,
                     tools: session.hostContext.toolSchemas,
                     toolSearch: toolSearch,
+                    pinnedTools: pinned,
                     messages: wire
                 )))
                 let stream = client.stream(

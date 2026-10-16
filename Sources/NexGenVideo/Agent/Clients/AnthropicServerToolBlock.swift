@@ -29,6 +29,15 @@ struct AnthropicServerToolBlock: Codable, Sendable, Equatable {
 
     var canonicalJSON: String { String(decoding: encodedJSON, as: UTF8.self) }
 
+    /// Tools a search result surfaced; empty for any other block.
+    var referencedToolNames: [String] {
+        let object = json
+        guard object["type"] as? String == "tool_search_tool_result",
+              let content = object["content"] as? [String: Any],
+              let references = content["tool_references"] as? [[String: Any]] else { return [] }
+        return references.compactMap { $0["tool_name"] as? String }
+    }
+
     init(from decoder: any Decoder) throws {
         let data = try decoder.singleValueContainer().decode(Data.self)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -61,12 +70,33 @@ enum AnthropicToolSearch {
     }
 
     /// Tools that stay loaded up front, or nil when every tool loads directly without search.
-    static func loadedToolNames(_ names: [String], enabled: Bool) -> Set<String>? {
+    static func loadedToolNames(_ names: [String], enabled: Bool, pinned: Set<String> = []) -> Set<String>? {
         guard enabled else { return nil }
         let all = Set(names)
-        let loaded = all.intersection(ToolDefinitions.core.map(\.rawValue))
-        guard !loaded.isEmpty, loaded.count < all.count, !all.contains(toolName) else { return nil }
+        let core = all.intersection(ToolDefinitions.core.map(\.rawValue))
+        let loaded = core.union(all.intersection(pinned))
+        guard !core.isEmpty, loaded.count < all.count, !all.contains(toolName) else { return nil }
         return loaded
+    }
+
+    /// Non-core tools a chat called before any search result in it surfaced them.
+    static func toolsUsedBeforeSurfacing(_ messages: [AgentMessage]) -> Set<String> {
+        let core = Set(ToolDefinitions.core.map(\.rawValue))
+        var surfaced: Set<String> = []
+        var used: Set<String> = []
+        for message in messages where message.role == .assistant && !message.isIncompleteAPIResponse {
+            for block in message.blocks {
+                switch block {
+                case .serverTool(let server):
+                    surfaced.formUnion(server.referencedToolNames)
+                case .toolUse(_, let name, _) where !core.contains(name) && !surfaced.contains(name):
+                    used.insert(name)
+                default:
+                    break
+                }
+            }
+        }
+        return used
     }
 
     static var searchToolBlock: [String: Any] {
