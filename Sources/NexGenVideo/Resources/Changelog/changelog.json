@@ -2,8 +2,8 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
-      "version": "1.6.4",
-      "date": "2026-10-15",
+      "version": "1.7.0",
+      "date": "2026-10-16",
       "sections": [
         {
           "heading": "Agent",
@@ -13,7 +13,13 @@
             "Shot List reference demands use a fixed set of roles: identity, location and prop anchors plus style, lighting, motion and voice references. Unknown roles, unsupported modalities and input slots or modes that no activated video route offers are rejected when the Shot List is written, not after approval.",
             "A second request to revise approved work without new direction from you pauses with Continue without revision. All approvals are kept.",
             "Repeated writes that fail or leave the artifact unchanged pause per phase, also across chats.",
-            "Batches without a cost estimate are reported to the agent as unpriced, not as waiting only for approval."
+            "Batches without a cost estimate are reported to the agent as unpriced, not as waiting only for approval.",
+            "Shot List writes check every shot against one production route, so a Shot List that saves also renders. Shot Lists saved by 1.6.3 with the retired anchor input render without changes.",
+            "While provider discovery is still running, a Shot List write reports a retryable wait instead of asking you to activate a provider.",
+            "Questionnaires that ask for internal reference identifiers are refused in any spelling; creative questions stay allowed.",
+            "Anthropic API-key mode reads the available Claude models from Anthropic at runtime. New models appear without an update, your choice is kept, and requests use each model's own thinking and effort capabilities.",
+            "Conversations in API-key mode replay earlier turns unchanged so thinking stays valid across turns.",
+            "Model tiers resolve to the newest model of their family instead of fixed model names."
           ]
         },
         {
@@ -25,7 +31,20 @@
             "Approval cards show whether the offered version is unchanged or changed since your last recorded approval of that phase, by exact byte comparison, and list the changed lines. After an approval made outside Tasks, no comparison is claimed until the next recorded approval.",
             "Tasks shows the time spent in each chat on agent work, tool calls, provider generation and waiting for your decisions, plus failed attempts.",
             "Tasks status reports a paused repair or revision and an outdated approval from the same project state as Pipeline.",
-            "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write. A rejected write of an existing artifact offers a direct review of the stored version."
+            "A rejected first Shot List write or pack phase write shows as not saved instead of as an unverified write. A rejected write of an existing artifact offers a direct review of the stored version.",
+            "The project budget is a display: billed money, provider credits in each provider's unit, and runs without a known cost. No budget limit stops work.",
+            "Runway, Marble and ElevenLabs run costs reported by the provider are recorded with each run.",
+            "Approve All in a phase covers every paid agent run of that phase until the phase is approved, sent back, changed or the approval is withdrawn or NexGenVideo quits. Tasks shows the active approval with Withdraw.",
+            "Storyboard opens in its cockpit tab with the same loading, empty and error states as the other artifacts, names its destination like the approval card, and marks when its content changed after approval was requested.",
+            "The model picker in API-key mode lists the newest model of each family first and older models in a submenu."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.14 requires NexGenVideo 1.7.0. Frames and Render no longer stop for spend or unknown costs, and the Brief no longer asks for a budget limit.",
+            "Pattern library sources were replaced with verifiable references, incorrect attributions were corrected, and the Kahlil Joseph visual-album pattern uses its correct name; projects that saved the old name keep working.",
+            "Existing projects keep their pinned pack version."
           ]
         }
       ]
