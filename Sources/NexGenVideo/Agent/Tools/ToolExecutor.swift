@@ -607,7 +607,10 @@ final class ToolExecutor {
                 phase: hostStatePhase ?? guardedPhase,
                 tool: tool.rawValue
             )
-            if pipelineRepairAttempts.record(scope: scope, failure: failure), let failure {
+            // Host-busy refusals wait on the host, not on an agent correction.
+            let waitsOnHost = result.isError && failureKind == .hostBusy
+            if !waitsOnHost,
+               pipelineRepairAttempts.record(scope: scope, failure: failure), let failure {
                 editor.agentService.pausePipelineRepair(tool: tool.rawValue, detail: failure, origin: origin)
                 result = ToolResult(content: [.text("Repeated attempts without progress. The host paused this repair attempt and preserved the existing artifacts. Do not ask the user for internal identifiers or keep retrying. Read get_project_state.execution_input_contract and list_models.production_routes when explicitly resumed. " + failure)],
                     isError: true, turnDisposition: .suspendTurn)
