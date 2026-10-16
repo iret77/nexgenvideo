@@ -352,4 +352,27 @@ struct ProviderStatusTests {
                 client: mediaOnly)
         }
     }
+
+    @MainActor
+    @Test func interruptedMCPBatchJobsAreResolvedThroughTheStatusTool() async throws {
+        let service = EditorViewModel().generationService
+        let stub = MCPStatusStub(payloads: [
+            "job-failed": #"{"status":"failed","message":"provider rejected the render"}"#,
+            "job-done": #"{"status":"completed"}"#,
+            "job-queued": #"{"status":"queued"}"#,
+        ])
+        service.reconciliation = ProviderRunReconciliation(mcpClient: { _ in stub })
+
+        let failed = await service.mcpBatchJobOutcome(provider: .higgsfield, jobID: "job-failed")
+        #expect(GenerationService.providerRunEnded(after: failed))
+        #expect(failed.localizedDescription.contains("provider rejected the render"))
+        #expect(GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
+            provider: .higgsfield, jobID: "job-done")))
+        #expect(!GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
+            provider: .higgsfield, jobID: "job-queued")))
+
+        service.reconciliation = ProviderRunReconciliation(mcpClient: { _ in nil })
+        #expect(!GenerationService.providerRunEnded(after: await service.mcpBatchJobOutcome(
+            provider: .higgsfield, jobID: "job-failed")))
+    }
 }

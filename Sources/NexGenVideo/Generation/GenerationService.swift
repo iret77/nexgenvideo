@@ -370,7 +370,7 @@ final class GenerationService {
         try scope.requireCurrent(editor: editor)
         let completedIDs = Set(receipts.map(\.asset.id))
         let target = specification.package.payload.target
-        guard target.transport == .api, [.fal, .runway, .marble].contains(target.provider) else {
+        guard target.transport == .mcp || [.fal, .runway, .marble].contains(target.provider) else {
             throw GenerationRequestError.gate("This provider request cannot yet resume status retrieval.")
         }
         var placeholders: [MediaAsset] = []
@@ -411,8 +411,14 @@ final class GenerationService {
             }
         }
         _ = try GenerationBatchStore.update(saved, editor: editor) { try $0.resumeRecordedJob(itemID: item.itemID) }
-        guard let key = ProviderKeychain.load(target.provider) else {
-            throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+        let key: String
+        if target.transport == .mcp {
+            key = ""
+        } else {
+            guard let stored = ProviderKeychain.load(target.provider) else {
+                throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+            }
+            key = stored
         }
         ActiveSpendTransactions.begin(execution.transactionID)
         let task = Task { @MainActor [weak self, weak editor] in
@@ -428,6 +434,9 @@ final class GenerationService {
             var providerFinished = false
             do {
                 if completedIDs.count < execution.placeholders.count {
+                    if target.transport == .mcp {
+                        throw await self.mcpBatchJobOutcome(provider: target.provider, jobID: requestID)
+                    }
                     let urls: [String]
                     switch target.provider {
                     case .fal:
@@ -1122,6 +1131,33 @@ final class GenerationService {
     /// Only a typed, provider-confirmed end settles a run; anything else keeps it in flight.
     nonisolated static func providerRunEnded(after error: any Error) -> Bool {
         (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
+    }
+
+    /// One status read for an interrupted MCP batch job; only a stated terminal state ends it.
+    func mcpBatchJobOutcome(provider: GenerationProvider, jobID: String) async -> any Error {
+        guard let client = await reconciliation.mcpClient(provider) else {
+            return GenerationRequestError.gate("\(provider.displayName) is not connected. Resume this batch once it is.")
+        }
+        var status: ProviderRunStatus?
+        do {
+            let tools = try await client.discoverTools()
+            status = try await MCPGenerationExecutor.status(jobID: jobID, tools: tools, client: client)
+        } catch {
+            status = nil
+        }
+        await client.disconnect()
+        switch status {
+        case .failed(let message, let cost)?:
+            return ProviderRunEndedError(message: message, cost: cost)
+        case .completed(let cost)?:
+            return ProviderRunEndedError(
+                message: "\(provider.displayName) finished this job, but NexGenVideo can't recover MCP output after an interruption.",
+                cost: cost)
+        case .running?:
+            return GenerationRequestError.gate("The \(provider.displayName) job is still running. Resume this batch later.")
+        case nil:
+            return GenerationRequestError.gate("\(provider.displayName) did not report this job's status. Resume this batch later.")
+        }
     }
 
     /// Books how a resumed run ended, at most once; a run the provider already finished counts as ended.
