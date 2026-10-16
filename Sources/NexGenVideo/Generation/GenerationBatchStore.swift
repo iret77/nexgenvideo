@@ -100,10 +100,15 @@ enum GenerationBatchStore {
         for item in batch.payload.items { try item.package.persist(editor: editor) }
         try markDirty(editor: editor)
         let record = try authority.create(batch: batch, journal: snapshot.journal, home: home)
-        try scope.requireCurrent(editor: editor)
-        try writeProjectProjection(record: record, home: home)
         let stored = Snapshot(record: record)
-        editor.generationBatchCoordinator.record(stored)
+        // The durable authority is the approval; a missing projection is rewritten by the next journal update.
+        do {
+            try scope.requireCurrent(editor: editor)
+            try writeProjectProjection(record: record, home: home)
+            editor.generationBatchCoordinator.record(stored)
+        } catch {
+            Log.generation.error("approved batch \(batch.id) has no project projection yet: \(error.localizedDescription)")
+        }
         return stored
     }
 
@@ -145,10 +150,14 @@ enum GenerationBatchStore {
         }
         let updatedRecord = try authority.update(expected: authorityRecord, journal: updatedJournal,
             adding: addingSpendEvents)
-        try scope.requireCurrent(editor: editor)
-        try writeProjectProjection(record: updatedRecord, home: home)
         let updated = Snapshot(record: updatedRecord, recoveredOutputs: current.recoveredOutputs)
-        editor.generationBatchCoordinator.record(updated)
+        do {
+            try scope.requireCurrent(editor: editor)
+            try writeProjectProjection(record: updatedRecord, home: home)
+            editor.generationBatchCoordinator.record(updated)
+        } catch {
+            Log.generation.error("batch \(updatedRecord.batch.id) changed without a project projection: \(error.localizedDescription)")
+        }
         return updated
     }
 
