@@ -263,12 +263,23 @@ struct ProductionRecoveryTests {
 
         var undeclared = anchor
         undeclared["mode_id"] = "fixture-undeclared"
-        let foreignMode = try generatedInput(demands: [undeclared])
         do {
-            try PipelineReferenceRouteContract.validate([foreignMode], routes: [route])
-            Issue.record("A demand mode no route offers was accepted")
+            _ = try generatedInput(demands: [undeclared])
+            Issue.record("A demand mode outside generation_requirement.mode_ids was accepted")
         } catch {
-            #expect(error.localizedDescription.contains("reference_demands[0].input_slot_id"))
+            #expect(error.localizedDescription.contains("execution_shot[s001].generation_requirement.mode_ids"))
+            #expect(error.localizedDescription.contains("fixture-undeclared"))
+        }
+
+        let foreignMode = try generatedInput(demands: [undeclared], modes: [Self.mode, "fixture-undeclared"])
+        let modeWithoutSlot = videoRoute("mode-without-slot", inputKinds: ["image"], slots: [
+            slot(CoreReferenceInputSlotIDV1.referenceImage, .image, order: 2),
+        ], modes: [Self.mode, "fixture-undeclared"])
+        do {
+            try PipelineReferenceRouteContract.validate([foreignMode], routes: [modeWithoutSlot])
+            Issue.record("A demand mode no route slot offers was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("execution_shot[s001].reference_demands[0].input_slot_id"))
             #expect(error.localizedDescription.contains("fixture-undeclared"))
         }
 
@@ -401,7 +412,8 @@ struct ProductionRecoveryTests {
         inputKinds: [String],
         slots: [ProductionInputSlotCapabilityV1],
         imageCapacity: Int = 3,
-        videoCapacity: Int = 3
+        videoCapacity: Int = 3,
+        modes: [String] = [Self.mode]
     ) -> ProductionRouteCandidateV1 {
         let origin = ResolvedCapabilityOriginV1(kind: .exact, profileID: "fixture-\(offeringID)")
         func value<Value>(_ value: Value) -> ResolvedCapabilityValueV1<Value>
@@ -421,7 +433,7 @@ struct ProductionRecoveryTests {
                     CapabilityFieldIDV1.totalReferences: value(9),
                 ],
                 strings: [
-                    CapabilityFieldIDV1.modes: value([Self.mode]),
+                    CapabilityFieldIDV1.modes: value(modes),
                     CapabilityFieldIDV1.inputKinds: value(inputKinds),
                 ]
             )

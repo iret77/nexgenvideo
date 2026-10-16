@@ -3319,6 +3319,8 @@ struct WorkflowToolsTests {
             "overall_character": "Measured pulse with a clear opening and development.",
         ])
         try recordAnalysisLineage(dataRoot: dataRoot)
+        // The Bible gate requires Brief, Production Design and look.style to carry this verbatim.
+        let style = "restrained hand-drawn animation"
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             try Brief(
                 project: "demo",
@@ -3330,7 +3332,7 @@ struct WorkflowToolsTests {
                 budgetEur: 50,
                 conceptType: .narrative,
                 visualMedium: .animation2d,
-                visualMediumNotes: "restrained hand-drawn animation",
+                visualMediumNotes: style,
                 figures: .othersOnly,
                 lyricsIntegration: .metaphorical,
                 finalResolution: route.resolution
@@ -3342,6 +3344,7 @@ struct WorkflowToolsTests {
         _ = try await setup.runOK("write_production_design", args: [
             "project_dir": dataRoot.path,
             "visual_medium": "2d_animation",
+            "visual_medium_notes": style,
             "refs": [],
             "color_script": [["section": "intro", "description": "Muted blue dawn."]],
         ])
@@ -3442,7 +3445,7 @@ struct WorkflowToolsTests {
         location["scene3d"] = ["panorama": "", "provider": "", "povs": []]
         _ = try await setup.runOK("write_bible", args: [
             "project_dir": dataRoot.path,
-            "look": ["style": "restrained hand-drawn animation"],
+            "look": ["style": style],
             "characters": [entity("mouse", name: "Mouse", prompt: "A small grey hand-drawn mouse.")],
             "ensembles": [],
             "props": [entity("cheese", name: "Cheese", prompt: "A yellow wedge of cheese.")],
