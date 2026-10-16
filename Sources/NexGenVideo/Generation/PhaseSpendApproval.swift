@@ -15,7 +15,8 @@ struct PhaseSpendApproval: Equatable, Sendable {
     let projectKey: String
     let phase: String
     let grantedAt: Date
-    /// The approval chain of every gate at grant time; any approval or rewind changes it.
+    /// Every gate's approval plus the phase's own verdict at grant time; any approval, rewind or
+    /// revision request changes it.
     let gateFingerprint: String
     var runs: [Run]
 }
@@ -60,7 +61,7 @@ final class PhaseSpendApprovalController {
     func grant(phase: String, editor: EditorViewModel, at date: Date = Date()) -> PhaseSpendApproval? {
         guard let projectKey = editor.projectId,
               let dataRoot = Self.dataRoot(editor: editor),
-              let fingerprint = Self.gateFingerprint(dataRoot: dataRoot),
+              let fingerprint = Self.gateFingerprint(dataRoot: dataRoot, phase: phase),
               Self.phaseIsOpen(phase, dataRoot: dataRoot) else { return nil }
         let approval = PhaseSpendApproval(projectKey: projectKey, phase: phase, grantedAt: date,
             gateFingerprint: fingerprint, runs: [])
@@ -120,7 +121,7 @@ final class PhaseSpendApprovalController {
     private func isValid(_ approval: PhaseSpendApproval, editor: EditorViewModel) -> Bool {
         guard approval.projectKey == editor.projectId,
               let dataRoot = Self.dataRoot(editor: editor),
-              Self.gateFingerprint(dataRoot: dataRoot) == approval.gateFingerprint else { return false }
+              Self.gateFingerprint(dataRoot: dataRoot, phase: approval.phase) == approval.gateFingerprint else { return false }
         return Self.phaseIsOpen(approval.phase, dataRoot: dataRoot)
     }
 
@@ -135,14 +136,16 @@ final class PhaseSpendApprovalController {
         return !gates.get(phase).approved
     }
 
-    static func gateFingerprint(dataRoot: URL) -> String? {
+    static func gateFingerprint(dataRoot: URL, phase: String) -> String? {
         guard let gates = try? YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile) else {
             return nil
         }
-        let chain = gates.gates.keys.sorted().map { phase -> String in
-            let gate = gates.get(phase)
-            return phase + "=" + (gate.approved ? (gate.approvedAt ?? "approved") : "-")
-        }.joined(separator: "\n")
-        return FileDigest.sha256(of: Data(chain.utf8))
+        let chain = gates.gates.keys.sorted().map { key -> String in
+            let gate = gates.get(key)
+            return key + "=" + (gate.approved ? (gate.approvedAt ?? "approved") : "-")
+        }
+        let own = gates.get(phase)
+        let verdict = "\(phase):\(own.state.rawValue):\(own.notes ?? "")"
+        return FileDigest.sha256(of: Data((chain + [verdict]).joined(separator: "\n").utf8))
     }
 }

@@ -107,6 +107,19 @@ struct PhaseSpendApprovalTests {
         #expect(approvals.active(phase: "frames", editor: fixture.editor) == nil)
     }
 
+    @Test func rewindingOrRevisingTheApprovedPhaseItselfEndsTheApproval() throws {
+        let fixture = try pipelineEditor()
+        defer { cleanup(fixture) }
+        try writeGates(fixture.dataRoot, briefApprovedAt: "2026-10-16T08:00:00Z")
+        let approvals = fixture.editor.phaseSpendApproval
+        _ = try #require(approvals.grant(phase: "frames", editor: fixture.editor))
+
+        try writeGates(fixture.dataRoot, briefApprovedAt: "2026-10-16T08:00:00Z",
+            frames: Gate(approved: false, notes: "Redo the hero frame", state: .needsRevision))
+        #expect(approvals.active(phase: "frames", editor: fixture.editor) == nil)
+        #expect(approvals.current == nil)
+    }
+
     @Test func movingToAnotherPhaseEndsTheApproval() throws {
         let fixture = try pipelineEditor()
         defer { cleanup(fixture) }
