@@ -241,6 +241,33 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image", "job_status", "job_status", "job_status"])
     }
 
+    @Test func anAcceptedAsyncJobWithMediaButNoStatusKeepsPollingItsID() async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"null-accept","status":null,"result":{"url":"https://output.invalid/early.png"}}"#]],
+            "job_status": [[#"{"job_id":"null-accept","status":"completed","result":{"url":"https://output.invalid/final.png"}}"#]],
+        ])
+
+        let result = try await MCPGenerationExecutor.run(
+            generationTool: generate,
+            arguments: ["prompt": .string("compiled anchor")],
+            tools: [generate, status],
+            provider: .higgsfield,
+            client: client,
+            maxPollAttempts: 1,
+            pollIntervalNanoseconds: 0
+        )
+
+        #expect(result.jobID == "null-accept")
+        #expect(result.outputURLs == ["https://output.invalid/final.png"])
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),

@@ -82,10 +82,12 @@ enum MCPGenerationExecutor {
         )
         // The job id must be on record before any polling an interruption could cut short.
         if let jobID = submission.jobID, !jobID.isEmpty { await onJobAccepted(jobID) }
-        switch MCPGenerationLifecycle.status(
-            from: payloads,
-            allowRootURL: allowRootURL
-        ) {
+        let inferred = MCPGenerationLifecycle.status(from: payloads, allowRootURL: allowRootURL)
+        // An accepted async job needs a stated terminal status; media alone means keep polling its id.
+        let isAsyncAcceptance = submission.jobID != nil && !hasDirectOutput && !hasSynchronousOutput
+        let acceptance: MCPGenerationLifecycle.Status =
+            isAsyncAcceptance && MCPGenerationLifecycle.explicitStatus(from: payloads) == nil ? .pending : inferred
+        switch acceptance {
         case .succeeded where !submission.output.isEmpty:
             return Result(jobID: submission.jobID, output: submission.output)
         case .succeeded:
