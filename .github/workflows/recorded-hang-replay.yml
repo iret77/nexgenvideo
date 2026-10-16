@@ -50,7 +50,16 @@ jobs:
           obsolete = "                    surface: editor.uiContract?.phases[gate.phase]?.surface,\n"
           if source.count(obsolete) != 1:
               raise SystemExit("Pinned baseline gate-card call changed; inspect its compatibility")
-          panel.write_text(source.replace(obsolete, "", 1))
+          source = source.replace(obsolete, "", 1)
+          # Models are discovered at runtime now; adapt the pinned picker to the current selection API.
+          for old, new in [
+              ("{ service.model = m }", "{ service.selectModel(m) }"),
+              ("Text(service.effectiveModel.displayName)", 'Text(service.effectiveModel?.displayName ?? "")'),
+          ]:
+              if source.count(old) != 1:
+                  raise SystemExit(f"Pinned baseline model picker changed; inspect: {old}")
+              source = source.replace(old, new, 1)
+          panel.write_text(source)
           PYTHON
       - name: Build optimized replay app
         run: |
