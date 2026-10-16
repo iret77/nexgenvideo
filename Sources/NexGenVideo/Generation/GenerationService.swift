@@ -1509,7 +1509,7 @@ final class GenerationService {
                     submissionState.recordDispatch()
                 },
                 onJobAccepted: { jobID in
-                    self.markMCPSubmitted(jobID: jobID, requestID: requestId, tools: tools,
+                    await self.markMCPSubmitted(jobID: jobID, requestID: requestId, tools: tools,
                         state: submissionState, authorization: authorization, editor: editor)
                 }
             )

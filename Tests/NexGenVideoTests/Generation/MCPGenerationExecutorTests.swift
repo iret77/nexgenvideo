@@ -165,12 +165,20 @@ struct MCPGenerationExecutorTests {
         #expect(calls.filter { $0 == "generate_image" }.count == 1)
     }
 
-    @MainActor
-    private final class JobRecorder {
-        private(set) var jobIDs: [String] = []
+    private final class JobRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [String] = []
+
+        var jobIDs: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return recorded
+        }
 
         func record(_ jobID: String) {
-            jobIDs.append(jobID)
+            lock.lock()
+            recorded.append(jobID)
+            lock.unlock()
         }
     }
 
@@ -185,7 +193,7 @@ struct MCPGenerationExecutorTests {
             responses: ["generate_image": [[#"{"job_id":"job-accepted","status":"queued"}"#]]],
             suspendedTools: ["job_status"]
         )
-        let recorder = await JobRecorder()
+        let recorder = JobRecorder()
         let task = Task {
             try await MCPGenerationExecutor.run(
                 generationTool: generate,
@@ -199,7 +207,7 @@ struct MCPGenerationExecutorTests {
         }
 
         #expect(await waitForCall("job_status", client: client))
-        #expect(await recorder.jobIDs == ["job-accepted"])
+        #expect(recorder.jobIDs == ["job-accepted"])
         task.cancel()
         _ = try? await task.value
     }
