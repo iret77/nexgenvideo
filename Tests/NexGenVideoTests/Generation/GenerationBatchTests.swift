@@ -1183,6 +1183,65 @@ struct GenerationBatchTests {
         #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
     }
 
+    @Test func phaseApprovedBatchesGetTheSameManifestAndAuthorityAsManualApproval() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        editor.generationBatchCoordinator.startsApprovedBatches = false
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: #require(editor.workingRoot)))
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            Gates(project: "demo", gates: [
+                "brief": Gate(approved: true, approvedAt: "2026-10-16T08:00:00Z"),
+                "frames": Gate(),
+            ]),
+            to: PipelineLayout.gatesFile
+        )
+        let unpriced = try await unpricedBatch(original, editor: editor)
+        func framesBatch(_ source: GenerationBatch) throws -> GenerationBatch {
+            try GenerationBatch(payload: .init(nonce: UUID(), projectKey: source.payload.projectKey,
+                phase: "frames", items: source.payload.items))
+        }
+        func recoveries(_ batch: GenerationBatch) -> [String: GenerationBatchRecovery] {
+            Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+                (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+            })
+        }
+        let home = try #require(editor.workingRoot)
+        let authority = try GenerationExecutionAuthorityStore.live()
+
+        for source in [original, unpriced] {
+            let manual = try framesBatch(source)
+            try editor.generationBatchCoordinator.present(manual, recoveries: recoveries(manual))
+            await editor.generationBatchCoordinator.approve(editor: editor, expectedBatchID: manual.id,
+                approval: manual.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
+            #expect(editor.generationBatchCoordinator.pending == nil)
+
+            _ = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+            let automatic = try framesBatch(source)
+            let result = try editor.agentService.presentGenerationBatch(automatic, recoveries: recoveries(automatic),
+                origin: .direct, editor: editor)
+            #expect(result.turnDisposition == .suspendTurn)
+            #expect(editor.generationBatchCoordinator.autoApprovingPhase == "frames")
+            for _ in 0..<500 where editor.generationBatchCoordinator.pending != nil {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            #expect(editor.generationBatchCoordinator.pending == nil)
+            #expect(editor.phaseSpendApproval.current?.runs.count == 1)
+
+            let manualRecord = try authority.load(projectKey: manual.payload.projectKey, batchID: manual.id)
+            let automaticRecord = try authority.load(projectKey: automatic.payload.projectKey, batchID: automatic.id)
+            #expect(manualRecord.batch == manual)
+            #expect(automaticRecord.batch == automatic)
+            #expect(automaticRecord.schema == manualRecord.schema)
+            #expect(automaticRecord.retainedFiles == manualRecord.retainedFiles)
+            #expect(automaticRecord.spendEvents.isEmpty && manualRecord.spendEvents.isEmpty)
+            #expect(automaticRecord.journal.pricingOverrideItemIDs == manualRecord.journal.pricingOverrideItemIDs)
+            #expect(automaticRecord.journal.revision == manualRecord.journal.revision)
+            #expect(automaticRecord.journal.executions.map(\.state) == manualRecord.journal.executions.map(\.state))
+            #expect(try GenerationBatchStore.load(id: automatic.id, home: home).authorityAvailable)
+            editor.phaseSpendApproval.withdraw(editor: editor)
+        }
+    }
+
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {
         let (root, editor, batch) = try await fixture()
         let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")

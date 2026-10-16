@@ -1596,6 +1596,10 @@ final class AgentService {
         }
     }
     private(set) var spendApprovalError: String?
+    /// The pipeline phase the pending paid run belongs to; the card offers to approve that whole phase.
+    private(set) var pendingSpendPhase: String?
+    /// Set while a run starts under the user's phase approval, so the dock shows no card.
+    private(set) var autoApprovingSpendPhase: String?
     private(set) var runningSpendStatus: SpendRunStatus? {
         didSet {
             guard oldValue?.runToken != runningSpendStatus?.runToken else { return }
@@ -1657,6 +1661,9 @@ final class AgentService {
         }
 
         suspendToolCalls(from: origin)
+        if let phase = batch.payload.phase, editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil {
+            editor.generationBatchCoordinator.approveUnderPhaseApproval(editor: editor, expectedBatchID: batch.id, phase: phase)
+        }
         return .suspended(marker)
     }
 
@@ -1819,10 +1826,63 @@ final class AgentService {
             cancel: cancelOperation
         )
         suspendToolCalls(from: origin)
+        pendingSpendPhase = pipelineScope?.phase
         pendingSpendApproval = SpendSelectionPreferences.applyingStoredSelection(
             to: approval
         )
+        if let phase = pipelineScope?.phase,
+           editor.phaseSpendApproval.active(phase: phase, editor: editor) != nil,
+           approval.modelRequirement?.unavailableReason == nil,
+           let option = approval.options.first(where: { $0.id == approval.recommendedOptionId }) {
+            startPhaseApprovedSpend(option: option, phase: phase, editor: editor)
+        }
         return .suspended(Self.spendSuspensionText)
+    }
+
+    /// Runs the pending request with the resolver's default route under the user's phase approval,
+    /// through the same preparation and approval path a click takes. Any failure shows the card.
+    private func startPhaseApprovedSpend(option: SpendOption, phase: String, editor: EditorViewModel) {
+        guard let approvalID = pendingSpendApproval?.id else { return }
+        autoApprovingSpendPhase = phase
+        Task { @MainActor [weak self, weak editor] in
+            guard let self else { return }
+            defer { if self.autoApprovingSpendPhase == phase { self.autoApprovingSpendPhase = nil } }
+            guard let editor, self.pendingSpendApproval?.id == approvalID else { return }
+            var selected = option
+            if self.pendingSpendApproval?.requiresGenerationPackage == true {
+                self.prepareSpendOption(option)
+                _ = await self.spendPreparationTask?.value
+                guard self.pendingSpendApproval?.id == approvalID,
+                      let prepared = self.pendingSpendApproval?.options.first(where: { $0.id == option.id }),
+                      prepared.generationPackage != nil else { return }
+                selected = prepared
+            }
+            await self.approveSpendRecordingPhaseRun(selected, approvalID: approvalID, editor: editor,
+                recordSelection: false)
+        }
+    }
+
+    /// The user approves every paid agent run of the pending request's phase, starting with this one.
+    func approveSpendForPhase(_ option: SpendOption) async {
+        guard let editor, let phase = pendingSpendPhase, let approvalID = pendingSpendApproval?.id else { return }
+        guard editor.phaseSpendApproval.grant(phase: phase, editor: editor) != nil else {
+            spendApprovalError = "This phase can't be approved as a whole right now. Approve this run on its own."
+            return
+        }
+        await approveSpendRecordingPhaseRun(option, approvalID: approvalID, editor: editor, recordSelection: true)
+    }
+
+    private func approveSpendRecordingPhaseRun(
+        _ option: SpendOption,
+        approvalID: String,
+        editor: EditorViewModel,
+        recordSelection: Bool
+    ) async {
+        let label = pendingSpendApproval?.actionLabel ?? option.modelName
+        await approveSpend(option, recordSelection: recordSelection)
+        guard runningSpendStatus?.id == approvalID else { return }
+        editor.phaseSpendApproval.recordRun(label: label,
+            detail: "\(option.modelName) via \(option.providerLabel)", editor: editor)
     }
 
     func refreshSpendApproval() {
@@ -1876,7 +1936,7 @@ final class AgentService {
         }
     }
 
-    func approveSpend(_ option: SpendOption) async {
+    func approveSpend(_ option: SpendOption, recordSelection: Bool = true) async {
         guard runningSpendTask == nil else { return }
         guard let approval = pendingSpendApproval,
               approval.options.contains(option) else {
@@ -1902,7 +1962,7 @@ final class AgentService {
             spendApprovalError = error.localizedDescription
             return
         }
-        SpendSelectionPreferences.record(option, for: approval)
+        if recordSelection { SpendSelectionPreferences.record(option, for: approval) }
         if let requirement = approval.modelRequirement {
             Log.generation.notice(
                 "spend \(approval.id) confirmed option=\(option.id) recommended=\(approval.recommendedOptionId) "
@@ -1912,6 +1972,7 @@ final class AgentService {
         spendPreparationID = nil
         spendPreparationTask = nil
         pendingSpendApproval = nil
+        pendingSpendPhase = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
         spendApprovalError = nil
@@ -2064,6 +2125,8 @@ final class AgentService {
         spendPreparationID = nil
         let operation = pendingSpendOperation
         pendingSpendApproval = nil
+        pendingSpendPhase = nil
+        autoApprovingSpendPhase = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
         spendApprovalError = nil

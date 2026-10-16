@@ -1299,6 +1299,7 @@ extension ToolExecutor {
                 reset = try GatesOperations.rewindTo(&$0, target: approval.phase, order: order)
             }
             editor.onPipelineChanged?()
+            editor.phaseSpendApproval.reconcile(editor: editor)
             let payload = try NativeCockpitReader.serialize(["target": approval.phase, "reset_phases": reset])
             return String(decoding: payload, as: UTF8.self)
         }
@@ -1350,6 +1351,7 @@ extension ToolExecutor {
             throw ToolError(error.localizedDescription, kind: .approvalStructure)
         }
         editor.onPipelineChanged?()
+        editor.phaseSpendApproval.reconcile(editor: editor)
         let gate = gates.get(approval.phase)
         guard let payload = Self.jsonString([
             "request_id": approval.id,

@@ -14,6 +14,8 @@ struct SpendApprovalCard: View {
     let onDecline: () -> Void
     let onRefresh: () -> Void
     let onPrepare: (SpendOption) -> Void
+    let approvalPhase: String?
+    let onApproveAll: ((SpendOption) -> Void)?
 
     @State private var selectedOptionId: String
     @State private var chosenProvider: GenerationProvider?
@@ -27,7 +29,9 @@ struct SpendApprovalCard: View {
         onApprove: @escaping (SpendOption) -> Void,
         onDecline: @escaping () -> Void,
         onRefresh: @escaping () -> Void = {},
-        onPrepare: @escaping (SpendOption) -> Void = { _ in }
+        onPrepare: @escaping (SpendOption) -> Void = { _ in },
+        approvalPhase: String? = nil,
+        onApproveAll: ((SpendOption) -> Void)? = nil
     ) {
         self.approval = approval
         self.error = error
@@ -36,6 +40,8 @@ struct SpendApprovalCard: View {
         self.onDecline = onDecline
         self.onRefresh = onRefresh
         self.onPrepare = onPrepare
+        self.approvalPhase = approvalPhase
+        self.onApproveAll = onApproveAll
         _selectedOptionId = State(initialValue: approval.recommendedOptionId)
     }
 
@@ -294,19 +300,33 @@ struct SpendApprovalCard: View {
             Button("Decline") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking)
+            if let approvalPhase, let onApproveAll {
+                Button("Approve All in \(PhaseDisplay.label(approvalPhase))") {
+                    guard let selectedOption else { return }
+                    approvalError = nil
+                    onApproveAll(selectedOption)
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .disabled(approveDisabled)
+                .help("Approve every paid agent run in this phase, including this one. Withdraw it in Tasks.")
+            }
             Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
                 guard let selectedOption else { return }
                 approvalError = nil
                 onApprove(selectedOption)
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
-            .disabled(selectedOption == nil || isWorking
-                || (approval.requiresGenerationPackage == true && selectedOption?.generationPackage == nil))
+            .disabled(approveDisabled)
             .focused($focusedControl, equals: .approve)
             .accessibilityHint(
                 selectedOption == nil ? "Choose an available provider and model" : ""
             )
         }
+    }
+
+    private var approveDisabled: Bool {
+        selectedOption == nil || isWorking
+            || (approval.requiresGenerationPackage == true && selectedOption?.generationPackage == nil)
     }
 
     private func requestInitialFocus() {

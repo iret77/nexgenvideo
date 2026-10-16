@@ -245,6 +245,7 @@ struct GenerationBatchCard: View {
                     reviseButton(controls)
                     if coordinator.canRetryPricing { retryButton(controls) }
                     Spacer(minLength: AppTheme.Spacing.sm)
+                    phaseApproveButton(batch: batch, controls: controls)
                     approveButton(batch: batch, controls: controls)
                 }
                 VStack(alignment: .trailing, spacing: AppTheme.Spacing.sm) {
@@ -254,11 +255,15 @@ struct GenerationBatchCard: View {
                         if coordinator.canRetryPricing { retryButton(controls) }
                         Spacer(minLength: AppTheme.Spacing.none)
                     }
-                    approveButton(batch: batch, controls: controls)
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        phaseApproveButton(batch: batch, controls: controls)
+                        approveButton(batch: batch, controls: controls)
+                    }
                 }
                 WrapLayout(spacing: AppTheme.Spacing.sm) {
                     declineButton(controls)
                     moreMenu(controls)
+                    phaseApproveButton(batch: batch, controls: controls)
                     approveButton(batch: batch, controls: controls)
                 }
             }
@@ -399,6 +404,27 @@ struct GenerationBatchCard: View {
             identifier: "generation-batch.approve",
             enabled: runtimeEvidenceEnabled
         ))
+    }
+
+    @ViewBuilder
+    private func phaseApproveButton(
+        batch: GenerationBatch,
+        controls: GenerationBatchReviewControls
+    ) -> some View {
+        if let phase = batch.payload.phase {
+            Button("Approve All in \(PhaseDisplay.label(phase))") {
+                Task {
+                    await editor.generationBatchCoordinator.approveForPhase(
+                        editor: editor,
+                        expectedBatchID: batch.id
+                    )
+                }
+            }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .disabled(batch.totalEUR == nil ? !controls.canApproveWithoutEstimate : !controls.canApprove)
+            .help("Approve every paid agent run in this phase, including this batch. Withdraw it in Tasks.")
+            .accessibilityIdentifier("generation-batch.approve-phase")
+        }
     }
 
     private func knownEUR(_ batch: GenerationBatch) -> Double {

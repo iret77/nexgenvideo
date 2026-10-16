@@ -407,6 +407,7 @@ struct AgentPanelView: View {
             WrapLayout(spacing: AppTheme.Spacing.xs) { taskHistoryButtons }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(AppTheme.Spacing.md)
+            PhaseSpendApprovalIndicator(editor: editor)
         }
         .popover(isPresented: Binding(get: { editor.agentConversationHistoryPresented },
             set: { editor.agentConversationHistoryPresented = $0 })) {
@@ -840,7 +841,10 @@ struct AgentPanelView: View {
     private var composerDock: some View {
         switch surfaceState.dockOwner {
         case .spendApproval:
-            if editor.generationBatchCoordinator.pending != nil {
+            if let phase = service.autoApprovingSpendPhase ?? editor.generationBatchCoordinator.autoApprovingPhase {
+                PhaseSpendApprovalStartNotice(phase: phase)
+                    .padding(.bottom, AppTheme.Spacing.xs)
+            } else if editor.generationBatchCoordinator.pending != nil {
                 // The decision is offered height before the task result so its list can show a complete request.
                 GenerationBatchCard(editor: editor).layoutPriority(1)
             } else if let approval = service.pendingSpendApproval {
@@ -853,7 +857,11 @@ struct AgentPanelView: View {
                     },
                     onDecline: { service.declineSpend() },
                     onRefresh: { service.refreshSpendApproval() },
-                    onPrepare: { service.prepareSpendOption($0) }
+                    onPrepare: { service.prepareSpendOption($0) },
+                    approvalPhase: service.pendingSpendPhase,
+                    onApproveAll: { option in
+                        Task { await service.approveSpendForPhase(option) }
+                    }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             }

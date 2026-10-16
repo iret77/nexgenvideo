@@ -809,6 +809,7 @@ final class EditorViewModel {
     let pipelinePhaseExecution = PipelinePhaseExecutionState()
     let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
     let generationBatchCoordinator = GenerationBatchCoordinator()
+    let phaseSpendApproval = PhaseSpendApprovalController()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
@@ -1197,6 +1198,7 @@ final class EditorViewModel {
         }
         uiContract = (try? ct.get()) ?? nil
         engineStateRevision += 1
+        phaseSpendApproval.reconcile(editor: self)
         let reconciliation = pipelineAgentHarness.reconcile(editor: self)
         if let failure = reconciliation.failure {
             workflowHandoffPending = false
