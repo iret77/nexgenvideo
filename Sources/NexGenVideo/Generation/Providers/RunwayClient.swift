@@ -36,6 +36,8 @@ actor RunwayClient {
     struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
+        /// Runway's own task id when it returned one; otherwise the ledger id is synthetic.
+        var providerTaskID: String?
 
         var errorDescription: String? { message }
         var providerRunEnded: Bool { false }
@@ -295,7 +297,7 @@ actor RunwayClient {
             } else {
                 message = "Runway accepted task \(id) before cancellation and then cancelled the provider task."
             }
-            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message)
+            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message, providerTaskID: id)
         }
         return id
     }

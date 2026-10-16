@@ -1005,6 +1005,12 @@ struct BudgetStopTests {
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
             ledgerRequestID: "task", message: "Cancellation failed")))
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.CancellationFailedError(message: "May run")))
+        let accepted = GenerationService.runwayReceipt(RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "task-accepted", message: "Cancelled after acceptance", providerTaskID: "task-accepted"))
+        #expect(accepted.requestID == "task-accepted" && accepted.resumable)
+        let synthetic = GenerationService.runwayReceipt(RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "runway-missing-task-id-1", message: "No task id"))
+        #expect(synthetic.requestID == "runway-missing-task-id-1" && !synthetic.resumable)
         #expect(GenerationService.providerRunEnded(after: RunwayClient.TaskFailure(message: "FAILED", cost: nil)))
         #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.cancellationFailed("offline")))
         #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.notConnected))

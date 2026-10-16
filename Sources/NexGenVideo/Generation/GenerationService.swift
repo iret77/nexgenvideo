@@ -1115,6 +1115,13 @@ final class GenerationService {
         (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
     }
 
+    /// A real Runway task id can later be queried for its status; a synthetic ledger id cannot.
+    nonisolated static func runwayReceipt(
+        _ error: RunwayClient.SubmissionAcknowledgedError
+    ) -> (requestID: String, resumable: Bool) {
+        (error.providerTaskID ?? error.ledgerRequestID, error.providerTaskID != nil)
+    }
+
     /// Gemini image calls are synchronous: an HTTP answer or a response without an image ends the run.
     nonisolated static func googleImageOutcome(_ error: any Error) -> any Error {
         if let error = error as? GoogleImageClient.ClientError {
@@ -1537,9 +1544,11 @@ final class GenerationService {
             )
             failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionAcknowledgedError {
+            let receipt = Self.runwayReceipt(error)
             markSubmitted(
                 authorization: authorization,
-                providerRequestId: error.ledgerRequestID,
+                providerRequestId: receipt.requestID,
+                resumable: receipt.resumable,
                 editor: editor
             )
             failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
