@@ -1165,12 +1165,15 @@ enum PipelineRenderRecordWriter {
         func ordinaryBindings(_ modality: AssetPhysicalModalityV1) -> [ProductionGenerationRoutingBindingV1] {
             ordinary.filter { $0.modalityID == modality.rawValue }
         }
+        let renderedSource: [RenderInputProof] = renderProof.sourceVideo.map { [$0] } ?? []
+        let renderedStart: [RenderInputProof] = renderProof.startFrame.map { [$0] } ?? []
+        let renderedEnd: [RenderInputProof] = renderProof.endFrame.map { [$0] } ?? []
         guard source.count <= 1,
               start.count <= 1,
               end.count <= 1,
-              matches(renderProof.sourceVideo.map { [$0] } ?? [], source),
-              matches(renderProof.startFrame.map { [$0] } ?? [], start),
-              matches(renderProof.endFrame.map { [$0] } ?? [], end),
+              matches(renderedSource, source),
+              matches(renderedStart, start),
+              matches(renderedEnd, end),
               matches(renderProof.referenceImages, ordinaryBindings(.image)),
               matches(renderProof.referenceVideos, ordinaryBindings(.video)),
               matches(renderProof.referenceAudio, ordinaryBindings(.audio)) else {
