@@ -133,6 +133,7 @@ final class AgentService {
         switch result {
         case .success(let models):
             availableModels = models
+            modelListIsCurrent = true
             modelDiscoveryError = nil
             modelCatalogStore.saveCatalog(models)
         case .failure(let error):
@@ -262,6 +263,8 @@ final class AgentService {
     private(set) var availableModels: [AnthropicModelInfo]
     private(set) var isDiscoveringModels = false
     private(set) var modelDiscoveryError: String?
+    /// True once this session discovered the list; until then the cache cannot retire a stored id.
+    private(set) var modelListIsCurrent = false
     /// The user's choice, persisted as a plain model id.
     private(set) var model: String?
     private(set) var modelFamily: String?
@@ -282,8 +285,16 @@ final class AgentService {
         AnthropicModelSelection.resolve(
             storedID: model,
             storedFamily: modelFamily,
-            models: availableModels
+            models: availableModels,
+            listIsCurrent: modelListIsCurrent
         )
+    }
+
+    /// The list offered in the picker; a stored id the stale cache lacks stays selectable.
+    var pickerModels: [AnthropicModelInfo] {
+        guard let selected = effectiveModel,
+              !availableModels.contains(where: { $0.id == selected.id }) else { return availableModels }
+        return availableModels + [selected]
     }
 
     var sessions: [ChatSession] = []

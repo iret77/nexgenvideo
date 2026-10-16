@@ -182,18 +182,20 @@ enum AnthropicModelSelection {
             ?? usable.first
     }
 
+    /// Without a current list the stored id is kept as-is: a stale cache cannot prove it is gone.
     static func resolve(
         storedID: String?,
         storedFamily: String?,
-        models: [AnthropicModelInfo]
+        models: [AnthropicModelInfo],
+        listIsCurrent: Bool = true
     ) -> AnthropicModelInfo? {
         let stored = storedID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = stored?.isEmpty == false ? stored : nil
-        guard !models.isEmpty else {
-            return id.map { AnthropicModelInfo.unlisted($0, family: storedFamily) }
-        }
         if let id, let offered = models.first(where: { $0.id == id && !$0.isRetired }) {
             return offered
+        }
+        if let id, !listIsCurrent || models.isEmpty {
+            return AnthropicModelInfo.unlisted(id, family: storedFamily)
         }
         if let id,
            let family = storedFamily ?? AnthropicModelInfo.derivedFamily(fromID: id),
@@ -209,7 +211,7 @@ enum AnthropicModelSelection {
         var seenFamilies: Set<String> = []
         let usable = models.filter { !$0.isRetired }
         let byFamily = Dictionary(grouping: usable) { $0.family ?? "id:" + $0.id }
-        let newestPerFamily = Set(byFamily.compactMap { _, members -> String? in
+        let newestPerFamily = Set(byFamily.values.compactMap { members -> String? in
             let ranked = ordered(members)
             return (ranked.first(where: \.isActive) ?? ranked.first)?.id
         })

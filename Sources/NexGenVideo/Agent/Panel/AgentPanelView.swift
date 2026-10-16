@@ -561,7 +561,7 @@ struct AgentPanelView: View {
     @ViewBuilder
     private var modelPicker: some View {
         if service.backend == .anthropicAPI && service.hasApiKey {
-            let groups = AnthropicModelSelection.pickerGroups(service.availableModels)
+            let groups = AnthropicModelSelection.pickerGroups(service.pickerModels)
             let isEnabled = !groups.current.isEmpty
             Menu {
                 ForEach(groups.current) { model in
@@ -610,9 +610,7 @@ struct AgentPanelView: View {
     }
 
     private var modelPickerTitle: String {
-        if let selected = service.effectiveModel {
-            return service.availableModels.first { $0.id == selected.id }?.displayName ?? selected.displayName
-        }
+        if let selected = service.effectiveModel { return selected.displayName }
         return service.isDiscoveringModels ? "Loading Models…" : "No Models"
     }
 

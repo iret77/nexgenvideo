@@ -171,6 +171,33 @@ struct AnthropicModelCatalogTests {
         ])
     }
 
+    @Test("a stored id missing from a stale cache stays in use until a current list retires it")
+    func storedIDSurvivesStaleCache() async throws {
+        let defaults = F.isolatedDefaults()
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(F.models([F.sonnet46, F.opus55]))
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let offline = RecordingModelsTransport(pages: [.failure(URLError(.timedOut))])
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: offline.transport
+        )
+        await service.refreshModelCatalog(apiKey: "sk-test")
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(service.pickerModels.map(\.id).contains("claude-opus-4-8"))
+
+        let online = RecordingModelsTransport(pages: [.success(try F.page([F.sonnet55, F.opus55], hasMore: false))])
+        let current = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: online.transport
+        )
+        #expect(current.effectiveModel?.id == "claude-opus-4-8")
+        await current.refreshModelCatalog(apiKey: "sk-test")
+        #expect(current.effectiveModel?.id == "claude-opus-5-5")
+        #expect(!current.pickerModels.map(\.id).contains("claude-opus-4-8"))
+    }
+
     @Test("router families resolve to the newest discovered id; pinned ids stay pinned")
     func routeResolution() throws {
         let store = AnthropicModelCatalogStore(defaults: F.isolatedDefaults())
