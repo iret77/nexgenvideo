@@ -11,7 +11,7 @@ references:
   - name: "Aardman Animations"
     role: director
     notable_works:
-      - "Peter Gabriel — Sledgehammer (1986, multiple award-winning music video)"
+      - "Peter Gabriel — Sledgehammer (1986, directed by Stephen R. Johnson; animation by Aardman Animations and the Brothers Quay; claymation, pixilation and stop motion; nine MTV Video Music Awards in 1987)"
       - "Wallace & Gromit series"
       - "Chicken Run (2000)"
       - "Shaun the Sheep"
@@ -19,10 +19,10 @@ references:
     sources:
       - label: "Wikipedia — Aardman Animations"
         url: "https://en.wikipedia.org/wiki/Aardman_Animations"
+      - label: "Wikipedia — Sledgehammer (Peter Gabriel song)"
+        url: "https://en.wikipedia.org/wiki/Sledgehammer_(Peter_Gabriel_song)"
       - label: "Animation Studies 2.0 — Hidden In Plain Sight: Aardman's American Dream"
         url: "https://blog.animationstudies.org/hidden-in-plain-sight-aardmans-american-dream/"
-      - label: "Popfixion — Aardman et Laika: les rois du Stop Motion"
-        url: "https://www.popfixion.fr/articles/article-155-Animation-Aardman-et-Laika-les-rois-du-Stop-Motion"
   - name: "Laika Studios"
     role: director
     notable_works:
@@ -38,8 +38,6 @@ references:
         url: "https://www.screendaily.com/features/how-laika-made-ambitious-stop-motion-animation-missing-link/5145578.article"
       - label: "Focus Features — Two Years in the Making"
         url: "https://www.focusfeatures.com/article/two__years_in_the_making"
-      - label: "DeeDee Studio — How does Laika produce stop motion animation?"
-        url: "https://www.deedeestudio.net/en/post/laika-produce-stop-motion-animation"
 
 section_arc:
   - role: establishing
