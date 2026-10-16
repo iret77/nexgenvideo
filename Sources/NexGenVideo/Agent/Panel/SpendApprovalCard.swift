@@ -308,7 +308,7 @@ struct SpendApprovalCard: View {
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(approveDisabled)
-                .help("Approve every paid agent run in this phase, including this one. Withdraw it in Tasks.")
+                .help("Approve every paid agent run in this phase, including this one. Ends when the phase is approved or rewound, when you withdraw it in Tasks, or when NexGenVideo quits.")
             }
             Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
                 guard let selectedOption else { return }

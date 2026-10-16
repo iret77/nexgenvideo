@@ -422,7 +422,7 @@ struct GenerationBatchCard: View {
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(batch.totalEUR == nil ? !controls.canApproveWithoutEstimate : !controls.canApprove)
-            .help("Approve every paid agent run in this phase, including this batch. Withdraw it in Tasks.")
+            .help("Approve every paid agent run in this phase, including this batch. Ends when the phase is approved or rewound, when you withdraw it in Tasks, or when NexGenVideo quits.")
             .accessibilityIdentifier("generation-batch.approve-phase")
         }
     }

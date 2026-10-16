@@ -152,10 +152,11 @@ enum GenerationSpendLedger {
                 } else if let cost = outcome.providerCost {
                     let key = outcome.provider.rawValue + "|" + cost.unit
                     if let current = credits[key] {
-                        credits[key] = .init(provider: current.provider, unit: current.unit,
+                        credits[key] = ProjectSpendSnapshot.ProviderCredits(provider: current.provider, unit: current.unit,
                             amount: current.amount + cost.amount, runs: current.runs + 1)
                     } else {
-                        credits[key] = .init(provider: outcome.provider, unit: cost.unit, amount: cost.amount, runs: 1)
+                        credits[key] = ProjectSpendSnapshot.ProviderCredits(provider: outcome.provider, unit: cost.unit,
+                            amount: cost.amount, runs: 1)
                         creditOrder.append(key)
                     }
                 } else {

@@ -19,8 +19,13 @@ struct PhaseSpendApprovalIndicator: View {
                     Spacer(minLength: AppTheme.Spacing.sm)
                     Button("Withdraw") { editor.phaseSpendApproval.withdraw(editor: editor) }
                         .buttonStyle(.capsule(.secondary, size: .small))
+                        .help("Ends when the phase is approved or rewound, when you withdraw it, or when NexGenVideo quits.")
                         .accessibilityIdentifier("phase-approval.withdraw")
                 }
+                Text("Until the phase is approved or rewound, or NexGenVideo quits.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
                 if approval.runs.isEmpty {
                     Text("No runs yet")
                         .interfaceFont(size: AppTheme.Typography.ui)

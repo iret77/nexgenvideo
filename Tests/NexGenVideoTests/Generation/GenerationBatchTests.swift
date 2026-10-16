@@ -1216,6 +1216,7 @@ struct GenerationBatchTests {
             #expect(editor.generationBatchCoordinator.pending == nil)
 
             _ = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+            #expect(!editor.agentService.isComposerBlocked)
             let automatic = try framesBatch(source)
             let result = try editor.agentService.presentGenerationBatch(automatic, recoveries: recoveries(automatic),
                 origin: .direct, editor: editor)
