@@ -413,6 +413,7 @@ final class GenerationService {
                     projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
             }
             var recoveredCost: GenerationProviderCost?
+            var providerFinished = false
             do {
                 if completedIDs.count < execution.placeholders.count {
                     let urls: [String]
@@ -431,6 +432,7 @@ final class GenerationService {
                         recoveredCost = ProviderReportedCost.marble(operation: operation)
                     default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
                     }
+                    providerFinished = true
                     try scope.requireCurrent(editor: editor)
                     await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
                         errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
@@ -453,16 +455,11 @@ final class GenerationService {
                         }
                     }
                 }
-            } catch let failure as RunwayClient.TaskFailure {
-                if let transaction = execution.transactionID,
-                   !editor.generationLog.spendEvents.contains(where: {
-                       $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
-                   }) {
-                    self.recordSubmittedRunFailure(failure, message: failure.localizedDescription,
+            } catch {
+                if let transaction = execution.transactionID {
+                    self.recordResumedRunFailure(error, providerFinished: providerFinished, cost: recoveredCost,
                         authorization: resumedAuthorization(transaction), editor: editor)
                 }
-                self.failJob(placeholders, failure.localizedDescription, nil)
-            } catch {
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
             do { try await item.settle(editor: editor) }
@@ -1113,6 +1110,25 @@ final class GenerationService {
     /// Only a typed, provider-confirmed end settles a run; anything else keeps it in flight.
     nonisolated static func providerRunEnded(after error: any Error) -> Bool {
         (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
+    }
+
+    /// Books how a resumed run ended, at most once; a run the provider already finished counts as ended.
+    func recordResumedRunFailure(
+        _ error: any Error,
+        providerFinished: Bool,
+        cost: GenerationProviderCost?,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        guard let transaction = authorization.transactionId,
+              !editor.generationLog.spendEvents.contains(where: {
+                  $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
+              }) else { return }
+        var outcome: any Error = error
+        if providerFinished {
+            outcome = ProviderRunEndedError(message: error.localizedDescription, cost: cost)
+        }
+        recordSubmittedRunFailure(outcome, message: error.localizedDescription, authorization: authorization, editor: editor)
     }
 
     /// A real Runway task id can later be queried for its status; a synthetic ledger id cannot.

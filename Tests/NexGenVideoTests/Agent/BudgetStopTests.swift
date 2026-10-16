@@ -1089,6 +1089,55 @@ struct BudgetStopTests {
         #expect(snapshot.providerCredits.map(\.amount) == [10])
     }
 
+    @Test("a resumed run books a confirmed end once and leaves an unconfirmed one in flight")
+    func resumedRunFailuresShareTheTypedEndHandling() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        func submitted(_ request: String) async throws -> GenerationAuthorization {
+            let authorization = try await GenerationBudgetGuard.authorize(
+                input: GenerationPricingInput(
+                    modelId: "fal-ai/veo3",
+                    modality: .video,
+                    durationSeconds: 5,
+                    outputCount: 1,
+                    resolution: nil,
+                    quality: nil,
+                    promptCharacterCount: 5,
+                    generateAudio: true,
+                    referenceCount: 0
+                ),
+                target: GenerationService.dispatchTarget(modelId: "fal-ai/veo3"),
+                editor: editor,
+                quoteLoader: { _, _ in money(2) }
+            )
+            try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+                providerRequestId: request, providerRequestResumable: true, money: authorization.estimate)
+            return authorization
+        }
+        let service = editor.generationService
+        let credits = GenerationProviderCost(amount: 4, unit: "credits", source: "fixture")
+
+        let failed = try await submitted("fal-failed")
+        let failure = ProviderRunEndedError(message: "fal.ai generation failed")
+        service.recordResumedRunFailure(failure, providerFinished: false, cost: nil, authorization: failed, editor: editor)
+        service.recordResumedRunFailure(failure, providerFinished: false, cost: nil, authorization: failed, editor: editor)
+        let finished = try await submitted("marble-finished")
+        service.recordResumedRunFailure(GenerationRequestError.gate("The project changed."), providerFinished: true,
+            cost: credits, authorization: finished, editor: editor)
+        let polling = try await submitted("runway-polling")
+        service.recordResumedRunFailure(CancellationError(), providerFinished: false, cost: nil,
+            authorization: polling, editor: editor)
+
+        let failedID = try #require(failed.transactionId)
+        let finishedID = try #require(finished.transactionId)
+        let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
+        #expect(settled.map(\.transactionId) == [failedID, finishedID])
+        #expect(settled.last?.providerCost == credits)
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
+        #expect(snapshot.inFlightCount == 1)
+    }
+
     @Test("invalid append-only transitions are rejected")
     func invalidTransitionIsRejected() throws {
         let tx = UUID().uuidString
