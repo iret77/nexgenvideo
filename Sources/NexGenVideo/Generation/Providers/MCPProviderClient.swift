@@ -27,8 +27,8 @@ actor MCPProviderClient {
         case cancellationFailed(String)
 
         var providerRunEnded: Bool {
-            if case .cancellationFailed = self { return false }
-            return true
+            if case .toolFailed = self { return true }
+            return false
         }
 
         var errorDescription: String? {

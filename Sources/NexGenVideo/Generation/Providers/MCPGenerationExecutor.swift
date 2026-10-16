@@ -33,15 +33,10 @@ enum MCPGenerationExecutor {
     struct JobFailure: LocalizedError, ProviderRunEndReporting {
         let jobID: String
         let message: String
-        /// False when the accepted job could not be cancelled and may still run.
-        var providerRunEnded = true
+        /// True only when the provider itself reported a terminal job state.
+        var providerRunEnded = false
 
         var errorDescription: String? { "Provider job '\(jobID)' failed: \(message)" }
-    }
-
-    private struct AcceptedJobCancellation: Sendable {
-        let message: String
-        let sent: Bool
     }
 
     struct Result: Equatable {
@@ -60,7 +55,8 @@ enum MCPGenerationExecutor {
         maxPollAttempts: Int = 600,
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
         timeoutSeconds: TimeInterval = 30 * 60,
-        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {}
+        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {},
+        onJobAccepted: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) async throws -> Result {
         let hasLifecycle = hasUsableLifecycle(tools: tools)
         let hasDirectOutput = hasDirectOutputContract(generationTool)
@@ -84,10 +80,14 @@ enum MCPGenerationExecutor {
             from: payloads,
             allowRootURL: allowRootURL
         )
-        switch MCPGenerationLifecycle.status(
-            from: payloads,
-            allowRootURL: allowRootURL
-        ) {
+        // The job id must be on record before any polling an interruption could cut short.
+        if let jobID = submission.jobID, !jobID.isEmpty { await onJobAccepted(jobID) }
+        let inferred = MCPGenerationLifecycle.status(from: payloads, allowRootURL: allowRootURL)
+        // A job id with any status tool needs a stated terminal status; a media schema proves no completion.
+        let isAsyncAcceptance = submission.jobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil
+        let acceptance: MCPGenerationLifecycle.Status =
+            isAsyncAcceptance && MCPGenerationLifecycle.explicitStatus(from: payloads) == nil ? .pending : inferred
+        switch acceptance {
         case .succeeded where !submission.output.isEmpty:
             return Result(jobID: submission.jobID, output: submission.output)
         case .succeeded:
@@ -103,14 +103,17 @@ enum MCPGenerationExecutor {
                         )
                     )
                 } catch {
-                    throw JobFailure(jobID: jobID, message: error.localizedDescription)
+                    throw JobFailure(jobID: jobID, message: error.localizedDescription, providerRunEnded: true)
                 }
             }
+            throw ProviderRunEndedError(
+                message: "\(provider.displayName)'s MCP reported success without output media or a job identifier."
+            )
         case .failed(let message):
             if let jobID = submission.jobID {
-                throw JobFailure(jobID: jobID, message: message)
+                throw JobFailure(jobID: jobID, message: message, providerRunEnded: true)
             }
-            throw GenerationBackendError.transport(message)
+            throw ProviderRunEndedError(message: message)
         case .pending, .unknown:
             break
         }
@@ -127,8 +130,7 @@ enum MCPGenerationExecutor {
             )
             throw JobFailure(
                 jobID: jobID,
-                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable asynchronous media result path. \(cancellation.message)",
-                providerRunEnded: cancellation.sent
+                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable asynchronous media result path. \(cancellation)"
             )
         }
         do {
@@ -143,7 +145,7 @@ enum MCPGenerationExecutor {
             )
             return Result(jobID: jobID, output: output)
         } catch let terminal as TerminalProviderState {
-            throw JobFailure(jobID: jobID, message: terminal.message)
+            throw JobFailure(jobID: jobID, message: terminal.message, providerRunEnded: true)
         } catch {
             let cancellation = await cancelAcceptedJobIndependently(
                 jobID: jobID,
@@ -155,8 +157,7 @@ enum MCPGenerationExecutor {
                 : error.localizedDescription
             throw JobFailure(
                 jobID: jobID,
-                message: "\(reason) \(cancellation.message)",
-                providerRunEnded: cancellation.sent
+                message: "\(reason) \(cancellation)"
             )
         }
     }
@@ -215,12 +216,9 @@ enum MCPGenerationExecutor {
         jobID: String,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async -> AcceptedJobCancellation {
+    ) async -> String {
         guard let cancelTool = MCPGenerationLifecycle.cancelTool(in: tools) else {
-            return .init(
-                message: "No compatible cancellation tool is available; the provider may still charge for the accepted job.",
-                sent: false
-            )
+            return "No compatible cancellation tool is available; the provider may still charge for the accepted job."
         }
         do {
             let arguments = try MCPGenerationArguments.makeJob(
@@ -228,12 +226,9 @@ enum MCPGenerationExecutor {
                 schema: cancelTool.inputSchema
             )
             _ = try await client.callTool(name: cancelTool.name, arguments: arguments)
-            return .init(message: "NexGenVideo sent a cancellation request for the accepted job.", sent: true)
+            return "NexGenVideo sent a cancellation request for the accepted job."
         } catch {
-            return .init(
-                message: "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job.",
-                sent: false
-            )
+            return "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job."
         }
     }
 
@@ -241,11 +236,88 @@ enum MCPGenerationExecutor {
         jobID: String,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async -> AcceptedJobCancellation {
+    ) async -> String {
         let cancellation = Task.detached {
             await cancelAcceptedJob(jobID: jobID, tools: tools, client: client)
         }
         return await cancellation.value
+    }
+
+    /// One status call for an accepted job; nil when the provider exposes no status tool.
+    static func status(
+        jobID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async throws -> ProviderRunStatus? {
+        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return nil }
+        let payloads = try await statusPayloads(jobID: jobID, statusTool: statusTool, client: client)
+        switch jobStatus(from: payloads, statusTool: statusTool) {
+        case .pending:
+            return .running
+        case .succeeded:
+            return .completed(nil)
+        case .failed(let message):
+            return .failed(message, nil)
+        case .unknown(let value):
+            throw GenerationBackendError.transport("The provider MCP returned an unsupported job status: \(value ?? "<missing>").")
+        }
+    }
+
+    /// One status read for an interrupted accepted job, with its media; never submits anything new.
+    static func resumedOutput(
+        jobID: String,
+        provider: GenerationProvider,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async throws -> MCPGenerationLifecycle.Output {
+        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
+            throw GenerationBackendError.transport("\(provider.displayName)'s MCP exposes no job-status tool.")
+        }
+        let payloads = try await statusPayloads(jobID: jobID, statusTool: statusTool, client: client)
+        switch jobStatus(from: payloads, statusTool: statusTool) {
+        case .succeeded(let output) where !output.isEmpty:
+            return output
+        case .succeeded:
+            do {
+                return try await fetchResult(jobID: jobID, provider: provider, tools: tools, client: client)
+            } catch {
+                throw ProviderRunEndedError(message: error.localizedDescription)
+            }
+        case .failed(let message):
+            throw ProviderRunEndedError(message: message)
+        case .pending:
+            throw GenerationRequestError.gate("The \(provider.displayName) job is still running. Resume this batch later.")
+        case .unknown(let value):
+            throw GenerationBackendError.transport(
+                "\(provider.displayName)'s MCP returned an unsupported job status: \(value ?? "<missing>")."
+            )
+        }
+    }
+
+    /// A failed status query says nothing about the job itself, so it can never end the run.
+    private static func statusPayloads(
+        jobID: String,
+        statusTool: MCPProviderClient.DiscoveredTool,
+        client: any MCPToolCalling
+    ) async throws -> [String] {
+        do {
+            let arguments = try MCPGenerationArguments.makeJob(jobID: jobID, schema: statusTool.inputSchema, sync: false)
+            return try await client.callTool(name: statusTool.name, arguments: arguments)
+        } catch {
+            throw JobFailure(jobID: jobID, message: error.localizedDescription, providerRunEnded: false)
+        }
+    }
+
+    /// An accepted job's status poll: success inferred from media alone, or a null status, is unknown.
+    static func jobStatus(
+        from payloads: [String],
+        statusTool: MCPProviderClient.DiscoveredTool
+    ) -> MCPGenerationLifecycle.Status {
+        guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else { return .unknown(nil) }
+        return MCPGenerationLifecycle.status(
+            from: payloads,
+            allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(statusTool.outputSchema)
+        )
     }
 
     private static func poll(
@@ -273,12 +345,7 @@ enum MCPGenerationExecutor {
                 sync: false
             )
             let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
-            switch MCPGenerationLifecycle.status(
-                from: payloads,
-                allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(
-                    statusTool.outputSchema
-                )
-            ) {
+            switch jobStatus(from: payloads, statusTool: statusTool) {
             case .pending:
                 unknownStatuses = 0
                 ProviderStatusSignal.confirmRunning()

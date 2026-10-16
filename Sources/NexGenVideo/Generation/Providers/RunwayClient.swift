@@ -36,11 +36,11 @@ actor RunwayClient {
     struct SubmissionAcknowledgedError: LocalizedError, Sendable, ProviderRunEndReporting {
         let ledgerRequestID: String
         let message: String
-        /// Runway confirmed the cancellation of the accepted task.
-        var providerTaskEnded = false
+        /// Runway's own task id when it returned one; otherwise the ledger id is synthetic.
+        var providerTaskID: String?
 
         var errorDescription: String? { message }
-        var providerRunEnded: Bool { providerTaskEnded }
+        var providerRunEnded: Bool { false }
     }
 
     struct SubmissionOutcomeUnknownError: LocalizedError, Sendable, ProviderRunEndReporting {
@@ -182,6 +182,29 @@ actor RunwayClient {
         }
     }
 
+    /// One status read for a task; never polls, retries or cancels it.
+    func status(taskId: String) async throws -> ProviderRunStatus {
+        let (data, status) = try await send(method: "GET", path: "tasks/\(taskId)", body: nil)
+        guard (200..<300).contains(status) else {
+            throw Self.apiError(data: data, status: status, operation: "task status")
+        }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let state = json?["status"] as? String else {
+            throw GenerationBackendError.transport("Runway returned a malformed task status.")
+        }
+        switch state {
+        case "SUCCEEDED":
+            return .completed(ProviderReportedCost.runway(terminalTask: json))
+        case "FAILED", "CANCELLED":
+            let reason = (json?["failure"] as? String) ?? "Runway reported the task as ended without output"
+            return .failed(reason, ProviderReportedCost.runway(terminalTask: json))
+        case "PENDING", "THROTTLED", "RUNNING":
+            return .running
+        default:
+            throw GenerationBackendError.transport("Runway returned a malformed task status.")
+        }
+    }
+
     // MARK: - Reference hosting
 
     /// `POST /v1/uploads` — host a reference on RUNWAY, so an image-to-video or restyle run needs no
@@ -279,6 +302,13 @@ actor RunwayClient {
             )
         }
         let (data, status) = response
+        // A server error or timeout says nothing about whether the task started; only a 4xx is a rejection.
+        if status >= 500 || status == 408 {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "runway-unknown-\(UUID().uuidString)",
+                message: "Runway answered the submission with HTTP \(status). The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard (200..<300).contains(status) else {
             throw Self.apiError(data: data, status: status, operation: "submission")
@@ -297,8 +327,7 @@ actor RunwayClient {
             } else {
                 message = "Runway accepted task \(id) before cancellation and then cancelled the provider task."
             }
-            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message,
-                providerTaskEnded: cancellationFailure == nil)
+            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message, providerTaskID: id)
         }
         return id
     }
@@ -320,7 +349,10 @@ actor RunwayClient {
             switch state {
             case "SUCCEEDED":
                 guard let output = json?["output"] as? [String], !output.isEmpty else {
-                    throw TerminalTaskError(message: "Runway returned no output.")
+                    throw TerminalTaskError(
+                        message: "Runway returned no output.",
+                        cost: ProviderReportedCost.runway(terminalTask: json)
+                    )
                 }
                 return TaskResult(urls: output, cost: ProviderReportedCost.runway(terminalTask: json))
             case "FAILED", "CANCELLED":

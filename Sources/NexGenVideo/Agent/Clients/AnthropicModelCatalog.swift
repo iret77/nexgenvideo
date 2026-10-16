@@ -115,12 +115,14 @@ enum AnthropicModelsAPI {
 
     static func page(from data: Data) throws -> Page {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = object["data"] as? [[String: Any]] else {
+              let entries = object["data"] as? [[String: Any]],
+              let flag = object["has_more"] as? NSNumber,
+              CFGetTypeID(flag) == CFBooleanGetTypeID() else {
             throw DiscoveryError.invalidResponse
         }
         return Page(
             models: entries.compactMap(model(from:)),
-            hasMore: object["has_more"] as? Bool ?? false,
+            hasMore: flag.boolValue,
             lastID: object["last_id"] as? String
         )
     }

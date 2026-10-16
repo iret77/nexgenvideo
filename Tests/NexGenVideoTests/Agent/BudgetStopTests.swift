@@ -632,7 +632,7 @@ struct BudgetStopTests {
         #expect(snapshot.legacyGenerationCount == 1)
         #expect(!snapshot.isComplete)
         #expect(snapshot.verifiedEur == 0)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount + snapshot.unresolvedCount == 1)
     }
 
     @Test("an estimate on a run in flight is never booked as spend")
@@ -657,6 +657,7 @@ struct BudgetStopTests {
                 transport: .api,
                 endpoint: "fal-ai/veo3",
                 providerRequestId: "request-1",
+                providerRequestResumable: true,
                 money: money(3)
             ),
         ]
@@ -715,7 +716,7 @@ struct BudgetStopTests {
         #expect(snapshot.isComplete)
     }
 
-    @Test("one ledger totals billed Bible work, frame roles and retakes; open runs stay in flight")
+    @Test("one ledger totals billed Bible work, frame roles and retakes; open runs without a receipt stay unconfirmed")
     func billedProjectSpendSnapshot() throws {
         func events(
             _ transaction: String,
@@ -797,7 +798,8 @@ struct BudgetStopTests {
 
         #expect(snapshot.verifiedEur == 21)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.inFlightCount == 2)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 2)
         #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 0)
     }
@@ -825,7 +827,8 @@ struct BudgetStopTests {
 
         #expect(snapshot.verifiedEur == 0)
         #expect(!snapshot.isComplete)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 1)
         #expect(snapshot.unknownCostCount == 0)
         #expect(snapshot.legacyGenerationCount == 1)
     }
@@ -941,7 +944,8 @@ struct BudgetStopTests {
         )
 
         #expect(snapshot.unknownCostCount == 2)
-        #expect(snapshot.inFlightCount == 1)
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 1)
         #expect(snapshot.verifiedEur == 0)
         #expect(snapshot.legacyGenerationCount == 0)
     }
@@ -1004,19 +1008,34 @@ struct BudgetStopTests {
             ledgerRequestID: "runway-unknown", message: "No receipt")))
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
             ledgerRequestID: "task", message: "Cancellation failed")))
-        #expect(GenerationService.providerRunEnded(after: RunwayClient.SubmissionAcknowledgedError(
-            ledgerRequestID: "task", message: "Cancelled", providerTaskEnded: true)))
         #expect(!GenerationService.providerRunEnded(after: RunwayClient.CancellationFailedError(message: "May run")))
+        let accepted = GenerationService.runwayReceipt(RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "task-accepted", message: "Cancelled after acceptance", providerTaskID: "task-accepted"))
+        #expect(accepted.requestID == "task-accepted" && accepted.resumable)
+        let synthetic = GenerationService.runwayReceipt(RunwayClient.SubmissionAcknowledgedError(
+            ledgerRequestID: "runway-missing-task-id-1", message: "No task id"))
+        #expect(synthetic.requestID == "runway-missing-task-id-1" && !synthetic.resumable)
         #expect(GenerationService.providerRunEnded(after: RunwayClient.TaskFailure(message: "FAILED", cost: nil)))
         #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.cancellationFailed("offline")))
+        #expect(!GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.notConnected))
         #expect(GenerationService.providerRunEnded(after: MCPProviderClient.ClientError.toolFailed("rejected")))
-        #expect(!GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(
-            jobID: "job", message: "Cancellation failed", providerRunEnded: false)))
-        #expect(GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(jobID: "job", message: "FAILED")))
-        #expect(GenerationService.providerRunEnded(after: CancellationError()))
+        #expect(!GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(jobID: "job", message: "Timed out")))
+        #expect(GenerationService.providerRunEnded(after: MCPGenerationExecutor.JobFailure(
+            jobID: "job", message: "FAILED", providerRunEnded: true)))
+        #expect(GenerationService.providerRunEnded(after: ProviderRunEndedError(message: "FAILED")))
+        #expect(!GenerationService.providerRunEnded(after: CancellationError()))
+        #expect(!GenerationService.providerRunEnded(after: URLError(.timedOut)))
+        #expect(!GenerationService.providerRunEnded(after: GenerationBackendError.transport(
+            "The MCP returned neither a job identifier nor output media.")))
+
+        #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
+            GenerationBackendError.api(status: 400, code: "400", message: "Bad request"))))
+        #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
+            GoogleImageClient.ClientError.noImage("blocked"))))
+        #expect(!GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(URLError(.timedOut))))
     }
 
-    @Test("an unknown provider outcome stays in flight; a terminal failure settles with its reported cost")
+    @Test("an unknown provider outcome stays open as unconfirmed; a terminal failure settles with its reported cost")
     func unknownProviderOutcomeStaysInFlight() async throws {
         let package = try project(stop: nil)
         defer { cleanup(package) }
@@ -1056,14 +1075,72 @@ struct BudgetStopTests {
         let credits = GenerationProviderCost(amount: 7, unit: "credits", source: "fixture")
         service.recordSubmittedRunFailure(RunwayClient.TaskFailure(message: "FAILED", cost: credits),
             message: "FAILED", authorization: terminal, editor: editor)
+        let panoramaless = try await submitted("job-no-output")
+        let reported = GenerationProviderCost(amount: 3, unit: "credits", source: "fixture")
+        service.recordSubmittedRunFailure(ProviderRunEndedError(message: "Marble returned no panorama", cost: reported),
+            message: "Marble returned no panorama", authorization: panoramaless, editor: editor)
+        let unclassified = try await submitted("job-poll")
+        service.recordSubmittedRunFailure(GenerationBackendError.transport("Status poll failed"),
+            message: "Status poll failed", authorization: unclassified, editor: editor)
 
         let terminalID = try #require(terminal.transactionId)
+        let panoramalessID = try #require(panoramaless.transactionId)
         let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
-        #expect(settled.map(\.transactionId) == [terminalID])
-        #expect(settled.first?.providerCost == credits)
+        #expect(settled.map(\.transactionId) == [terminalID, panoramalessID])
+        #expect(settled.map(\.providerCost) == [credits, reported])
         let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
-        #expect(snapshot.inFlightCount == 2)
-        #expect(snapshot.providerCredits.map(\.amount) == [7])
+        #expect(snapshot.inFlightCount == 0)
+        #expect(snapshot.unresolvedCount == 3)
+        #expect(snapshot.providerCredits.map(\.amount) == [10])
+    }
+
+    @Test("a resumed run books a confirmed end once and leaves an unconfirmed one in flight")
+    func resumedRunFailuresShareTheTypedEndHandling() async throws {
+        let package = try project(stop: nil)
+        defer { cleanup(package) }
+        let editor = editor(for: package)
+        func submitted(_ request: String) async throws -> GenerationAuthorization {
+            let authorization = try await GenerationBudgetGuard.authorize(
+                input: GenerationPricingInput(
+                    modelId: "fal-ai/veo3",
+                    modality: .video,
+                    durationSeconds: 5,
+                    outputCount: 1,
+                    resolution: nil,
+                    quality: nil,
+                    promptCharacterCount: 5,
+                    generateAudio: true,
+                    referenceCount: 0
+                ),
+                target: GenerationService.dispatchTarget(modelId: "fal-ai/veo3"),
+                editor: editor,
+                quoteLoader: { _, _ in money(2) }
+            )
+            try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+                providerRequestId: request, providerRequestResumable: true, money: authorization.estimate)
+            return authorization
+        }
+        let service = editor.generationService
+        let credits = GenerationProviderCost(amount: 4, unit: "credits", source: "fixture")
+
+        let failed = try await submitted("fal-failed")
+        let failure = ProviderRunEndedError(message: "fal.ai generation failed")
+        service.recordResumedRunFailure(failure, providerFinished: false, cost: nil, authorization: failed, editor: editor)
+        service.recordResumedRunFailure(failure, providerFinished: false, cost: nil, authorization: failed, editor: editor)
+        let finished = try await submitted("marble-finished")
+        service.recordResumedRunFailure(GenerationRequestError.gate("The project changed."), providerFinished: true,
+            cost: credits, authorization: finished, editor: editor)
+        let polling = try await submitted("runway-polling")
+        service.recordResumedRunFailure(CancellationError(), providerFinished: false, cost: nil,
+            authorization: polling, editor: editor)
+
+        let failedID = try #require(failed.transactionId)
+        let finishedID = try #require(finished.transactionId)
+        let settled = editor.generationLog.spendEvents.filter { $0.kind == .settled }
+        #expect(settled.map(\.transactionId) == [failedID, finishedID])
+        #expect(settled.last?.providerCost == credits)
+        let snapshot = try GenerationBudgetGuard.spendSnapshot(log: editor.generationLog, generatedInputs: [])
+        #expect(snapshot.inFlightCount == 1)
     }
 
     @Test("invalid append-only transitions are rejected")

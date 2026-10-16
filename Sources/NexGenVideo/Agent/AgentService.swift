@@ -11,6 +11,7 @@ final class AgentService {
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
     private var apiKeyGeneration = 0
+    private var isLoadingAPIKey = false
     private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
     private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
     private let runtimeAdapterFactory: (@MainActor (AgentBackend) -> (any AgentRuntimeAdapter)?)?
@@ -102,6 +103,7 @@ final class AgentService {
         apiKeyGeneration &+= 1
         let generation = apiKeyGeneration
         isCheckingAPIKey = true
+        isLoadingAPIKey = true
         modelListIsCurrent = false
         invalidateModelDiscovery()
         let loader = apiKeyLoader
@@ -110,9 +112,11 @@ final class AgentService {
                 await loader() ?? ""
             }.value
             guard let self, self.apiKeyGeneration == generation else { return }
+            self.isLoadingAPIKey = false
             self.apiKey = key
             self.apiKeyGeneration &+= 1
             self.isCheckingAPIKey = false
+            self.modelListIsCurrent = false
             self.invalidateModelDiscovery()
             if !key.isEmpty { await self.refreshModelCatalog() }
         }
@@ -130,7 +134,8 @@ final class AgentService {
     }
 
     func refreshModelCatalog(apiKey key: String) async {
-        guard !key.isEmpty else { return }
+        // The stored key is stale until the key being loaded replaces it.
+        guard !key.isEmpty, !isLoadingAPIKey else { return }
         modelDiscoveryGeneration &+= 1
         let generation = modelDiscoveryGeneration
         let keyGeneration = apiKeyGeneration

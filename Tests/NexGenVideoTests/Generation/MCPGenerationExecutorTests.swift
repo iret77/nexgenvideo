@@ -165,6 +165,140 @@ struct MCPGenerationExecutorTests {
         #expect(calls.filter { $0 == "generate_image" }.count == 1)
     }
 
+    @MainActor
+    private final class JobRecorder {
+        private(set) var jobIDs: [String] = []
+
+        func record(_ jobID: String) {
+            jobIDs.append(jobID)
+        }
+    }
+
+    @Test func acceptedJobIDIsRecordedBeforeTheFirstStatusPoll() async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(
+            responses: ["generate_image": [[#"{"job_id":"job-accepted","status":"queued"}"#]]],
+            suspendedTools: ["job_status"]
+        )
+        let recorder = await JobRecorder()
+        let task = Task {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0,
+                onJobAccepted: { recorder.record($0) }
+            )
+        }
+
+        #expect(await waitForCall("job_status", client: client))
+        #expect(await recorder.jobIDs == ["job-accepted"])
+        task.cancel()
+        _ = try? await task.value
+    }
+
+    @Test func aNullStatusWithMediaNeverEndsAnAcceptedJobsPolling() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let nullStatus = #"{"job_id":"null-status","status":null,"result":{"url":"https://output.invalid/early.png"}}"#
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"null-status","status":"queued"}"#]],
+            "job_status": [[nullStatus], [nullStatus], [nullStatus]],
+        ])
+
+        if case .unknown = MCPGenerationExecutor.jobStatus(from: [nullStatus], statusTool: status) {
+        } else {
+            Issue.record("A null status with media must read as unknown")
+        }
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                maxPollAttempts: 5,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected polling to refuse a job without an explicit status")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.message.contains("unsupported job status"))
+            #expect(!error.providerRunEnded)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await client.calledTools() == ["generate_image", "job_status", "job_status", "job_status"])
+    }
+
+    @Test(arguments: [false, true])
+    func anAcceptedAsyncJobWithMediaButNoStatusKeepsPollingItsID(declaresMediaOutput: Bool) async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ], outputSchema: declaresMediaOutput ? mediaOutputSchema : nil)
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"null-accept","status":null,"result":{"url":"https://output.invalid/early.png"}}"#]],
+            "job_status": [[#"{"job_id":"null-accept","status":"completed","result":{"url":"https://output.invalid/final.png"}}"#]],
+        ])
+
+        let result = try await MCPGenerationExecutor.run(
+            generationTool: generate,
+            arguments: ["prompt": .string("compiled anchor")],
+            tools: [generate, status],
+            provider: .higgsfield,
+            client: client,
+            maxPollAttempts: 1,
+            pollIntervalNanoseconds: 0
+        )
+
+        #expect(result.jobID == "null-accept")
+        #expect(result.outputURLs == ["https://output.invalid/final.png"])
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
+    @Test func aJobWithAnyStatusToolNeedsAStatedEndEvenWithoutAUsableResultPath() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"bare-status","status":null,"result":{"url":"https://output.invalid/preview.png"}}"#]],
+        ])
+
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected a preview without a stated end to fail unconfirmed")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.jobID == "bare-status")
+            #expect(!error.providerRunEnded)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await client.calledTools() == ["generate_image"])
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
@@ -542,7 +676,7 @@ struct MCPGenerationExecutorTests {
             #expect(error.jobID == "timed-out")
             #expect(error.message.contains("did not finish"))
             #expect(error.message.contains("sent a cancellation request"))
-            #expect(error.providerRunEnded)
+            #expect(!error.providerRunEnded)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -624,12 +758,42 @@ struct MCPGenerationExecutorTests {
             } catch let error as MCPGenerationExecutor.JobFailure {
                 #expect(error.jobID == jobID)
                 #expect(error.message.contains("provider settled the render"))
+                #expect(error.providerRunEnded)
             } catch {
                 Issue.record("Unexpected error: \(error)")
             }
 
             #expect(await client.calledTools() == ["generate_image", "job_status"])
         }
+    }
+
+    @Test func pendingSubmissionWithoutJobIdentifierStaysUnconfirmed() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"status":"queued"}"#]],
+        ])
+
+        do {
+            _ = try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                maxPollAttempts: 1,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected a pending submission without a job identifier to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("neither a job identifier nor output media"))
+            #expect(!GenerationService.providerRunEnded(after: error))
+        }
+        #expect(await client.calledTools() == ["generate_image"])
     }
 
     @Test func taskCancellationCancelsAcceptedJobExactlyOnce() async {

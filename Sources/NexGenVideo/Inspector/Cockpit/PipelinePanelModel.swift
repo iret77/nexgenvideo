@@ -30,6 +30,7 @@ struct ProjectStateData: Codable, Sendable, Equatable {
     var legacyGenerations: Int
     var unknownCostRuns: Int
     var inFlightRuns: Int
+    var unresolvedRuns: Int
     var providerCredits: [ProviderCreditData]
     var phases: [ProjectPhase]
     var nextPhase: String?
@@ -46,6 +47,7 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         case legacyGenerations = "legacy_generations"
         case unknownCostRuns = "unknown_cost_runs"
         case inFlightRuns = "in_flight_runs"
+        case unresolvedRuns = "unresolved_runs"
         case providerCredits = "provider_credits"
         case nextPhase = "next_phase"
         case confirmedIdentityRecovery = "confirmed_identity_recovery"
@@ -64,6 +66,7 @@ struct ProjectStateData: Codable, Sendable, Equatable {
         legacyGenerations = try c.decodeIfPresent(Int.self, forKey: .legacyGenerations) ?? 0
         unknownCostRuns = try c.decodeIfPresent(Int.self, forKey: .unknownCostRuns) ?? unpricedTransactions
         inFlightRuns = try c.decodeIfPresent(Int.self, forKey: .inFlightRuns) ?? activeReservations
+        unresolvedRuns = try c.decodeIfPresent(Int.self, forKey: .unresolvedRuns) ?? 0
         providerCredits = try c.decodeIfPresent([ProviderCreditData].self, forKey: .providerCredits) ?? []
         phases = try c.decodeIfPresent([ProjectPhase].self, forKey: .phases) ?? []
         nextPhase = try c.decodeIfPresent(String.self, forKey: .nextPhase)

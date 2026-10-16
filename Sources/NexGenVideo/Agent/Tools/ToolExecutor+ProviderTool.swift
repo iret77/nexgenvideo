@@ -115,23 +115,37 @@ extension ToolExecutor {
                                 "\(match.name) is no longer an available prompt-free provider tool."
                             )
                         }
+                        ActiveSpendTransactions.begin(authorization.transactionId)
+                        defer { ActiveSpendTransactions.end(authorization.transactionId) }
                         do {
-                            try editor.recordSpendEvent(
-                                authorization: authorization,
-                                kind: .submitted,
-                                providerRequestId: UUID().uuidString,
-                                money: authorization.estimate
-                            )
+                            try authorization.projectMutationScope?.requireCurrent(editor: editor)
                         } catch {
                             await approvedClient.disconnect()
                             throw error
                         }
+                        let ledgerRequestID = UUID().uuidString
                         do {
                             let texts = try await approvedClient.callTool(
                                 name: current.name,
                                 arguments: arguments
                             )
                             await approvedClient.disconnect()
+                            let outcome = Self.providerToolOutcome(payloads: texts, tools: currentTools)
+                            // The receipt carries the provider's own job id when it returned one, so it stays queryable.
+                            try? editor.recordSpendEvent(
+                                authorization: authorization,
+                                kind: .submitted,
+                                providerRequestId: outcome.jobID ?? ledgerRequestID,
+                                providerRequestResumable: outcome.queryable,
+                                money: authorization.estimate
+                            )
+                            guard outcome.ended else {
+                                return .ok(
+                                    "\(current.name) on \(provider.displayName) accepted the request"
+                                        + (outcome.jobID.map { " as job \($0)" } ?? "")
+                                        + " and has not finished. Nothing was imported; its spend stays open until the provider confirms the end."
+                                )
+                            }
                             try? editor.recordSpendEvent(
                                 authorization: authorization,
                                 kind: .settled,
@@ -149,11 +163,20 @@ extension ToolExecutor {
                             )
                         } catch {
                             await approvedClient.disconnect()
+                            // The call may have reached the provider, so it is booked as submitted, never released.
                             try? editor.recordSpendEvent(
                                 authorization: authorization,
-                                kind: .settled,
-                                note: "The provider tool ended without a result: \(error.localizedDescription)"
+                                kind: .submitted,
+                                providerRequestId: ledgerRequestID,
+                                money: authorization.estimate
                             )
+                            if GenerationService.providerRunEnded(after: error) {
+                                try? editor.recordSpendEvent(
+                                    authorization: authorization,
+                                    kind: .settled,
+                                    note: "The provider tool ended without a result: \(error.localizedDescription)"
+                                )
+                            }
                             return .error(
                                 "\(current.name) on \(provider.displayName) failed after submission: \(error.localizedDescription)"
                             )
@@ -168,6 +191,32 @@ extension ToolExecutor {
 
         let seen = offered.isEmpty ? "" : " Tools offered by configured provider MCPs: \(offered.sorted().joined(separator: ", "))."
         throw ToolError("No configured provider MCP offers a tool named '\(tool)'.\(seen)")
+    }
+
+    struct ProviderToolOutcome: Equatable, Sendable {
+        let jobID: String?
+        let queryable: Bool
+        let ended: Bool
+    }
+
+    /// Ends the run only on a stated terminal status, or on a plain answer with neither job id nor status.
+    nonisolated static func providerToolOutcome(
+        payloads: [String],
+        tools: [MCPProviderClient.DiscoveredTool]
+    ) -> ProviderToolOutcome {
+        let jobID = MCPGenerationLifecycle.submission(from: payloads).jobID.flatMap { $0.isEmpty ? nil : $0 }
+        let queryable = jobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil
+        guard MCPGenerationLifecycle.explicitStatus(from: payloads) != nil else {
+            // A missing status is a plain answer; a null or non-string status is an unconfirmed one.
+            let plainAnswer = jobID == nil && !MCPGenerationLifecycle.declaresStatus(in: payloads)
+            return ProviderToolOutcome(jobID: jobID, queryable: queryable, ended: plainAnswer)
+        }
+        switch MCPGenerationLifecycle.status(from: payloads) {
+        case .succeeded, .failed:
+            return ProviderToolOutcome(jobID: jobID, queryable: queryable, ended: true)
+        case .pending, .unknown:
+            return ProviderToolOutcome(jobID: jobID, queryable: queryable, ended: false)
+        }
     }
 
     /// Refuse tool names that denote CONTENT GENERATION — those must go through the gated generate_*

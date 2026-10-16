@@ -15,18 +15,23 @@ struct ProjectSpendSnapshot: Sendable, Equatable {
     let unknownCostCount: Int
     let inFlightCount: Int
     let legacyGenerationCount: Int
+    /// Open runs with no provider receipt NexGenVideo can query and no task still working on them.
+    var unresolvedCount = 0
 
     var creditOnlyCount: Int { providerCredits.reduce(0) { $0 + $1.runs } }
 
     /// True only when every recorded run carries billed money; otherwise spend reads "at least".
     var isComplete: Bool {
-        unknownCostCount == 0 && inFlightCount == 0 && creditOnlyCount == 0 && legacyGenerationCount == 0
+        unknownCostCount == 0 && inFlightCount == 0 && unresolvedCount == 0 && creditOnlyCount == 0
+            && legacyGenerationCount == 0
     }
 }
 
 struct GenerationSpendOutcome: Sendable, Equatable {
     enum Status: Sendable, Equatable {
         case inFlight
+        /// Neither running in this session nor backed by a provider receipt that can be queried.
+        case unresolved
         case finished
         case released
     }
@@ -51,7 +56,8 @@ enum GenerationSpendLedger {
     static func outcomes(
         log: GenerationLog,
         generatedInputs: [GenerationInput],
-        completedTransactionIDs: Set<String> = []
+        completedTransactionIDs: Set<String> = [],
+        activeTransactionIDs: Set<String> = []
     ) throws -> [GenerationSpendOutcome] {
         guard (1...settledLogVersion).contains(log.version) else {
             throw corrupt("generation-log.json uses unsupported version \(log.version)")
@@ -109,7 +115,14 @@ enum GenerationSpendLedger {
             switch state.kind {
             case .released: status = .released
             case .charged, .settled: status = .finished
-            case .reserved, .submitted: status = completed.contains(transactionId) ? .finished : .inFlight
+            case .reserved, .submitted:
+                if completed.contains(transactionId) {
+                    status = .finished
+                } else if activeTransactionIDs.contains(transactionId) || state.hasQueryableReceipt {
+                    status = .inFlight
+                } else {
+                    status = .unresolved
+                }
             }
             let closing = state.chargedMoney ?? state.settledMoney
             let billed = closing.flatMap { $0.isProviderBilled ? $0 : nil }
@@ -128,16 +141,19 @@ enum GenerationSpendLedger {
     static func snapshot(
         log: GenerationLog,
         generatedInputs: [GenerationInput],
-        completedTransactionIDs: Set<String> = []
+        completedTransactionIDs: Set<String> = [],
+        activeTransactionIDs: Set<String> = []
     ) throws -> ProjectSpendSnapshot {
         let outcomes = try outcomes(
             log: log,
             generatedInputs: generatedInputs,
-            completedTransactionIDs: completedTransactionIDs
+            completedTransactionIDs: completedTransactionIDs,
+            activeTransactionIDs: activeTransactionIDs
         )
         var billed = 0.0
         var unknown = 0
         var inFlight = 0
+        var unresolved = 0
         var credits: [String: ProjectSpendSnapshot.ProviderCredits] = [:]
         var creditOrder: [String] = []
         for outcome in outcomes {
@@ -146,6 +162,8 @@ enum GenerationSpendLedger {
                 continue
             case .inFlight:
                 inFlight += 1
+            case .unresolved:
+                unresolved += 1
             case .finished:
                 if let money = outcome.billedMoney {
                     billed += money.eurAmount
@@ -182,7 +200,8 @@ enum GenerationSpendLedger {
             providerCredits: creditOrder.compactMap { credits[$0] },
             unknownCostCount: unknown,
             inFlightCount: inFlight,
-            legacyGenerationCount: max(legacyTransactionIDs.count, legacyAssetIDs.count)
+            legacyGenerationCount: max(legacyTransactionIDs.count, legacyAssetIDs.count),
+            unresolvedCount: unresolved
         )
     }
 
@@ -221,6 +240,7 @@ enum GenerationSpendLedger {
         var chargedMoney: GenerationMoney?
         var settledMoney: GenerationMoney?
         var providerCost: GenerationProviderCost?
+        var hasQueryableReceipt = false
 
         init(_ event: GenerationSpendEvent) {
             model = event.model
@@ -251,6 +271,7 @@ enum GenerationSpendLedger {
                         "transaction \(event.transactionId) changes its submitted amount"
                     )
                 }
+                hasQueryableReceipt = event.providerRequestResumable == true
                 kind = .submitted
             case (.submitted, .charged):
                 guard let money = event.money else {

@@ -1356,6 +1356,32 @@ struct GenerationBatchTests {
         #expect(try authority.loadIfPresent(projectKey: late.payload.projectKey, batchID: late.id) == nil)
     }
 
+    @Test func aDurableApprovalIsApprovedEvenWhenItsProjectProjectionFails() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.startsApprovedBatches = false
+        let home = try #require(editor.workingRoot)
+        try Data("not a folder".utf8).write(to: home.appendingPathComponent("generation-batches"))
+        try coordinator.present(batch, recoveries: Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        }))
+
+        await coordinator.approve(editor: editor, expectedBatchID: batch.id)
+
+        #expect(coordinator.pending == nil)
+        #expect(coordinator.error == nil)
+        let authority = try GenerationExecutionAuthorityStore.live()
+        #expect(try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil)
+        let stored = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(stored.authorityAvailable)
+        _ = try GenerationBatchStore.update(stored, editor: editor) { $0.cancelRemaining() }
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
+        try FileManager.default.removeItem(at: home.appendingPathComponent("generation-batches"))
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        #expect(coordinator.error == nil)
+    }
+
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {
         let (root, editor, batch) = try await fixture()
         let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")

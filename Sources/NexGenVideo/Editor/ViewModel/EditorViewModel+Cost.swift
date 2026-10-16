@@ -107,7 +107,8 @@ extension EditorViewModel {
 
     /// Ledger outcome per spend transaction, for labelling each Project Activity row honestly.
     var generationSpendOutcomes: [String: GenerationSpendOutcome] {
-        let outcomes = (try? GenerationSpendLedger.outcomes(log: generationLog, generatedInputs: [])) ?? []
+        let outcomes = (try? GenerationSpendLedger.outcomes(log: generationLog, generatedInputs: [],
+            activeTransactionIDs: ActiveSpendTransactions.current)) ?? []
         return Dictionary(outcomes.map { ($0.transactionId, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
@@ -174,6 +175,11 @@ extension EditorViewModel {
         } catch {
             generationLog = previousLog
             throw error
+        }
+        switch kind {
+        case .reserved: ActiveSpendTransactions.begin(transactionId)
+        case .charged, .settled, .released: ActiveSpendTransactions.end(transactionId)
+        case .submitted: break
         }
     }
 

@@ -152,6 +152,13 @@ actor FalClient {
                 message: "fal.ai did not return a submission receipt. The request may still be running, so NexGenVideo will not retry it automatically."
             )
         }
+        // A server error or timeout says nothing about whether the job started; only a 4xx is a rejection.
+        if response.status >= 500 || response.status == 408 {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "unknown-\(UUID().uuidString)",
+                message: "fal.ai answered the submission with HTTP \(response.status). The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = Self.parse(response.data)
         try Self.throwIfError(response, request: request, operation: "submit", json: json)
         guard let requestId = json?["request_id"] as? String else {
@@ -267,8 +274,8 @@ actor FalClient {
                 case "FAILED", "ERROR", "CANCELLED":
                     providerReachedTerminalState = true
                     let detail = Self.errorMessage(in: json) ?? "provider reported failure"
-                    throw GenerationBackendError.transport(
-                        "fal.ai generation failed for \(route.application), request \(Self.safeRequestID(requestId)): \(detail)"
+                    throw ProviderRunEndedError(
+                        message: "fal.ai generation failed for \(route.application), request \(Self.safeRequestID(requestId)): \(detail)"
                     )
                 default:
                     invalidStatusResponses += 1
@@ -287,7 +294,7 @@ actor FalClient {
             let message =
                 "fal.ai generation timed out for \(route.application), request \(Self.safeRequestID(requestId))"
             guard !providerReachedTerminalState else {
-                throw GenerationBackendError.transport(message)
+                throw ProviderRunEndedError(message: message)
             }
             let error = await abandonmentError(
                 message,
@@ -295,7 +302,9 @@ actor FalClient {
             )
             throw error
         } catch is CancellationError {
-            guard !providerReachedTerminalState else { throw CancellationError() }
+            guard !providerReachedTerminalState else {
+                throw ProviderRunEndedError(message: "Generation cancelled.")
+            }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
                 throw CancellationFailedError(
                     message: "fal.ai generation was cancelled locally. \(warning)"
@@ -303,13 +312,38 @@ actor FalClient {
             }
             throw CancellationError()
         } catch {
-            guard !providerReachedTerminalState else { throw error }
+            guard !providerReachedTerminalState else {
+                if error is ProviderRunEndedError { throw error }
+                throw ProviderRunEndedError(message: error.localizedDescription)
+            }
             if let warning = await cancellationFailureWarning(url: cancelURL) {
                 throw CancellationFailedError(
                     message: "\(error.localizedDescription) \(warning)"
                 )
             }
             throw error
+        }
+    }
+
+    /// One status read for a queued request; never retries, cancels or fetches the result.
+    func status(endpoint: String, requestId: String) async throws -> ProviderRunStatus {
+        let url = try Self.route(endpoint: endpoint).lifecycleURL(requestId: requestId, suffix: "status")
+        let request = makeRequest(url: url, method: "GET", body: nil)
+        let response = try await send(request)
+        let json = Self.parse(response.data)
+        try Self.throwIfError(response, request: request, operation: "status", json: json)
+        guard let state = json?["status"] as? String else {
+            throw GenerationBackendError.transport("fal.ai returned no usable request status.")
+        }
+        switch state {
+        case "COMPLETED":
+            return .completed(nil)
+        case "FAILED", "ERROR", "CANCELLED":
+            return .failed(Self.errorMessage(in: json) ?? "fal.ai reported the request as failed", nil)
+        case "IN_QUEUE", "IN_PROGRESS":
+            return .running
+        default:
+            throw GenerationBackendError.transport("fal.ai returned no usable request status.")
         }
     }
 
