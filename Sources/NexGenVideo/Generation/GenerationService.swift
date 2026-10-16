@@ -427,7 +427,7 @@ final class GenerationService {
             defer { ActiveSpendTransactions.end(execution.transactionID) }
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
-            func resumedAuthorization(_ transaction: String) -> GenerationAuthorization {
+            @MainActor func resumedAuthorization(_ transaction: String) -> GenerationAuthorization {
                 let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
                 return GenerationAuthorization(transactionId: transaction, target: target, estimate: reserved,
                     projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
