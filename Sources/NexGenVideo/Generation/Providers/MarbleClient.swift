@@ -59,6 +59,13 @@ actor MarbleClient {
             )
         }
         let (data, status) = response
+        // A server error or timeout says nothing about whether the job started; only a 4xx is a rejection.
+        if status >= 500 || status == 408 {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "marble-unknown-\(UUID().uuidString)",
+                message: "Marble answered the submission with HTTP \(status). The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = Self.parse(data)
         try Self.throwIfError(status: status, json: json)
         guard let operationId = Self.operationId(in: json) else {

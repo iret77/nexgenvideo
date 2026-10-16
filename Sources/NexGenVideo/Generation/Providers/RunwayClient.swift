@@ -302,6 +302,13 @@ actor RunwayClient {
             )
         }
         let (data, status) = response
+        // A server error or timeout says nothing about whether the task started; only a 4xx is a rejection.
+        if status >= 500 || status == 408 {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "runway-unknown-\(UUID().uuidString)",
+                message: "Runway answered the submission with HTTP \(status). The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard (200..<300).contains(status) else {
             throw Self.apiError(data: data, status: status, operation: "submission")

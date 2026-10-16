@@ -100,11 +100,16 @@ struct ProviderStatusTests {
             #expect(!GenerationService.providerRunEnded(after: error))
         }
 
+        Fixture.stub("POST", "/worlds:generate", .response(status: 502, body: #"{"message":"bad gateway"}"#))
+        await #expect(throws: MarbleClient.SubmissionOutcomeUnknownError.self) {
+            _ = try await client.submit(body: Data("{}".utf8))
+        }
+
         Fixture.stub("POST", "/worlds:generate", .response(status: 422, body: #"{"message":"invalid prompt"}"#))
         await #expect(throws: GenerationBackendError.self) {
             _ = try await client.submit(body: Data("{}".utf8))
         }
-        #expect(Fixture.requests().count == 3)
+        #expect(Fixture.requests().count == 4)
     }
 
     private struct MCPStatusStub: MCPStatusClient {

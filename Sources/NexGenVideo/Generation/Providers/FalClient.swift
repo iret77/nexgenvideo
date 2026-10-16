@@ -152,6 +152,13 @@ actor FalClient {
                 message: "fal.ai did not return a submission receipt. The request may still be running, so NexGenVideo will not retry it automatically."
             )
         }
+        // A server error or timeout says nothing about whether the job started; only a 4xx is a rejection.
+        if response.status >= 500 || response.status == 408 {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "unknown-\(UUID().uuidString)",
+                message: "fal.ai answered the submission with HTTP \(response.status). The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = Self.parse(response.data)
         try Self.throwIfError(response, request: request, operation: "submit", json: json)
         guard let requestId = json?["request_id"] as? String else {

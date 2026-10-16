@@ -711,7 +711,7 @@ struct FalClientTests {
             retryBaseDelayNanoseconds: 0
         )
 
-        await #expect(throws: GenerationBackendError.self) {
+        await #expect(throws: FalClient.SubmissionOutcomeUnknownError.self) {
             _ = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
         }
         let requests = FixtureURLProtocol.requests()

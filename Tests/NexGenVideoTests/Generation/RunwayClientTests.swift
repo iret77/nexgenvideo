@@ -246,6 +246,29 @@ struct RunwayClientTests {
         #expect(FixtureURLProtocol.requests().filter { $0.method == "DELETE" }.count == 1)
     }
 
+    @Test func serverErrorsOnSubmissionAreUnknownWhileRejectionsAreNot() async throws {
+        FixtureURLProtocol.reset()
+        FixtureURLProtocol.enqueue(method: "POST", pathSuffix: "/image_to_video",
+            result: .response(status: 504, body: #"{"error":"gateway timeout"}"#))
+        FixtureURLProtocol.enqueue(method: "POST", pathSuffix: "/image_to_video",
+            result: .response(status: 422, body: #"{"error":"invalid ratio"}"#))
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = RunwayClient(apiKey: "runway-secret", session: testSession)
+        func submit() async throws {
+            _ = try await client.createImageToVideo(model: "gen4_turbo", promptImage: "https://example.com/frame.png",
+                promptText: "Move slowly", ratio: "1280:720", duration: 5)
+        }
+
+        await #expect(throws: RunwayClient.SubmissionOutcomeUnknownError.self) { try await submit() }
+        do {
+            try await submit()
+            Issue.record("Expected a rejected submission to throw")
+        } catch {
+            #expect(!(error is RunwayClient.SubmissionOutcomeUnknownError))
+        }
+    }
+
     @Test func cancelledSubmissionWithoutReceiptHasUnknownOutcome() async throws {
         FixtureURLProtocol.reset()
         FixtureURLProtocol.enqueue(
