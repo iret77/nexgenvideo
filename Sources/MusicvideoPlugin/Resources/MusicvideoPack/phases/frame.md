@@ -252,10 +252,14 @@ After a frame is in the project:
   separately. The host resolves and persists the real project path;
   `get_frames_manifest` must then show both entries with non-empty
   `provider_prompt`.
-- Budget check after every call via `estimate_cost(project_dir)`. If
-  `over_budget` would flip true, stop and escalate to the user before
-  further calls. If `spend_complete=false`, stop as well; never treat an
-  unavailable remainder as zero spend.
+- Budget check after every call via `estimate_cost(project_dir)`.
+  `over_budget` is true only when known spend exceeds `budget_stop_eur`.
+  If it would flip true, stop and escalate to the user before further
+  calls. Unknown costs never stop the phase: with `spend_complete=false`,
+  continue and tell the user how many runs have unknown cost
+  (`unpriced_transactions` + `legacy_generations`). Each such run still
+  goes through its own spend approval. Never treat `verified_spend_eur`
+  as the complete total or an unavailable remainder as zero spend.
 
 #### F2.12 — Shots without keyframes
 
@@ -464,7 +468,8 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 | Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review, then either generate unchanged or explicitly rewind to the owning Shot List/Bible phase before any correction or skip. |
 | Audit blocking deviation | Repair the owning artifact when needed; otherwise recompile the unchanged shot and rerender, max 2 attempts. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
-| `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |
+| `estimate_cost` shows over_budget (known spend above `budget_stop_eur`) | Stop and escalate to the user before further `generate_image` calls. |
+| `estimate_cost` shows spend_complete=false | Continue. Tell the user how many runs have unknown cost; never stop for it. |
 
 ## Current audit evidence and explicit deviations
 

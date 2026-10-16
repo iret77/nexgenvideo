@@ -267,9 +267,13 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    an AI-enhanced shot passes only with the exact `source_path` declared
    by its approved Shot List.
 7. **Budget check** after every shot via `estimate_cost(project_dir)`.
-   If `over_budget` would flip true, abort the batch and escalate to the
-   user before further `generate_video` calls. Abort in the same way when
-   `spend_complete=false`; `verified_spend_eur` is then only a lower bound.
+   `over_budget` is true only when known spend exceeds `budget_stop_eur`.
+   If it would flip true, abort the batch and escalate to the user before
+   further `generate_video` calls. Unknown costs never abort the loop:
+   with `spend_complete=false`, continue and tell the user how many runs
+   have unknown cost (`unpriced_transactions` + `legacy_generations`);
+   `verified_spend_eur` is then only a lower bound. Each such run still
+   goes through its own spend approval.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
 the manifest and proof incrementally. A crash between the two writes is
@@ -429,10 +433,12 @@ failed, total spend (`estimate_cost`), and any shots delivered as
 - **Insufficient credits / generation budget:** controlled batch abort
   with a clear user message including the resume hint. After topping up
   in the host, continue the loop.
-- **Budget exceeded (`estimate_cost` over_budget):** abort; this is a
-  deliberate brake, never bypass it silently.
-- **Spend incomplete (`estimate_cost` spend_complete=false):** abort and
-  report the unpriced/legacy counts; never infer a remaining amount.
+- **Budget exceeded (`estimate_cost` over_budget, known spend above
+  `budget_stop_eur`):** abort; this is a deliberate brake, never bypass
+  it silently.
+- **Spend incomplete (`estimate_cost` spend_complete=false):** continue;
+  report the unpriced/legacy counts to the user and never infer a
+  remaining amount. Unknown cost is never a reason to abort.
 - **Content-policy fail:** do not batch. Apply the workaround table from
   `phases/shotlist.md` rule 3, call
   `rewind(target_phase="shotlist")`, rewrite and re-approve the

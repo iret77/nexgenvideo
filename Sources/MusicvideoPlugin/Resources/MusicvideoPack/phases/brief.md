@@ -191,6 +191,8 @@ explain the affected approvals and use an explicit rewind before rewriting it.
    ask whether that amount is also a hard stop. If yes, write the same amount
    to `budget_stop_eur`; if no, state that the planning target does not block
    spending and leave `budget_stop_eur` empty. Never call `budget_eur` a cap.
+   When offering the stop, say that it counts known costs only: a run whose
+   provider gives no price is not covered by it and asks for approval each time.
 
 9. **Image-model routing** (phase F + K5 bible sheets) — exactly 4
    options (Other automatic):
@@ -272,12 +274,14 @@ explain the affected approvals and use an explicit rewind before rewriting it.
     then ask. Concretely:
 
     a) **Show the budget picture** (before asking the question): call
-       `estimate_cost(project_dir)` and present `budget_eur`,
-       `budget_stop_eur`, `spent_eur`, and `remaining_eur`. If
-       `spend_complete=false`, present `verified_spend_eur` as a lower bound
-       and state that remaining amounts are unavailable. A per-shot forward estimate
-       only
-       exists only once a shotlist exists. Before Brief approval, use the
+       `estimate_cost(project_dir)` and present `budget_eur` (planning
+       target), `budget_stop_eur`, `spent_eur`, and `remaining_eur` (the
+       amount left under `budget_stop_eur`; null when no stop is set). If
+       `spend_complete=false`, present `verified_spend_eur` as a lower bound,
+       state how many runs have unknown cost, and state that remaining
+       amounts are unavailable. Unknown cost never blocks later phases;
+       those runs go through their own spend approval. A per-shot forward
+       estimate exists only once a shotlist exists. Before Brief approval, use the
        known planning budget and explain that a per-shot estimate is not yet
        available.
 
