@@ -36,6 +36,7 @@ struct GateApprovalCard: View {
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(isWorking || isBlocked)
+            .background { acceptanceProbe("open", enabled: !(isWorking || isBlocked), text: reviewDestination) }
             if let blocker = review.blocker, !isBlocked {
                 Text(blocker)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -196,6 +197,7 @@ struct GateApprovalCard: View {
             Button("Not yet") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
+                .background { acceptanceProbe("decline", enabled: !(isWorking || isBlocked)) }
             if horizontal { Spacer() }
             Button {
                 Task {
@@ -212,10 +214,23 @@ struct GateApprovalCard: View {
             }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(isWorking || isBlocked || !review.isReady)
+                .background {
+                    acceptanceProbe("approve", enabled: !(isWorking || isBlocked || !review.isReady),
+                        text: review.isReady ? nil : review.blocker)
+                }
                 .focused($approveFocused)
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""
                 )
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(_ part: String, enabled: Bool, text: String? = nil) -> some View {
+        if WorkspaceUIAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "agent.gate.\(part)", acceptanceState: enabled, acceptanceText: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
         }
     }
 }

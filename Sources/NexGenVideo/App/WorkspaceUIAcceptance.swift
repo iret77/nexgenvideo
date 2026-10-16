@@ -46,6 +46,7 @@ enum WorkspaceUIAcceptance {
                 case "provenance": await captureAssetProvenance(evidenceURL: evidenceURL, scale: scale)
                 case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
                 case "hoststates": await captureHostStateHistory(evidenceURL: evidenceURL, scale: scale)
+                case "storyboard": await captureStoryboardReview(evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -1406,7 +1407,7 @@ enum WorkspaceUIAcceptance {
     }
 
     private static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
-        guard let root = window.contentView, let probe = findProbe(in: root, identifier: identifier),
+        guard let root = window.contentView, let probe = shownProbe(in: root, identifier: identifier),
               let scroll = enclosingScrollView(for: probe), let document = scroll.documentView else { return false }
         document.scrollToVisible(probe.convert(probe.bounds, to: document))
         scroll.reflectScrolledClipView(scroll.contentView)
@@ -2233,7 +2234,7 @@ enum WorkspaceUIAcceptance {
         guard (1...2).contains(clickCount) else { return "unsupported click count" }
         guard window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView,
-              let probe = findProbe(in: root, identifier: identifier),
+              let probe = shownProbe(in: root, identifier: identifier),
               probe.window === window,
               !probe.isHiddenOrHasHiddenAncestor else {
             return "control geometry unavailable"
@@ -2279,6 +2280,13 @@ enum WorkspaceUIAcceptance {
             NSApp.postEvent(up, atStart: false)
         }
         return nil
+    }
+
+    /// Layouts such as ViewThatFits can keep an unused variant's probe; act on the one on screen.
+    private static func shownProbe(in root: NSView, identifier: String) -> NSView? {
+        probes(in: root, identifier: identifier).first {
+            !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 0 && $0.bounds.height > 0
+        } ?? findProbe(in: root, identifier: identifier)
     }
 
     private static func findProbe(in view: NSView, identifier: String) -> NSView? {
@@ -2433,5 +2441,242 @@ extension WorkspaceUIAcceptance {
                 && !text(rejectedShotlist).contains("unverified") && !reviewOffered(rejectedShotlist),
             "screenshots": [name],
         ])
+    }
+}
+
+extension WorkspaceUIAcceptance {
+    /// A pending Storyboard approval reviewed in the shared cockpit tab, never in a modal surface (#623).
+    fileprivate static func captureStoryboardReview(evidenceURL: URL, scale: Double) async {
+        let projectURL: URL
+        let savedBytes: [String: Data]
+        let document: VideoProject
+        do {
+            projectURL = try makeStoryboardFixture()
+            savedBytes = try treeSnapshot(at: projectURL)
+            document = try await VideoProject.load(from: projectURL)
+        } catch { fail("could not open the Storyboard fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        let editor = document.editorViewModel
+        editor.setWorkspaceFocus(.production)
+        await editor.refreshEngineState()
+        guard let home = editor.workingRoot, let dataRoot = DataRootResolver.dataRoot(of: home),
+              let requested = try? StoryboardReviewSnapshot.read(root: dataRoot),
+              editor.agentService.pendingDialog == nil,
+              PipelineSurfaceRouting.route(for: "storyboard", contract: editor.uiContract,
+                  availablePackSurfaces: editor.availableCockpitPackSurfaces)?.destination == .tab(.storyboard) else {
+            fail("Storyboard fixture lost its working copy, artifact or canonical route", scale: scale)
+        }
+        let gatesURL = PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        let gates = try? Data(contentsOf: gatesURL)
+        let approval: GateApproval
+        do {
+            approval = try editor.agentService.requestGateApproval(GateApproval(
+                phase: "storyboard",
+                dataRoot: dataRoot,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding,
+                artifactFingerprint: GateArtifactFingerprint(
+                    path: PipelineLayout.storyboardCurrentFile,
+                    sha256: requested.sha256,
+                    lineageSHA256: try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.lineageFile, in: dataRoot)),
+                    phase: "storyboard"
+                )
+            )).approval
+        } catch { fail("could not request the Storyboard approval: \(error.localizedDescription)", scale: scale) }
+        editor.cockpitTab = .pipeline
+        editor.cockpitPackSurfaceID = nil
+        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
+            ProjectCockpitView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
+            AgentPanelView()
+        }.interfaceStyle(palette: editor.projectPalette).environment(editor)
+            .frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height)
+            .background(AppTheme.Background.surfaceColor))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil); window.contentView = nil }
+        let baseline = Set(NSApp.windows.filter(\.isVisible).map { ObjectIdentifier($0) })
+        func shown(_ id: String) -> AppRelaunchClickProbeView? {
+            probes(in: host, identifier: id).first { !$0.isHiddenOrHasHiddenAncestor } as? AppRelaunchClickProbeView
+        }
+        func text(_ id: String) -> String? { shown(id)?.acceptanceText }
+        func state(_ id: String) -> Bool? { shown(id)?.acceptanceState }
+        func modalSurfaces() -> [String] {
+            var found = NSApp.windows.filter {
+                $0.isVisible && ($0.isSheet || $0.isModalPanel || $0.sheetParent != nil
+                    || ($0.styleMask.contains(.titled) && !baseline.contains(ObjectIdentifier($0))))
+            }.map { String(describing: type(of: $0)) }
+            if window.attachedSheet != nil { found.append("attachedSheet") }
+            if NSApp.modalWindow != nil { found.append("modalWindow") }
+            return found
+        }
+        func reject(_ reason: String) -> Never {
+            _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-storyboard-failed.png"))
+            emit("storyboard-diagnostic", scale: scale, fields: [
+                "reason": reason, "tab": editor.cockpitTab.rawValue,
+                "pending": editor.agentService.pendingGateApproval?.phase ?? "none",
+                "open": text("agent.gate.open") ?? "missing", "approve": text("agent.gate.approve") ?? "missing",
+                "review": text("storyboard.review") ?? "missing", "document": text("storyboard.document") ?? "missing",
+                "row": text("pipeline.overview.surface.storyboard") ?? "missing", "modal": modalSurfaces(),
+            ])
+            fail(reason, scale: scale)
+        }
+        let checking = "Checking the current phase…"
+        let storyboardTitle = CockpitTab.storyboard.rawValue
+        func reviewIsOffered() -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard window.isKeyWindow, state("cockpit.tab.Pipeline") == true else { return false }
+            guard text("agent.gate.open") == storyboardTitle, state("agent.gate.open") == true else { return false }
+            guard state("agent.gate.decline") == true, state("agent.gate.approve") != nil else { return false }
+            guard text("agent.gate.approve") != checking else { return false }
+            guard text("pipeline.overview.surface.storyboard") == storyboardTitle else { return false }
+            guard state("pipeline.overview.surface.storyboard") == true else { return false }
+            return modalSurfaces().isEmpty
+        }
+        guard await waitUntil(timeout: .seconds(10), reviewIsOffered) else {
+            reject("the pending Storyboard approval or its Pipeline action did not render")
+        }
+        let cardDestination = text("agent.gate.open") ?? ""
+        let pipelineDestination = text("pipeline.overview.surface.storyboard") ?? ""
+        let approveState = state("agent.gate.approve")
+        let approveBlocker = text("agent.gate.approve")
+        func showsStoryboard(_ snapshot: StoryboardReviewSnapshot, _ binding: StoryboardReviewBinding) -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard state("cockpit.tab.Storyboard") == true, editor.cockpitTab == .storyboard else { return false }
+            guard editor.cockpitPackSurfaceID == nil, editor.workspaceFocus == .production else { return false }
+            guard text("storyboard.document") == snapshot.sha256 else { return false }
+            guard text("storyboard.review") == binding.rawValue else { return false }
+            guard findProbe(in: host, identifier: "pipeline.overview.root") == nil else { return false }
+            return modalSurfaces().isEmpty
+        }
+        func showsRequestedStoryboard() -> Bool {
+            editor.agentService.pendingGateApproval?.id == approval.id && showsStoryboard(requested, .current)
+        }
+        func activate(_ identifier: String, _ failure: String) async {
+            _ = await revealProbe(identifier, in: window)
+            if let reason = click(identifier: identifier, in: window) { reject("\(failure): \(reason)") }
+        }
+        await activate("agent.gate.open", "Open Storyboard could not be clicked")
+        guard await waitUntil(timeout: .seconds(5), showsRequestedStoryboard) else {
+            reject("Open Storyboard did not select the Storyboard tab with the requested bytes")
+        }
+        let opened = "scale-\(scaleLabel(scale))-storyboard-review.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(opened)) else { reject("could not capture the Storyboard tab") }
+
+        func otherTabKeepsCard() -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard state("cockpit.tab.Bible") == true, text("agent.gate.open") == cardDestination else { return false }
+            guard findProbe(in: host, identifier: "storyboard.document") == nil else { return false }
+            return modalSurfaces().isEmpty
+        }
+        await activate("cockpit.tab.Bible", "Bible tab could not open")
+        guard await waitUntil(timeout: .seconds(5), otherTabKeepsCard) else {
+            reject("switching tabs lost the approval card or kept the Storyboard")
+        }
+        await activate("cockpit.tab.Storyboard", "Storyboard tab could not reopen")
+        guard await waitUntil(timeout: .seconds(5), showsRequestedStoryboard) else {
+            reject("returning to the Storyboard tab did not show the requested bytes")
+        }
+        func pipelineOffersStoryboard() -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard state("cockpit.tab.Pipeline") == true else { return false }
+            guard text("pipeline.overview.surface.storyboard") == cardDestination else { return false }
+            return state("pipeline.overview.surface.storyboard") == true
+        }
+        await activate("cockpit.tab.Pipeline", "Pipeline tab could not open")
+        guard await waitUntil(timeout: .seconds(5), pipelineOffersStoryboard) else {
+            reject("Pipeline did not offer the Storyboard action")
+        }
+        await activate("pipeline.overview.surface.storyboard", "the Pipeline Storyboard action could not be clicked")
+        guard await waitUntil(timeout: .seconds(5), showsRequestedStoryboard) else {
+            reject("the Pipeline Storyboard action did not open the same tab and bytes")
+        }
+        func approvalControlsUsable() -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard editor.agentService.pendingGateApproval?.id == approval.id else { return false }
+            for id in ["agent.gate.open", "agent.gate.decline", "agent.gate.approve"] {
+                guard visibleProbe(identifier: id, in: window, containedBy: host.bounds) else { return false }
+            }
+            guard state("agent.gate.open") == true, state("agent.gate.decline") == true else { return false }
+            guard state("agent.gate.approve") == approveState else { return false }
+            guard text("agent.gate.approve") == approveBlocker else { return false }
+            return modalSurfaces().isEmpty
+        }
+        guard await waitUntil(timeout: .seconds(5), approvalControlsUsable) else {
+            reject("the approval controls changed or were covered after the tab round trip")
+        }
+
+        let revised: StoryboardReviewSnapshot
+        do {
+            try StoryboardStore.save(storyboardFixture(subject: "The singer stops at the platform edge.", version: 2),
+                to: dataRoot)
+            revised = try StoryboardReviewSnapshot.read(root: dataRoot)
+        } catch { reject("could not revise the Storyboard during review") }
+        await editor.refreshEngineState()
+        let changedBlocker = "This revision changed. Request a new approval for the updated artifact."
+        func changeIsMarked() -> Bool {
+            guard editor.agentService.pendingGateApproval?.id == approval.id else { return false }
+            guard showsStoryboard(revised, .changed) else { return false }
+            guard state("agent.gate.approve") == false else { return false }
+            return text("agent.gate.approve") == changedBlocker
+        }
+        guard revised.sha256 != requested.sha256, await waitUntil(timeout: .seconds(10), changeIsMarked) else {
+            reject("a Storyboard change during review was not marked or still offered approval")
+        }
+        let changed = "scale-\(scaleLabel(scale))-storyboard-changed.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(changed)) else {
+            reject("could not capture the changed Storyboard")
+        }
+
+        func declinedFromStoryboard() -> Bool {
+            guard editor.agentService.pendingGateApproval == nil else { return false }
+            guard showsStoryboard(revised, .unrelated) else { return false }
+            return findProbe(in: host, identifier: "agent.gate.open") == nil
+        }
+        await activate("agent.gate.decline", "Not yet could not be clicked")
+        guard await waitUntil(timeout: .seconds(5), declinedFromStoryboard) else {
+            reject("Not yet did not resolve the approval while the Storyboard stayed open")
+        }
+        guard gates != nil, (try? Data(contentsOf: gatesURL)) == gates,
+              (try? treeSnapshot(at: projectURL)) == savedBytes else {
+            reject("reviewing or declining changed the gates or the saved project")
+        }
+        emit("storyboard-review", scale: scale, fields: [
+            "cardDestination": cardDestination, "pipelineDestination": pipelineDestination,
+            "openedTabWithoutModal": true, "tabRoundTrip": true, "pipelineActionSameTarget": true,
+            "approvalControlsUsable": true, "shownBytesMatchApproval": true, "changeMarked": true,
+            "declinedFromStoryboard": true, "gatesUnchanged": true, "savedProjectUnchanged": true,
+            "screenshots": [opened, changed],
+        ])
+    }
+
+    private static func makeStoryboardFixture() throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Storyboard-\(UUID().uuidString).ngv", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
+        try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
+        try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
+        let dataRoot = try ProjectScaffold.initProject(home: home, name: "Native Storyboard acceptance")
+        try StoryboardStore.save(storyboardFixture(subject: "The singer crosses the empty night platform.", version: 1),
+            to: dataRoot)
+        _ = try ProjectIdentity.uuid(for: home)
+        return home
+    }
+
+    private static func storyboardFixture(subject: String, version: Int) throws -> Storyboard {
+        try Storyboard(
+            meta: StoryboardMeta(project: "Native Storyboard acceptance", version: version, generated: "2026-10-16",
+                summaryOneline: "One continuous walk across a night platform."),
+            sections: [.init(id: "verse1", label: "Verse 1", timeStart: 0, timeEnd: 12,
+                energy: "low", function: "setup",
+                steps: [.init(id: "verse1.01", function: .story, subject: subject,
+                    camera: "Slow dolly", framing: "Wide")])]
+        )
     }
 }
