@@ -43,6 +43,157 @@ struct AnthropicModelCatalogTests {
         }
     }
 
+    private func pageWithoutCursor() throws -> Data {
+        let body: [String: Any] = ["data": [F.sonnet55], "has_more": true]
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    @Test("more pages without a usable cursor or past the page limit fail discovery")
+    func incompletePaginationFails() async throws {
+        let missingCursor = RecordingModelsTransport(pages: [.success(try pageWithoutCursor())])
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.incompletePagination) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: missingCursor.transport)
+        }
+        let repeatedCursor = RecordingModelsTransport(pages: [
+            .success(try F.page([F.sonnet55], hasMore: true)),
+            .success(try F.page([F.opus55, F.sonnet55], hasMore: true)),
+            .success(try F.page([F.sonnet55], hasMore: true)),
+        ])
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.incompletePagination) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: repeatedCursor.transport)
+        }
+        #expect(repeatedCursor.recorded.count == 2)
+        let endless = RecordingModelsTransport(pages: try (0..<AnthropicModelsAPI.maximumPages).map {
+            index -> Result<Data, Error> in
+            .success(try F.page([F.entry(id: "claude-page-\(index)", name: "Page \(index)",
+                created: "2026-01-01T00:00:00Z", line: "page")], hasMore: true))
+        })
+        await #expect(throws: AnthropicModelsAPI.DiscoveryError.pageLimitReached) {
+            _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: endless.transport)
+        }
+        #expect(endless.recorded.count == AnthropicModelsAPI.maximumPages)
+    }
+
+    @Test("a page without a boolean has_more is an invalid response")
+    func hasMoreIsRequired() async throws {
+        for hasMore in [nil, "false", 0] as [Any?] {
+            var body: [String: Any] = ["data": [F.sonnet55], "last_id": "claude-sonnet-5-5"]
+            if let hasMore { body["has_more"] = hasMore }
+            let transport = RecordingModelsTransport(pages: [.success(try JSONSerialization.data(withJSONObject: body))])
+            await #expect(throws: AnthropicModelsAPI.DiscoveryError.invalidResponse) {
+                _ = try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: transport.transport)
+            }
+        }
+        let valid = RecordingModelsTransport(pages: [.success(try F.page([F.sonnet55], hasMore: false))])
+        #expect(try await AnthropicModelsAPI.fetchAll(apiKey: "sk", transport: valid.transport).map(\.id)
+            == ["claude-sonnet-5-5"])
+    }
+
+    @Test("an incomplete model list keeps the cached list and the stored choice")
+    func incompleteListIsNotCurrent() async throws {
+        let defaults = F.isolatedDefaults()
+        let cached = F.models([F.sonnet46, F.opus55])
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(cached)
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let partial = RecordingModelsTransport(pages: [.success(try pageWithoutCursor())])
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: partial.transport
+        )
+        await service.refreshModelCatalog(apiKey: "sk-test")
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(service.modelDiscoveryError != nil)
+        #expect(defaults.string(forKey: "agentModel") == "claude-opus-4-8")
+        #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels() == cached)
+    }
+
+    @Test("a list fetched with the previous key never becomes current after a key change")
+    func keyChangeInvalidatesInFlightDiscovery() async throws {
+        let defaults = F.isolatedDefaults()
+        let cached = F.models([F.sonnet46, F.opus55])
+        AnthropicModelCatalogStore(defaults: defaults).saveCatalog(cached)
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let transport = GatedModelsTransport()
+        let keychain = GatedKeyLoader()
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: transport.transport,
+            apiKeyLoader: { await keychain.load() }
+        )
+
+        let old = Task { await service.refreshModelCatalog(apiKey: "sk-old") }
+        await waitUntil { transport.isWaiting("sk-old") }
+        service.reloadAPIKey()
+        await waitUntil { keychain.isWaiting }
+        transport.respond("sk-old", with: .success(try F.page([F.sonnet55, F.opus55], hasMore: false)))
+        await old.value
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+
+        keychain.release("sk-new")
+        await waitUntil { transport.isWaiting("sk-new") }
+        transport.respond("sk-new", with: .failure(URLError(.notConnectedToInternet)))
+        await waitUntil { !service.isCheckingAPIKey && !service.isDiscoveringModels && service.modelDiscoveryError != nil }
+        #expect(!service.modelListIsCurrent)
+        #expect(service.availableModels == cached)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(defaults.string(forKey: "agentModel") == "claude-opus-4-8")
+        #expect(AnthropicModelCatalogStore(defaults: defaults).cachedModels() == cached)
+    }
+
+    @Test("no discovery uses the previous key while a new key loads; a replaced key's list is never current")
+    func staleKeyNeverDiscoversWhileKeyReloads() async throws {
+        let defaults = F.isolatedDefaults()
+        defaults.set("claude-opus-4-8", forKey: "agentModel")
+        let transport = GatedModelsTransport()
+        let keychain = GatedKeyLoader()
+        let service = AgentService(
+            refreshBackendStatusOnInit: false,
+            modelCatalogDefaults: defaults,
+            modelDiscoveryTransport: transport.transport,
+            apiKeyLoader: { await keychain.load() }
+        )
+
+        service.reloadAPIKey()
+        await waitUntil { keychain.isWaiting }
+        keychain.release("sk-old")
+        await waitUntil { transport.isWaiting("sk-old") }
+        transport.respond("sk-old", with: .success(try F.page([F.sonnet55, F.opus55], hasMore: false)))
+        await waitUntil { service.modelListIsCurrent }
+        #expect(service.effectiveModel?.id == "claude-opus-5-5")
+
+        service.reloadAPIKey()
+        #expect(!service.modelListIsCurrent)
+        await waitUntil { keychain.isWaiting }
+        let stale = Task { await service.refreshModelCatalog() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(!transport.isWaiting("sk-old"))
+        #expect(transport.requestCount("sk-old") == 1)
+        transport.respond("sk-old", with: .failure(URLError(.cancelled)))
+        await stale.value
+        #expect(!service.modelListIsCurrent)
+
+        keychain.release("")
+        await waitUntil { !service.isCheckingAPIKey }
+        #expect(!service.hasApiKey)
+        #expect(!service.modelListIsCurrent)
+        #expect(service.effectiveModel?.id == "claude-opus-4-8")
+        #expect(defaults.string(forKey: "agentModel") == "claude-opus-4-8")
+    }
+
+    private func waitUntil(_ predicate: () -> Bool) async {
+        for _ in 0..<500 {
+            if predicate() { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("Timed out waiting for model discovery")
+    }
+
     @Test("parsing reads line, release date, output limit, and capability leaves")
     func parsing() throws {
         let sonnet = F.info(F.sonnet55)
@@ -243,5 +394,81 @@ struct AnthropicModelCatalogTests {
         #expect(unknown["output_config"] == nil)
         #expect(unknown["max_tokens"] as? Int == AnthropicRequestBody.unknownModelMaxTokens)
         #expect(unknown["tool_choice"] == nil)
+    }
+}
+
+private final class GatedModelsTransport: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiting: [String: CheckedContinuation<(Data, URLResponse), Error>] = [:]
+    private var requests: [String: Int] = [:]
+
+    var transport: AnthropicModelsAPI.Transport {
+        { [self] request in
+            let key = request.value(forHTTPHeaderField: "x-api-key") ?? ""
+            return try await withCheckedThrowingContinuation { continuation in
+                self.park(continuation, key: key)
+            }
+        }
+    }
+
+    func isWaiting(_ key: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiting[key] != nil
+    }
+
+    func requestCount(_ key: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests[key, default: 0]
+    }
+
+    func respond(_ key: String, with result: Result<Data, Error>) {
+        lock.lock()
+        let continuation = waiting.removeValue(forKey: key)
+        lock.unlock()
+        let response = HTTPURLResponse(url: AnthropicModelsAPI.endpoint, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        switch result {
+        case .success(let data): continuation?.resume(returning: (data, response))
+        case .failure(let error): continuation?.resume(throwing: error)
+        }
+    }
+
+    private func park(_ continuation: CheckedContinuation<(Data, URLResponse), Error>, key: String) {
+        lock.lock()
+        waiting[key] = continuation
+        requests[key, default: 0] += 1
+        lock.unlock()
+    }
+}
+
+private final class GatedKeyLoader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String?, Never>?
+
+    var isWaiting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuation != nil
+    }
+
+    func load() async -> String? {
+        await withCheckedContinuation { continuation in
+            park(continuation)
+        }
+    }
+
+    func release(_ key: String?) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: key)
+    }
+
+    private func park(_ continuation: CheckedContinuation<String?, Never>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
     }
 }

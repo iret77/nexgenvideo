@@ -21,10 +21,15 @@ actor MCPProviderClient {
         }
     }
 
-    enum ClientError: LocalizedError, Sendable {
+    enum ClientError: LocalizedError, Sendable, ProviderRunEndReporting {
         case notConnected
         case toolFailed(String)
         case cancellationFailed(String)
+
+        var providerRunEnded: Bool {
+            if case .toolFailed = self { return true }
+            return false
+        }
 
         var errorDescription: String? {
             switch self {

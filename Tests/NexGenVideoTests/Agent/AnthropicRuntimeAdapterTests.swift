@@ -637,6 +637,65 @@ struct AnthropicRuntimeAdapterTests {
         #expect(anthropicTerminals(events) == [.completed(.pauseTurn)])
         #expect(client.recordedCalls.count == AnthropicRuntimeAdapter.maximumPauseContinuations + 1)
     }
+
+    @Test("a paused turn's continuation is its own assistant message and replays exactly as sent")
+    func pausedTurnReplaysAsSent() async throws {
+        let thinking = try AnthropicThinkingBlock(json: [
+            "type": "thinking", "thinking": "", "signature": "after-pause==",
+        ])
+        let client = ScriptedAnthropicClient(scripts: [
+            [.event(.textDelta("A")), .event(.messageStop(stopReason: .pauseTurn))],
+            [
+                .event(.textDelta("B")),
+                .event(.toolUseComplete(id: "tool-1", name: "host_tool", inputJSON: "{}")),
+                .event(.messageStop(stopReason: .toolUse)),
+            ],
+            [.event(.thinkingComplete(thinking)), .event(.textDelta("C")), .event(.messageStop(stopReason: .endTurn))],
+            [.event(.textDelta("D")), .event(.messageStop(stopReason: .endTurn))],
+        ])
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let service = AgentService(
+            backend: .anthropicAPI,
+            refreshBackendStatusOnInit: false,
+            runtimeAdapterFactory: { _ in adapter },
+            runtimeReadinessOverride: { nil },
+            runtimeHostContextOverride: { testHostContext() },
+            modelCatalogDefaults: AnthropicModelFixtures.isolatedDefaults()
+        )
+        service.loadSessions(from: nil)
+
+        #expect(service.send(text: "Find it", mentions: []))
+        for _ in 0..<500 where client.recordedCalls.count < 3 || service.isStreaming {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(service.send(text: "Next", mentions: []))
+        for _ in 0..<500 where client.recordedCalls.count < 4 || service.isStreaming {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let assistants = service.messages.filter { $0.role == .assistant }
+        #expect(assistants.map(\.blocks) == [
+            [.text("A")],
+            [.text("B"), .toolUse(id: "tool-1", name: "host_tool", inputJSON: "{}")],
+            [.thinking(thinking), .text("C")],
+            [.text("D")],
+        ])
+        #expect(Set(assistants.prefix(3).compactMap(\.providerPrefixDigest)).count == 3)
+        let calls = client.recordedCalls
+        #expect(calls.count == 4)
+        guard calls.count == 4 else { return }
+        let sent = calls[2].messages.map(wireJSON)
+        let replayed = calls[3].messages.map(wireJSON)
+        #expect(sent.count == 3)
+        #expect(Array(replayed.prefix(sent.count)) == sent)
+        #expect(calls[3].messages.dropFirst(sent.count).first?.content.first?["signature"] as? String == "after-pause==")
+    }
+}
+
+private func wireJSON(_ message: AnthropicMessage) -> String {
+    let object: [String: Any] = ["role": message.role.rawValue, "content": message.content]
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return "" }
+    return String(decoding: data, as: UTF8.self)
 }
 
 @MainActor

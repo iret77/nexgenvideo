@@ -246,6 +246,29 @@ struct RunwayClientTests {
         #expect(FixtureURLProtocol.requests().filter { $0.method == "DELETE" }.count == 1)
     }
 
+    @Test func serverErrorsOnSubmissionAreUnknownWhileRejectionsAreNot() async throws {
+        FixtureURLProtocol.reset()
+        FixtureURLProtocol.enqueue(method: "POST", pathSuffix: "/image_to_video",
+            result: .response(status: 504, body: #"{"error":"gateway timeout"}"#))
+        FixtureURLProtocol.enqueue(method: "POST", pathSuffix: "/image_to_video",
+            result: .response(status: 422, body: #"{"error":"invalid ratio"}"#))
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = RunwayClient(apiKey: "runway-secret", session: testSession)
+        func submit() async throws {
+            _ = try await client.createImageToVideo(model: "gen4_turbo", promptImage: "https://example.com/frame.png",
+                promptText: "Move slowly", ratio: "1280:720", duration: 5)
+        }
+
+        await #expect(throws: RunwayClient.SubmissionOutcomeUnknownError.self) { try await submit() }
+        do {
+            try await submit()
+            Issue.record("Expected a rejected submission to throw")
+        } catch {
+            #expect(!(error is RunwayClient.SubmissionOutcomeUnknownError))
+        }
+    }
+
     @Test func cancelledSubmissionWithoutReceiptHasUnknownOutcome() async throws {
         FixtureURLProtocol.reset()
         FixtureURLProtocol.enqueue(
@@ -317,6 +340,8 @@ struct RunwayClientTests {
         } catch {
             #expect(error.localizedDescription.contains("Runway task cancellation failed"))
             #expect(error.localizedDescription.contains("may still run and incur charges"))
+            #expect(error is RunwayClient.CancellationFailedError)
+            #expect(!GenerationService.providerRunEnded(after: error))
         }
         #expect(FixtureURLProtocol.requests().filter { $0.method == "DELETE" }.count == 1)
     }
@@ -342,6 +367,14 @@ struct RunwayClientTests {
         )
         FixtureURLProtocol.enqueue(
             method: "GET",
+            pathSuffix: "/tasks/task-empty",
+            result: .response(
+                status: 200,
+                body: #"{"id":"task-empty","status":"SUCCEEDED","output":[],"cost":{"credits":25}}"#
+            )
+        )
+        FixtureURLProtocol.enqueue(
+            method: "GET",
             pathSuffix: "/tasks/task-refunded",
             result: .response(
                 status: 200,
@@ -357,6 +390,14 @@ struct RunwayClientTests {
         #expect(priced.cost == GenerationProviderCost(
             amount: 60, unit: "credits", source: "Runway GET /v1/tasks/{id} cost.credits"))
         #expect(try await client.result(taskId: "task-no-cost").cost == nil)
+        do {
+            _ = try await client.result(taskId: "task-empty")
+            Issue.record("Expected a succeeded Runway task without output to throw")
+        } catch let failure as RunwayClient.TaskFailure {
+            #expect(failure.message == "Runway returned no output.")
+            #expect(failure.cost?.amount == 25)
+            #expect(GenerationService.providerRunEnded(after: failure))
+        }
         do {
             _ = try await client.result(taskId: "task-refunded")
             Issue.record("Expected a failed Runway task to throw")

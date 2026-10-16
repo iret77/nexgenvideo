@@ -189,12 +189,14 @@ enum GenerationBudgetGuard {
     nonisolated static func spendSnapshot(
         log: GenerationLog,
         generatedInputs: [GenerationInput],
-        completedTransactionIDs: Set<String> = []
+        completedTransactionIDs: Set<String> = [],
+        activeTransactionIDs: Set<String> = []
     ) throws -> ProjectSpendSnapshot {
         try GenerationSpendLedger.snapshot(
             log: log,
             generatedInputs: generatedInputs,
-            completedTransactionIDs: completedTransactionIDs
+            completedTransactionIDs: completedTransactionIDs,
+            activeTransactionIDs: activeTransactionIDs
         )
     }
 

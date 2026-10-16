@@ -1183,6 +1183,59 @@ struct GenerationBatchTests {
         #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
     }
 
+    @Test func onlyAValidatedProjectLocalJournalProvesARunFinished() async throws {
+        let (root, editor, batch) = try await fixture()
+        let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
+        let authority = try GenerationExecutionAuthorityStore(root: authorityRoot, hostID: UUID().uuidString)
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-outside-\(UUID().uuidString)")
+        defer {
+            cleanup(root)
+            try? FileManager.default.removeItem(at: authorityRoot)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor, authority: authority)
+        let item = batch.payload.items[0]
+        let entries = placeholders(item, transaction: "finished-transaction")
+        let finished = try GenerationBatchStore.update(approved, editor: editor, authority: authority) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id,
+                transactionID: "finished-transaction", placeholders: entries, batch: batch)
+            try $0.recordProviderRequest(itemID: item.id, transactionID: "finished-transaction",
+                requestID: "provider-job", resumable: true)
+            try $0.finish(itemID: item.id, outputAssetIDs: entries.map(\.id), batch: batch)
+        }
+        let home = try #require(editor.workingRoot)
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
+
+        let second = batch.payload.items[1]
+        let forgedEntries = placeholders(second, transaction: "forged-transaction")
+        var forged = finished.journal
+        try forged.beginSubmission(itemID: second.id, packageID: second.package.id,
+            transactionID: "forged-transaction", placeholders: forgedEntries, batch: batch)
+        try forged.recordProviderRequest(itemID: second.id, transactionID: "forged-transaction",
+            requestID: "forged-job", resumable: true)
+        try forged.finish(itemID: second.id, outputAssetIDs: forgedEntries.map(\.id), batch: batch)
+        let forgedBytes = try GenerationPackageV1.canonicalData(forged)
+
+        let batchFolder = home.appendingPathComponent("generation-batches/\(batch.id)", isDirectory: true)
+        let foreign = home.appendingPathComponent(
+            "generation-batches/\(String(repeating: "a", count: 64))", isDirectory: true)
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+        try forgedBytes.write(to: foreign.appendingPathComponent("journal.json"))
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
+        try FileManager.default.copyItem(at: batchFolder.appendingPathComponent("manifest.json"),
+            to: foreign.appendingPathComponent("manifest.json"))
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home) == ["finished-transaction"])
+        try FileManager.default.removeItem(at: foreign)
+
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let outsideJournal = outside.appendingPathComponent("journal.json")
+        try forgedBytes.write(to: outsideJournal)
+        let journalURL = batchFolder.appendingPathComponent("journal.json")
+        try FileManager.default.removeItem(at: journalURL)
+        try FileManager.default.createSymbolicLink(at: journalURL, withDestinationURL: outsideJournal)
+        #expect(GenerationBatchStore.completedTransactionIDs(home: home).isEmpty)
+    }
+
     @Test func phaseApprovedBatchesGetTheSameManifestAndAuthorityAsManualApproval() async throws {
         let (root, editor, original) = try await fixture(stop: 1)
         defer { cleanup(root) }
@@ -1242,6 +1295,91 @@ struct GenerationBatchTests {
             #expect(try GenerationBatchStore.load(id: automatic.id, home: home).authorityAvailable)
             editor.phaseSpendApproval.withdraw(editor: editor)
         }
+    }
+
+    @Test func anEndedPhaseApprovalNeverGrantsBatchAuthority() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        editor.generationBatchCoordinator.startsApprovedBatches = false
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            Gates(project: "demo", gates: [
+                "brief": Gate(approved: true, approvedAt: "2026-10-16T08:00:00Z"),
+                "frames": Gate(),
+            ]),
+            to: PipelineLayout.gatesFile
+        )
+        func framesBatch() throws -> GenerationBatch {
+            try GenerationBatch(payload: .init(nonce: UUID(), projectKey: original.payload.projectKey,
+                phase: "frames", items: original.payload.items))
+        }
+        func recoveries(_ batch: GenerationBatch) -> [String: GenerationBatchRecovery] {
+            Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+                (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+            })
+        }
+        let authority = try GenerationExecutionAuthorityStore.live()
+        let coordinator = editor.generationBatchCoordinator
+
+        let automatic = try framesBatch()
+        _ = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+        _ = try editor.agentService.presentGenerationBatch(automatic, recoveries: recoveries(automatic),
+            origin: .direct, editor: editor)
+        #expect(coordinator.autoApprovingPhase == "frames")
+        editor.phaseSpendApproval.withdraw(editor: editor)
+        for _ in 0..<500 where coordinator.autoApprovingPhase != nil {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(coordinator.pending?.id == automatic.id)
+        #expect(coordinator.error == nil)
+        #expect(try authority.loadIfPresent(projectKey: automatic.payload.projectKey, batchID: automatic.id) == nil)
+        coordinator.decline(editor: editor)
+
+        let late = try framesBatch()
+        try coordinator.present(late, recoveries: recoveries(late))
+        let grant = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+        editor.phaseSpendApproval.withdraw(editor: editor)
+        await coordinator.approve(editor: editor, expectedBatchID: late.id,
+            approval: late.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices, underPhaseApproval: grant)
+        #expect(coordinator.pending?.id == late.id)
+        #expect(coordinator.error == nil)
+        #expect(try authority.loadIfPresent(projectKey: late.payload.projectKey, batchID: late.id) == nil)
+        #expect(!FileManager.default.fileExists(
+            atPath: workingRoot.appendingPathComponent("generation-batches/\(late.id)").path))
+        coordinator.decline(editor: editor)
+
+        await #expect(throws: PhaseSpendApprovalEnded.self) {
+            _ = try await GenerationBatchStore.approve(late, editor: editor, authority: authority,
+                confirm: { throw PhaseSpendApprovalEnded() })
+        }
+        #expect(try authority.loadIfPresent(projectKey: late.payload.projectKey, batchID: late.id) == nil)
+    }
+
+    @Test func aDurableApprovalIsApprovedEvenWhenItsProjectProjectionFails() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.startsApprovedBatches = false
+        let home = try #require(editor.workingRoot)
+        try Data("not a folder".utf8).write(to: home.appendingPathComponent("generation-batches"))
+        try coordinator.present(batch, recoveries: Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        }))
+
+        await coordinator.approve(editor: editor, expectedBatchID: batch.id)
+
+        #expect(coordinator.pending == nil)
+        #expect(coordinator.error == nil)
+        let authority = try GenerationExecutionAuthorityStore.live()
+        #expect(try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil)
+        let stored = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(stored.authorityAvailable)
+        _ = try GenerationBatchStore.update(stored, editor: editor) { $0.cancelRemaining() }
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
+        try FileManager.default.removeItem(at: home.appendingPathComponent("generation-batches"))
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        #expect(coordinator.error == nil)
     }
 
     @Test func saveAsAndAnotherHostKeepHistoryWithoutExecutableAuthority() async throws {

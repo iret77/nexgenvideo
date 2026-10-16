@@ -244,4 +244,41 @@ struct PhaseSpendApprovalTests {
         #expect(service.spendApprovalError?.contains("phase changed") == true)
         service.declineSpend()
     }
+
+    @Test func anApprovalThatEndsBeforeTheAutomaticStartLeavesTheCard() async throws {
+        let fixture = try pipelineEditor()
+        defer { cleanup(fixture) }
+        try writeGates(fixture.dataRoot, briefApprovedAt: "2026-10-16T08:00:00Z")
+        let approvals = fixture.editor.phaseSpendApproval
+        let original = try #require(approvals.grant(phase: "frames", editor: fixture.editor))
+        let selected = option()
+        var providerWasCalled = false
+        let service = fixture.editor.agentService
+
+        _ = try service.requestSpendApproval(
+            SpendApproval(id: "approval-ended", recommendedOptionId: selected.id, options: [selected],
+                actionLabel: "Generate image"),
+            origin: .direct,
+            editor: fixture.editor,
+            pipelineScope: scope(fixture, phase: "frames"),
+            execute: { _, _ in
+                providerWasCalled = true
+                return .ok("unexpected")
+            }
+        )
+        #expect(service.autoApprovingSpendPhase == "frames")
+        approvals.withdraw(editor: fixture.editor)
+        let regranted = try #require(approvals.grant(phase: "frames", editor: fixture.editor))
+        #expect(!approvals.isActive(original, editor: fixture.editor))
+        #expect(approvals.isActive(regranted, editor: fixture.editor))
+
+        // Reaching the approval would fail with "phase changed" in this fixture; a stale grant stops before it.
+        await waitUntil { service.autoApprovingSpendPhase == nil }
+        #expect(!providerWasCalled)
+        #expect(service.pendingSpendApproval?.id == "approval-ended")
+        #expect(service.spendApprovalError == nil)
+        #expect(!service.spendApprovalIsRunning)
+        #expect(approvals.current?.runs.isEmpty == true)
+        service.declineSpend()
+    }
 }

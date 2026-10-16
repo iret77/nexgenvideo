@@ -788,6 +788,11 @@ final class VideoProject: NSDocument {
         editorViewModel.searchIndex.projectOpened()
         if !editorViewModel.recoveredUnsavedWork {
             editorViewModel.generationBatchCoordinator.resume(editor: editorViewModel)
+            let editor = editorViewModel
+            Task { [weak editor] in
+                guard let editor else { return }
+                await editor.generationService.reconcileOpenRuns(editor: editor)
+            }
         }
         editorViewModel.updateTelemetryContext()
         Telemetry.breadcrumb(

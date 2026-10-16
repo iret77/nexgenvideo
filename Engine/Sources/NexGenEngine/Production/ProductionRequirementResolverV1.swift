@@ -689,6 +689,29 @@ public enum ProductionRequirementResolverV1 {
         }
     }
 
+    /// Render's asset-free route verdict: slot, mode and reference-capacity checks on the required demands only.
+    public static func requiredInputEvaluations(
+        requirement: ProductionRequirementV1,
+        demands: [ReferenceDemandV1],
+        candidates: [ProductionRouteCandidateV1]
+    ) -> [ProductionRouteEvaluationV1] {
+        let required = demands.filter(\.isRequired)
+        return slotAndModeEvaluations(
+            requirement: requirement,
+            demands: required,
+            candidates: candidates
+        ).map { evaluation in
+            guard modalityDeficit(requirement: requirement, candidate: evaluation.candidate) == nil else {
+                return evaluation
+            }
+            return ProductionRouteEvaluationV1(
+                candidate: evaluation.candidate,
+                deficits: evaluation.deficits
+                    + referenceCapacityDeficits(demands: required, candidate: evaluation.candidate)
+            )
+        }
+    }
+
     private static func modalityDeficit(
         requirement: ProductionRequirementV1,
         candidate: ProductionRouteCandidateV1
@@ -830,63 +853,13 @@ public enum ProductionRequirementResolverV1 {
             uniqueKeysWithValues: candidate.inputSlots.map { ($0.id, $0) }
         )
         result.append(contentsOf: inputSlotDeficits(demands: requiredDemands, candidate: candidate))
-        let modalityBudgetedDemands = requiredDemands.filter {
-            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
-                .countsTowardModalityBudget == true
-        }
-        let totalBudgetedDemands = requiredDemands.filter {
-            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
-                .countsTowardTotalBudget == true
-        }
+        result.append(contentsOf: referenceCapacityDeficits(
+            demands: requiredDemands,
+            candidate: candidate
+        ))
         let durationBudgetedDemands = requiredDemands.filter {
             ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
                 .countsTowardCombinedDuration == true
-        }
-        let counts = Dictionary(grouping: modalityBudgetedDemands, by: \.modality)
-            .mapValues(\.count)
-        for modality in AssetPhysicalModalityV1.allCases {
-            let count = counts[modality] ?? 0
-            let capacity = referenceCapacity(
-                modality: modality,
-                profile: profile,
-                offeringModality: offering.modality
-            )
-            if count > capacity.value {
-                result.append(deficit(
-                    .referenceCapacity,
-                    field: capacity.field,
-                    required: String(count),
-                    available: String(capacity.value),
-                    profile: profile
-                ))
-            }
-        }
-        let totalCapacity = offering.modality == .video
-            ? integer(profile, CapabilityFieldIDV1.totalReferences)
-            : referenceCapacity(
-                modality: .image,
-                profile: profile,
-                offeringModality: offering.modality
-            ).value + referenceCapacity(
-                modality: .audio,
-                profile: profile,
-                offeringModality: offering.modality
-            ).value
-        if totalBudgetedDemands.count > totalCapacity {
-            let field = offering.modality == .video
-                ? CapabilityFieldIDV1.totalReferences
-                : referenceCapacity(
-                    modality: .image,
-                    profile: profile,
-                    offeringModality: offering.modality
-                ).field
-            result.append(deficit(
-                .referenceCapacity,
-                field: field,
-                required: String(totalBudgetedDemands.count),
-                available: String(totalCapacity),
-                profile: profile
-            ))
         }
         checkCombinedDuration(
             demands: durationBudgetedDemands.filter { $0.modality == .video },
@@ -1031,6 +1004,74 @@ public enum ProductionRequirementResolverV1 {
                     availableValue: nil
                 ))
             }
+        }
+        return result
+    }
+
+    private static func referenceCapacityDeficits(
+        demands: [ReferenceDemandV1],
+        candidate: ProductionRouteCandidateV1
+    ) -> [ProductionRouteDeficitV1] {
+        var result: [ProductionRouteDeficitV1] = []
+        let profile = candidate.capabilities.effective
+        let offering = candidate.capabilities.offering
+        let inputSlots = Dictionary(
+            candidate.inputSlots.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let modalityBudgetedDemands = demands.filter {
+            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
+                .countsTowardModalityBudget == true
+        }
+        let totalBudgetedDemands = demands.filter {
+            ProductionInputSlotAliasV1.slot($0.inputSlotID, in: inputSlots)?
+                .countsTowardTotalBudget == true
+        }
+        let counts = Dictionary(grouping: modalityBudgetedDemands, by: \.modality)
+            .mapValues(\.count)
+        for modality in AssetPhysicalModalityV1.allCases {
+            let count = counts[modality] ?? 0
+            let capacity = referenceCapacity(
+                modality: modality,
+                profile: profile,
+                offeringModality: offering.modality
+            )
+            if count > capacity.value {
+                result.append(deficit(
+                    .referenceCapacity,
+                    field: capacity.field,
+                    required: String(count),
+                    available: String(capacity.value),
+                    profile: profile
+                ))
+            }
+        }
+        let totalCapacity = offering.modality == .video
+            ? integer(profile, CapabilityFieldIDV1.totalReferences)
+            : referenceCapacity(
+                modality: .image,
+                profile: profile,
+                offeringModality: offering.modality
+            ).value + referenceCapacity(
+                modality: .audio,
+                profile: profile,
+                offeringModality: offering.modality
+            ).value
+        if totalBudgetedDemands.count > totalCapacity {
+            let field = offering.modality == .video
+                ? CapabilityFieldIDV1.totalReferences
+                : referenceCapacity(
+                    modality: .image,
+                    profile: profile,
+                    offeringModality: offering.modality
+                ).field
+            result.append(deficit(
+                .referenceCapacity,
+                field: field,
+                required: String(totalBudgetedDemands.count),
+                available: String(totalCapacity),
+                profile: profile
+            ))
         }
         return result
     }

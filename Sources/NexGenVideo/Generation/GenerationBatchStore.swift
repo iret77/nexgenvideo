@@ -68,9 +68,11 @@ enum GenerationBatchStore {
             .sorted { $0.journal.approvedAt < $1.journal.approvedAt }
     }
 
+    /// `confirm` runs after the last await, immediately before execution authority is created.
     static func approve(_ batch: GenerationBatch, editor: EditorViewModel,
                         approval: GenerationBatchApproval = .verifiedPrices,
-                        authority supplied: GenerationExecutionAuthorityStore? = nil) async throws -> Snapshot {
+                        authority supplied: GenerationExecutionAuthorityStore? = nil,
+                        confirm: (@MainActor () throws -> Void)? = nil) async throws -> Snapshot {
         guard let home = editor.workingRoot else {
             throw GenerationRequestError.storage("Save this project before approving a generation batch.")
         }
@@ -94,13 +96,19 @@ enum GenerationBatchStore {
             }
             return existing
         }
+        try confirm?()
         for item in batch.payload.items { try item.package.persist(editor: editor) }
         try markDirty(editor: editor)
         let record = try authority.create(batch: batch, journal: snapshot.journal, home: home)
-        try scope.requireCurrent(editor: editor)
-        try writeProjectProjection(record: record, home: home)
         let stored = Snapshot(record: record)
-        editor.generationBatchCoordinator.record(stored)
+        // The durable authority is the approval; a missing projection is rewritten by the next journal update.
+        do {
+            try scope.requireCurrent(editor: editor)
+            try writeProjectProjection(record: record, home: home)
+            editor.generationBatchCoordinator.record(stored)
+        } catch {
+            Log.generation.error("approved batch \(batch.id) has no project projection yet: \(error.localizedDescription)")
+        }
         return stored
     }
 
@@ -142,10 +150,14 @@ enum GenerationBatchStore {
         }
         let updatedRecord = try authority.update(expected: authorityRecord, journal: updatedJournal,
             adding: addingSpendEvents)
-        try scope.requireCurrent(editor: editor)
-        try writeProjectProjection(record: updatedRecord, home: home)
         let updated = Snapshot(record: updatedRecord, recoveredOutputs: current.recoveredOutputs)
-        editor.generationBatchCoordinator.record(updated)
+        do {
+            try scope.requireCurrent(editor: editor)
+            try writeProjectProjection(record: updatedRecord, home: home)
+            editor.generationBatchCoordinator.record(updated)
+        } catch {
+            Log.generation.error("batch \(updatedRecord.batch.id) changed without a project projection: \(error.localizedDescription)")
+        }
         return updated
     }
 
@@ -245,20 +257,40 @@ enum GenerationBatchStore {
         }
     }
 
-    /// Transactions whose batch item delivered every output; read-only proof that a run finished.
+    /// Transactions a validated, project-local journal of this project's own batch proves finished.
     nonisolated static func completedTransactionIDs(home: URL) -> Set<String> {
+        guard let projectKey = projectIdentity(home: home) else { return [] }
         let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
         guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
         var completed: Set<String> = []
         for id in ids where !id.hasPrefix(".") {
-            let url = folder.appendingPathComponent(id, isDirectory: true).appendingPathComponent("journal.json")
-            guard let data = try? Data(contentsOf: url),
-                  let journal = try? JSONDecoder().decode(GenerationBatchJournal.self, from: data) else { continue }
-            for execution in journal.executions where execution.state == .complete {
+            guard let snapshot = try? loadProjectIfPresent(id: id, home: home),
+                  snapshot.batch.payload.projectKey == projectKey else { continue }
+            for execution in snapshot.journal.executions where execution.state == .complete {
                 if let transaction = execution.transactionID { completed.insert(transaction) }
             }
         }
         return completed
+    }
+
+    /// Every transaction a validated project-local batch journal tracks; batch resume owns those runs.
+    nonisolated static func batchTransactionIDs(home: URL) -> Set<String> {
+        Set(batchItemsByTransaction(home: home).keys)
+    }
+
+    /// The batch item each tracked transaction belongs to.
+    nonisolated static func batchItemsByTransaction(home: URL) -> [String: GenerationBatchAuthorization] {
+        let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
+        guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [:] }
+        var items: [String: GenerationBatchAuthorization] = [:]
+        for id in ids where !id.hasPrefix(".") {
+            guard let snapshot = try? loadProjectIfPresent(id: id, home: home) else { continue }
+            for execution in snapshot.journal.executions {
+                guard let transaction = execution.transactionID else { continue }
+                items[transaction] = GenerationBatchAuthorization(batchID: snapshot.batch.id, itemID: execution.itemID)
+            }
+        }
+        return items
     }
 
     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {

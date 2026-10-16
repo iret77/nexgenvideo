@@ -24,12 +24,20 @@ struct ProjectBudgetView: View {
             data = nil
             unavailable = false
             guard let home = editor.workingRoot else { return }
-            let result = await CockpitDataService.projectState(projectDir: home)
-            guard !Task.isCancelled, editor.workingRoot == home else { return }
-            switch result {
-            case .success(let value): data = value
-            case .failure: unavailable = true
-            }
+            await load(home: home)
+            guard !Task.isCancelled, editor.workingRoot == home,
+                  await editor.generationService.reconcileOpenRuns(editor: editor) > 0,
+                  !Task.isCancelled, editor.workingRoot == home else { return }
+            await load(home: home)
+        }
+    }
+
+    private func load(home: URL) async {
+        let result = await CockpitDataService.projectState(projectDir: home)
+        guard !Task.isCancelled, editor.workingRoot == home else { return }
+        switch result {
+        case .success(let value): data = value
+        case .failure: unavailable = true
         }
     }
 }
@@ -72,10 +80,19 @@ private struct ProjectBudgetCard: View {
                 if data.inFlightRuns > 0 {
                     textRow(label: "Running", value: Self.runs(data.inFlightRuns))
                 }
+                if data.unresolvedRuns > 0 {
+                    textRow(label: "Unconfirmed", value: Self.runs(data.unresolvedRuns))
+                }
             }
 
             if !data.providerCredits.isEmpty || data.unknownCostRuns > 0 || data.legacyGenerations > 0 {
                 Text("Credits and characters are each provider's own unit. Unknown costs are not estimated.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if data.unresolvedRuns > 0 {
+                Text("NexGenVideo can't confirm whether unconfirmed runs finished or what they cost.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)

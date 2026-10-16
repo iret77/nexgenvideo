@@ -14,12 +14,31 @@ final class FirstOnlyFlag {
     }
 }
 
+/// A post-submission failure that states whether the provider confirmed the run ended.
+protocol ProviderRunEndReporting: Error {
+    var providerRunEnded: Bool { get }
+}
+
+/// The provider confirmed this run reached a terminal state, or answered without a run continuing.
+struct ProviderRunEndedError: LocalizedError, ProviderRunEndReporting {
+    let message: String
+    var cost: GenerationProviderCost?
+
+    var errorDescription: String? { message }
+    var providerRunEnded: Bool { true }
+}
+
 @MainActor
 private final class MCPSubmissionDispatchState {
     private(set) var didDispatch = false
+    private(set) var receiptBooked = false
 
     func recordDispatch() {
         didDispatch = true
+    }
+
+    func recordReceipt() {
+        receiptBooked = true
     }
 }
 
@@ -57,6 +76,11 @@ final class GenerationService {
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
     private var generationTasks: [String: Task<Void, Never>] = [:]
     private var batchResumeTasks: [String: Task<Void, Error>] = [:]
+    var reconciliation = ProviderRunReconciliation()
+    /// Provider receipts whose write failed; retried before the run closes.
+    private var pendingReceipts: [String: (authorization: GenerationAuthorization, requestID: String, resumable: Bool)] = [:]
+    var lastReconciliation: [URL: Date] = [:]
+    var reconcilingHomes: Set<URL> = []
 
     @discardableResult
     func generate(
@@ -124,7 +148,9 @@ final class GenerationService {
             return true
         }()
 
+        ActiveSpendTransactions.begin(authorization.transactionId)
         let task = Task { @MainActor [weak self, weak editor] in
+            defer { ActiveSpendTransactions.end(authorization.transactionId) }
             guard let self, let editor else { return }
             var tempToCleanup: [URL] = []
             defer {
@@ -346,7 +372,7 @@ final class GenerationService {
         try scope.requireCurrent(editor: editor)
         let completedIDs = Set(receipts.map(\.asset.id))
         let target = specification.package.payload.target
-        guard target.transport == .api, [.fal, .runway, .marble].contains(target.provider) else {
+        guard target.transport == .mcp || [.fal, .runway, .marble].contains(target.provider) else {
             throw GenerationRequestError.gate("This provider request cannot yet resume status retrieval.")
         }
         var placeholders: [MediaAsset] = []
@@ -387,56 +413,95 @@ final class GenerationService {
             }
         }
         _ = try GenerationBatchStore.update(saved, editor: editor) { try $0.resumeRecordedJob(itemID: item.itemID) }
-        guard let key = ProviderKeychain.load(target.provider) else {
-            throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+        let key: String
+        if target.transport == .mcp {
+            key = ""
+        } else {
+            guard let stored = ProviderKeychain.load(target.provider) else {
+                throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
+            }
+            key = stored
         }
+        ActiveSpendTransactions.begin(execution.transactionID)
         let task = Task { @MainActor [weak self, weak editor] in
+            defer { ActiveSpendTransactions.end(execution.transactionID) }
             guard let self, let editor else { return }
             defer { self.generationTasks.removeValue(forKey: primaryID) }
+            func resumedAuthorization(_ transaction: String) -> GenerationAuthorization {
+                let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
+                return GenerationAuthorization(transactionId: transaction, target: target, estimate: reserved,
+                    projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
+            }
             var recoveredCost: GenerationProviderCost?
+            var providerFinished = false
             do {
                 if completedIDs.count < execution.placeholders.count {
                     let urls: [String]
-                    switch target.provider {
-                    case .fal:
-                        let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                        let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                        urls = FalOutput.urls(from: data, shape: shape)
-                    case .runway:
-                        let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
-                        urls = result.urls
-                        recoveredCost = result.cost
-                    case .marble:
-                        let operation = try await MarbleClient(apiKey: key).result(operationId: requestID)
-                        urls = MarbleOutput.urls(from: operation)
-                        recoveredCost = ProviderReportedCost.marble(operation: operation)
-                    default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                    var inlineOutput: [MCPGenerationLifecycle.OutputMedia] = []
+                    if target.transport == .mcp {
+                        let output = try await self.resumedMCPOutput(provider: target.provider, jobID: requestID)
+                        urls = output.urls
+                        if !output.inlineMedia.isEmpty { inlineOutput = output.media }
+                    } else {
+                        switch target.provider {
+                        case .fal:
+                            let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
+                            let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
+                            urls = FalOutput.urls(from: data, shape: shape)
+                        case .runway:
+                            let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
+                            urls = result.urls
+                            recoveredCost = result.cost
+                        case .marble:
+                            let operation = try await MarbleClient(apiKey: key).result(operationId: requestID)
+                            urls = MarbleOutput.urls(from: operation)
+                            recoveredCost = ProviderReportedCost.marble(operation: operation)
+                        default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
+                        }
                     }
+                    providerFinished = true
                     try scope.requireCurrent(editor: editor)
-                    await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
-                        errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
-                        editor: editor, mutationScope: scope, batchItem: item,
-                        completedAssetIDs: completedIDs, onComplete: nil, onFailure: nil)
+                    if inlineOutput.isEmpty {
+                        await self.finalizeSuccess(job: .init(_id: requestID, status: .succeeded, resultUrls: urls,
+                            errorMessage: nil, costCredits: nil, completedAt: nil), placeholders: placeholders,
+                            editor: editor, mutationScope: scope, batchItem: item,
+                            completedAssetIDs: completedIDs, onComplete: nil, onFailure: nil)
+                    } else {
+                        await self.finalizeMCPMedia(inlineOutput, placeholders: placeholders, editor: editor,
+                            mutationScope: scope, batchItem: item, completedAssetIDs: completedIDs,
+                            onComplete: nil, onFailure: nil)
+                    }
                 }
                 if let transaction = execution.transactionID,
                    !editor.generationLog.spendEvents.contains(where: { $0.transactionId == transaction && $0.kind == .charged }) {
-                    let reserved = editor.generationLog.spendEvents.first { $0.transactionId == transaction && $0.kind == .reserved }?.money
-                    let recoveredAuthorization = GenerationAuthorization(transactionId: transaction, target: target,
-                        estimate: reserved, projectMutationScope: scope, generationPackage: specification.package, batchItem: item)
+                    let recoveredAuthorization = resumedAuthorization(transaction)
                     let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
                     switch target.provider {
-                    case .fal:
-                        let billed = try? await ProviderMoneyClient.shared.falCharge(requestId: requestID, endpoint: target.endpoint, apiKey: key)
+                    case .fal where target.transport == .api:
+                        let billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
                         if billed != nil || !settled {
                             self.markFinished(authorization: recoveredAuthorization, billed: billed, editor: editor)
                         }
                     default:
                         if !settled {
+                            if recoveredCost == nil, completedIDs.count >= execution.placeholders.count {
+                                recoveredCost = await self.terminalCost(provider: target.provider,
+                                    transport: target.transport, requestID: requestID, apiKey: key)
+                            }
                             self.markFinished(authorization: recoveredAuthorization, providerCost: recoveredCost, editor: editor)
                         }
                     }
                 }
             } catch {
+                if let transaction = execution.transactionID {
+                    var billed: GenerationMoney?
+                    if target.provider == .fal, target.transport == .api,
+                       providerFinished || Self.providerRunEnded(after: error) {
+                        billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
+                    }
+                    self.recordResumedRunFailure(error, providerFinished: providerFinished, cost: recoveredCost,
+                        billed: billed, authorization: resumedAuthorization(transaction), editor: editor)
+                }
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
             do { try await item.settle(editor: editor) }
@@ -1047,53 +1112,194 @@ final class GenerationService {
         failJob(placeholders, message, onFailure)
     }
 
-    private func markSubmitted(
+    /// True once the receipt is durable; a failed write keeps the id for a retry, never a resubmission.
+    @discardableResult
+    func markSubmitted(
         authorization: GenerationAuthorization,
         providerRequestId: String,
         resumable: Bool = false,
         editor: EditorViewModel
-    ) {
+    ) -> Bool {
         do {
-            try editor.recordSpendEvent(
-                authorization: authorization,
-                kind: .submitted,
-                providerRequestId: providerRequestId,
-                providerRequestResumable: resumable,
-                money: authorization.estimate
-            )
+            if let transactionID = authorization.transactionId,
+               !editor.generationLog.spendEvents.contains(where: {
+                   $0.transactionId == transactionID && $0.kind == .submitted
+               }) {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .submitted,
+                    providerRequestId: providerRequestId,
+                    providerRequestResumable: resumable,
+                    money: authorization.estimate
+                )
+            }
             if let transactionID = authorization.transactionId {
                 try authorization.batchItem?.recordProviderRequest(transactionID: transactionID,
                     requestID: providerRequestId, resumable: resumable, editor: editor)
+                pendingReceipts.removeValue(forKey: transactionID)
             }
+            return true
         } catch {
             Log.generation.error(
                 "could not record provider request \(providerRequestId): \(error.localizedDescription)"
             )
+            if let transactionID = authorization.transactionId {
+                pendingReceipts[transactionID] = (authorization, providerRequestId, resumable)
+            }
+            return false
         }
+    }
+
+    /// Re-writes this project's failed receipts so their jobs become resumable once storage works again.
+    @discardableResult
+    func flushPendingReceipts(editor: EditorViewModel) -> Int {
+        var written = 0
+        for (transactionID, pending) in pendingReceipts {
+            guard editor.generationLog.spendEvents.contains(where: {
+                      $0.transactionId == transactionID && $0.kind == .reserved
+                  }),
+                  pending.authorization.projectMutationScope.map({ (try? $0.requireCurrent(editor: editor)) != nil }) ?? true
+            else { continue }
+            if markSubmitted(authorization: pending.authorization, providerRequestId: pending.requestID,
+                resumable: pending.resumable, editor: editor) {
+                written += 1
+            }
+        }
+        return written
+    }
+
+    /// Writes a receipt that failed earlier, so a closing event or an open run keeps its provider id.
+    private func retryPendingReceipt(for transactionID: String?, editor: EditorViewModel) {
+        guard let transactionID, let pending = pendingReceipts[transactionID] else { return }
+        markSubmitted(authorization: pending.authorization, providerRequestId: pending.requestID,
+            resumable: pending.resumable, editor: editor)
     }
 
     private func failSubmittedJob(
         _ placeholders: [MediaAsset],
         _ message: String,
-        providerCost: GenerationProviderCost? = nil,
+        after error: any Error,
         authorization: GenerationAuthorization,
         editor: EditorViewModel,
         onFailure: (@MainActor () -> Void)?
     ) {
-        markFinished(authorization: authorization, providerCost: providerCost,
-            note: "The provider job ended without a result: \(message)", editor: editor)
+        recordSubmittedRunFailure(error, message: message, authorization: authorization, editor: editor)
         failJob(placeholders, message, onFailure)
+    }
+
+    /// Only a typed, provider-confirmed end settles a run; anything else keeps it in flight.
+    nonisolated static func providerRunEnded(after error: any Error) -> Bool {
+        (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
+    }
+
+    /// The cost a finished task reports, read once when its outputs arrived before its cost was booked.
+    func terminalCost(
+        provider: GenerationProvider,
+        transport: ProviderTransport,
+        requestID: String,
+        apiKey: String
+    ) async -> GenerationProviderCost? {
+        guard transport == .api else { return nil }
+        let session = reconciliation.session
+        let status: ProviderRunStatus?
+        switch provider {
+        case .runway: status = try? await RunwayClient(apiKey: apiKey, session: session).status(taskId: requestID)
+        case .marble: status = try? await MarbleClient(apiKey: apiKey, session: session).status(operationId: requestID)
+        default: status = nil
+        }
+        switch status {
+        case .completed(let cost)?, .failed(_, let cost)?: return cost
+        case .running?, nil: return nil
+        }
+    }
+
+    /// The media of an interrupted MCP batch job, read through its status or result tool.
+    func resumedMCPOutput(provider: GenerationProvider, jobID: String) async throws -> MCPGenerationLifecycle.Output {
+        guard let client = await reconciliation.mcpClient(provider) else {
+            throw GenerationRequestError.gate("\(provider.displayName) is not connected. Resume this batch once it is.")
+        }
+        do {
+            let tools = try await client.discoverTools()
+            let output = try await MCPGenerationExecutor.resumedOutput(jobID: jobID, provider: provider,
+                tools: tools, client: client)
+            await client.disconnect()
+            return output
+        } catch {
+            await client.disconnect()
+            throw error
+        }
+    }
+
+    /// Books how a resumed run ended, at most once; a run the provider already finished counts as ended.
+    func recordResumedRunFailure(
+        _ error: any Error,
+        providerFinished: Bool,
+        cost: GenerationProviderCost?,
+        billed: GenerationMoney? = nil,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        guard let transaction = authorization.transactionId,
+              !editor.generationLog.spendEvents.contains(where: {
+                  $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
+              }) else { return }
+        if let billed, providerFinished || Self.providerRunEnded(after: error) {
+            markFinished(authorization: authorization, billed: billed, providerCost: cost,
+                note: "The provider job ended without a result: \(error.localizedDescription)", editor: editor)
+            return
+        }
+        var outcome: any Error = error
+        if providerFinished {
+            outcome = ProviderRunEndedError(message: error.localizedDescription, cost: cost)
+        }
+        recordSubmittedRunFailure(outcome, message: error.localizedDescription, authorization: authorization, editor: editor)
+    }
+
+    /// A real Runway task id can later be queried for its status; a synthetic ledger id cannot.
+    nonisolated static func runwayReceipt(
+        _ error: RunwayClient.SubmissionAcknowledgedError
+    ) -> (requestID: String, resumable: Bool) {
+        (error.providerTaskID ?? error.ledgerRequestID, error.providerTaskID != nil)
+    }
+
+    /// Gemini image calls are synchronous: an HTTP answer or a response without an image ends the run.
+    nonisolated static func googleImageOutcome(_ error: any Error) -> any Error {
+        if let error = error as? GoogleImageClient.ClientError {
+            return ProviderRunEndedError(message: error.localizedDescription)
+        }
+        if let error = error as? GenerationBackendError, case .api = error {
+            return ProviderRunEndedError(message: error.localizedDescription)
+        }
+        return error
+    }
+
+    /// Settles a failed submitted run only once the provider confirmed it ended; otherwise it stays in flight.
+    func recordSubmittedRunFailure(
+        _ error: any Error,
+        message: String,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        retryPendingReceipt(for: authorization.transactionId, editor: editor)
+        guard Self.providerRunEnded(after: error) else {
+            Log.generation.notice("provider run outcome unconfirmed; it stays in flight: \(message)")
+            return
+        }
+        let cost = (error as? RunwayClient.TaskFailure)?.cost ?? (error as? ProviderRunEndedError)?.cost
+        markFinished(authorization: authorization, providerCost: cost,
+            note: "The provider job ended without a result: \(message)", editor: editor)
     }
 
     /// Closes a finished run: billed money becomes a charge; otherwise the run settles with whatever
     /// cost the provider reported in its own unit, or none. An estimate is never booked as spend.
-    private func markFinished(
+    func markFinished(
         authorization: GenerationAuthorization,
         billed: GenerationMoney? = nil,
         providerCost: GenerationProviderCost? = nil,
         note: String? = nil,
         editor: EditorViewModel
     ) {
+        retryPendingReceipt(for: authorization.transactionId, editor: editor)
         do {
             if let billed {
                 try editor.recordSpendEvent(
@@ -1150,7 +1356,7 @@ final class GenerationService {
             let outputData = try await client.result(endpoint: endpoint, requestId: submittedId)
             let urls = FalOutput.urls(from: outputData, shape: shape)
             guard !urls.isEmpty else {
-                throw GenerationBackendError.transport("fal returned no output")
+                throw ProviderRunEndedError(message: "fal returned no output")
             }
             let job = BackendGenerationJob(
                 _id: submittedId,
@@ -1181,29 +1387,37 @@ final class GenerationService {
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as FalClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             if requestId == nil {
                 failBeforeSubmission(
                     placeholders, "Generation cancelled.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, "Generation cancelled.", authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, "Generation cancelled.", after: CancellationError(), authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
-            if requestId == nil {
+            if let requestId {
+                // fal reports money only through its billing record, never in a status response.
+                if Self.providerRunEnded(after: error),
+                   let billed = await reconciliation.falCharge(requestId, endpoint, apiKey) {
+                    markFinished(authorization: authorization, billed: billed,
+                        note: "The provider job ended without a result: \(error.localizedDescription)", editor: editor)
+                    failJob(placeholders, error.localizedDescription, onFailure)
+                } else {
+                    failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
+                }
+            } else {
                 failBeforeSubmission(
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
-            } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1232,12 +1446,15 @@ final class GenerationService {
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
         let submissionState = MCPSubmissionDispatchState()
+        let requestId = UUID().uuidString
+        var discoveredTools: [MCPProviderClient.DiscoveredTool] = []
         var selectedToolName = toolName
         let requiredCandidateNames = PipelineProductionRouting.requiredMCPFieldNames(
             genInput: genInput
         )
         do {
             let tools = try await client.discoverTools()
+            discoveredTools = tools
             // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
             // modality matching for a bootstrap/legacy offer that carried no tool name.
             let tool = toolName.flatMap { name in tools.first { $0.name == name } }
@@ -1250,7 +1467,6 @@ final class GenerationService {
                     authorization: authorization, editor: editor, onFailure: onFailure)
             }
             selectedToolName = tool.name
-            let requestId = UUID().uuidString
             _ = try MCPGenerationArguments.make(
                 for: params,
                 model: modelParam,
@@ -1291,14 +1507,15 @@ final class GenerationService {
                 client: client,
                 onSubmissionDispatched: {
                     submissionState.recordDispatch()
-                    self.markSubmitted(
-                        authorization: authorization,
-                        providerRequestId: requestId,
-                        editor: editor
-                    )
+                },
+                onJobAccepted: { jobID in
+                    self.markMCPSubmitted(jobID: jobID, requestID: requestId, tools: tools,
+                        state: submissionState, authorization: authorization, editor: editor)
                 }
             )
             await client.disconnect()
+            markMCPSubmitted(jobID: result.jobID, requestID: requestId, tools: tools,
+                state: submissionState, authorization: authorization, editor: editor)
             let job = BackendGenerationJob(
                 _id: result.jobID ?? requestId, status: .succeeded,
                 resultUrls: result.output.urls,
@@ -1338,7 +1555,9 @@ final class GenerationService {
                 modelName: model
             ) {
             case .failJob(let message):
-                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
+                markMCPSubmitted(jobID: (error as? MCPGenerationExecutor.JobFailure)?.jobID, requestID: requestId,
+                    tools: discoveredTools, state: submissionState, authorization: authorization, editor: editor)
+                failSubmittedJob(placeholders, message, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             case .failBeforeSubmission(let message):
                 failBeforeSubmission(
                     placeholders,
@@ -1348,6 +1567,28 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             }
+        }
+    }
+
+    /// A real job id behind a status tool can later be reconciled; anything else stays a ledger id.
+    private func markMCPSubmitted(
+        jobID: String?,
+        requestID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        state: MCPSubmissionDispatchState,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel
+    ) {
+        guard !state.receiptBooked else { return }
+        let usableJobID = jobID.flatMap { $0.isEmpty ? nil : $0 }
+        // A failed write keeps polling in memory; later calls retry it and the job is never resubmitted.
+        if markSubmitted(
+            authorization: authorization,
+            providerRequestId: usableJobID ?? requestID,
+            resumable: usableJobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil,
+            editor: editor
+        ) {
+            state.recordReceipt()
         }
     }
 
@@ -1470,7 +1711,7 @@ final class GenerationService {
                 onComplete: onComplete, onFailure: onFailure)
             markFinished(authorization: authorization, providerCost: result.cost, editor: editor)
         } catch let error as RunwayClient.TaskFailure {
-            failSubmittedJob(placeholders, error.localizedDescription, providerCost: error.cost,
+            failSubmittedJob(placeholders, error.localizedDescription, after: error,
                 authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
             markSubmitted(
@@ -1478,14 +1719,16 @@ final class GenerationService {
                 providerRequestId: error.ledgerRequestID,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch let error as RunwayClient.SubmissionAcknowledgedError {
+            let receipt = Self.runwayReceipt(error)
             markSubmitted(
                 authorization: authorization,
-                providerRequestId: error.ledgerRequestID,
+                providerRequestId: receipt.requestID,
+                resumable: receipt.resumable,
                 editor: editor
             )
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch is CancellationError {
             let message = "Generation cancelled."
             if taskId == nil {
@@ -1497,7 +1740,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } else {
-                failSubmittedJob(placeholders, message, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, message, after: CancellationError(), authorization: authorization, editor: editor, onFailure: onFailure)
             }
         } catch {
             if taskId == nil {
@@ -1505,7 +1748,7 @@ final class GenerationService {
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }
@@ -1633,7 +1876,9 @@ final class GenerationService {
                 providerRequestId: UUID().uuidString,
                 editor: editor
             )
-            let images = try await client.geminiImage(prepared: prepared)
+            let images: [Data]
+            do { images = try await client.geminiImage(prepared: prepared) }
+            catch { throw Self.googleImageOutcome(error) }
             await finalizeBytes(
                 images,
                 placeholders: placeholders,
@@ -1645,7 +1890,7 @@ final class GenerationService {
             )
             markFinished(authorization: authorization, editor: editor)
         } catch {
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -1737,11 +1982,13 @@ final class GenerationService {
         editor: EditorViewModel,
         mutationScope: GenerationProjectMutationScope?,
         batchItem: GenerationBatchAuthorization?,
+        completedAssetIDs: Set<String> = [],
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         var finalized: [MediaAsset] = []
         for (index, placeholder) in placeholders.enumerated() {
+            if completedAssetIDs.contains(placeholder.id) { continue }
             guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
             guard outputMedia.indices.contains(index) else {
                 placeholder.generationStatus = .failed("No media for placeholder")
@@ -1985,6 +2232,7 @@ final class GenerationService {
                 placeholders, "Unsupported ElevenLabs model: \(endpoint)",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
+        var delivered: ElevenLabsClient.Audio?
         do {
             let client = ElevenLabsClient(apiKey: apiKey)
             markSubmitted(
@@ -2005,10 +2253,9 @@ final class GenerationService {
                     lengthMs: (params.durationSeconds ?? 90) * 1000,
                     forceInstrumental: params.instrumental)
             default:
-                throw GenerationBackendError.transport(
-                    "Unsupported ElevenLabs model: \(endpoint)"
-                )
+                throw ProviderRunEndedError(message: "Unsupported ElevenLabs model: \(endpoint)")
             }
+            delivered = audio
             // Bytes arrive directly (no result URL) — write to the placeholder's destination and
             // run the same finalize steps downloadAndFinalize performs after its move.
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
@@ -2031,7 +2278,11 @@ final class GenerationService {
             )
             markFinished(authorization: authorization, providerCost: audio.cost, editor: editor)
         } catch {
-            failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+            var outcome: any Error = error
+            if let delivered {
+                outcome = ProviderRunEndedError(message: error.localizedDescription, cost: delivered.cost)
+            }
+            failSubmittedJob(placeholders, error.localizedDescription, after: outcome, authorization: authorization, editor: editor, onFailure: onFailure)
         }
     }
 
@@ -2076,7 +2327,7 @@ final class GenerationService {
             let urls = MarbleOutput.urls(from: outputData)
             let reportedCost = ProviderReportedCost.marble(operation: outputData)
             guard !urls.isEmpty else {
-                throw GenerationBackendError.transport("Marble returned no panorama")
+                throw ProviderRunEndedError(message: "Marble returned no panorama", cost: reportedCost)
             }
             let job = BackendGenerationJob(
                 _id: submittedId,
@@ -2096,13 +2347,19 @@ final class GenerationService {
                 onFailure: onFailure
             )
             markFinished(authorization: authorization, providerCost: reportedCost, editor: editor)
+        } catch let error as MarbleClient.SubmissionOutcomeUnknownError {
+            markSubmitted(authorization: authorization, providerRequestId: error.ledgerRequestID, editor: editor)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
+        } catch let error as MarbleClient.SubmissionAcknowledgedError {
+            markSubmitted(authorization: authorization, providerRequestId: error.ledgerRequestID, editor: editor)
+            failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
         } catch {
             if operationId == nil {
                 failBeforeSubmission(
                     placeholders, error.localizedDescription,
                     authorization: authorization, editor: editor, onFailure: onFailure)
             } else {
-                failSubmittedJob(placeholders, error.localizedDescription, authorization: authorization, editor: editor, onFailure: onFailure)
+                failSubmittedJob(placeholders, error.localizedDescription, after: error, authorization: authorization, editor: editor, onFailure: onFailure)
             }
         }
     }

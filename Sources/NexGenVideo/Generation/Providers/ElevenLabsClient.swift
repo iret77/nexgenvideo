@@ -6,9 +6,11 @@ import Foundation
 /// bytes; we pin mp3_44100_128 so the bytes match the .mp3 placeholder the generation flow creates.
 actor ElevenLabsClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     struct Audio: Sendable {
@@ -26,7 +28,10 @@ actor ElevenLabsClient {
 
     /// POST /v1/text-to-speech/{voice_id} — body { text, model_id }, returns audio bytes.
     func textToSpeech(text: String, voiceName: String) async throws -> Audio {
-        let voiceId = try await resolveVoiceId(named: voiceName)
+        let voiceId: String
+        // No generation request has been sent yet, so nothing can still run at ElevenLabs.
+        do { voiceId = try await resolveVoiceId(named: voiceName) }
+        catch { throw ProviderRunEndedError(message: error.localizedDescription) }
         return try await post(
             path: "text-to-speech/\(voiceId)",
             body: ["text": text, "model_id": "eleven_multilingual_v2"]
@@ -100,13 +105,16 @@ actor ElevenLabsClient {
     }
 
     private func send(_ request: URLRequest) async throws -> Audio {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             // Error bodies are JSON ({"detail": …}); surface them so failures are diagnosable.
             let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
-            throw GenerationBackendError.transport("ElevenLabs HTTP \(status): \(detail)")
+            throw ProviderRunEndedError(
+                message: "ElevenLabs HTTP \(status): \(detail)",
+                cost: ProviderReportedCost.elevenLabs(characterCost: http?.value(forHTTPHeaderField: "character-cost"))
+            )
         }
         return Audio(
             data: data,

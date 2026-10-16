@@ -478,6 +478,10 @@ final class EditorViewModel {
         recoveredUnsavedWork = false
         onPipelineChanged?()
         generationBatchCoordinator.resume(editor: self)
+        Task { [weak self] in
+            guard let self else { return }
+            await self.generationService.reconcileOpenRuns(editor: self)
+        }
     }
 
     /// Throw away the recovered working copy and start from the last saved project state.

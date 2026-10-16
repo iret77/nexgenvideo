@@ -565,8 +565,9 @@ enum NativeCockpitReader {
         [
             "verified_spend_eur": spend.verifiedEur,
             "spend_complete": spend.isComplete,
-            "active_reservations": spend.inFlightCount,
+            "active_reservations": spend.inFlightCount + spend.unresolvedCount,
             "in_flight_runs": spend.inFlightCount,
+            "unresolved_runs": spend.unresolvedCount,
             "unpriced_transactions": spend.unknownCostCount + spend.creditOnlyCount,
             "unknown_cost_runs": spend.unknownCostCount,
             "legacy_generations": spend.legacyGenerationCount,
@@ -616,7 +617,8 @@ enum NativeCockpitReader {
             return try GenerationBudgetGuard.spendSnapshot(
                 log: log,
                 generatedInputs: generatedInputs,
-                completedTransactionIDs: GenerationBatchStore.completedTransactionIDs(home: home)
+                completedTransactionIDs: GenerationBatchStore.completedTransactionIDs(home: home),
+                activeTransactionIDs: ActiveSpendTransactions.current
             )
         } catch {
             throw NativeError.load(error.localizedDescription)
