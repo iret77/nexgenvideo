@@ -149,7 +149,7 @@ extension EditorViewModel {
         )
         generationLog.spendEvents.append(event)
         do {
-            _ = try GenerationBudgetGuard.verifiedSpend(
+            try GenerationBudgetGuard.validateLedger(
                 log: generationLog,
                 generatedAssets: mediaAssets
             )

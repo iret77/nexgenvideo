@@ -75,9 +75,6 @@ private struct ProjectBudgetCard: View {
 
             VStack(spacing: AppTheme.Spacing.smMd) {
                 amountRow(label: "Planning budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
-                if let stop = data.budgetStopEur {
-                    amountRow(label: "Hard stop", amount: stop, color: AppTheme.Text.secondaryColor)
-                }
                 amountRow(label: data.spendComplete ? "Spend" : "Verified spend at least",
                           amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
                 if data.activeReservations > 0 {
@@ -92,11 +89,6 @@ private struct ProjectBudgetCard: View {
                 } else {
                     textRow(label: "Planning remaining", value: "Unavailable",
                             color: AppTheme.Status.errorColor, emphasized: true)
-                }
-                if let remaining = data.hardStopRemainingEur {
-                    amountRow(label: "Hard stop remaining", amount: remaining,
-                              color: remaining <= 0 ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
-                              emphasized: true)
                 }
             }
         }

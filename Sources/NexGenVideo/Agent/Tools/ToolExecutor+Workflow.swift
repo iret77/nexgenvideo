@@ -490,7 +490,6 @@ extension ToolExecutor {
         ].joined(separator: ", ")
         var extra: [String] = []
         if b.budgetEur != 50.0 { extra.append("budget_eur=\(b.budgetEur)") }
-        if let stop = b.budgetStopEur { extra.append("budget_stop_eur=\(stop)") }
         if b.finalResolution != .res1080p { extra.append("final_resolution=\(b.finalResolution.rawValue)") }
         if b.previewMode != .skip { extra.append("preview_mode=\(b.previewMode.rawValue)") }
         if b.cutHandlesMode != .withOverlap { extra.append("cut_handles_mode=\(b.cutHandlesMode.rawValue)") }
@@ -5209,7 +5208,7 @@ private func briefValidationViolation(_ error: Brief.ValidationError) -> String 
     case .budgetNotPositive(let value):
         return "field `budget_eur`: must be greater than 0 (got \(value))."
     case .budgetStopNotPositive(let value):
-        return "field `budget_stop_eur`: must be greater than 0 when set (got \(value)); omit it for no hard stop."
+        return "field `budget_stop_eur`: must be greater than 0 when set (got \(value)); the field is ignored; omit it."
     case .visualMediumNotesRequired(let medium):
         return "field `visual_medium_notes` is required when `visual_medium` is `\(medium.rawValue)` (a stylized medium — give a concrete style note)."
     }

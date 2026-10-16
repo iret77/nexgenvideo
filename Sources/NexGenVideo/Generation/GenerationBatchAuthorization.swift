@@ -32,7 +32,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
         try authorization.projectMutationScope?.requireCurrent(editor: editor)
         let snapshot = try current(package: package, editor: editor)
         if let ceiling = package.payload.estimate {
-            guard let quote = authorization.estimate, quote.eurAmount <= ceiling.eurAmount else {
+            if let quote = authorization.estimate, quote.eurAmount > ceiling.eurAmount {
                 throw GenerationRequestError.gate("The batch submission exceeds its reviewed price.")
             }
         } else {

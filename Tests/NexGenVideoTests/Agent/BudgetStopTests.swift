@@ -4,7 +4,7 @@ import Testing
 import NexGenEngine
 
 @MainActor
-@Suite("Central generation budget stop")
+@Suite("Generation spend guard")
 struct BudgetStopTests {
 
     private func project(stop: Double?, log: GenerationLog = GenerationLog()) throws -> URL {
@@ -79,12 +79,11 @@ struct BudgetStopTests {
         )
     }
 
-    @Test("over-limit request stops before provider dispatch and leaves the ledger untouched")
-    func overLimitStopsBeforeDispatch() async throws {
+    @Test("a stored budget stop never blocks a known price above it")
+    func storedStopNeverBlocksKnownPrice() async throws {
         let package = try project(stop: 5)
         defer { cleanup(package) }
         let editor = editor(for: package)
-        let beforeAssets = editor.mediaAssets.count
         var providerThunkExecuted = false
 
         let result = await GenerationController.submit(
@@ -93,18 +92,17 @@ struct BudgetStopTests {
             quoteLoader: { _, _ in money(6) }
         )
 
-        guard case .failure(.budget(let message)) = result else {
-            Issue.record("expected budget failure, got \(result)")
+        guard case .success = result else {
+            Issue.record("expected dispatch despite the stored stop, got \(result)")
             return
         }
-        #expect(message.contains("Budget stop reached"))
-        #expect(!providerThunkExecuted)
-        #expect(editor.mediaAssets.count == beforeAssets)
-        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(providerThunkExecuted)
+        #expect(editor.generationLog.spendEvents.first?.kind == .reserved)
+        #expect(editor.generationLog.spendEvents.first?.money?.eurAmount == 6)
     }
 
-    @Test("a set stop never blocks a request whose price is unknown")
-    func unknownPriceRunsUnderStop() async throws {
+    @Test("a stored budget stop never blocks a request whose price is unknown")
+    func unknownPriceRunsUnderStoredStop() async throws {
         let package = try project(stop: 100)
         defer { cleanup(package) }
         let editor = editor(for: package)
@@ -128,8 +126,8 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.first?.note?.contains("No verified price") == true)
     }
 
-    @Test("known spend at the stop blocks known prices but not an unknown price")
-    func unknownPriceRunsWhenKnownSpendReachedStop() async throws {
+    @Test("spend above a stored stop never blocks known or unknown prices")
+    func spendAboveStoredStopNeverBlocks() async throws {
         let package = try project(stop: 6)
         defer { cleanup(package) }
         let editor = editor(for: package)
@@ -166,23 +164,18 @@ struct BudgetStopTests {
             return
         }
         #expect(providerThunkExecuted)
-        let eventsAfterUnknown = editor.generationLog.spendEvents.count
-        do {
-            _ = try await GenerationBudgetGuard.authorize(
-                input: input,
-                target: target,
-                editor: editor,
-                quoteLoader: { _, _ in money(1) }
-            )
-            Issue.record("expected the known price above the stop to block")
-        } catch let error as GenerationBudgetError {
-            #expect(error.localizedDescription.contains("Budget stop reached"))
-        }
-        #expect(editor.generationLog.spendEvents.count == eventsAfterUnknown)
+        let known = try await GenerationBudgetGuard.authorize(
+            input: input,
+            target: target,
+            editor: editor,
+            quoteLoader: { _, _ in money(10) }
+        )
+        #expect(known.estimate?.eurAmount == 10)
+        #expect(editor.generationLog.spendEvents.count == 3)
     }
 
     @Test("an unpriced reservation in the history never locks later known-price work")
-    func unpricedHistoryDoesNotLockStop() async throws {
+    func unpricedHistoryNeverLocksLaterWork() async throws {
         var log = GenerationLog()
         log.spendEvents = [GenerationSpendEvent(
             transactionId: UUID().uuidString,
@@ -270,8 +263,8 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.first?.note?.contains("No verified price") == true)
     }
 
-    @Test("an unreadable brief fails closed before provider dispatch")
-    func corruptBriefStops() async throws {
+    @Test("an unreadable brief does not take part in spend authorization")
+    func unreadableBriefDoesNotAffectSpend() async throws {
         let package = try project(stop: 100)
         defer { cleanup(package) }
         let editor = editor(for: package)
@@ -288,14 +281,11 @@ struct BudgetStopTests {
             quoteLoader: { _, _ in money(1) }
         )
 
-        guard case .failure(.budget(let message)) = result else {
-            Issue.record("expected corrupt-brief failure, got \(result)")
+        guard case .success = result else {
+            Issue.record("expected dispatch, got \(result)")
             return
         }
-        #expect(message.contains("brief.yaml"))
-        #expect(!providerThunkExecuted)
-        #expect(editor.mediaAssets.isEmpty)
-        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(providerThunkExecuted)
         #expect(try Data(contentsOf: briefURL) == corrupt)
     }
 
@@ -326,44 +316,8 @@ struct BudgetStopTests {
         #expect(persisted.spendEvents.first?.money?.eurAmount == 6)
     }
 
-    @Test("live reservations prevent concurrent requests from overspending")
-    func reservationsCountAgainstLaterRequests() async throws {
-        let package = try project(stop: 10)
-        defer { cleanup(package) }
-        let editor = editor(for: package)
-        let target = GenerationService.dispatchTarget(modelId: "fal-ai/veo3")
-        let input = GenerationPricingInput(
-            modelId: "fal-ai/veo3",
-            modality: .video,
-            durationSeconds: 5,
-            outputCount: 1,
-            resolution: nil,
-            quality: nil,
-            promptCharacterCount: 5,
-            generateAudio: true,
-            referenceCount: 0
-        )
-
-        _ = try await GenerationBudgetGuard.authorize(
-            input: input,
-            target: target,
-            editor: editor,
-            quoteLoader: { _, _ in money(6) }
-        )
-
-        await #expect(throws: GenerationBudgetError.self) {
-            _ = try await GenerationBudgetGuard.authorize(
-                input: input,
-                target: target,
-                editor: editor,
-                quoteLoader: { _, _ in money(6) }
-            )
-        }
-        #expect(editor.generationLog.spendEvents.count == 1)
-    }
-
-    @Test("a delayed quote rechecks live reservations before authorizing")
-    func delayedQuoteCannotOverwriteConcurrentReservation() async throws {
+    @Test("concurrent requests each record their own reservation")
+    func concurrentReservationsAreAllRecorded() async throws {
         let package = try project(stop: 10)
         defer { cleanup(package) }
         let editor = editor(for: package)
@@ -397,7 +351,7 @@ struct BudgetStopTests {
         var iterator = quoteStarted.makeAsyncIterator()
         _ = await iterator.next()
 
-        _ = try await GenerationBudgetGuard.authorize(
+        let first = try await GenerationBudgetGuard.authorize(
             input: input,
             target: target,
             editor: editor,
@@ -405,19 +359,22 @@ struct BudgetStopTests {
         )
         let continuation = try #require(resumeQuote)
         continuation.resume()
+        let second = try await delayed.value
 
-        await #expect(throws: GenerationBudgetError.self) {
-            _ = try await delayed.value
-        }
-        #expect(editor.generationLog.spendEvents.count == 1)
-        #expect(editor.generationLog.spendEvents.first?.money?.eurAmount == 6)
+        #expect(first.transactionId != second.transactionId)
+        #expect(editor.generationLog.spendEvents.count == 2)
+        #expect(Set(editor.generationLog.spendEvents.map(\.transactionId)).count == 2)
     }
 
-    @Test("reruns use the same pre-dispatch budget guard")
-    func rerunStopsBeforeDispatch() async throws {
-        let package = try project(stop: 5)
+    @Test("reruns use the same pre-dispatch ledger guard")
+    func rerunStopsOnCorruptLedgerBeforeDispatch() async throws {
+        let package = try project(stop: nil)
         defer { cleanup(package) }
         let editor = editor(for: package)
+        let workingRoot = try #require(editor.workingRoot)
+        let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
+        let corrupt = Data("{\"version\":2,\"spendEvents\":[".utf8)
+        try corrupt.write(to: logURL, options: .atomic)
         let asset = MediaAsset(
             url: package.appendingPathComponent("source.png"),
             type: .image,
@@ -440,22 +397,22 @@ struct BudgetStopTests {
                 editor: editor,
                 quoteLoader: { _, _ in money(6) }
             )
-            Issue.record("expected the rerun budget guard to block")
+            Issue.record("expected the rerun ledger guard to block")
         } catch let error as EditSubmitter.RerunError {
             guard case .budget(let message) = error else {
-                Issue.record("expected budget failure, got \(error)")
+                Issue.record("expected a ledger failure, got \(error)")
                 return
             }
-            #expect(message.contains("Budget stop reached"))
+            #expect(message.contains("generation-log.json"))
         }
 
         #expect(editor.mediaAssets.count == beforeAssets)
-        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(try Data(contentsOf: logURL) == corrupt)
     }
 
     @Test("a trimmed upscale rerun prices and replays the recorded source range")
     func trimmedUpscaleRerunUsesRecordedRange() async throws {
-        let package = try project(stop: 5)
+        let package = try project(stop: nil)
         defer { cleanup(package) }
         let editor = editor(for: package)
         let source = MediaAsset(
@@ -495,13 +452,13 @@ struct BudgetStopTests {
                 editor: editor,
                 quoteLoader: { _, pricing in
                     pricedDuration = pricing.durationSeconds
-                    return money(6)
+                    throw CancellationError()
                 }
             )
-            Issue.record("expected the rerun budget guard to block")
+            Issue.record("expected the cancelled pricing to stop the rerun before dispatch")
         } catch let error as EditSubmitter.RerunError {
             guard case .budget = error else {
-                Issue.record("expected budget failure, got \(error)")
+                Issue.record("expected a pre-dispatch failure, got \(error)")
                 return
             }
         }
@@ -561,8 +518,8 @@ struct BudgetStopTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
-    @Test("an unpriced provider workflow is not blocked by an explicit stop")
-    func providerWorkflowRunsUnderStop() throws {
+    @Test("an unpriced provider workflow is never blocked by a stored stop")
+    func providerWorkflowRunsUnderStoredStop() throws {
         let package = try project(stop: 1)
         defer { cleanup(package) }
         let editor = editor(for: package)
@@ -609,8 +566,8 @@ struct BudgetStopTests {
         #expect(editor.mediaAssets.isEmpty)
     }
 
-    @Test("legacy credit rows stay unconverted and never block a set stop")
-    func legacyCreditsDoNotBlockStop() async throws {
+    @Test("legacy credit rows stay unconverted and never block generation")
+    func legacyCreditsNeverBlock() async throws {
         var log = GenerationLog()
         log.entries.append(GenerationLogEntry(
             model: "fal-ai/veo3",
@@ -670,10 +627,10 @@ struct BudgetStopTests {
             ),
         ]
 
-        let spend = try GenerationBudgetGuard.verifiedSpend(
+        let spend = try GenerationBudgetGuard.spendSnapshot(
             log: log,
-            generatedAssets: []
-        )
+            generatedInputs: []
+        ).verifiedEur
 
         #expect(spend == 3)
     }
@@ -713,10 +670,10 @@ struct BudgetStopTests {
             ),
         ]
 
-        let spend = try GenerationBudgetGuard.verifiedSpend(
+        let spend = try GenerationBudgetGuard.spendSnapshot(
             log: log,
-            generatedAssets: []
-        )
+            generatedInputs: []
+        ).verifiedEur
 
         #expect(spend == 4)
     }
@@ -861,7 +818,7 @@ struct BudgetStopTests {
         ]
 
         #expect(throws: GenerationBudgetError.self) {
-            _ = try GenerationBudgetGuard.verifiedSpend(
+            try GenerationBudgetGuard.validateLedger(
                 log: log,
                 generatedAssets: []
             )

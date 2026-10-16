@@ -52,7 +52,6 @@ struct GenerationBatchCard: View {
     var runtimeEvidence: GenerationBatchReviewRuntimeEvidence? = nil
 
     @State private var expandedItemIDs: Set<String> = []
-    @State private var budgetStopIsSet = false
     @FocusState private var focusedRemoveItemID: String?
 
     var body: some View {
@@ -106,9 +105,6 @@ struct GenerationBatchCard: View {
             }
             .onAppear {
                 if runtimeEvidenceEnabled { focusedRemoveItemID = batch.payload.items.first?.id }
-            }
-            .task(id: [editor.workingRoot?.path ?? "", batch.id]) {
-                budgetStopIsSet = GenerationBudgetGuard.hasBudgetStop(in: editor.workingRoot)
             }
         }
     }
@@ -328,9 +324,7 @@ struct GenerationBatchCard: View {
                 .interfaceFont(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(budgetStopIsSet
-                ? String(localized: "Provider charges apply. Unknown costs are not covered by the budget limit.")
-                : String(localized: "Provider charges apply. The project budget cannot be guaranteed for this batch."))
+            Text("Provider charges apply. The cost is recorded only if the provider reports it.")
                 .interfaceFont(size: AppTheme.FontSize.xxs)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)

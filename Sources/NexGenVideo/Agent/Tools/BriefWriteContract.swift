@@ -112,7 +112,7 @@ enum BriefWriteContract {
         Field(key: "budget_eur", kind: .double, required: false,
               description: "Planning budget in EUR (default 50). Must be > 0."),
         Field(key: "budget_stop_eur", kind: .double, required: false,
-              description: "Optional hard spending stop in EUR (must be > 0). Omit for no hard stop."),
+              description: "Legacy field accepted for older packs and ignored; the budget never stops work. Omit it."),
         Field(key: "concept_type", kind: .enumField(options: ConceptType.allCases.map(\.rawValue)),
               required: true, description: "Concept type. Use 'other' + concept_type_other for unlisted."),
         Field(key: "concept_type_other", kind: .string, required: false,

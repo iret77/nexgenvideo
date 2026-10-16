@@ -56,19 +56,28 @@ enum GenerationBudgetGuard {
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
-                    "Budget stop could not access the live project working copy. "
+                    "The live project working copy is unavailable. "
                     + "Restore or reopen the project before generating."
                 )
             }
-            if let ceiling = approvedPackage?.payload.estimate {
-                let current = try await quoteLoader(target, input)
-                try validate(current)
-                guard current.eurAmount <= ceiling.eurAmount else {
-                    throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
-                }
-                return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
+            guard let ceiling = approvedPackage?.payload.estimate else {
+                return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
             }
-            return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
+            let current: GenerationMoney?
+            do {
+                let quoted = try await quoteLoader(target, input)
+                try validate(quoted)
+                current = quoted
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                current = nil
+            }
+            if let current, current.eurAmount > ceiling.eurAmount {
+                throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
+            }
+            return GenerationAuthorization(transactionId: nil, target: target, estimate: current)
         }
         let mutationScope = try GenerationProjectMutationScope(
             projectHome: workingRoot,
@@ -90,10 +99,9 @@ enum GenerationBudgetGuard {
             pricingFailure = .classified(error, provider: target.provider, endpoint: target.endpoint)
         }
 
-        if let ceiling = approvedPackage?.payload.estimate {
-            guard let estimate, estimate.eurAmount <= ceiling.eurAmount else {
-                throw GenerationBudgetError.blocked("The current price is unavailable or exceeds the reviewed estimate. Prepare and review the generation again.")
-            }
+        // A known higher price changes what the user approved; a missing price never blocks.
+        if let ceiling = approvedPackage?.payload.estimate, let estimate, estimate.eurAmount > ceiling.eurAmount {
+            throw GenerationBudgetError.blocked("The current price exceeds the reviewed estimate. Prepare and review the generation again.")
         }
 
         guard editor.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL else {
@@ -102,21 +110,8 @@ enum GenerationBudgetGuard {
             )
         }
         try mutationScope.requireCurrent(editor: editor)
-        let stop = try budgetStop(in: workingRoot)
-        var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        let existingSpend = try verifiedSpend(log: log, generatedAssets: editor.mediaAssets)
-
-        // The stop judges known amounts only; an unknown price goes through per-run approval instead.
-        if let stop, let estimate, !acceptsUnknownPrice {
-            let projected = existingSpend + estimate.eurAmount
-            guard projected <= stop else {
-                throw GenerationBudgetError.blocked(
-                    "Budget stop reached. This request is estimated at "
-                    + euro(estimate.eurAmount) + "; known project spend plus reservations would be "
-                    + euro(projected) + ", above the limit of " + euro(stop) + "."
-                )
-            }
-        }
+        let log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
+        try validateLedger(log: log, generatedAssets: editor.mediaAssets)
 
         try Task.checkCancellation()
         let transactionId = UUID().uuidString
@@ -160,7 +155,7 @@ enum GenerationBudgetGuard {
         guard let workingRoot = editor.workingRoot else {
             if editor.projectURL != nil {
                 throw GenerationBudgetError.blocked(
-                    "Budget stop could not access the live project working copy. "
+                    "The live project working copy is unavailable. "
                     + "Restore or reopen the project before running provider tools."
                 )
             }
@@ -171,8 +166,8 @@ enum GenerationBudgetGuard {
             editor: editor
         )
 
-        var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
-        _ = try verifiedSpend(log: log, generatedAssets: editor.mediaAssets)
+        let log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
+        try validateLedger(log: log, generatedAssets: editor.mediaAssets)
 
         let authorization = GenerationAuthorization(
             transactionId: UUID().uuidString,
@@ -189,14 +184,14 @@ enum GenerationBudgetGuard {
         return authorization
     }
 
-    static func verifiedSpend(
+    static func validateLedger(
         log: GenerationLog,
         generatedAssets: [MediaAsset]
-    ) throws -> Double {
-        try spendSnapshot(
+    ) throws {
+        _ = try spendSnapshot(
             log: log,
             generatedInputs: generatedAssets.compactMap(\.generationInput)
-        ).verifiedEur
+        )
     }
 
     nonisolated static func spendSnapshot(
@@ -288,44 +283,6 @@ enum GenerationBudgetGuard {
         )
     }
 
-    static func hasBudgetStop(in workingRoot: URL?) -> Bool {
-        guard let workingRoot else { return false }
-        return (try? budgetStop(in: workingRoot)) != nil
-    }
-
-    private static func budgetStop(in workingRoot: URL) throws -> Double? {
-        let dataRoot: URL?
-        if let resolved = DataRootResolver.dataRoot(of: workingRoot) {
-            dataRoot = resolved
-        } else {
-            let pipeline = workingRoot.appendingPathComponent(DataRootResolver.pipelineDirname)
-            let nestedBrief = PipelineLayout.url(PipelineLayout.briefFile, in: pipeline)
-            let flatBrief = PipelineLayout.url(PipelineLayout.briefFile, in: workingRoot)
-            if FileManager.default.fileExists(atPath: nestedBrief.path) {
-                dataRoot = pipeline
-            } else if FileManager.default.fileExists(atPath: flatBrief.path) {
-                dataRoot = workingRoot
-            } else {
-                dataRoot = nil
-            }
-        }
-        guard let dataRoot else { return nil }
-        let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        do {
-            let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
-                Brief.self,
-                at: PipelineLayout.briefFile
-            )
-            try brief.validate()
-            return brief.budgetStopEur
-        } catch {
-            throw GenerationBudgetError.blocked(
-                "Budget stop could not validate brief.yaml. Repair or restore it before generating."
-            )
-        }
-    }
-
     private static func loadGenerationLog(from workingRoot: URL) throws -> GenerationLog? {
         let url = workingRoot.appendingPathComponent(Project.generationLogFilename)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -350,11 +307,7 @@ enum GenerationBudgetGuard {
     }
 
     nonisolated private static func corrupt(_ detail: String) -> GenerationBudgetError {
-        .blocked("Budget stop could not verify project spend: \(detail). No provider request was sent.")
-    }
-
-    private static func euro(_ amount: Double) -> String {
-        String(format: "€%.2f", amount)
+        .blocked("The spend ledger could not be verified: \(detail). No provider request was sent.")
     }
 
     private struct SpendState {

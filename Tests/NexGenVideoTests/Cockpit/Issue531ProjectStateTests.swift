@@ -39,7 +39,6 @@ struct Issue531ProjectStateTests {
                 unpricedTransactionCount: 0,
                 legacyGenerationCount: 0
             ),
-            budgetStopEur: nil,
             approvalEvidence: [
                 "brief": NativeCockpitReader.PhaseApprovalEvidence(
                     current: false,

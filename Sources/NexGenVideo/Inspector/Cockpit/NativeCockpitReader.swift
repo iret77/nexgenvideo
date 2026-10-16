@@ -217,10 +217,6 @@ enum NativeCockpitReader {
             throw NativeError.notInitialized
         }
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
         let approvalEvidence = FileDigest.$readinessCache.withValue(
             approvalEvidenceDigests
         ) {
@@ -236,7 +232,6 @@ enum NativeCockpitReader {
         return try serialize(stateDictionary(
             snapshot,
             spend: spend,
-            budgetStopEur: brief?.budgetStopEur,
             approvalEvidence: approvalEvidence,
             confirmedIdentityRecovery: recovery
         ))
@@ -246,7 +241,6 @@ enum NativeCockpitReader {
     static func stateDictionary(
         _ s: ProjectStateBuilder.ProjectState,
         spend: ProjectSpendSnapshot,
-        budgetStopEur: Double?,
         approvalEvidence: [String: PhaseApprovalEvidence] = [:],
         confirmedIdentityRecovery:
             ConfirmedIdentityProvenanceRecoveryStatus? = nil
@@ -266,21 +260,15 @@ enum NativeCockpitReader {
         let remaining: Any = spend.isComplete
             ? max(0.0, s.budgetEur - spend.verifiedEur)
             : NSNull()
-        let stopRemaining: Any
-        if spend.isComplete, let budgetStopEur {
-            stopRemaining = max(0.0, budgetStopEur - spend.verifiedEur)
-        } else {
-            stopRemaining = NSNull()
-        }
         var state: [String: Any] = [
             "project": s.project,
             "mode": s.mode,
             "budget_eur": s.budgetEur,
-            "budget_stop_eur": budgetStopEur.map { $0 as Any } ?? NSNull(),
+            "budget_stop_eur": NSNull(),
             "budget_spent_eur": spend.verifiedEur,
             "verified_spend_eur": spend.verifiedEur,
             "budget_remaining_eur": remaining,
-            "hard_stop_remaining_eur": stopRemaining,
+            "hard_stop_remaining_eur": NSNull(),
             "spend_complete": spend.isComplete,
             "active_reservations": spend.activeReservationCount,
             "unpriced_transactions": spend.unpricedTransactionCount,
@@ -549,31 +537,19 @@ enum NativeCockpitReader {
             throw NativeError.notInitialized
         }
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
-        let stop = brief?.budgetStopEur
         let verifiedTotal: Any = spend.isComplete
             ? spend.verifiedEur
             : NSNull()
-        // `budget_eur` plans; only the stop limits spend, and only known spend can exceed it.
-        let overBudget = stop.map { spend.verifiedEur > $0 } ?? false
-        let stopRemaining: Any
-        if spend.isComplete, let stop {
-            stopRemaining = max(0.0, stop - spend.verifiedEur)
-        } else {
-            stopRemaining = NSNull()
-        }
+        // The budget is a display, never a limit; these keys stay for pinned packs.
         return [
             "project": snapshot.project,
             "budget_eur": snapshot.budgetEur,
-            "budget_stop_eur": stop.map { $0 as Any } ?? NSNull(),
+            "budget_stop_eur": NSNull(),
             "spent_eur": verifiedTotal,
             "verified_spend_eur": spend.verifiedEur,
-            "remaining_eur": stopRemaining,
-            "hard_stop_remaining_eur": stopRemaining,
-            "over_budget": overBudget,
+            "remaining_eur": NSNull(),
+            "hard_stop_remaining_eur": NSNull(),
+            "over_budget": false,
             "spend_complete": spend.isComplete,
             "active_reservations": spend.activeReservationCount,
             "unpriced_transactions": spend.unpricedTransactionCount,

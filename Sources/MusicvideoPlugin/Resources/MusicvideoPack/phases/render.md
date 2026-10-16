@@ -266,14 +266,10 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    A generated shot passes only with its planned frames/reference set;
    an AI-enhanced shot passes only with the exact `source_path` declared
    by its approved Shot List.
-7. **Budget check** after every shot via `estimate_cost(project_dir)`.
-   `over_budget` is true only when known spend exceeds `budget_stop_eur`.
-   If it would flip true, abort the batch and escalate to the user before
-   further `generate_video` calls. Unknown costs never abort the loop:
-   with `spend_complete=false`, continue and tell the user how many runs
-   have unknown cost (`unpriced_transactions` + `legacy_generations`);
-   `verified_spend_eur` is then only a lower bound. Each such run still
-   goes through its own spend approval.
+7. **Spend** is a display, never a limit: `estimate_cost(project_dir)`
+   reports proven spend, provider credits and runs with unknown cost, and
+   nothing in it stops the loop. Report it at the end (step 11); while
+   `spend_complete=false`, `verified_spend_eur` is only a lower bound.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
 the manifest and proof incrementally. A crash between the two writes is
@@ -281,7 +277,7 @@ fail-closed: their mismatch makes that shot pending again. On resume,
 `next_render_shot` skips only exact, currently proven renders and hands
 you the missing / stale / failed ones.
 
-**Insufficient generation budget / unavailable model** is a controlled
+**Insufficient provider credits / unavailable model** is a controlled
 abort: mark the current shot `status="failed"`, give the user a clear
 message with a resume hint, and stop the batch (every further call would
 hit the same wall). The keys/credits are bound in the host — never a
@@ -294,7 +290,7 @@ When the user asks to redo a single shot:
 1. Re-render only this shot, skip the rest.
 2. Keep the old clip as history.
 3. Re-record via `record_render` (the new entry replaces the old).
-4. Deduct the budget via `estimate_cost`; do **not** reset the
+4. Report the updated spend via `estimate_cost`; do **not** reset the
    preview pass. Re-recording a final shot automatically invalidates the
    terminal `render` gate; review and approve it again after the replacement.
 
@@ -413,8 +409,8 @@ failed, total spend (`estimate_cost`), and any shots delivered as
   not call a video provider; pass the returned exact `output_media_ref`
   straight to `record_render`. Repeat until `done`, then call
   `assemble_timeline`. `done` means current file hash plus generation
-  provenance, not merely `status=rendered`. Budget is checked via
-  `estimate_cost` after every paid generation; the terminal gate is
+  provenance, not merely `status=rendered`. Spend is reported via
+  `estimate_cost` and never stops the loop; the terminal gate is
   `render` via `approve_gate`.
 - **What you do NOT do:**
   - No unplanned editorial changes. `assemble_timeline` executes the
@@ -430,15 +426,12 @@ failed, total spend (`estimate_cost`), and any shots delivered as
 - **Generic provider error (timeout, model glitch):** mark the shot
   `status="failed"`, the loop continues. Re-run the failed shots later —
   `next_render_shot` hands them back on the next pass.
-- **Insufficient credits / generation budget:** controlled batch abort
-  with a clear user message including the resume hint. After topping up
-  in the host, continue the loop.
-- **Budget exceeded (`estimate_cost` over_budget, known spend above
-  `budget_stop_eur`):** abort; this is a deliberate brake, never bypass
-  it silently.
-- **Spend incomplete (`estimate_cost` spend_complete=false):** continue;
-  report the unpriced/legacy counts to the user and never infer a
-  remaining amount. Unknown cost is never a reason to abort.
+- **Insufficient provider credits:** controlled batch abort with a clear
+  user message including the resume hint. After topping up with the
+  provider, continue the loop.
+- **Unknown or incomplete spend:** never a reason to stop; report the
+  unknown-cost, legacy and in-flight counts and never infer a remaining
+  amount.
 - **Content-policy fail:** do not batch. Apply the workaround table from
   `phases/shotlist.md` rule 3, call
   `rewind(target_phase="shotlist")`, rewrite and re-approve the

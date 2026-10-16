@@ -172,7 +172,8 @@ struct PipelineAgentContractTests {
         let document = try PackKnowledge.phaseDoc(name: "brief")
         #expect(document.contains("finish before Brief approval"))
         #expect(document.contains("A later change requires an explicit Brief rewind"))
-        #expect(document.contains("budget_stop_eur"))
+        #expect(!document.contains("budget_stop_eur"))
+        #expect(document.contains("never a limit"))
         #expect(document.contains("A 4-second net shot therefore"))
         #expect(document.contains("orders 6 gross seconds"))
         #expect(!document.contains("DEFER these out of the brief interview"))
@@ -180,19 +181,17 @@ struct PipelineAgentContractTests {
         #expect(!document.contains("redo it after K7"))
     }
 
-    @Test("Frames and Render stop only for known spend above the budget stop")
-    func unknownCostNeverStopsFramesOrRender() throws {
+    @Test("Frames and Render never stop for spend")
+    func spendNeverStopsFramesOrRender() throws {
         let frame = try PackKnowledge.phaseDoc(name: "frame")
         let render = try PackKnowledge.phaseDoc(name: "render")
         for document in [frame, render] {
-            #expect(document.contains("`over_budget` is true only when known spend exceeds `budget_stop_eur`."))
-            #expect(document.contains("(`unpriced_transactions` + `legacy_generations`)"))
+            #expect(document.contains("is a display, never a limit"))
+            #expect(!document.contains("over_budget"))
+            #expect(!document.contains("budget_stop_eur"))
+            #expect(!document.contains("If `spend_complete=false`, stop as well"))
+            #expect(!document.contains("Abort in the same way when"))
         }
-        #expect(frame.contains("Unknown costs never stop the phase"))
-        #expect(!frame.contains("If `spend_complete=false`, stop as well"))
-        #expect(render.contains("Unknown costs never abort the loop"))
-        #expect(!render.contains("Abort in the same way when"))
-        #expect(!render.contains("spend_complete=false):** abort"))
     }
 
     @Test("Bible instructions keep approved images as identity truth")

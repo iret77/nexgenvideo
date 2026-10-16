@@ -636,7 +636,7 @@ struct GenerationBatchTests {
         try JSONDecoder().decode(GenerationBatchJournal.self, from: legacyData).validate(batch: original)
     }
 
-    @Test func unknownCostReservationsNeverLockLaterWorkWhileKnownPricesStillMeetTheStop() async throws {
+    @Test func unknownCostReservationsNeverLockLaterWorkEvenAboveAStoredStop() async throws {
         let (root, editor, original) = try await fixture(stop: 0.6)
         defer { cleanup(root) }
         let batch = try await unpricedBatch(original, editor: editor)
@@ -674,15 +674,10 @@ struct GenerationBatchTests {
             target: known.package.payload.target, editor: editor, approvedPackage: known.package,
             quoteLoader: { _, _ in GenerationPackageFixture.money() })
         #expect(editor.generationLog.spendEvents.count == 4)
-        do {
-            _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
-                target: known.package.payload.target, editor: editor, approvedPackage: known.package,
-                quoteLoader: { _, _ in GenerationPackageFixture.money() })
-            Issue.record("expected the known price above the stop to block")
-        } catch let error as GenerationBudgetError {
-            #expect(error.localizedDescription.contains("Budget stop reached"))
-        }
-        #expect(editor.generationLog.spendEvents.count == 4)
+        _ = try await GenerationBudgetGuard.authorize(input: known.package.pricingInput(),
+            target: known.package.payload.target, editor: editor, approvedPackage: known.package,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        #expect(editor.generationLog.spendEvents.count == 5)
         let dataRoot = try #require(editor.workingRoot).appendingPathComponent("pipeline")
         let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
         #expect(brief.budgetStopEur == 0.6)
@@ -692,7 +687,7 @@ struct GenerationBatchTests {
                 requiresVerifiedCeiling: true, batchItem: authorization,
                 quoteLoader: { _, _ in throw CancellationError() })
         }
-        #expect(editor.generationLog.spendEvents.count == 4)
+        #expect(editor.generationLog.spendEvents.count == 5)
         let home = try #require(editor.workingRoot)
         let current = try GenerationBatchStore.load(id: batch.id, home: home)
         let transaction = try #require(reserved.transactionId)
@@ -711,6 +706,28 @@ struct GenerationBatchTests {
                     placeholders: outputEntries, batch: batch)
             }
         }
+    }
+
+    @Test func aReviewedRunWhosePriceBecomesUnavailableStillRuns() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: batchItem,
+            quoteLoader: { _, _ in throw GenerationBudgetError.blocked("Pricing outage") })
+        #expect(reserved.transactionId != nil)
+        #expect(reserved.estimate == nil)
+        #expect(editor.generationLog.spendEvents.first?.money == nil)
+        await #expect(throws: (any Error).self) {
+            try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+                target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+                requiresVerifiedCeiling: true, batchItem: batchItem,
+                quoteLoader: { _, _ in GenerationPackageFixture.money(0.50) })
+        }
+        #expect(editor.generationLog.spendEvents.count == 1)
     }
 
     @Test func actualChargeAboveTheReviewedCeilingIsRecordedAndReloads() async throws {
