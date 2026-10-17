@@ -1,5 +1,7 @@
 """Exercise and verify the native five-workspace editor on a macOS 26 runner."""
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -116,13 +118,143 @@ def valid_keyframe_lane_evidence(row):
     )
 
 
+
+
+def valid_generation_evidence(evidence):
+    if not isinstance(evidence, dict):
+        return False
+    if (
+        evidence.get("generatedShotIDs") != ["s001"]
+        or evidence.get("importedShotIDs") != ["s002"]
+        or evidence.get("spendEvents") != ["reserved", "submitted", "settled"]
+        or evidence.get("requestMethods") != ["POST", "PUT", "POST", "GET", "GET", "GET"]
+        or evidence.get("generatedSourceStartFrame") != 30
+        or evidence.get("generatedSourceEndFrame") != 90
+        or evidence.get("totalFrames") != 129
+        or evidence.get("unexpectedRequestCount") != 0
+        or any(type(evidence.get(key)) is not int or evidence[key] != 1 for key in (
+            "submitCount", "pollCount", "resultCount", "downloadCount", "uploadCount",
+        ))
+    ):
+        return False
+    description = evidence.get("providerEvidence")
+    if not isinstance(description, str) or not all(term in description for term in (
+        "FalClient", "simulator", "no live provider",
+    )):
+        return False
+    for key in ("compiledPromptSHA256", "referenceSHA256", "outputSHA256", "selectedSourceSHA256"):
+        value = evidence.get(key)
+        if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            return False
+    return (
+        evidence["selectedSourceSHA256"] == evidence["outputSHA256"]
+        and all(isinstance(evidence.get(key), str) and evidence[key].strip() for key in (
+            "batchID", "packageID", "takeID", "generationAssetID",
+        ))
+    )
+
+def valid_musicvideo_review(row, output):
+    if not isinstance(row, dict):
+        return False
+    viewport = row.get("viewport")
+    controls = row.get("controls")
+    if (
+        row.get("route") != "mixed-musicvideo"
+        or not valid_generation_evidence(row.get("generation"))
+        or not all(row.get(key) is True for key in (
+            "nativeSequenceReview", "nativeStyleReview", "recordDisabledUntilReviewed",
+            "reviewInputsPersisted", "timelineUnchangedByReview", "nativeExportSubmitted",
+            "exportCompleted", "sequenceReviewBound", "styleReviewBound", "fullSongDuration", "reviewReelHasAudio",
+        ))
+        or not valid_frame(viewport)
+        or viewport["width"] != 960 or viewport["height"] != 640
+        or row.get("expectedDurationFrames") != 129
+        or row.get("shotIDs") != ["s001", "s002"]
+        or row.get("verifiedShotImages") != 2
+        or row.get("verifiedMovingShots") != len(row["shotIDs"])
+        or type(row.get("verifiedFrames")) is not int
+        or row["verifiedFrames"] < 2 * len(row["shotIDs"])
+        or row.get("sequenceFindingCount") != 1
+        or not isinstance(row.get("styleFindingCount"), int) or row["styleFindingCount"] < 1
+        or not isinstance(controls, list) or not controls
+        or len(row.get("screenshots", [])) != 7
+    ):
+        return False
+    for key, minimum in (("playbackSeconds", 4.26), ("decodedAudioSamples", 200000), ("decodedAudioRMS", 0.001),
+                         ("decodedAudioCorrelation", 0.98)):
+        value = row.get(key)
+        if type(value) not in (int, float) or not math.isfinite(value) or value < minimum:
+            return False
+    if row["decodedAudioCorrelation"] > 1.000001:
+        return False
+    for item in controls:
+        if not isinstance(item, dict):
+            return False
+        control, clip = item.get("control"), item.get("viewport")
+        if (
+            not valid_frame(control) or not valid_frame(clip)
+            or not all(isinstance(value, (int, float)) and math.isfinite(value)
+                       for frame in (control, clip) for value in frame.values())
+            or not contains_frame(clip, control) or not contains_frame(viewport, clip)
+        ):
+            return False
+    identifiers = {item.get("id") for item in controls}
+    if not {
+        "pipeline.overview.select.render", "sequence.disclosure", "sequence.build", "sequence.play",
+        "sequence.shots", "sequence.start", "sequence.end", "sequence.evidence", "sequence.severity",
+        "sequence.action", "sequence.add", "sequence.adjacent", "sequence.whole", "sequence.record",
+        "style.disclosure", "style.begin", "style.record", "production.export",
+    }.issubset(identifiers):
+        return False
+    if not any(isinstance(key, str) and key.startswith("style.choice.") for key in identifiers):
+        return False
+    if not any(isinstance(key, str) and key.startswith("style.observation.") for key in identifiers):
+        return False
+    transitions = row.get("pickerTransitions")
+    if not isinstance(transitions, list) or not all(
+        isinstance(item, dict) and all(isinstance(item.get(key), str) and item[key]
+                                      for key in ("id", "before", "after"))
+        and item["before"] != item["after"] for item in transitions
+    ):
+        return False
+    expected_transitions = [
+        {"id": "sequence.severity", "before": "warning", "after": "info"},
+        {"id": "sequence.action", "before": "local_repair", "after": "accept"},
+    ]
+    style_choices = {key for key in identifiers if isinstance(key, str) and key.startswith("style.choice.")}
+    if (transitions[:2] != expected_transitions or len(transitions) != 2 + len(style_choices)
+        or len(style_choices) != row["styleFindingCount"]
+        or {item["id"] for item in transitions[2:]} != style_choices
+        or not all(item["before"] == "unreviewed" and item["after"] == "accepted_deviation"
+                   for item in transitions[2:])
+        or row.get("recordedSequenceSelection") != {"severity": "info", "action": "accept"}):
+        return False
+    try:
+        names = [row[key] for key in ("movie", "deliveryReceipt")]
+        if not all(isinstance(name, str) and name and Path(name).name == name for name in names):
+            return False
+        movie = (output / names[0]).read_bytes()
+        receipt = json.loads((output / names[1]).read_text())
+        return (
+            len(movie) > 1000 and movie[4:8] == b"ftyp"
+            and hashlib.sha256(movie).hexdigest() == row.get("outputSHA256") == receipt.get("output_sha256")
+            and receipt.get("schema") == "delivery-attempt/v1"
+            and receipt.get("status") == "succeeded"
+            and receipt.get("output_byte_count") == len(movie)
+            and receipt.get("probe_qc", {}).get("passed") is True
+            and isinstance(receipt.get("sequence_review_sha256"), str)
+            and len(receipt["sequence_review_sha256"]) == 64
+        )
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
 def run_scale(executable, output, scale):
     label = str(round(scale * 100))
     log_path = output / f"scale-{label}.log"
     started = time.monotonic()
     case_results = []
     output_chunks = []
-    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard"):
+    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard", "filmreview"):
         case_started = time.monotonic()
         try:
             process = subprocess.run(
@@ -137,7 +269,7 @@ def run_scale(executable, output, scale):
                     "NGV_WORKSPACE_UI_CASE": scenario,
                     "NGV_INSPECTOR_UI_ACCEPTANCE": "1",
                 },
-                timeout=90,
+                timeout=180 if scenario == "filmreview" else 90,
                 check=False,
                 text=True,
             )
@@ -169,7 +301,7 @@ def run_scale(executable, output, scale):
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
     workspaces = {row.get("workspace") for row in workspace_rows}
-    completed = sum(row.get("event") == "completed" for row in rows) == 7
+    completed = sum(row.get("event") == "completed" for row in rows) == 8
     hidden = [row for row in rows if row.get("event") == "panels-hidden"]
     narrow = [row for row in rows if row.get("event") == "narrow-production"]
     invariants = [row for row in rows if row.get("event") == "invariants"]
@@ -183,6 +315,7 @@ def run_scale(executable, output, scale):
     storyboard = [row for row in rows if row.get("event") == "storyboard-review"]
     production = [row for row in rows if row.get("event") == "production-workbench"]
     agent_activity = [row for row in rows if row.get("event") == "agent-activity"]
+    film_review = [row for row in rows if row.get("event") == "musicvideo-film-review"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
@@ -202,7 +335,7 @@ def run_scale(executable, output, scale):
     ]
     screenshots += [
         name
-        for row in analysis + provenance + musicvideo + host_states + storyboard + production + agent_activity
+        for row in analysis + provenance + musicvideo + host_states + storyboard + production + agent_activity + film_review
         for name in row.get("screenshots", [])
     ]
     valid_images = all(
@@ -290,6 +423,8 @@ def run_scale(executable, output, scale):
         and len(agent_activity) == 1
         and agent_activity[0].get("complete") is True
         and len(agent_activity[0].get("screenshots", [])) == 3
+        and len(film_review) == 1
+        and valid_musicvideo_review(film_review[0], output)
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -301,7 +436,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 31 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 38 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

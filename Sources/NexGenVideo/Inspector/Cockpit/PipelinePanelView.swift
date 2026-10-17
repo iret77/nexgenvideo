@@ -704,7 +704,7 @@ struct PipelinePanelView: View {
 
     @ViewBuilder
     private func acceptanceProbe(_ part: String, enabled: Bool? = nil, text: String? = nil) -> some View {
-        if WorkspaceUIAcceptance.isRequested {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
             AppRelaunchClickProbe(identifier: "pipeline.overview.\(part)",
                 acceptanceState: enabled, acceptanceText: text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

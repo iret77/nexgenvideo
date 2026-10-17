@@ -1,11 +1,14 @@
 import AVKit
+import Combine
 import NexGenEngine
 import SwiftUI
 
 struct SequenceReviewView: View {
     @Environment(EditorViewModel.self) private var editor
+    @State private var expanded = false
     @State private var snapshot: PipelineSequenceReviewStore.Snapshot?
     @State private var player: AVPlayer?
+    @State private var playing = false
     @State private var reviewedAdjacentPairs = false
     @State private var reviewedWholePlayback = false
     @State private var scope = SequenceReviewScopeV1.adjacentPair
@@ -21,18 +24,34 @@ struct SequenceReviewView: View {
     @State private var message: String?
 
     var body: some View {
-        DisclosureGroup("Sequence review") {
+        DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("Build a canonical reel from the exact selected sources and review cut continuity separately from whole playback.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 if let snapshot {
+                    Button(playing ? "Pause reel" : "Play reel") {
+                        guard let player else { return }
+                        if player.rate > 0 {
+                            player.pause()
+                        } else {
+                            if let duration = player.currentItem?.duration, duration.isNumeric,
+                               player.currentTime() >= duration { player.seek(to: .zero) }
+                            player.play()
+                        }
+                    }
+                    .buttonStyle(InlineActionButtonStyle())
+                    .reviewAcceptanceProbe("sequence.play", state: playing)
+                    .disabled(busy)
                     VideoPlayer(player: player)
-                        .frame(minHeight: AppTheme.Layout.previewMinHeight)
+                        .frame(height: AppTheme.Layout.previewMinHeight)
+                        .reviewAcceptanceProbe("sequence.player")
                     Text("\(snapshot.plan.selectedMedia.count) sources · \(snapshot.reel.durationFrames) frames · exact EDL \(snapshot.reel.edlSHA256.prefix(10))")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Toggle("I reviewed every adjacent cut", isOn: $reviewedAdjacentPairs)
+                        .reviewAcceptanceProbe("sequence.adjacent", state: reviewedAdjacentPairs)
                         .disabled(busy || snapshot.plan.selectedMedia.count < 2)
-                    Toggle("I watched the complete reel with audio", isOn: $reviewedWholePlayback)
+                    Toggle("I watched the complete reel and checked its sound", isOn: $reviewedWholePlayback)
+                        .reviewAcceptanceProbe("sequence.whole", state: reviewedWholePlayback)
                         .disabled(busy)
                     findingEditor(snapshot: snapshot)
                     if !findings.isEmpty {
@@ -47,6 +66,7 @@ struct SequenceReviewView: View {
                                 Spacer(minLength: AppTheme.Spacing.none)
                                 Button("Remove") { findings.remove(at: index) }
                                     .buttonStyle(InlineActionButtonStyle())
+                                    .reviewAcceptanceProbe("sequence.remove.\(index)")
                                     .disabled(busy)
                             }
                         }
@@ -54,9 +74,11 @@ struct SequenceReviewView: View {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         Button("Rebuild reel") { beginReview() }
                             .buttonStyle(InlineActionButtonStyle())
+                            .reviewAcceptanceProbe("sequence.rebuild")
                             .disabled(busy)
                         Button("Record review") { save(snapshot: snapshot) }
                             .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                            .reviewAcceptanceProbe("sequence.record")
                             .disabled(
                                 busy
                                     || !reviewedWholePlayback
@@ -66,15 +88,28 @@ struct SequenceReviewView: View {
                 } else {
                     Button("Build review reel") { beginReview() }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                        .reviewAcceptanceProbe("sequence.build")
                         .disabled(busy)
                 }
                 if busy { ProgressView().controlSize(.small) }
-                if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+                if let message {
+                    Text(message).foregroundStyle(AppTheme.Text.secondaryColor)
+                        .reviewAcceptanceProbe("sequence.message", text: message)
+                }
             }
             .padding(.vertical, AppTheme.Spacing.sm)
+        } label: {
+            Text("Sequence review")
+                .reviewAcceptanceProbe("sequence.disclosure", state: expanded)
         }
         .interfaceFont(size: AppTheme.Typography.ui)
-        .onDisappear { player?.pause() }
+        .onReceive(player?.publisher(for: \.rate).eraseToAnyPublisher() ?? Just(Float.zero).eraseToAnyPublisher()) {
+            playing = $0 > 0
+        }
+        .onDisappear { player?.pause(); playing = false }
+        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { notification in
+            if let item = notification.object as? AVPlayerItem, item === player?.currentItem { playing = false }
+        }
         .onChange(of: editor.workingRoot) { _, _ in reset() }
     }
 
@@ -83,23 +118,25 @@ struct SequenceReviewView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text("Observed finding").fontWeight(AppTheme.FontWeight.semibold)
-            HStack(spacing: AppTheme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Picker("Scope", selection: $scope) {
                     Text(SequenceReviewScopeV1.adjacentPair.label).tag(SequenceReviewScopeV1.adjacentPair)
                     Text(SequenceReviewScopeV1.wholePlayback.label).tag(SequenceReviewScopeV1.wholePlayback)
                 }
+                .reviewAcceptanceProbe("sequence.scope", text: scope.rawValue)
                 Picker("Category", selection: $category) {
                     ForEach(SequenceReviewCategoryV1.allCases, id: \.self) {
                         Text($0.label).tag($0)
                     }
                 }
             }
-            HStack(spacing: AppTheme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Picker("Severity", selection: $severity) {
                     Text("Info").tag(SequenceReviewSeverityV1.info)
                     Text("Warning").tag(SequenceReviewSeverityV1.warning)
                     Text("Blocking").tag(SequenceReviewSeverityV1.blocking)
                 }
+                .reviewAcceptanceProbe("sequence.severity", text: severity.rawValue)
                 Picker("Action", selection: $action) {
                     Text("Accept").tag(SequenceReviewActionV1.accept)
                     Text("Local repair").tag(SequenceReviewActionV1.localRepair)
@@ -107,19 +144,24 @@ struct SequenceReviewView: View {
                     Text("Rescue range").tag(SequenceReviewActionV1.rescue)
                     Text("Rewind plan").tag(SequenceReviewActionV1.rewind)
                 }
+                .reviewAcceptanceProbe("sequence.action", text: action.rawValue)
             }
             TextField("Shot IDs, separated by commas", text: $shotIDs)
+                .reviewAcceptanceProbe("sequence.shots", text: shotIDs)
                 .disabled(busy)
-            HStack(spacing: AppTheme.Spacing.sm) {
-                TextField("First frame", value: $startFrame, format: .number)
-                TextField("End frame", value: $endFrame, format: .number)
-            }
-            TextField("Describe only what you observed", text: $evidence)
+            TextField("First frame", value: $startFrame, format: .number)
+                .reviewAcceptanceProbe("sequence.start", text: String(startFrame))
+            TextField("End frame", value: $endFrame, format: .number)
+                .reviewAcceptanceProbe("sequence.end", text: String(endFrame))
+            TextField("Describe only what you observed", text: $evidence, axis: .vertical)
+                .reviewAcceptanceProbe("sequence.evidence", text: evidence)
                 .disabled(busy)
             Button("Add finding") { addFinding(snapshot: snapshot) }
                 .buttonStyle(InlineActionButtonStyle())
+                .reviewAcceptanceProbe("sequence.add")
                 .disabled(busy || !validDraft(snapshot: snapshot))
         }
+        .disabled(busy)
         .padding(AppTheme.Spacing.sm)
         .background(AppTheme.Background.raisedColor)
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
@@ -164,6 +206,7 @@ struct SequenceReviewView: View {
 
     private func beginReview() {
         player?.pause()
+        playing = false
         busy = true
         message = nil
         Task {
@@ -208,6 +251,7 @@ struct SequenceReviewView: View {
                     : "Review recorded for this exact reel, cut order and production input set."
                 self.snapshot = nil
                 player?.pause()
+                playing = false
                 player = nil
             } catch {
                 message = error.localizedDescription
@@ -218,6 +262,7 @@ struct SequenceReviewView: View {
 
     private func reset() {
         player?.pause()
+        playing = false
         player = nil
         snapshot = nil
         reviewedAdjacentPairs = false
@@ -256,5 +301,25 @@ private extension SequenceReviewCategoryV1 {
         case .visualArtifact: "Visual artifact"
         case .audio: "Audio"
         }
+    }
+}
+
+private struct ReviewAcceptanceProbe: View {
+    @Environment(\.isEnabled) private var isEnabled
+    let identifier: String
+    let state: Bool?
+    let text: String?
+
+    var body: some View {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: identifier, acceptanceState: state ?? isEnabled, acceptanceText: text)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+extension View {
+    func reviewAcceptanceProbe(_ identifier: String, state: Bool? = nil, text: String? = nil) -> some View {
+        background { ReviewAcceptanceProbe(identifier: identifier, state: state, text: text) }
     }
 }

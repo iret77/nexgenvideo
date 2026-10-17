@@ -99,7 +99,7 @@ struct ProjectCockpitView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background {
-                if GenerationBatchReviewSelfTest.isRequested {
+                if GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                     AppRelaunchClickProbe(identifier: "production.artifact")
                 }
             }
@@ -118,7 +118,7 @@ struct ProjectCockpitView: View {
                 .frame(height: min(dockContentHeight, dockMaximumHeight))
                 .clipped()
                 .background {
-                    if GenerationBatchReviewSelfTest.isRequested {
+                    if GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                         AppRelaunchClickProbe(identifier: "production.dock")
                     }
                 }

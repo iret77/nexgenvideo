@@ -6,7 +6,9 @@ import NexGenEngine
 enum ReviewReelBuilder {
     static func build(
         plan: AssemblyPlanV1,
-        dataRoot: URL
+        dataRoot: URL,
+        timeline assembledTimeline: Timeline? = nil,
+        resolver sourceResolver: MediaResolver? = nil
     ) async throws -> ReviewReelV1 {
         let selectedMedia = plan.selectedMedia
         guard let fps = selectedMedia.first?.sourceFPS,
@@ -21,8 +23,9 @@ enum ReviewReelBuilder {
             throw ToolError("Sequence review requires one frame rate, one picture track and transitions the editor can reproduce exactly.")
         }
         try PipelineAssemblyStore.requireCurrentSources(selectedMedia, dataRoot: dataRoot)
-        let selectionData = try PipelineAssemblyStore.canonical(selectedMedia)
-        let reelID = FileDigest.sha256(of: Data((FileDigest.sha256(of: selectionData) + "\nreview-reel/v1").utf8))
+        let soundtrack = try ReviewReelSoundtrack.capture(timeline: assembledTimeline, resolver: sourceResolver,
+            fps: fps, dataRoot: dataRoot)
+        let reelID = try soundtrack.reelID(plan: plan)
         let reelPath = "reviews/sequence/reels/\(reelID).mp4"
         let edlPath = "reviews/sequence/reels/\(reelID).edl.v1.json"
         let reelURL = dataRoot.appendingPathComponent(reelPath)
@@ -30,7 +33,6 @@ enum ReviewReelBuilder {
 
         var durationFrames = 0
         var videoClips: [Clip] = []
-        var audioClips: [Clip] = []
         var media = MediaManifest()
         var entries: [ReviewReelEDLEntryV1] = []
         for (selected, placement) in zip(selectedMedia, plan.placements) {
@@ -81,13 +83,6 @@ enum ReviewReelBuilder {
             )
             videoClip.trimStartFrame = selected.sourceStartFrame
             videoClips.append(videoClip)
-            if hasAudio {
-                var audioClip = videoClip
-                audioClip.id = "\(videoClip.id)-audio"
-                audioClip.mediaType = .audio
-                audioClip.sourceClipType = .video
-                audioClips.append(audioClip)
-            }
             entries.append(ReviewReelEDLEntryV1(
                 shotID: selected.shotID,
                 sourcePath: selected.sourcePath,
@@ -100,9 +95,31 @@ enum ReviewReelBuilder {
             ))
             durationFrames = max(durationFrames, reelStart + duration)
         }
+        guard soundtrack.tracks.flatMap(\.clips).allSatisfy({
+            $0.startFrame >= firstStart && $0.endFrame <= firstStart + durationFrames
+        }) else { throw ToolError("The soundtrack extends beyond the assembled picture. Extend the picture cut to cover it or trim the audio, then rebuild the reel.") }
+        for source in soundtrack.sources {
+            let sourceURL = try source.resolve(dataRoot: dataRoot)
+            let asset = AVURLAsset(url: sourceURL)
+            let audioDuration = try await asset.load(.duration)
+            guard audioDuration.isNumeric, audioDuration.seconds > 0,
+                  try await !asset.loadTracks(withMediaType: .audio).isEmpty,
+                  !media.entries.contains(where: { $0.id == source.mediaID }) else {
+                throw ToolError("The reviewed soundtrack source is not playable or has an ambiguous media identity.")
+            }
+            media.entries.append(MediaManifestEntry(id: source.mediaID, name: source.mediaID, type: .audio,
+                source: .external(absolutePath: sourceURL.path), duration: audioDuration.seconds, hasAudio: true))
+        }
+        let audioData = try PipelineAssemblyStore.canonical(soundtrack)
+        let audioURL = dataRoot.appendingPathComponent(ReviewReelSoundtrack.path(reelPath: reelPath))
         let edl = ReviewReelEDLV1(fps: fps, entries: entries)
         let edlData = try PipelineAssemblyStore.canonical(edl)
         try FileManager.default.createDirectory(at: reelURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: audioURL.path) {
+            guard try Data(contentsOf: audioURL) == audioData else { throw ToolError("The immutable review soundtrack has different bytes.") }
+        } else {
+            try audioData.write(to: audioURL, options: .atomic)
+        }
         if FileManager.default.fileExists(atPath: edlURL.path) {
             guard try Data(contentsOf: edlURL) == edlData else {
                 throw ToolError("The immutable review EDL has different bytes.")
@@ -120,10 +137,14 @@ enum ReviewReelBuilder {
             timeline.height = 720
             timeline.settingsConfigured = true
             timeline.tracks = [track]
-            if !audioClips.isEmpty {
-                var audioTrack = Track(type: .audio, clips: audioClips)
-                audioTrack.id = "review-reel-audio-v1"
-                timeline.tracks.append(audioTrack)
+            timeline.tracks += soundtrack.tracks.map { original in
+                var track = original
+                track.clips = original.clips.map { original in
+                    var clip = original
+                    clip.startFrame -= firstStart
+                    return clip
+                }
+                return track
             }
             let finalMedia = media
             let resolver = MediaResolver(manifest: { finalMedia }, projectURL: { nil })
@@ -165,6 +186,8 @@ enum ReviewReelBuilder {
             entries: entries
         )
         try SequenceReviewValidatorV1.validate(reel: reel, selectedMedia: selectedMedia)
+        try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: plan, dataRoot: dataRoot,
+            timeline: assembledTimeline, resolver: sourceResolver)
         return reel
     }
 }

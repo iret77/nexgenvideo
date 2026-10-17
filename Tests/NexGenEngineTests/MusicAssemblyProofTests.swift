@@ -8,6 +8,31 @@ struct MusicAssemblyProofTests {
         try MusicAssemblyProofValidatorV1.validate(proof())
     }
 
+    @Test("Musicvideo picture coverage rejects opening, internal and trailing gaps", arguments: ["opening", "internal", "trailing"])
+    func rejectsIncompleteSongPicture(gap: String) {
+        let assembly = assembly(firstStart: gap == "opening" ? 1 : 0,
+            secondStart: gap == "internal" ? 61 : 60,
+            secondDuration: gap == "opening" ? 60 : 59)
+        #expect(throws: MusicvideoProductionValidationErrorV1.coverageMissing("assembly.full_song")) {
+            try MusicAssemblyProofValidatorV1.validate(proof(), assembly: assembly)
+        }
+    }
+
+    @Test("Musicvideo picture covers the exact song without changing generic assembly policy")
+    func acceptsCompleteSongPicture() throws {
+        try MusicAssemblyProofValidatorV1.validate(proof(), assembly: assembly())
+    }
+
+    private func assembly(firstStart: Int = 0, secondStart: Int = 60, secondDuration: Int = 60) -> TimelineAssemblyProofV1 {
+        TimelineAssemblyProofV1(project: "demo", phase: "final", timelineFPS: 30,
+            videoTrackID: "video", audioTrackID: "audio", generatedAt: "fixture", placements: [
+                .init(shotID: "s001", clipID: "clip-1", sourcePath: "s001.mov", sourceSHA256: hash("a"),
+                    sourceKind: .video, startFrame: firstStart, durationFrames: 60, motion: nil),
+                .init(shotID: "s002", clipID: "clip-2", sourcePath: "s002.mov", sourceSHA256: hash("b"),
+                    sourceKind: .video, startFrame: secondStart, durationFrames: secondDuration, motion: nil),
+            ])
+    }
+
     @Test("rejects duplicate additional audio assets")
     func rejectsDuplicateAudioAssets() {
         let layer = audioLayer(mediaID: "ambience", clipID: "ambience-1")

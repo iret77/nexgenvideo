@@ -8,8 +8,9 @@ It is the required status check for `main`, without an up-to-date requirement.
 No push, pull request or schedule starts a macOS runner (`macrunner` or `macos-26`).
 
 Heavy verification runs only through `ci-batch.yml`, a manual dispatch the owner
-approves per run. It calls `ci.yml` and, selectable per run, the hang replays and
-the signing preflight, covering every merge since the previous batch. A red batch
+approves per run. It calls `ci.yml` and, selectable per run, the hang replays,
+signing preflight, native workspace acceptance and private Music Video analysis
+acceptance, covering every merge since the previous batch. A red batch
 is fixed or reverted before further merges; a release starts only from a `main`
 commit with a green batch run. `ci.yml`'s first job carries the same name,
 `Light Checks`, so a dispatched run (for example the release metadata flow) also
@@ -31,6 +32,24 @@ render evidence without allocating a macOS runner. Runtime Markdown in source
 and pack directories is treated as code. `Merge Gate` requires all selected jobs,
 including UI evidence and normal-startup acceptance, and rejects missing plans,
 failed jobs and unexpected skips. The manual Bundle workflow calls the same CI.
+
+Native workspace acceptance includes a Musicvideo sequence review and delivery
+at 960×640 with 100%, 125% and 150% interface text. It uses the real assembled
+timeline, review controls, Export sheet and save panel. Its synthetic film and
+delivery receipt are retained with the screenshots; independent decoding checks
+the full song duration, waveform identity and selected moving shot images. The
+first shot passes through prompt compilation, batch approval, the real Fal HTTP
+client, output import and take review against a simulator that rejects unexpected
+requests. The next shot uses imported footage. The report binds the generated
+source, references, spend receipt and trimmed cut handles to the assembled film.
+
+The private analysis acceptance reuses the workspace app and external pack from
+the same batch instead of compiling them again. Without workspace acceptance it
+builds its own harness. Real source media and analysis remain in the private
+fixture/report packages; no private media enters the public UI artifacts. The
+real analysis run and the synthetic delivery scenario provide different evidence:
+neither represents a live paid generation-provider run or a subjective film-quality
+assessment. Runtime results are established only by the corresponding Actions run.
 
 ## Release metadata
 

@@ -67,11 +67,37 @@ enum AgentActivityAcceptance {
         guard visibleProbes("agent.stop", in: host).first?.acceptanceText == "Stop task" else {
             throw Failure("The streaming action does not name the task")
         }
+        let phaseRelease = DispatchSemaphore(value: 0)
+        defer { phaseRelease.signal() }
+        let phaseTask = Task { @MainActor in
+            await editor.pipelinePhaseRunCoordinator.run(projectRoot: home, phase: "bible", sourceFilename: nil,
+                runner: { _ in
+                    guard phaseRelease.wait(timeout: .now() + 15) == .success else {
+                        throw Failure("The bounded phase fixture was not released")
+                    }
+                }, progressRunner: nil, state: editor.pipelinePhaseExecution)
+        }
+        try await waitUntil {
+            host.layoutSubtreeIfNeeded()
+            return editor.pipelinePhaseExecution.snapshot?.isRunning == true
+                && visibleProbes("agent.stop", in: host).count == 1
+                && visibleProbes("agent.stop", in: host).first?.acceptanceText == "Stop agent"
+        }
         screenshots.append(try capture(host, name: "agent-streaming", scale: scale, directory: evidenceURL))
         guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: activityWindow) == nil else {
             throw Failure("The native Stop task control is not clickable")
         }
         try await waitUntil { !service.isStreaming && service.currentTaskPhase == nil }
+        guard editor.pipelinePhaseExecution.snapshot?.isRunning == true,
+              editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: home) == "bible" else {
+            throw Failure("Stopping the agent changed the independent canonical phase job")
+        }
+        try await waitUntil {
+            host.layoutSubtreeIfNeeded()
+            return visibleProbes("agent.stop", in: host).isEmpty
+        }
+        phaseRelease.signal()
+        guard await phaseTask.value == .completed else { throw Failure("The canonical phase did not complete after its runner was released") }
 
         let option = SpendOption(modelId: "fixture-image", modelName: "Fixture image",
             target: .init(modelId: "fixture-image", provider: .fal, endpoint: "fixture-only", binding: nil),

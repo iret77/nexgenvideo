@@ -67,6 +67,7 @@ struct TimelineStyleReviewView: View {
                 }
             }
             .buttonStyle(InlineActionButtonStyle(variant: .approval))
+            .reviewAcceptanceProbe("style.begin")
             .disabled(busy)
             if let snapshot, snapshot.home == editor.workingRoot {
                 ForEach(snapshot.style.criteria, id: \.auditKey) { criterion in
@@ -83,9 +84,12 @@ struct TimelineStyleReviewView: View {
                                 Text(choice.label).tag(choice.rawValue)
                             }
                         }
-                        .disabled(snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true)
+                        .reviewAcceptanceProbe("style.choice.\(criterion.auditKey)", text: choices[criterion.auditKey]?.rawValue ?? "unreviewed")
+                        .disabled(busy || snapshot.targetsByCriterion[criterion.auditKey]?.isEmpty == true)
                         TextField("Observation and time range, or reason for accepting the deviation", text: Binding(
-                            get: { observations[criterion.auditKey] ?? "" }, set: { observations[criterion.auditKey] = $0 }))
+                            get: { observations[criterion.auditKey] ?? "" }, set: { observations[criterion.auditKey] = $0 }), axis: .vertical)
+                            .reviewAcceptanceProbe("style.observation.\(criterion.auditKey)", text: observations[criterion.auditKey] ?? "")
+                            .disabled(busy)
                     }
                 }
                 Button("Record this timeline review") {
@@ -116,11 +120,15 @@ struct TimelineStyleReviewView: View {
                     }
                 }
                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                .reviewAcceptanceProbe("style.record")
                 .disabled(busy || snapshot.style.criteria.contains {
                     choices[$0.auditKey] == nil || (observations[$0.auditKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 })
             }
-            if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+            if let message {
+                Text(message).foregroundStyle(AppTheme.Text.secondaryColor)
+                    .reviewAcceptanceProbe("style.message", text: message)
+            }
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .onChange(of: editor.workingRoot) { _, _ in snapshot = nil; choices = [:]; observations = [:]; message = nil }

@@ -291,7 +291,7 @@ struct WorkflowToolsTests {
 
     private func generatedExecutionShotInput(
         id: String = "s001",
-        duration: Double = 12,
+        duration: Double = 14,
         firstFrame: Bool = true
     ) -> [String: Any] {
         var input: [String: Any] = [
@@ -407,8 +407,8 @@ struct WorkflowToolsTests {
                 "modality_id": CapabilityModalityV1.video.rawValue,
                 "mode_ids": modeIDs,
                 "duration": [
-                    "minimum_seconds": shot.durationS,
-                    "maximum_seconds": shot.durationS,
+                    "minimum_seconds": Double(CutHandles.orderableGrossDuration(for: shot, forceAll: true)),
+                    "maximum_seconds": Double(CutHandles.orderableGrossDuration(for: shot, forceAll: true)),
                     "allows_automatic": false,
                 ],
                 "requires_output_audio": false,
@@ -3550,7 +3550,7 @@ struct WorkflowToolsTests {
                 "generation_requirement": [
                     "modality_id": CapabilityModalityV1.video.rawValue,
                     "mode_ids": [route.modeID],
-                    "duration": ["minimum_seconds": 4, "maximum_seconds": 4, "allows_automatic": false],
+                    "duration": ["minimum_seconds": 6, "maximum_seconds": 6, "allows_automatic": false],
                     "requires_output_audio": false,
                 ],
                 "core_inputs": [:],

@@ -184,6 +184,12 @@ struct ExportView: View {
 
                     Toggle("Require current sequence review", isOn: $requireSequenceReview)
                         .interfaceFont(size: AppTheme.Typography.ui)
+                        .accessibilityIdentifier("export.require-sequence")
+                        .background {
+                            if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+                                AppRelaunchClickProbe(identifier: "export.require-sequence", acceptanceState: requireSequenceReview)
+                            }
+                        }
 
                     Text("Export adopts the current timeline as the exact finish source and records output hash, media bindings and probe QC.")
                         .interfaceFont(size: AppTheme.Typography.ui)
@@ -288,6 +294,11 @@ struct ExportView: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .padding(.top, AppTheme.Spacing.sm)
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+                            AppRelaunchClickProbe(identifier: "export.error", acceptanceText: error)
+                        }
+                    }
             }
 
             if let ngvResult {
@@ -380,10 +391,22 @@ struct ExportView: View {
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(activeJob != nil && activeJob?.canCancel != true)
             .keyboardShortcut(.cancelAction)
+            .accessibilityIdentifier("export.cancel")
+            .background {
+                if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "export.cancel", acceptanceState: activeJob == nil || activeJob?.canCancel == true)
+                }
+            }
             Button("Export") { startExport() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(preparingDelivery || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("export.start")
+                .background {
+                    if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "export.start", acceptanceState: !preparingDelivery && (mode != .video || codec != .hdr || hdrCapability?.isSupported == true))
+                    }
+                }
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
         .padding(.vertical, AppTheme.Spacing.lg)

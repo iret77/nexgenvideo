@@ -755,7 +755,8 @@ enum PipelineDeliveryStore {
             if isCancelled() { throw CancellationError() }
             _ = try PipelineSequenceReviewStore.requireCurrent(
                 dataRoot: dataRoot,
-                timeline: timeline
+                timeline: timeline,
+                resolver: resolver
             )
             if isCancelled() { throw CancellationError() }
             sequenceReviewSHA256 = try cancellableSHA256(

@@ -261,7 +261,8 @@ struct AgentPanelView: View {
         case .phaseRun:
             guard let snapshot = editor.pipelinePhaseExecution.snapshot, snapshot.isRunning else {
                 return AgentLiveStatus(state: .working, title: "Finishing the current phase",
-                    detail: "Approval is unavailable until this operation finishes.")
+                    detail: "Approval is unavailable until this operation finishes.", canCancel: service.isStreaming,
+                    stopLabel: String(localized: "Stop agent"))
             }
             let presentation = PipelinePhaseProgressPresentation(
                 stageID: snapshot.stageID
@@ -269,12 +270,15 @@ struct AgentPanelView: View {
             let count = snapshot.totalUnitCount > 0
                 ? " · \(snapshot.completedUnitCount) of \(snapshot.totalUnitCount)"
                 : ""
+            let stopping = service.isStreaming ? " · The phase operation continues if you stop the agent." : ""
             return AgentLiveStatus(
                 state: .working,
                 title: taskActivity.title,
                 detail: pendingGateIsBlockedByPhaseRun
-                    ? "\(presentation.title)\(count) · Approval is unavailable until this operation finishes."
-                    : "\(presentation.title)\(count)"
+                    ? "\(presentation.title)\(count) · Approval is unavailable until this operation finishes.\(stopping)"
+                    : "\(presentation.title)\(count)\(stopping)",
+                canCancel: service.isStreaming,
+                stopLabel: String(localized: "Stop agent")
             )
         case .phaseFailure:
             return AgentLiveStatus(

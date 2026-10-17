@@ -41,7 +41,17 @@ final class VideoProject: NSDocument {
 
     static let typeIdentifier = Project.typeIdentifier
 
-    let editorViewModel = EditorViewModel()
+    let editorViewModel: EditorViewModel
+
+    override init() {
+        editorViewModel = EditorViewModel()
+        super.init()
+    }
+
+    init(agentService: AgentService) {
+        editorViewModel = EditorViewModel(agentService: agentService)
+        super.init()
+    }
 
     /// Decoded off-main in read(), applied on main in makeWindowControllers.
     private nonisolated(unsafe) var loadedTimeline: Timeline?
@@ -74,11 +84,11 @@ final class VideoProject: NSDocument {
     override class var autosavesInPlace: Bool { false }
 
     @MainActor
-    static func load(from url: URL) async throws -> VideoProject {
+    static func load(from url: URL, agentService: AgentService? = nil) async throws -> VideoProject {
         var contents = try await Task.detached(priority: .userInitiated) {
             try readProjectPackage(at: url)
         }.value
-        let doc = VideoProject()
+        let doc = agentService.map { VideoProject(agentService: $0) } ?? VideoProject()
         doc.fileURL = url
         doc.fileType = typeIdentifier
         doc.applyLoadedContents(contents)

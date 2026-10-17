@@ -138,7 +138,11 @@ enum PipelineMusicvideoAssemblyWriter {
                 ($0.coverageID, $0.roleID) < ($1.coverageID, $1.roleID)
             }
         )
-        try MusicAssemblyProofValidatorV1.validate(proof)
+        do {
+            try MusicAssemblyProofValidatorV1.validate(proof, assembly: assembly)
+        } catch MusicvideoProductionValidationErrorV1.coverageMissing("assembly.full_song") {
+            throw ToolError("Rebuild the Musicvideo assembly so the picture covers the complete song from frame 0 without gaps.")
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(proof)
@@ -165,11 +169,6 @@ enum PipelineMusicvideoAssemblyWriter {
         let normalizedDataRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
         let path: String
         if let expectedPath {
-            let expectedURL = try ProjectLocalFile.resolve(expectedPath, dataRoot: dataRoot)
-                .standardizedFileURL.resolvingSymlinksInPath()
-            guard expectedURL == url else {
-                throw ToolError("The timeline song does not match the approved song path.")
-            }
             path = expectedPath
         } else if url.path.hasPrefix(normalizedDataRoot.path + "/") {
             path = FrameInventory.relativePath(of: url, to: normalizedDataRoot)

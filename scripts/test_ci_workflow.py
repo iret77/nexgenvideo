@@ -152,11 +152,24 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(
             set(called),
             {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
-             "signing-preflight.yml", "workspace-ui-acceptance.yml"},
+             "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml"},
         )
         for name in called:
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))
+        analysis = text.split("  musicvideo-analysis-acceptance:\n", 1)[1]
+        self.assertIn("needs: workspace-ui-acceptance", analysis)
+        self.assertIn(
+            "if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance && "
+            "(needs.workspace-ui-acceptance.result == 'success' || "
+            "needs.workspace-ui-acceptance.result == 'skipped') }}",
+            analysis,
+        )
+        self.assertIn(
+            "runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}",
+            analysis,
+        )
+        self.assertIn("NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}", analysis)
 
 
 if __name__ == "__main__":

@@ -592,7 +592,7 @@ final class GenerationService {
             }
         }
         do {
-            let (downloadURL, _) = try await URLSession.shared.download(from: remoteURL)
+            let (downloadURL, _) = try await reconciliation.session.download(from: remoteURL)
             transientURL = downloadURL
             guard editor.mediaAssets.contains(where: { $0.id == asset.id }) else {
                 return false
@@ -727,10 +727,11 @@ final class GenerationService {
         cacheKeys: [MediaAsset?],
     ) async throws -> [String] {
         guard !urls.isEmpty else { return [] }
-        guard let apiKey = ProviderKeychain.load(.fal) else {
+        guard let apiKey = reconciliation.providerKey(.fal) else {
             throw GenerationBackendError.transport("Add a fal.ai API key in Settings to use references.")
         }
 
+        let session = reconciliation.session
         let uploaded = try await withThrowingTaskGroup(of: (Int, String, Bool).self) { group in
             for (i, url) in urls.enumerated() {
                 let type = types.indices.contains(i) ? types[i] : .image
@@ -741,7 +742,7 @@ final class GenerationService {
                 }
                 let contentType = Self.contentType(for: url, fallback: type)
                 group.addTask {
-                    let hosted = try await FalStorage.upload(fileURL: url, contentType: contentType, apiKey: apiKey)
+                    let hosted = try await FalStorage.upload(fileURL: url, contentType: contentType, apiKey: apiKey, session: session)
                     return (i, hosted, true)
                 }
             }
@@ -1337,7 +1338,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let apiKey = ProviderKeychain.load(.fal) else {
+        guard let apiKey = reconciliation.providerKey(.fal) else {
             return failBeforeSubmission(
                 placeholders, "Add a fal.ai API key in Settings to generate.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1349,7 +1350,7 @@ final class GenerationService {
             // an "input" key (that is only the JS/Python SDK convention). Wrapping made fal see no
             // recognized fields and reject every job, so no fal generation ever produced an asset.
             let inputBody = try JSONSerialization.data(withJSONObject: input)
-            let client = FalClient(apiKey: apiKey)
+            let client = FalClient(apiKey: apiKey, session: reconciliation.session)
             let submittedId = try await client.submit(endpoint: endpoint, inputBody: inputBody)
             requestId = submittedId
             markSubmitted(
@@ -1380,11 +1381,7 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            let billed = try? await ProviderMoneyClient.shared.falCharge(
-                requestId: submittedId,
-                endpoint: endpoint,
-                apiKey: apiKey
-            )
+            let billed = await reconciliation.falCharge(submittedId, endpoint, apiKey)
             markFinished(authorization: authorization, billed: billed, editor: editor)
         } catch let error as FalClient.SubmissionOutcomeUnknownError {
             markSubmitted(

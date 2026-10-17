@@ -3496,7 +3496,12 @@ extension ToolExecutor {
         }
 
         let placements: [BeatAssembly.Placement]
-        if let grid {
+        if let grid, declaration.packName == "musicvideo" {
+            placements = BeatAssembly.plan(
+                beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs,
+                requiredDurationFrames: BeatAssembly.frame(seconds: grid.durationS, fps: fps)
+            )
+        } else if let grid {
             placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
         } else {
             placements = planInputs.map {
@@ -4566,6 +4571,8 @@ extension ToolExecutor {
         dataRoot: URL
     ) throws -> [SelectedShotMediaV1] {
         let shots = Dictionary(uniqueKeysWithValues: shotlist.shots.map { ($0.id, $0) })
+        let brief = try readBriefIfPresent(dataRoot: dataRoot)
+        let forceHandles = brief?.cutHandlesMode == .withOverlap
         let takeIndex = try PipelineRenderTakeStore.load(
             dataRoot: dataRoot,
             project: project,
@@ -4657,8 +4664,13 @@ extension ToolExecutor {
                     fps: fps
                 )
             )
-            guard placement.durationFrames <= durationFrames else {
-                throw ToolError("The selected take for '\(placement.shotId)' is shorter than its planned timeline placement.")
+            let sourceStart = BeatAssembly.frame(
+                seconds: CutHandles.handles(for: shot, forceAll: forceHandles).pre,
+                fps: fps
+            )
+            let sourceEnd = sourceStart + placement.durationFrames
+            guard sourceEnd <= durationFrames else {
+                throw ToolError("The selected take for '\(placement.shotId)' is shorter than its planned timeline placement including cut handles. Select an explicit reviewed take range or generate and review a new take with the required handles.")
             }
             return SelectedShotMediaV1(
                 shotID: placement.shotId,
@@ -4667,8 +4679,8 @@ extension ToolExecutor {
                 sourceSHA256: sourceSHA256,
                 sourceByteCount: Int64(byteCount),
                 sourceFPS: fps,
-                sourceStartFrame: 0,
-                sourceEndFrame: placement.durationFrames,
+                sourceStartFrame: sourceStart,
+                sourceEndFrame: sourceEnd,
                 takeID: takeID,
                 reviewPath: reviewPath,
                 reviewSHA256: FileDigest.sha256(of: reviewData)

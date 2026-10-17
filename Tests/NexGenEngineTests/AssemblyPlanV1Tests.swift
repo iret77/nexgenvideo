@@ -4,6 +4,27 @@ import Testing
 
 @Suite("Assembly plan V1")
 struct AssemblyPlanV1Tests {
+    @Test("generic music-sync policies retain their existing gap semantics", arguments: [1, 25])
+    func genericMusicCoverageRemainsCompatible(secondStart: Int) throws {
+        let firstStart = secondStart == 1 ? 1 : 0
+        let second = secondStart == 1 ? 25 : secondStart
+        let policy = AssemblyPolicyV1(id: "fixture.music-sync", version: "1.0.0",
+            timing: .musicSync, timelineFPS: 24, requiredDurationFrames: second + 24,
+            anchorAudioAtFrameZero: true)
+        let selected = [
+            selection(shot: "s001", source: hash("a"), start: 0, end: 24, review: hash("review-a")),
+            selection(shot: "s002", source: hash("b"), start: 0, end: 24, review: hash("review-b")),
+        ]
+        let plan = AssemblyPlanV1(projectID: "fixture", phase: "render", selectedMedia: selected,
+            placements: [
+                AssemblyPlacementV1(shotID: "s001", trackID: "v1", timelineStartFrame: firstStart,
+                    sourceStartFrame: 0, sourceEndFrame: 24),
+                AssemblyPlacementV1(shotID: "s002", trackID: "v1", timelineStartFrame: second,
+                    sourceStartFrame: 0, sourceEndFrame: 24),
+            ], existingRegionFingerprint: nil, policyPath: "assembly-policy.json", policySHA256: hash("policy"))
+        try AssemblyValidatorV1.validate(plan: plan, policy: policy)
+    }
+
     @Test("two shots may bind separate reviewed ranges from one take")
     func reviewedRangesRemainDistinct() throws {
         let policy = AssemblyPolicyV1(
