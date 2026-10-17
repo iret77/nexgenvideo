@@ -59,8 +59,26 @@ jobs:
               if source.count(old) != 1:
                   raise SystemExit(f"Pinned baseline model picker changed; inspect: {old}")
               source = source.replace(old, new, 1)
-          # The historical transcript ignores the new workbench placement mode.
-          source = source.replace("struct AgentPanelView: View {", "struct AgentPanelView: View {\n    var presentation: AgentPanelPresentation = .tasks", 1)
+          # Both variants mount the full transcript in the same recorded viewport.
+          source = source.replace("struct AgentPanelView: View {", "struct AgentPanelView: View {\n    var presentation: AgentPanelPresentation = .tasks\n    var replayTranscriptOnly = false", 1)
+          old = "        let turns = transcriptTurns\n        VStack(spacing: AppTheme.Spacing.none) {"
+          new = "        let turns = transcriptTurns\n        if replayTranscriptOnly {\n            messageList(turns: turns)\n        } else {\n        VStack(spacing: AppTheme.Spacing.none) {"
+          if source.count(old) != 1:
+              raise SystemExit("Pinned baseline transcript body changed; inspect its replay adapter")
+          source = source.replace(old, new, 1)
+          old = "    private func refreshDiscoveredPlugins() {"
+          if source.count(old) != 1:
+              raise SystemExit("Pinned baseline body boundary changed; inspect its replay adapter")
+          source = source.replace(old, "    }\n\n" + old, 1)
+          for old in [
+              "                    .padding(.bottom, AppTheme.Spacing.md)\n                }\n            } else {\n                scrollingMessages(turns: turns)",
+              "                .frame(maxWidth: AppTheme.Layout.chatColumnMax)\n                .frame(maxWidth: .infinity)\n            }\n            .scrollIndicators(.never)",
+          ]:
+              if source.count(old) != 1:
+                  raise SystemExit("Pinned baseline scroll content changed; inspect its probe placement")
+              indent = "                    " if "scrollingMessages" in old else "                "
+              boundary = "\n" + indent[:-4] + "}"
+              source = source.replace(old, old.replace(boundary, "\n" + indent + ".background { HangReplayTranscriptProbe() }" + boundary, 1), 1)
           panel.write_text(source)
           PYTHON
       - name: Build optimized replay app

@@ -6,6 +6,123 @@ import Testing
 @MainActor
 @Suite("AgentService runtime contract")
 struct AgentServiceRuntimeContractTests {
+    @Test("Gate continuation uses its new phase without inventing a user task or borrowing history")
+    func gateContinuationReplacesHistoricalTaskPhase() async throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let root = try ProjectScaffold.initProject(home: temporary.appendingPathComponent("project"), name: "fixture", mode: .beat)
+        let store = YAMLArtifactStore(dataRoot: root)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in coreGatePhases.prefix(while: { $0 != "bible" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let runtime = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: runtime)
+        let editor = EditorViewModel(agentService: service)
+        defer { service.cancel() }
+        #expect(service.sendWorkOrder(.init(title: "Complete Bible images", systemImage: "photo",
+            prompt: "Complete the Bible.", phase: "bible"), direction: "", mentions: []))
+        await waitUntil { runtime.sendRequests.count == 1 }
+        #expect(service.currentTaskPhase == "bible")
+        service.cancel()
+        service.isStreaming = true
+        let origin = ToolCallOrigin.inAppChat(sessionID: try #require(service.currentSessionId))
+        _ = try service.requestGateApproval(GateApproval(phase: "bible", dataRoot: root), origin: origin)
+        let result = await service.resolveGate(.approved)
+        #expect(result?.isError == false)
+        #expect(try store.load(Gates.self, at: PipelineLayout.gatesFile).get("bible").approved)
+        service.isStreaming = false
+        editor.projectState = try JSONDecoder().decode(ProjectStateData.self, from: NativeCockpitReader.stateJSON(dataRoot: root))
+        #expect(editor.projectState?.nextPhaseName == "shotlist")
+        service.noteRevisionRequest(origin: origin)
+        #expect(service.resumePendingGateFollowUp(nextPhasePrompt: "Write the Shot List from the approved Bible."))
+        #expect(service.currentTaskPhase == "shotlist")
+        let presentation = AgentTaskActivityPresentation(task: service.currentTaskActivity)
+        #expect(presentation.title == "Continue production · Shot List")
+        #expect(presentation.expectedResult == "Result: Shot List for approval")
+        let followUp = try #require(service.messages.last)
+        #expect(followUp.hidden)
+        #expect(followUp.userPresentation == nil)
+        #expect(!service.revisionRequestIsAdmissible(origin: origin))
+        await waitUntil { runtime.sendRequests.count == 2 }
+        service.cancel()
+        #expect(service.send(text: "Summarize the project.", mentions: [], hidden: true))
+        #expect(service.currentTaskPhase == nil)
+        #expect(AgentTaskActivityPresentation(task: service.currentTaskActivity).title == "Project task")
+    }
+
+    @Test("Generation and clarification resume their suspended task without creating another task receipt",
+        arguments: [AgentBackend.anthropicAPI, .claudeCode])
+    func samePhaseContinuationsKeepTheirTask(backend: AgentBackend) async throws {
+        let runtime = FakeRuntimeAdapter(backend: backend)
+        let service = makeService(backend: backend, adapter: runtime)
+        let editor = EditorViewModel(agentService: service)
+        defer { service.cancel() }
+        #expect(service.sendWorkOrder(.init(title: "Complete Bible images", systemImage: "photo",
+            prompt: "Complete the Bible.", phase: "bible"), direction: "", mentions: []))
+        await waitUntil { runtime.sendRequests.count == 1 }
+        let origin = ToolCallOrigin.inAppChat(sessionID: try #require(service.currentSessionId))
+        let option = SpendOption(modelId: "fixture", modelName: "Fixture",
+            target: .init(modelId: "fixture", provider: .fal, endpoint: "fixture", binding: nil),
+            credits: nil, requiresCatalogAvailability: false)
+        _ = try service.requestSpendApproval(.init(id: "task-spend", recommendedOptionId: option.id,
+            options: [option], actionLabel: "Generate image"), origin: origin, editor: editor,
+            execute: { _, _ in .ok("Character sheet generated") })
+        let first = try #require(runtime.sendRequests.first)
+        runtime.emit(.terminal(.completed(.endTurn)), for: first)
+        runtime.finish(first)
+        await waitUntil { !service.isStreaming }
+        await service.approveSpend(option, recordSelection: false)
+        await waitUntil { runtime.sendRequests.count == 2 }
+        #expect(service.currentTaskPhase == "bible")
+        #expect(service.currentTaskActivity?.title == "Complete Bible images")
+        let spendFollowUp = try #require(service.messages.last { $0.role == .user })
+        #expect(spendFollowUp.hidden)
+        #expect(spendFollowUp.userPresentation == nil)
+
+        let dialog = AgentDialog(id: "task-question", title: "Choose", symbol: "questionmark",
+            intro: nil, costHint: nil, confirmLabel: "Continue", textField: nil, sections: [])
+        try service.presentDialog(dialog, origin: origin)
+        let second = runtime.sendRequests[1]
+        runtime.emit(.terminal(.completed(.endTurn)), for: second)
+        runtime.finish(second)
+        await waitUntil { !service.isStreaming }
+        service.submitDialog(dialog, result: .init(selectedLabels: [:], toggles: [:], direction: "Keep the approved look"))
+        await waitUntil { runtime.sendRequests.count == 3 }
+        #expect(service.currentTaskPhase == "bible")
+        #expect(service.currentTaskActivity?.title == "Complete Bible images")
+        let answer = try #require(service.messages.last { $0.role == .user })
+        #expect(answer.userPresentation?.typedText == "Keep the approved look")
+        #expect(AgentTurnActivity.workOrder(answer.userPresentation) == nil)
+        service.cancel()
+        #expect(service.send(text: "Explain the timeline", mentions: []))
+        #expect(service.currentTaskPhase == nil)
+        #expect(service.currentTaskActivity == nil)
+    }
+
+    @Test("Continue without an available backend reveals recovery and starts no task")
+    func productionContinueRevealsUnavailableBackend() {
+        let service = AgentService(backend: .claudeCode, refreshBackendStatusOnInit: false,
+            runtimeReadinessOverride: { .authenticationRequired })
+        let editor = EditorViewModel(agentService: service)
+        #expect(!editor.continueProductionPhase("bible"))
+        #expect(editor.showsAgentActivity)
+        #expect(service.streamError != nil)
+        #expect(!service.isStreaming)
+        #expect(service.messages.isEmpty)
+    }
+
+    @Test("The production Continue action names its phase once in activity")
+    func productionContinuationActivityTitle() {
+        let runtime = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: runtime)
+        let editor = EditorViewModel(agentService: service)
+        defer { service.cancel() }
+        #expect(editor.continueProductionPhase("bible"))
+        #expect(AgentTaskActivityPresentation(task: service.currentTaskActivity).title == "Continue Bible")
+    }
+
     @Test("both backends receive the same canonical messages and host-owned context")
     func backendNeutralCanonicalTurnAndContext() async throws {
         let language = AgentInterfaceLanguage(identifier: "de-DE", displayName: "German")

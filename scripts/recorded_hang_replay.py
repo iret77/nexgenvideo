@@ -67,6 +67,11 @@ def main():
             for event_file in sorted(folder.glob("events-*.json")):
                 structural_records.extend(json.loads(event_file.read_text()))
         recorded_window = recorded_editor_window(structural_records)
+        recorded_scroll = max(
+            (record for record in structural_records
+             if record.get("operation") == "scroll" and len(record.get("values", [])) >= 5),
+            key=lambda record: record.get("sequence", 0), default=None,
+        )
         replay_delay = len(decoded) * (0.12 if args.match_geometry else 0)
         settling_delay = 30 if args.match_geometry else 2
         timeout = duration + replay_delay + settling_delay + 60
@@ -134,6 +139,9 @@ def main():
         if recorded_window is not None:
             result["recordedWindowWidth"] = recorded_window["values"][1]
             result["recordedWindowHeight"] = recorded_window["values"][2]
+        if recorded_scroll is not None:
+            result["recordedTranscriptWidth"] = recorded_scroll["values"][4]
+            result["recordedTranscriptHeight"] = recorded_scroll["values"][2]
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
         result["maxRSSKB"] = max((o["rssKB"] for o in observations), default=None)
         result["busySamples"] = captures

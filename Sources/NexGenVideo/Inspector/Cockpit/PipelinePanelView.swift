@@ -417,11 +417,7 @@ struct PipelinePanelView: View {
     }
 
     private func continuePhase(_ phase: String) {
-        let diagnostic = approvalReadiness.blocker.map { "\nApproval diagnostic: \($0)" } ?? ""
-        editor.agentService.sendWorkOrder(
-            .init(title: "Continue \(PhaseDisplay.label(phase))", systemImage: "play",
-                  prompt: "Continue the current \(phase) phase using its required workflow. Resolve its missing evidence and present the result for review. Never approve it yourself.\(diagnostic)",
-                  phase: phase), direction: "", mentions: [])
+        editor.continueProductionPhase(phase, diagnostic: approvalReadiness.blocker)
     }
 
     @ViewBuilder

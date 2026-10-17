@@ -7,6 +7,38 @@ import Testing
 @Suite("Pack surface — host decoders")
 struct PackSurfaceTests {
 
+    @Test @MainActor func selectedAnalysisAppearsWhenItsPackSurfaceBecomesAvailable() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("analysis-route-\(UUID().uuidString).ngv")
+        let pack = MusicvideoPack()
+        PackCatalog.register(pack)
+        _ = try ProjectScaffold.initProject(home: home, name: "analysis-route")
+        try Fixtures.prepareProjectPackage(at: home)
+        let binding = try #require(ProjectPackBinding(id: pack.name, version: pack.version, projectSchema: "musicvideo/2.0.0"))
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
+        let editor = EditorViewModel()
+        defer { editor.releaseWorkingCopy(); try? FileManager.default.removeItem(at: home) }
+        editor.projectURL = home
+        await editor.refreshEngineState()
+        let surface = try #require(editor.uiContract?.cockpitSurfaces.first(where: { $0.phase == "analysis" }))
+        editor.productionSelectedPhase = "analysis"
+        editor.updateCockpitPackSurfaces([], production: true)
+        #expect(editor.cockpitTab == .pipeline)
+        #expect(editor.cockpitPackSurfaceID == nil)
+
+        editor.updateCockpitPackSurfaces([surface], production: true)
+        #expect(editor.productionSelectedPhase == "analysis")
+        #expect(editor.cockpitPackSurfaceID == surface.id)
+        editor.updateCockpitPackSurfaces([], production: true)
+        #expect(editor.productionSelectedPhase == "analysis")
+        #expect(editor.cockpitPackSurfaceID == nil)
+        #expect(editor.cockpitTab == .pipeline)
+
+        editor.revealCockpit(.storyboard)
+        editor.updateCockpitPackSurfaces([surface], production: true)
+        #expect(editor.cockpitTab == .storyboard)
+        #expect(editor.cockpitPackSurfaceID == nil)
+    }
+
     private static let analysisJSON = """
     {
       "schema": "analysis/v3",

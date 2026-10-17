@@ -27,6 +27,9 @@ enum CockpitReviewAttention {
 
 struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.interfaceScale) private var interfaceScale
+    @State private var dockContentHeight: CGFloat = AppTheme.Spacing.none
+    @State private var packSurfaceRequest = UUID()
     var production = false
 
     var body: some View {
@@ -37,7 +40,11 @@ struct ProjectCockpitView: View {
         let selectedSurface = packSurfaces.first { $0.id == editor.cockpitPackSurfaceID }
         let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
 
-        return VStack(spacing: AppTheme.Spacing.none) {
+        return GeometryReader { geometry in
+        let dockMaximumHeight = max(AppTheme.Spacing.none, geometry.size.height
+            - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
+            - AppTheme.ComponentSize.productionArtifactMinHeight - AppTheme.BorderWidth.thin)
+        VStack(spacing: AppTheme.Spacing.none) {
             if production {
                 HStack {
                     Text(editor.productionSelectedPhase.map(PhaseDisplay.label) ?? selectedTitle)
@@ -91,12 +98,32 @@ struct ProjectCockpitView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background {
+                if GenerationBatchReviewSelfTest.isRequested {
+                    AppRelaunchClickProbe(identifier: "production.artifact")
+                }
+            }
             .clipped()
             if production {
                 AppDivider()
-                PipelinePanelView(presentation: .dock)
-                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    PipelinePanelView(presentation: .dock)
+                        .environment(\.generationDecisionMaximumHeight,
+                            max(AppTheme.Spacing.none, dockMaximumHeight - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
+                                - AppTheme.Spacing.md - AppTheme.Spacing.md))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { dockContentHeight = $0 }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: min(dockContentHeight, dockMaximumHeight))
+                .clipped()
+                .background {
+                    if GenerationBatchReviewSelfTest.isRequested {
+                        AppRelaunchClickProbe(identifier: "production.dock")
+                    }
+                }
             }
+        }
         }
         .onChange(of: selectedTitle) { _, title in acknowledgeReview(title: title) }
         .task(id: editor.projectURL) {
@@ -126,6 +153,8 @@ struct ProjectCockpitView: View {
     }
 
     private func resolvePackSurface() async {
+        let request = UUID()
+        packSurfaceRequest = request
         let declared = editor.uiContract?.cockpitSurfaces ?? []
         guard !declared.isEmpty, let dir = editor.workingRoot else {
             applyPackSurfaces([])
@@ -141,16 +170,12 @@ struct ProjectCockpitView: View {
                 return (try? PackSurfaceDocument(data: bytes)) != nil
             }
         }.value
-        guard editor.workingRoot == dir else { return }
+        guard editor.workingRoot == dir, packSurfaceRequest == request else { return }
         applyPackSurfaces(available)
     }
 
     private func applyPackSurfaces(_ surfaces: [CockpitSurfaceData]) {
-        editor.availableCockpitPackSurfaces = surfaces
-        if let selected = editor.cockpitPackSurfaceID,
-           !surfaces.contains(where: { $0.id == selected }) {
-            editor.cockpitPackSurfaceID = nil
-        }
+        editor.updateCockpitPackSurfaces(surfaces, production: production)
     }
 
     private var settingsButton: some View {
@@ -170,6 +195,22 @@ struct ProjectCockpitView: View {
         .padding(.trailing, AppTheme.Spacing.sm)
         .accessibilityLabel("Project settings")
         .help("Project settings")
+    }
+}
+
+extension EditorViewModel {
+    func updateCockpitPackSurfaces(_ surfaces: [CockpitSurfaceData], production: Bool) {
+        availableCockpitPackSurfaces = surfaces
+        if production, let phase = productionSelectedPhase {
+            switch PipelineSurfaceRouting.route(for: phase, contract: uiContract,
+                availablePackSurfaces: surfaces)?.destination {
+            case .pack(let id, _): cockpitPackSurfaceID = id
+            case .tab(let tab): cockpitTab = tab; cockpitPackSurfaceID = nil
+            case nil: cockpitTab = .pipeline; cockpitPackSurfaceID = nil
+            }
+        } else if let selected = cockpitPackSurfaceID, !surfaces.contains(where: { $0.id == selected }) {
+            cockpitPackSurfaceID = nil
+        }
     }
 }
 

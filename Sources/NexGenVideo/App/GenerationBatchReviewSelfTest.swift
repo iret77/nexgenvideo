@@ -293,6 +293,74 @@ enum GenerationBatchReviewSelfTest {
         editor.generationBatchCoordinator.decline(editor: editor)
         try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
         try await verifyMissingReference(package: pricedPackage, editor: editor, window: window)
+        try await verifyProductionDock(editor: editor, window: window)
+    }
+
+    private static func verifyProductionDock(editor: EditorViewModel, window: NSWindow) async throws {
+        let defaults = UserDefaults.standard
+        let previousScale = defaults.object(forKey: AppTheme.Typography.scaleKey)
+        let savedAssets = editor.mediaAssets
+        defer {
+            editor.mediaAssets = savedAssets
+            editor.generationBatchCoordinator.decline(editor: editor)
+            if let previousScale { defaults.set(previousScale, forKey: AppTheme.Typography.scaleKey) }
+            else { defaults.removeObject(forKey: AppTheme.Typography.scaleKey) }
+        }
+        defaults.set(AppTheme.Typography.largestScale, forKey: AppTheme.Typography.scaleKey)
+        let unpriced = try await package(editor: editor, priced: false)
+        let pending = try GenerationBatch(payload: .init(nonce: UUID(),
+            projectKey: unpriced.payload.binding.projectKey, phase: "bible", items: (1...13).map { index in
+                .init(id: UUID().uuidString, purpose: "Character Mara — continuity view \(index)", package: unpriced)
+            }))
+        try present(pending, editor: editor)
+        editor.setWorkspaceFocus(.production)
+        editor.mediaPanelVisible = true
+        editor.inspectorPanelVisible = true
+        editor.maximizedPanel = nil
+        editor.showsAgentActivity = false
+        let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
+        host.sizingOptions = []
+        window.contentView = host
+        place(window, contentSize: AppTheme.Window.projectMin)
+        guard await waitUntil(timeout: .seconds(10), {
+            host.layoutSubtreeIfNeeded()
+            return editor.generationBatchCoordinator.canApprovePending
+                && findClickProbes(in: host, identifier: "production.artifact").first != nil
+                && findClickProbes(in: host, identifier: "production.dock").first != nil
+        }) else { throw Failure(message: "minimal production window did not mount its pending decision") }
+
+        for missing in [false, true] {
+            if missing {
+                editor.mediaAssets.removeAll { $0.id == unpriced.payload.references.first?.assetID }
+                guard await waitUntil(timeout: .seconds(10), {
+                    editor.generationBatchCoordinator.preflightIssue != nil
+                        && !editor.generationBatchCoordinator.canApprovePending
+                }) else { throw Failure(message: "production dock did not show its missing-reference failure") }
+            }
+            for identifier in ["generation-batch.details.\(pending.payload.items[0].id)",
+                               "generation-batch.revise", "generation-batch.approve-phase", "generation-batch.approve"] {
+                try await reveal(identifier: identifier, in: window, context: "minimal production dock at 150 percent")
+            }
+            try await requireVisible(["generation-batch.revise", "generation-batch.approve-phase", "generation-batch.approve"],
+                in: window, context: "production dock footer at 150 percent")
+            guard let artifact = findClickProbes(in: host, identifier: "production.artifact").first,
+                  let dock = findClickProbes(in: host, identifier: "production.dock").first,
+                  let status = findClickProbes(in: host, identifier: "production.status").first else {
+                throw Failure(message: "production layout geometry evidence is incomplete")
+            }
+            let artifactFrame = artifact.convert(artifact.bounds, to: host)
+            let dockFrame = dock.convert(dock.bounds, to: host)
+            let statusFrame = status.convert(status.bounds, to: host)
+            guard artifactFrame.height >= AppTheme.ComponentSize.productionArtifactMinHeight - 1,
+                  dockFrame.height > 0, host.bounds.contains(artifactFrame), host.bounds.contains(dockFrame),
+                  host.bounds.contains(statusFrame), !artifactFrame.intersects(dockFrame), !dockFrame.intersects(statusFrame),
+                  controlState("generation-batch.approve", in: window) == !missing,
+                  controlState("generation-batch.approve-phase", in: window) == !missing else {
+                throw Failure(message: "production dock obscured its artifact, status or approval state at minimum window size")
+            }
+            try captureWindow(window, name: "generation-production-dock-\(missing ? "missing-reference" : "unpriced")-150.png")
+            writeEvidence("production-dock textScale=1.5 window=960x640 missingReference=\(missing) artifactHeight=\(artifactFrame.height) dockHeight=\(dockFrame.height) footerVisible=true")
+        }
     }
 
     private static func verifyMissingReference(package: GenerationPackageV1, editor: EditorViewModel, window: NSWindow) async throws {

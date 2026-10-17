@@ -146,6 +146,34 @@ struct GenerationReferencePreflightTests {
         #expect(fixture.editor.generationLog.spendEvents.isEmpty)
     }
 
+    @Test func singleSubmissionRejectsLibraryRemovalAfterReviewBeforeReservingOrDispatching() async throws {
+        for removeDuringPricing in [false, true] {
+            let fixture = try fixture(kind: "library")
+            defer { fixture.cleanup() }
+            let generation = try await prepare(fixture)
+            let package = try await GenerationController.prepareReviewPackage(generation, editor: fixture.editor,
+                quoteLoader: { _, _ in GenerationPackageFixture.money() })
+            try await GenerationPackageInputs.persist(package: package, snapshot: #require(generation.references), editor: fixture.editor)
+            if !removeDuringPricing { fixture.editor.mediaAssets.removeAll() }
+            var quotes = 0
+            let outcome = await GenerationController.submitPrepared(generation, editor: fixture.editor,
+                quoteLoader: { _, _ in
+                    quotes += 1
+                    fixture.editor.mediaAssets.removeAll()
+                    return GenerationPackageFixture.money()
+                })
+            guard case .failure(let error) = outcome else {
+                Issue.record("A removed library reference reached submission")
+                continue
+            }
+            #expect(error.localizedDescription.contains("no longer in the media library"))
+            #expect(quotes == (removeDuringPricing ? 1 : 0))
+            #expect(FileManager.default.fileExists(atPath: fixture.source.path))
+            #expect(fixture.editor.mediaAssets.isEmpty)
+            #expect(fixture.editor.generationLog.spendEvents.isEmpty)
+        }
+    }
+
     @Test func routedLibraryReferencesRetainTheirIdentityAndExactProjectPath() async throws {
         let fixture = try fixture(kind: "library")
         defer { fixture.cleanup() }

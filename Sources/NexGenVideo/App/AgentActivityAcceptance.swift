@@ -13,37 +13,44 @@ enum AgentActivityAcceptance {
         guard let bytes = ChatSessionStore.encodeSession(saved) else { throw Failure("Could not save resume fixture") }
         try bytes.write(to: chat.appendingPathComponent("\(saved.id.uuidString).json"))
         let runtime = FixtureRuntime()
+        var needsAuthentication = false
         let service = AgentService(backend: .claudeCode, refreshBackendStatusOnInit: false,
-            runtimeAdapterFactory: { _ in runtime }, runtimeReadinessOverride: { nil },
+            runtimeAdapterFactory: { _ in runtime }, runtimeReadinessOverride: { needsAuthentication ? .authenticationRequired : nil },
             runtimeHostContextOverride: { .hostOwned(tools: []) })
         let editor = EditorViewModel(agentService: service)
         service.loadSessions(from: home)
         guard service.currentSessionId == saved.id, service.messages.map(\.id) == [answer.id] else {
             throw Failure("Reopening the project lost its last answer")
         }
-        let host = NSHostingView(rootView: AgentPanelView(presentation: .activity)
+        let statusHost = NSHostingView(rootView: WorkbenchStatusBar()
+            .frame(maxHeight: .infinity, alignment: .bottom)
             .environment(editor).environment(\.interfaceScale, scale)
             .background(AppTheme.Background.surfaceColor))
-        host.sizingOptions = []
+        statusHost.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(origin: .zero,
             size: NSSize(width: AppTheme.Layout.activityFlyoutWidth, height: AppTheme.Layout.activityFlyoutHeight)),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = host
+        window.contentView = statusHost
+        let controller = EditorWindowController(editorViewModel: editor, window: window)
         window.appearance = NSAppearance(named: .darkAqua)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         defer {
+            editor.showsAgentActivity = false
             service.cancelRunningSpend()
             service.cancel()
             window.orderOut(nil)
             window.contentView = nil
         }
         let resultID = "agent.result.\(answer.id.uuidString)"
-        try await waitUntil {
-            host.layoutSubtreeIfNeeded()
-            return visibleProbes(resultID, in: host).count == 1 && visibleProbes("agent.stop", in: host).isEmpty
+        try await openActivity(in: window)
+        try await waitUntil { utilityWindow(resultID) != nil && utilityWindow("agent.stop") == nil }
+        try await verifyUtilities(editor: editor, controller: controller)
+        try await openActivity(in: window)
+        guard let activityWindow = utilityWindow(resultID), let host = activityWindow.contentView else {
+            throw Failure("The status bar did not present the restored activity popover")
         }
         var screenshots = [try capture(host, name: "agent-resumed", scale: scale, directory: evidenceURL)]
         guard service.sendWorkOrder(.init(title: "Complete Bible images", systemImage: "photo",
@@ -61,7 +68,7 @@ enum AgentActivityAcceptance {
             throw Failure("The streaming action does not name the task")
         }
         screenshots.append(try capture(host, name: "agent-streaming", scale: scale, directory: evidenceURL))
-        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: window) == nil else {
+        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: activityWindow) == nil else {
             throw Failure("The native Stop task control is not clickable")
         }
         try await waitUntil { !service.isStreaming && service.currentTaskPhase == nil }
@@ -84,12 +91,67 @@ enum AgentActivityAcceptance {
             throw Failure("The generation action does not name generation")
         }
         screenshots.append(try capture(host, name: "agent-generating", scale: scale, directory: evidenceURL))
-        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: window) == nil else {
+        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: activityWindow) == nil else {
             throw Failure("The native Stop generation control is not clickable")
         }
         try await waitUntil { service.currentSpendRun == nil }
+        editor.showsAgentActivity = false
+        try await waitUntil { utilityWindow(resultID) == nil }
+        needsAuthentication = true
+        guard !editor.continueProductionPhase("bible"), editor.showsAgentActivity, !service.isStreaming else {
+            throw Failure("Unavailable backend did not reveal recovery without starting a task")
+        }
+        try await waitUntil { utilityWindow("agent.backend-recovery") != nil }
         FileHandle.standardOutput.write(Data("SELFTEST_AGENT_ACTIVITY_OK idleStop=0 streamingStop=1 generationStop=1 restoredAnswerVisible=true\n".utf8))
         return screenshots
+    }
+
+    private static func verifyUtilities(editor: EditorViewModel, controller: EditorWindowController) async throws {
+        guard let statusWindow = controller.window else { throw Failure("The editor window is unavailable") }
+        for utility in ["sessions", "decisions", "diagnostics"] {
+            let action = "agent.\(utility)"
+            let done = "\(action).done"
+            try await openActivity(in: statusWindow)
+            guard let window = utilityWindow(action),
+                  WorkspaceUIAcceptance.click(identifier: action, in: window) == nil else {
+                throw Failure("The activity flyout cannot open \(utility)")
+            }
+            try await waitUntil { utilityWindow(done) != nil }
+            guard let presented = utilityWindow(done),
+                  WorkspaceUIAcceptance.click(identifier: done, in: presented) == nil else {
+                throw Failure("The activity flyout did not present usable \(utility)")
+            }
+            try await waitUntil { utilityWindow(done) == nil }
+        }
+        editor.showsAgentActivity = false
+        try await waitUntil { utilityWindow("agent.sessions") == nil && utilityWindow("agent.sessions.done") == nil }
+        statusWindow.makeKeyAndOrderFront(nil)
+        guard NSApp.sendAction(#selector(EditorWindowController.showAgentConversationHistory(_:)),
+            to: controller, from: nil) else {
+            throw Failure("The Sessions menu action was not handled by the editor window")
+        }
+        try await waitUntil { utilityWindow("agent.sessions.done") != nil }
+        guard let history = utilityWindow("agent.sessions.done"),
+              WorkspaceUIAcceptance.click(identifier: "agent.sessions.done", in: history) == nil else {
+            throw Failure("The Sessions menu action did not present usable history from the closed flyout")
+        }
+        try await waitUntil { utilityWindow("agent.sessions.done") == nil }
+    }
+
+    private static func openActivity(in window: NSWindow) async throws {
+        if utilityWindow("agent.sessions") != nil { return }
+        window.makeKeyAndOrderFront(nil)
+        guard WorkspaceUIAcceptance.click(identifier: "production.ai", in: window) == nil else {
+            throw Failure("The actual status bar AI control is not clickable")
+        }
+        try await waitUntil { utilityWindow("agent.sessions") != nil }
+    }
+
+    private static func utilityWindow(_ identifier: String) -> NSWindow? {
+        NSApp.windows.first { window in
+            guard window.isVisible, let content = window.contentView else { return false }
+            return !visibleProbes(identifier, in: content).isEmpty
+        }
     }
 
     private static func visibleProbes(_ id: String, in view: NSView) -> [AppRelaunchClickProbeView] {

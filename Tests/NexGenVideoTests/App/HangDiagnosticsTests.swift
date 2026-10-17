@@ -220,4 +220,13 @@ struct HangDiagnosticsTests {
         #expect(editorWindow?.values[1] == 1463)
         #expect(editorWindow?.values[2] == 1040)
     }
+
+    @Test @MainActor func replayUsesTheRecordedTranscriptViewportRatherThanSidebarWidth() {
+        let records = [
+            DiagnosticRecord(sequence: 1, uptime: 1, operation: .scroll, values: [1500, 900, 600, 0, 320]),
+            DiagnosticRecord(sequence: 2, uptime: 2, operation: .scroll, values: [1800, 1190, 610, 0, 328]),
+        ]
+        #expect(HangDiagnosticReplay.recordedTranscriptViewport(in: records) == CGSize(width: 328, height: 610))
+        #expect(HangDiagnosticReplay.recordedTranscriptViewport(in: []) == nil)
+    }
 }

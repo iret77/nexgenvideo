@@ -7,6 +7,9 @@ import SwiftUI
 enum HangDiagnosticReplay {
     private static var lastPulse = ProcessInfo.processInfo.systemUptime
     private static var maximumPulseGap = 0.0
+    private static var scrollEventsSent = 0
+    private static var lastScrollTarget: String?
+    private static var scrollMotion: [String: Any] = [:]
 
     static func runIfRequested() {
         let environment = ProcessInfo.processInfo.environment
@@ -33,14 +36,13 @@ enum HangDiagnosticReplay {
                 )
             )
             editor.setWorkspaceFocus(.production)
-            editor.agentPanelVisible = true
             let matchGeometry = environment["NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY"] == "1"
             let records = try (matchGeometry ? structuralRecords(in: folder) : [])
             let recordedWindow = recordedEditorWindow(in: records)
-            let recordedScroll = records.last { $0.operation == .scroll && $0.values.count >= 5 }
+            let recordedScroll = recordedTranscriptViewport(in: records)
+            guard !matchGeometry || recordedScroll != nil else { exit(70) }
             let activationTimeline = recordedActivationTimeline(in: records)
-            let host = NSHostingController(rootView: EditorWindowContentView().environment(editor).allowsHitTesting(false))
-            host.safeAreaRegions = []
+            let host = ReplayHost(editor: editor)
             let window = ReplayWindow(contentViewController: host)
             window.styleMask.insert([.fullSizeContentView, .resizable, .closable])
             window.titleVisibility = .hidden
@@ -105,16 +107,14 @@ enum HangDiagnosticReplay {
                         try service.restoreDiagnosticTranscript(state)
                         if matchGeometry {
                             try await Task.sleep(for: .milliseconds(20))
-                            if let scroll = recordedScroll {
-                                restoreSidebarWidth(scroll.values[4], in: window)
-                            }
-                            scrollTranscriptToBottom(in: window)
+                            if let recordedScroll { try host.matchViewport(recordedScroll) }
+                            try await scrollTranscriptToBottom(in: host)
                             try await Task.sleep(for: .milliseconds(100))
-                            writeProgress(sequence: decoded.sequence, window: window, environment: environment)
+                            writeProgress(sequence: decoded.sequence, window: window, host: host, environment: environment)
                         }
                     }
                     try await Task.sleep(for: .seconds(matchGeometry ? 30 : 2))
-                    writeProgress(sequence: nil, window: window, environment: environment)
+                    writeProgress(sequence: nil, window: window, host: host, environment: environment)
                     exit(0)
                 } catch { exit(67) }
             }
@@ -127,24 +127,39 @@ enum HangDiagnosticReplay {
         override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     }
 
-    private static func scrollTranscriptToBottom(in window: NSWindow) {
-        guard let content = window.contentView,
-              let split = descendants(of: content).compactMap({ $0 as? NSSplitView })
-                .first(where: { $0.autosaveName == "editor.produce.root" }),
-              let sidebar = split.subviews.first,
-              let scroll = descendants(of: sidebar).compactMap({ $0 as? NSScrollView })
-                .filter({ !$0.isHiddenOrHasHiddenAncestor })
-                .max(by: { $0.contentView.bounds.height < $1.contentView.bounds.height }),
-              let document = scroll.documentView else { return }
+    private static func scrollTranscriptToBottom(in host: ReplayHost) async throws {
+        let scroll = try host.transcriptScroll()
+        guard let document = scroll.documentView else { throw CocoaError(.coderValueNotFound) }
         let bottom = max(0, document.frame.height - scroll.contentView.bounds.height)
+        let target = String(describing: ObjectIdentifier(scroll))
+        if scrollMotion["target"] as? String != target, bottom > 120 {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom / 2))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            let before = scroll.contentView.bounds.origin.y
+            sendScrollGesture(to: scroll, delta: 20)
+            try await Task.sleep(for: .milliseconds(20))
+            let after = scroll.contentView.bounds.origin.y
+            if after <= before - 1 {
+                scrollMotion = ["target": target, "before": before, "after": after,
+                    "contentHeight": document.frame.height, "viewportHeight": scroll.contentView.bounds.height]
+            }
+        }
         scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom))
         scroll.reflectScrolledClipView(scroll.contentView)
+        sendScrollGesture(to: scroll, delta: -20)
+    }
+
+    private static func sendScrollGesture(to scroll: NSScrollView, delta: Int32) {
         for phase in [NSEvent.Phase.began, .changed, .ended] {
             guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
-                                      wheel1: -20, wheel2: 0, wheel3: 0) else { continue }
+                                      wheel1: delta, wheel2: 0, wheel3: 0) else { continue }
             event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
             event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
-            if let wheel = NSEvent(cgEvent: event) { scroll.scrollWheel(with: wheel) }
+            if let wheel = NSEvent(cgEvent: event) {
+                scroll.scrollWheel(with: wheel)
+                scrollEventsSent += 1
+                lastScrollTarget = String(describing: ObjectIdentifier(scroll))
+            }
         }
     }
 
@@ -165,6 +180,13 @@ enum HangDiagnosticReplay {
         return windows
             .filter { $0.values[0] == editorWindowNumber }
             .max { $0.sequence < $1.sequence }
+    }
+
+    static func recordedTranscriptViewport(in records: [DiagnosticRecord]) -> CGSize? {
+        guard let record = records.last(where: { $0.operation == .scroll && $0.values.count >= 5 }),
+              record.values[4].isFinite, record.values[4] > 0,
+              record.values[2].isFinite, record.values[2] > 0 else { return nil }
+        return CGSize(width: record.values[4], height: record.values[2])
     }
 
     struct ActivationSample: Equatable {
@@ -195,18 +217,52 @@ enum HangDiagnosticReplay {
         [view] + view.subviews.flatMap { descendants(of: $0) }
     }
 
-    private static func restoreSidebarWidth(_ width: Double, in window: NSWindow) {
-        guard let content = window.contentView,
-              let split = descendants(of: content).compactMap({ $0 as? NSSplitView })
-                .first(where: { $0.autosaveName == "editor.produce.root" }),
-              let sidebar = split.subviews.first else { return }
-        let target = width + AppTheme.Layout.panelGap
-        if abs(sidebar.frame.width - target) > 0.5 {
-            split.setPosition(target, ofDividerAt: 0)
+    private final class ReplayHost: NSViewController {
+        private let transcript: NSHostingView<AnyView>
+
+        init(editor: EditorViewModel) {
+            transcript = NSHostingView(rootView: AnyView(AgentPanelView(replayTranscriptOnly: true)
+                .interfaceStyle(palette: editor.projectPalette).environment(editor).allowsHitTesting(false)))
+            transcript.sizingOptions = []
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func loadView() {
+            view = NSView(frame: NSRect(origin: .zero, size: AppTheme.Acceptance.workbenchViewport))
+            transcript.frame = view.bounds
+            transcript.autoresizingMask = [.width, .height]
+            view.addSubview(transcript)
+        }
+
+        func transcriptScroll() throws -> NSScrollView {
+            let probes = descendants(of: transcript).compactMap { $0 as? HangReplayTranscriptProbe.ProbeView }
+                .filter { !$0.isHiddenOrHasHiddenAncestor }
+            guard probes.count == 1, let probe = probes.first,
+                  let scroll = probe.enclosingScrollView,
+                  scroll.isDescendant(of: transcript), let document = scroll.documentView,
+                  probe.isDescendant(of: document) else {
+                throw CocoaError(.coderValueNotFound)
+            }
+            return scroll
+        }
+
+        func matchViewport(_ target: CGSize) throws {
+            transcript.autoresizingMask = []
+            transcript.setFrameSize(target)
+            for _ in 0..<3 {
+                transcript.layoutSubtreeIfNeeded()
+                let actual = try transcriptScroll().contentView.bounds.size
+                if abs(actual.width - target.width) <= 1 && abs(actual.height - target.height) <= 1 { return }
+                transcript.setFrameSize(CGSize(width: transcript.frame.width + target.width - actual.width,
+                    height: transcript.frame.height + target.height - actual.height))
+            }
+            throw CocoaError(.coderInvalidValue)
         }
     }
 
-    private static func writeProgress(sequence: UInt64?, window: NSWindow, environment: [String: String]) {
+    private static func writeProgress(sequence: UInt64?, window: NSWindow, host: ReplayHost, environment: [String: String]) {
         guard let path = environment["NGV_DIAGNOSTIC_REPLAY_PROGRESS"],
               let content = window.contentView else { return }
         let views = descendants(of: content)
@@ -217,12 +273,19 @@ enum HangDiagnosticReplay {
              "offset": Double(scroll.contentView.bounds.origin.y),
              "contentHeight": Double(scroll.documentView?.frame.height ?? 0)]
         }
+        let transcriptScroll = try? host.transcriptScroll()
         let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
                                        "finished": sequence == nil, "scrolls": geometry,
                                        "windowNumber": window.windowNumber,
                                        "windowWidth": window.frame.width,
                                        "windowHeight": window.frame.height,
                                        "maximumPulseGap": maximumPulseGap,
+                                       "transcriptWidth": transcriptScroll?.contentView.bounds.width ?? 0,
+                                       "transcriptHeight": transcriptScroll?.contentView.bounds.height ?? 0,
+                                       "scrollEventsSent": scrollEventsSent,
+                                       "scrollTarget": lastScrollTarget ?? "",
+                                       "transcriptScrollTarget": transcriptScroll.map { String(describing: ObjectIdentifier($0)) } ?? "",
+                                       "scrollMotion": scrollMotion,
                                        "editableTextViews": views.compactMap { $0 as? NSTextView }
                                            .filter { $0.isEditable && !$0.isHiddenOrHasHiddenAncestor }.count,
                                        "views": views.count,
@@ -231,4 +294,12 @@ enum HangDiagnosticReplay {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
     }
+}
+
+struct HangReplayTranscriptProbe: NSViewRepresentable {
+    final class ProbeView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+    func makeNSView(context: Context) -> ProbeView { ProbeView() }
+    func updateNSView(_ nsView: ProbeView, context: Context) {}
 }

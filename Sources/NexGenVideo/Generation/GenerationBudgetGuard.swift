@@ -101,6 +101,10 @@ enum GenerationBudgetGuard {
                 "The project changed while pricing this request. Retry generation in the active project."
             )
         }
+        if let approvedPackage,
+           approvedPackage.payload.modality == "image" || approvedPackage.payload.modality == "video" {
+            try await GenerationPackageInputs.requireCurrentReferences(package: approvedPackage, editor: editor)
+        }
         try mutationScope.requireCurrent(editor: editor)
         let log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
         try validateLedger(log: log, generatedAssets: editor.mediaAssets)

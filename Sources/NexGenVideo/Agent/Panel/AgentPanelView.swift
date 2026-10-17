@@ -4,6 +4,7 @@ import SwiftUI
 struct AgentPanelView: View {
     @Environment(EditorViewModel.self) var editor
     var presentation: AgentPanelPresentation = .tasks
+    var replayTranscriptOnly = false
 
     private static let starterPrompts: [AgentStarterPrompt] = [
         AgentStarterPrompt(
@@ -78,10 +79,18 @@ struct AgentPanelView: View {
             ?? false)
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if replayTranscriptOnly {
+            diagnosticReplayTranscript
+        } else {
+            panelContents
+        }
+    }
+
+    private var panelContents: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            if presentation == .tasks { taskBar }
             if presentation != .decision {
+                taskBar
                 AgentLiveStatusView(
                 status: liveStatus,
                 onCancel: {
@@ -302,8 +311,10 @@ struct AgentPanelView: View {
     }
 
     private var taskActivity: AgentTaskActivityPresentation {
-        AgentTaskActivityPresentation(messages: service.messages,
-            phase: editor.pipelinePhaseExecution.snapshot?.phase ?? editor.projectState?.nextPhaseName)
+        if service.isStreaming {
+            return AgentTaskActivityPresentation(task: service.currentTaskActivity)
+        }
+        return AgentTaskActivityPresentation(messages: [], phase: editor.pipelinePhaseExecution.snapshot?.phase)
     }
 
     private var decisionLocation: String {
@@ -449,7 +460,7 @@ struct AgentPanelView: View {
     private var taskBar: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             HStack {
-                Text("Tasks")
+                Text(presentation == .activity ? "AI activity" : "Tasks")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Spacer(minLength: AppTheme.Spacing.sm)
                 utilityButton(iconOnly: false)
@@ -487,31 +498,39 @@ struct AgentPanelView: View {
                             .allowsHitTesting(false)
                     }
                 }
-            Menu {
-                Button("Resume Session") { editor.agentConversationHistoryPresented = true }
-                Button("New Session") { service.startNewConversation() }
-                    .disabled(!service.canStartNewConversation)
-            } label: {
-                ActionMenuLabel(title: "Sessions")
-            }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(.capsule(.secondary, size: .small))
+            Button("Sessions") { editor.agentConversationHistoryPresented = true }
+                .buttonStyle(.capsule(.secondary, size: .small))
+                .modifier(GenerationBatchRuntimeProbe(identifier: "agent.sessions", enabled: WorkspaceUIAcceptance.isRequested))
         }
     }
 
     private var sessionHistory: some View {
-        ChatHistoryList(
-            sessions: service.sessions.sorted { $0.updatedAt > $1.updatedAt },
-            currentId: service.currentSessionId,
-            cuesBySessionID: conversationCues,
-            canSwitch: !service.isComposerBlocked && !service.isStreaming,
-            onSelect: { id in
-                service.selectSession(id)
-                editor.agentConversationHistoryPresented = false
-            },
-            onDelete: { service.deleteSession($0) }
-        )
+        VStack(spacing: AppTheme.Spacing.sm) {
+            HStack {
+                Button("New Session") {
+                    service.startNewConversation()
+                    editor.agentConversationHistoryPresented = false
+                }
+                .disabled(!service.canStartNewConversation)
+                Spacer(minLength: AppTheme.Spacing.sm)
+                Button("Done") { editor.agentConversationHistoryPresented = false }
+                    .modifier(GenerationBatchRuntimeProbe(identifier: "agent.sessions.done", enabled: WorkspaceUIAcceptance.isRequested))
+            }
+            .buttonStyle(.inlineAction())
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .padding(.top, AppTheme.Spacing.sm)
+            ChatHistoryList(
+                sessions: service.sessions.sorted { $0.updatedAt > $1.updatedAt },
+                currentId: service.currentSessionId,
+                cuesBySessionID: conversationCues,
+                canSwitch: !service.isComposerBlocked && !service.isStreaming,
+                onSelect: { id in
+                    service.selectSession(id)
+                    editor.agentConversationHistoryPresented = false
+                },
+                onDelete: { service.deleteSession($0) }
+            )
+        }
     }
 
     @State private var showDecisionHistory = false
@@ -799,17 +818,22 @@ struct AgentPanelView: View {
                         }
                     }
             }
-            ScrollView {
-                AgentTranscriptLayout(spacing: AppTheme.Spacing.xl) {
-                    ForEach(transcriptTurns) { turn in
-                        AgentTranscriptTurnView(turn: turn, toolResults: toolResults)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            diagnosticReplayTranscript
         }
         .padding(AppTheme.Spacing.lg)
         .frame(width: AppTheme.Layout.chatColumnMax, height: AppTheme.ComponentSize.agentAssetPickerHeight)
+    }
+
+    var diagnosticReplayTranscript: some View {
+        ScrollView {
+            AgentTranscriptLayout(spacing: AppTheme.Spacing.xl) {
+                ForEach(transcriptTurns) { turn in
+                    AgentTranscriptTurnView(turn: turn, toolResults: toolResults)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background { HangReplayTranscriptProbe() }
+        }
     }
 
     @ViewBuilder
@@ -927,6 +951,7 @@ struct AgentPanelView: View {
                 Text("Open Agent Settings")
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
+            .modifier(GenerationBatchRuntimeProbe(identifier: "agent.backend-recovery", enabled: WorkspaceUIAcceptance.isRequested))
         }
         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -944,7 +969,8 @@ struct AgentPanelView: View {
                     .padding(.bottom, AppTheme.Spacing.xs)
             } else if editor.generationBatchCoordinator.pending != nil {
                 // The decision is offered height before the task result so its list can show a complete request.
-                GenerationBatchCard(editor: editor).layoutPriority(1)
+                GenerationBatchCard(editor: editor, runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested)
+                    .layoutPriority(1)
             } else if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,

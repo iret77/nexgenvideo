@@ -332,6 +332,7 @@ final class AgentService {
     private(set) var activitySessionID: UUID?
     private(set) var activityEvents: [AgentActivityEvent] = []
     private(set) var activityBaselineMessageID: UUID?
+    private var activityTask: AgentTurnActivity?
     private(set) var stoppedAgent = false
 
     func recordActivity(_ label: String? = nil) {
@@ -448,6 +449,9 @@ final class AgentService {
     @ObservationIgnored
     private var dialogOrigins: [String: ToolCallOrigin] = [:]
 
+    @ObservationIgnored
+    private var dialogActivities: [String: AgentTurnActivity] = [:]
+
     func captureDiagnosticTranscript() {
         guard HangDiagnosticRecorder.shared.recordsContent else { return }
         HangDiagnosticTranscript.capture(messages: messages, streaming: isStreaming,
@@ -484,6 +488,7 @@ final class AgentService {
         let saved = sessions.first { $0.id == currentSessionId }?.decision
         activeIntakeDraftKey = intakeKey
         dialogOrigins[dialog.id] = origin
+        dialogActivities[dialog.id] = taskActivity(from: origin)
         suspendToolCalls(from: origin)
         pendingDialog = dialog
         if let intakeKey, let saved, saved.intakeKey == intakeKey,
@@ -495,6 +500,7 @@ final class AgentService {
     }
 
     func abandonDialog() {
+        if let dialog = pendingDialog { dialogActivities.removeValue(forKey: dialog.id) }
         if let dialog = pendingDialog,
            let origin = dialogOrigins.removeValue(forKey: dialog.id) {
             prepareToolCallsForFollowUp(from: origin)
@@ -1291,7 +1297,8 @@ final class AgentService {
             text: text,
             mentions: attached,
             presentation: response.presentation,
-            origin: origin
+            origin: origin,
+            taskActivity: dialogActivities.removeValue(forKey: dialog.id)
         )
     }
 
@@ -1300,7 +1307,8 @@ final class AgentService {
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
-        origin: ToolCallOrigin
+        origin: ToolCallOrigin,
+        taskActivity: AgentTurnActivity?
     ) {
         switch origin {
         case .externalMCP:
@@ -1319,7 +1327,8 @@ final class AgentService {
             text: text,
             mentions: mentions,
             hidden: hidden,
-            presentation: presentation
+            presentation: presentation,
+            taskActivity: continuingTaskActivity(taskActivity)
         )
     }
 
@@ -1637,13 +1646,15 @@ final class AgentService {
             return
         }
         let origin = dialog.flatMap { dialogOrigins.removeValue(forKey: $0.id) } ?? .direct
+        let activity = dialog.flatMap { dialogActivities.removeValue(forKey: $0.id) }
         pendingDialog = nil
         if let dialog, dialog.purpose == .chatClarification {
             sendDialogTurn(
                 text: "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
                 mentions: [],
                 hidden: true,
-                origin: origin
+                origin: origin,
+                taskActivity: activity
             )
         }
     }
@@ -1709,7 +1720,7 @@ final class AgentService {
     private var spendPreparationID: UUID?
 
     @ObservationIgnored
-    private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String)] = [:]
+    private var generationBatchOrigins: [String: (origin: ToolCallOrigin, marker: String, activity: AgentTurnActivity?)] = [:]
 
     func presentGenerationBatch(
         _ batch: GenerationBatch,
@@ -1727,7 +1738,7 @@ final class AgentService {
             : "Generation batch \(batch.id) is waiting for native approval and completion. "
                 + "\(unpriced) of \(batch.payload.items.count) items have no cost estimate; the user can retry pricing "
                 + "or explicitly approve this exact batch without an estimate. Do not describe it as priced or as waiting only for approval."
-        generationBatchOrigins[batch.id] = (origin, marker)
+        generationBatchOrigins[batch.id] = (origin, marker, taskActivity(from: origin))
         workIntervals.begin("batch-wait:\(batch.id)", sessionID: origin.chatSessionID, category: .waiting)
         editor.agentPanelVisible = true
         do { try editor.generationBatchCoordinator.present(batch, recoveries: recoveries) }
@@ -1761,7 +1772,7 @@ final class AgentService {
         guard let stored = generationBatchOrigins.removeValue(forKey: batchID) else { return }
         let result = ToolResult.ok(message)
         replacePendingSpendToolResult(result, origin: stored.origin, marker: stored.marker)
-        enqueueSpendFollowUp(message, origin: stored.origin, result: result)
+        enqueueSpendFollowUp(message, origin: stored.origin, result: result, taskActivity: stored.activity)
     }
 
     @ObservationIgnored
@@ -1778,6 +1789,7 @@ final class AgentService {
 
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
+        let taskActivity: AgentTurnActivity?
         let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease?
         let prepare: (@MainActor (SpendOption) async throws -> GenerationPackageV1)?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
@@ -1798,6 +1810,7 @@ final class AgentService {
 
     private struct SpendFollowUp {
         let origin: ToolCallOrigin
+        let taskActivity: AgentTurnActivity?
         let text: String
         let imageBlocks: [[String: Any]]
     }
@@ -1897,6 +1910,7 @@ final class AgentService {
         }
         pendingSpendOperation = PendingSpendOperation(
             origin: origin,
+            taskActivity: taskActivity(from: origin),
             acquirePipelineMutation: acquirePipelineMutation,
             prepare: prepareOperation,
             execute: executeOperation,
@@ -2113,6 +2127,7 @@ final class AgentService {
                 approvalID: approvalID,
                 "Generation cancelled.",
                 origin: operation.origin,
+                taskActivity: operation.taskActivity,
                 result: cancelled
             )
             return
@@ -2130,6 +2145,7 @@ final class AgentService {
                     ? "The approved operation failed: \(message)"
                     : message,
                 origin: operation.origin,
+                taskActivity: operation.taskActivity,
                 result: result
             )
         } catch {
@@ -2151,6 +2167,7 @@ final class AgentService {
                 approvalID: approvalID,
                 message,
                 origin: operation.origin,
+                taskActivity: operation.taskActivity,
                 result: result
             )
         }
@@ -2160,6 +2177,7 @@ final class AgentService {
         approvalID: String,
         _ text: String,
         origin: ToolCallOrigin,
+        taskActivity: AgentTurnActivity?,
         result: ToolResult
     ) {
         guard runningSpendStatus?.id == approvalID else { return }
@@ -2167,7 +2185,7 @@ final class AgentService {
         runningSpendTask = nil
         runningSpendCancel = nil
         replacePendingSpendToolResult(result, origin: origin)
-        enqueueSpendFollowUp(text, origin: origin, result: result)
+        enqueueSpendFollowUp(text, origin: origin, result: result, taskActivity: taskActivity)
     }
 
     func recordSpendProviderStatus(runToken: UUID?, at date: Date = Date()) {
@@ -2199,7 +2217,7 @@ final class AgentService {
         let result = ToolResult.error(reason)
         replacePendingSpendToolResult(result, origin: operation.origin)
         clearSpendApproval(cancelling: true)
-        enqueueSpendFollowUp(reason, origin: operation.origin, result: result)
+        enqueueSpendFollowUp(reason, origin: operation.origin, result: result, taskActivity: operation.taskActivity)
     }
 
     private func clearSpendApproval(cancelling: Bool) {
@@ -2240,7 +2258,8 @@ final class AgentService {
     private func enqueueSpendFollowUp(
         _ text: String,
         origin: ToolCallOrigin,
-        result: ToolResult? = nil
+        result: ToolResult? = nil,
+        taskActivity: AgentTurnActivity?
     ) {
         guard origin.chatSessionID != nil else { return }
         let imageBlocks: [[String: Any]] = result?.content.compactMap { block in
@@ -2256,6 +2275,7 @@ final class AgentService {
         } ?? []
         pendingSpendFollowUps.append(SpendFollowUp(
             origin: origin,
+            taskActivity: taskActivity,
             text: text,
             imageBlocks: imageBlocks
         ))
@@ -2344,7 +2364,8 @@ final class AgentService {
                 Self.runtimeImages(from: followUp.imageBlocks),
                 backend: backend,
                 in: messages
-            )
+            ),
+            taskActivity: continuingTaskActivity(followUp.taskActivity)
         )
         if started {
             pendingSpendFollowUps.remove(at: followUpIndex)
@@ -2567,6 +2588,18 @@ final class AgentService {
         }
         return "This logical agent turn is suspended at a host decision. "
             + "Do not run more tools from it; wait for the host follow-up or start a fresh MCP session."
+    }
+
+    private func taskActivity(from origin: ToolCallOrigin) -> AgentTurnActivity? {
+        guard origin.chatSessionID == currentSessionId, origin.chatSessionID != nil else { return nil }
+        return currentTaskActivity
+    }
+
+    private func continuingTaskActivity(_ activity: AgentTurnActivity?) -> AgentTurnActivity? {
+        guard let activity else { return nil }
+        if let phase = activity.phase, let current = editor?.projectState?.nextPhaseName,
+           phase != current { return nil }
+        return activity
     }
 
     private func suspendToolCalls(from origin: ToolCallOrigin) {
@@ -2842,7 +2875,10 @@ final class AgentService {
             text: text,
             mentions: [],
             hidden: true,
-            allowWhileBlocked: true
+            allowWhileBlocked: true,
+            taskActivity: editor?.projectState?.nextPhaseName.map {
+                AgentTurnActivity(title: "Continue production", phase: $0)
+            }
         )
         if started {
             pendingGateFollowUp = nil
@@ -3129,6 +3165,7 @@ final class AgentService {
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
         abandonDialog()
         dialogOrigins.removeAll()
+        dialogActivities.removeAll()
         abandonGateApproval()
         abandonSpendApproval()
         abandonRunningSpend()
@@ -3387,8 +3424,8 @@ final class AgentService {
         presentation: AgentUserPresentation? = nil,
         allowWhileBlocked: Bool = false,
         runtimeImages: [AgentRuntimeImage] = [],
-        taskContext: String? = nil
-
+        taskContext: String? = nil,
+        taskActivity: AgentTurnActivity? = nil
     ) -> Bool {
         guard ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY"] == nil else { return false }
         guard !isStreaming else { return false }
@@ -3422,7 +3459,7 @@ final class AgentService {
         if !hidden || presentation != nil { recordUserDirection() }
         checkpointCurrentSession()
         streamError = nil
-        kickOffRuntimeTurn()
+        kickOffRuntimeTurn(taskActivity: taskActivity ?? AgentTurnActivity.workOrder(presentation))
         return true
     }
 
@@ -3457,10 +3494,12 @@ final class AgentService {
     }
 
     var currentTaskPhase: String? {
+        currentTaskActivity?.phase
+    }
+
+    var currentTaskActivity: AgentTurnActivity? {
         guard isStreaming, activitySessionID == currentSessionId else { return nil }
-        return messages.reversed().compactMap { $0.userPresentation?.choiceRecord }
-            .first { $0.selections.contains { $0.label == "Task" } }?
-            .selections.first { $0.label == "Phase" }?.values.first
+        return activityTask
     }
 
     @discardableResult
@@ -3909,7 +3948,7 @@ final class AgentService {
         return message.id
     }
 
-    private func kickOffRuntimeTurn() {
+    private func kickOffRuntimeTurn(taskActivity: AgentTurnActivity?) {
         currentTask?.cancel()
         lastRuntimeUsage = nil
         activityStartedAt = Date()
@@ -3917,6 +3956,7 @@ final class AgentService {
         activitySessionID = currentSessionId
         activityEvents = [.init(at: activityStartedAt ?? Date(), label: "Agent request started")]
         activityBaselineMessageID = messages.last?.id
+        activityTask = taskActivity
         stoppedAgent = false
         isStreaming = true
         let boundSessionID = currentSessionId

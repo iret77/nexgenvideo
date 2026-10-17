@@ -541,6 +541,7 @@ struct GenerationBatchDecisionLayout: SwiftUI.Layout {
     let minimumBodyHeight: CGFloat
     let spacing: CGFloat
     let fillsMaximumHeight: Bool
+    var allowsBodyCompression = false
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -556,7 +557,9 @@ struct GenerationBatchDecisionLayout: SwiftUI.Layout {
             + (finite(subviews[2].sizeThatFits(childProposal).height) ?? AppTheme.Spacing.none)
             + spacing + spacing
         let body = finite(subviews[1].sizeThatFits(childProposal).height) ?? minimumBodyHeight
-        let ceiling = max(maximumHeight, fixed + minimumBodyHeight)
+        let minimumBody = allowsBodyCompression
+            ? min(minimumBodyHeight, AppTheme.ComponentSize.generationBatchCompactBodyMinHeight) : minimumBodyHeight
+        let ceiling = max(maximumHeight, fixed + minimumBody)
         let available = min(max(finite(proposal.height) ?? ceiling, fixed), ceiling)
         let height = fillsMaximumHeight ? available : min(fixed + body, available)
         return CGSize(width: width, height: height)
