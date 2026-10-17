@@ -203,8 +203,9 @@ struct HangDiagnosticsTests {
     @Test @MainActor func replayScrollGestureUsesNativePhasesAndEndsWithoutMovement() throws {
         for delta in [Int32(20), Int32(-20)] {
             let events = try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: .zero)
+            let hasPreciseDeltas = events.allSatisfy(\.hasPreciseScrollingDeltas)
             #expect(events.map(\.phase) == [.began, .changed, .ended])
-            #expect(events.allSatisfy(\.hasPreciseScrollingDeltas))
+            #expect(hasPreciseDeltas)
             #expect(events.dropLast().allSatisfy { $0.scrollingDeltaY * CGFloat(delta) > 0 })
             #expect(events.last?.scrollingDeltaY == 0)
         }
