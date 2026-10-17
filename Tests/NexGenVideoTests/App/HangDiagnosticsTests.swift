@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import HangDiagnostics
 import Testing
@@ -197,6 +198,16 @@ struct HangDiagnosticsTests {
         let editor = EditorViewModel(agentService: service)
         #expect(editor.agentService === service)
         #expect(editor.agentService.backend == .claudeCode)
+    }
+
+    @Test @MainActor func replayScrollGestureUsesNativePhasesAndEndsWithoutMovement() throws {
+        for delta in [Int32(20), Int32(-20)] {
+            let events = try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: .zero)
+            #expect(events.map(\.phase) == [.began, .changed, .ended])
+            #expect(events.allSatisfy(\.hasPreciseScrollingDeltas))
+            #expect(events.dropLast().allSatisfy { $0.scrollingDeltaY * CGFloat(delta) > 0 })
+            #expect(events.last?.scrollingDeltaY == 0)
+        }
     }
 
     @Test @MainActor func replayActivationCombinesWindowsFromTheSameHeartbeat() {

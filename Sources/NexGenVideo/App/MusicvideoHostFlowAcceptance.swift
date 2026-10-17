@@ -84,12 +84,17 @@ final class MusicvideoHostFlowAcceptance {
         }
     }
 
-    func runAnalysis() async throws {
-        try await tool("run_phase", ["phase": "analysis"])
+    func runAnalysis(configureAudioAnalysis: @escaping ToolExecutor.AudioAnalysisConfiguration = { AudioAnalysisRuntime.configure($0) }) async throws {
+        try await tool("run_phase", ["phase": "analysis"],
+            executor: ToolExecutor(editor: editor, configureAudioAnalysis: configureAudioAnalysis))
         try require(editor.pipelinePhaseExecution.snapshot?.status == .completed,
             "Analysis did not complete through the host phase coordinator")
         try require(service.pendingDialog == nil && editor.projectState?.nextPhaseName == "analysis",
             "Creative intake advanced before analysis approval")
+        guard let requirement = PackCatalog.registry(activePack: editor.declaredPluginName).artifactWriteRequirements["analysis"] else {
+            throw Failure("The loaded pack has no measured-analysis write requirement")
+        }
+        try requirement(dataRoot)
         let readiness = await NativeGateWriter.controlReadiness(projectDir: editor.workingRoot!, phase: "analysis",
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
             executionCoordinator: editor.pipelinePhaseRunCoordinator)
@@ -121,6 +126,21 @@ final class MusicvideoHostFlowAcceptance {
         try require(service.pendingDialog?.fileIntake?.completionLabel == "Skip", "First empty character has no Skip action")
         try await click("agent.dialog.complete")
         try await waitForDialog("Prepared location 1", attachAs: "location")
+        let reference = FileManager.default.temporaryDirectory.appendingPathComponent("Stage-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: reference) }
+        try FullflowAcceptanceFixture.writeReference(to: reference)
+        try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false,
+            "An empty prepared location was actionable")
+        service.dialogDraft.fileURLs = [reference]
+        service.dialogDraft.direction = "Stage"
+        try await click("agent.dialog.confirm")
+        try await waitForDialog("Prepared location 2", attachAs: "location")
+        try require(service.pendingDialog?.fileIntake?.completionLabel == "Done", "The completed location has no Done action")
+        let confirmed = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot).entries.values.filter {
+            $0.role == .location && $0.identitySlug == "stage"
+        }
+        try require(confirmed.count == 1 && confirmed[0].sha256 == (try FileDigest.sha256(of: reference)),
+            "Native location intake did not confirm the exact supplied image")
         try await click("agent.dialog.complete")
         try await waitForDialog("Style references", attachAs: "style")
         try await click("agent.dialog.confirm")
@@ -134,6 +154,8 @@ final class MusicvideoHostFlowAcceptance {
         }
         try require(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent("import/script.md").path),
             "Skipping Existing story invented supplied material")
+        try await tool("record_affect", ["detected": [["tag": "meditative", "weight": 1.0]],
+            "basis": "inferred", "rationale": "Supplied acceptance interpretation; no live LLM inference."])
         try await tool("write_brief", ["mission": "single_release", "target_platform": "YouTube",
             "aspect_ratio": "16:9", "project_mode": "section", "concept_type": "narrative",
             "visual_medium": "live_action_realistic", "figures": "none", "lyrics_integration": "metaphorical",
@@ -194,12 +216,12 @@ final class MusicvideoHostFlowAcceptance {
         transitions.append("approved \(phase)")
     }
 
-    private func tool(_ name: String, _ args: [String: Any]) async throws {
+    private func tool(_ name: String, _ args: [String: Any], executor: ToolExecutor? = nil) async throws {
         try await waitUntil("agent idle before \(name)") { !self.service.isStreaming }
         guard let session = service.currentSessionId else { throw Failure("No host session owns this phase") }
         var arguments = args
         arguments["project_dir"] = dataRoot.path
-        let result = await ToolExecutor(editor: editor).execute(name: name, args: arguments,
+        let result = await (executor ?? ToolExecutor(editor: editor)).execute(name: name, args: arguments,
             origin: .inAppChat(sessionID: session), toolUseID: "acceptance-\(UUID().uuidString)")
         if result.isError { throw Failure("\(name) failed: \(result.content)") }
     }

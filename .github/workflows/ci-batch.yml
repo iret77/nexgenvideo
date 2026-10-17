@@ -8,6 +8,10 @@ on:
         description: Run the chat and recorded hang replays
         type: boolean
         default: true
+      recorded_hang_replay:
+        description: Include optimized recorded replay; disable when already verified in this build incident
+        type: boolean
+        default: true
       signing_preflight:
         description: Run the Developer ID signing preflight
         type: boolean
@@ -41,7 +45,7 @@ jobs:
       runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
 
   recorded-hang-replay:
-    if: inputs.hang_replays
+    if: inputs.hang_replays && inputs.recorded_hang_replay
     uses: ./.github/workflows/recorded-hang-replay.yml
     secrets: inherit
 

@@ -128,39 +128,97 @@ enum HangDiagnosticReplay {
         override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     }
 
-    private static func scrollTranscriptToBottom(in host: ReplayHost) async throws {
-        let scroll = try host.transcriptScroll()
-        guard let document = scroll.documentView else { throw CocoaError(.coderValueNotFound) }
-        let bottom = max(0, document.frame.height - scroll.contentView.bounds.height)
-        let target = String(describing: ObjectIdentifier(scroll))
-        if scrollMotion["target"] as? String != target, bottom > 120 {
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom / 2))
-            scroll.reflectScrolledClipView(scroll.contentView)
-            let before = scroll.contentView.bounds.origin.y
-            sendScrollGesture(to: scroll, delta: 20)
-            try await Task.sleep(for: .milliseconds(20))
-            let after = scroll.contentView.bounds.origin.y
-            if after <= before - 1 {
-                scrollMotion = ["target": target, "before": before, "after": after,
-                    "contentHeight": document.frame.height, "viewportHeight": scroll.contentView.bounds.height]
-            }
+    private struct ScrollSnapshot {
+        let scroll: NSScrollView
+        let document: NSView
+        let documentFrame: NSRect
+        let viewport: NSRect
+
+        var target: String { String(describing: ObjectIdentifier(scroll)) }
+        var bottom: CGFloat { max(0, documentFrame.height - viewport.height) }
+        var isInterior: Bool { viewport.minY > 0 && viewport.minY < bottom }
+
+        func hasSameGeometry(as other: Self) -> Bool {
+            scroll === other.scroll && document === other.document
+                && documentFrame == other.documentFrame && viewport.size == other.viewport.size
         }
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom))
-        scroll.reflectScrolledClipView(scroll.contentView)
-        sendScrollGesture(to: scroll, delta: -20)
     }
 
-    private static func sendScrollGesture(to scroll: NSScrollView, delta: Int32) {
-        for phase in [NSEvent.Phase.began, .changed, .ended] {
+    private static func scrollSnapshot(in host: ReplayHost) throws -> ScrollSnapshot {
+        host.view.layoutSubtreeIfNeeded()
+        let scroll = try host.transcriptScroll()
+        guard let document = scroll.documentView else { throw CocoaError(.coderValueNotFound) }
+        let frame = document.frame
+        let viewport = scroll.contentView.bounds
+        guard [frame.minX, frame.minY, frame.width, frame.height,
+               viewport.minX, viewport.minY, viewport.width, viewport.height].allSatisfy(\.isFinite),
+              frame.height >= 0, viewport.width > 0, viewport.height > 0 else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        return ScrollSnapshot(scroll: scroll, document: document, documentFrame: frame, viewport: viewport)
+    }
+
+    private static func stableScrollSnapshot(in host: ReplayHost, matching geometry: ScrollSnapshot? = nil) async throws -> ScrollSnapshot? {
+        var previous = try scrollSnapshot(in: host)
+        if let geometry, !previous.hasSameGeometry(as: geometry) { return nil }
+        var stableSamples = 0
+        for _ in 0..<3 {
+            try await Task.sleep(for: .milliseconds(20))
+            let current = try scrollSnapshot(in: host)
+            if let geometry, !current.hasSameGeometry(as: geometry) { return nil }
+            stableSamples = current.hasSameGeometry(as: previous) && current.viewport == previous.viewport
+                ? stableSamples + 1 : 0
+            if stableSamples == 2 { return current }
+            previous = current
+        }
+        return nil
+    }
+
+    private static func scrollTranscriptToBottom(in host: ReplayHost) async throws {
+        let initial = try scrollSnapshot(in: host)
+        if scrollMotion["target"] as? String != initial.target,
+           let ready = try await stableScrollSnapshot(in: host), ready.bottom > 120 {
+            ready.scroll.contentView.scroll(to: NSPoint(x: 0, y: ready.bottom / 2))
+            ready.scroll.reflectScrolledClipView(ready.scroll.contentView)
+            if let before = try await stableScrollSnapshot(in: host),
+               before.scroll === ready.scroll, before.document === ready.document, before.isInterior {
+                try sendScrollGesture(to: before.scroll, delta: 20)
+                if let after = try await stableScrollSnapshot(in: host, matching: before), after.isInterior,
+                   after.viewport.minY <= before.viewport.minY - 1 {
+                    scrollMotion = ["target": before.target, "before": before.viewport.minY,
+                        "after": after.viewport.minY, "contentHeight": before.documentFrame.height,
+                        "viewportHeight": before.viewport.height]
+                }
+            }
+        }
+        let current = try scrollSnapshot(in: host)
+        current.scroll.contentView.scroll(to: NSPoint(x: 0, y: current.bottom))
+        current.scroll.reflectScrolledClipView(current.scroll.contentView)
+        try sendScrollGesture(to: current.scroll, delta: -20)
+    }
+
+    static func scrollGestureEvents(delta: Int32, location: CGPoint) throws -> [NSEvent] {
+        let beganDelta = delta.signum()
+        return try [(CGScrollPhase.began, beganDelta), (.changed, delta - beganDelta), (.ended, 0)].map { phase, amount in
             guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
-                                      wheel1: delta, wheel2: 0, wheel3: 0) else { continue }
+                                      wheel1: amount, wheel2: 0, wheel3: 0) else { throw CocoaError(.coderInvalidValue) }
             event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
             event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
-            if let wheel = NSEvent(cgEvent: event) {
-                scroll.scrollWheel(with: wheel)
-                scrollEventsSent += 1
-                lastScrollTarget = String(describing: ObjectIdentifier(scroll))
-            }
+            event.location = location
+            guard let wheel = NSEvent(cgEvent: event) else { throw CocoaError(.coderInvalidValue) }
+            return wheel
+        }
+    }
+
+    private static func sendScrollGesture(to scroll: NSScrollView, delta: Int32) throws {
+        guard let window = scroll.window, let screen = NSScreen.screens.first else { throw CocoaError(.coderValueNotFound) }
+        let center = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
+        let point = window.convertPoint(toScreen: center)
+        let location = CGPoint(x: point.x, y: screen.frame.height - point.y)
+        for wheel in try scrollGestureEvents(delta: delta, location: location) {
+            scroll.scrollWheel(with: wheel)
+            scrollEventsSent += 1
+            lastScrollTarget = String(describing: ObjectIdentifier(scroll))
         }
     }
 

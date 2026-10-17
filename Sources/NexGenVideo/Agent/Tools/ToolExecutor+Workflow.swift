@@ -4858,7 +4858,7 @@ extension ToolExecutor {
         // ngv.json is the write-through source the editor property mirrors anyway. It lives in the
         // project PACKAGE (parent of `pipeline`), not the data root — resolve the home first.
         let registry = PackCatalog.registry(activePack: resolvedPack)
-        AudioAnalysisRuntime.configure(registry)
+        configureAudioAnalysis(registry)
 
         // #174: run the phase's engine-pinned deterministic steps FIRST — load-bearing operations the
         // agent can neither skip nor improvise (file intake into the right dir, the one-song contract,

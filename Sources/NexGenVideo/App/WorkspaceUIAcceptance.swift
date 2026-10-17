@@ -2466,6 +2466,18 @@ extension WorkspaceUIAcceptance {
             savedBytes = try treeSnapshot(at: projectURL)
             document = try await VideoProject.load(from: projectURL)
         } catch { fail("could not open the Storyboard fixture: \(error.localizedDescription)", scale: scale) }
+        document.makeWindowControllers()
+        guard let productionWindow = document.windowControllers
+            .compactMap({ $0 as? EditorWindowController }).first?.window else {
+            fail("Storyboard fixture did not create its document window", scale: scale)
+        }
+        // Initialize the document once, then let only the cockpit under test own tab selection.
+        weak var initialContentController = productionWindow.contentViewController
+        productionWindow.contentViewController = nil
+        productionWindow.contentView = nil
+        guard await waitUntil(timeout: .seconds(5), { initialContentController == nil }) else {
+            fail("Storyboard fixture retained a competing production cockpit", scale: scale)
+        }
         let editor = document.editorViewModel
         editor.setWorkspaceFocus(.production)
         await editor.refreshEngineState()
@@ -2658,7 +2670,11 @@ extension WorkspaceUIAcceptance {
         }
         window.orderOut(nil)
         window.contentView = nil
-        document.makeWindowControllers()
+        let productionContent = NSHostingController(rootView:
+            EditorWindowContentView().environment(editor).tint(AppTheme.Accent.primary))
+        productionContent.sizingOptions = []
+        productionContent.safeAreaRegions = []
+        productionWindow.contentViewController = productionContent
         await captureProductionWorkbench(document: document, evidenceURL: evidenceURL, scale: scale)
         do {
             let activityImages = try await AgentActivityAcceptance.run(evidenceURL: evidenceURL, scale: scale)

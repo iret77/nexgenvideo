@@ -41,6 +41,8 @@ class FilmReviewEvidenceTests(unittest.TestCase):
                 "unexpectedRequestCount": 0, "requestMethods": ["POST", "PUT", "POST", "GET", "GET", "GET"],
                 "spendEvents": ["reserved", "submitted", "settled"],
                 "generatedSourceStartFrame": 30, "generatedSourceEndFrame": 90, "totalFrames": 129,
+                "plannedCutSeconds": 2.0, "requestedDurationSeconds": 4,
+                "providerDurationFrames": 120, "importedSourceEndFrame": 69,
             },
             "controls": [{"id": key, "control": {"x": 10, "y": 10, "width": 200, "height": 30},
                           "viewport": frame.copy()} for key in ids],
@@ -203,6 +205,46 @@ class FilmReviewEvidenceTests(unittest.TestCase):
                     if action["controlID"] == "take.end":
                         action["before"] = original_end
                 self.assertTrue(valid_musicvideo_review(row, self.output))
+
+    def measured_cut_row(self, cut, source_end, imported_end, duration, provider_frames, review_end):
+        row = copy.deepcopy(self.row)
+        generation = row["generation"]
+        generation.update(plannedCutSeconds=cut, generatedSourceEndFrame=source_end,
+                          importedSourceEndFrame=imported_end, requestedDurationSeconds=duration,
+                          providerDurationFrames=provider_frames)
+        for finding in generation["nativeTakeReview"]["findings"]:
+            finding["endSeconds"] = review_end
+        for action in generation["nativeInteractions"]:
+            if action["controlID"] == "take.end":
+                action["before"] = str(float(duration))
+                action["after"] = str(review_end)
+        return row
+
+    def test_accepts_measured_cut_and_exact_rounded_provider_handles(self):
+        for values in ((1.974, 89, 70, 4, 120, 89 / 30), (2.020, 91, 68, 5, 150, 91 / 30)):
+            with self.subTest(cut=values[0]):
+                self.assertTrue(valid_musicvideo_review(self.measured_cut_row(*values), self.output))
+
+    def test_rejects_wrong_trimming_missing_frames_and_short_provider_result(self):
+        valid = self.measured_cut_row(2.020, 91, 68, 5, 150, 91 / 30)
+        for key, value in (("generatedSourceStartFrame", 29), ("generatedSourceEndFrame", 90),
+                           ("importedSourceEndFrame", 69), ("providerDurationFrames", 149),
+                           ("providerDurationFrames", 120), ("requestedDurationSeconds", 4),
+                           ("totalFrames", 128), ("totalFrames", 130), ("plannedCutSeconds", 2.1),
+                           ("plannedCutSeconds", float("nan")), ("plannedCutSeconds", True)):
+            with self.subTest(key=key, value=value):
+                row = copy.deepcopy(valid)
+                row["generation"][key] = value
+                self.assertFalse(valid_musicvideo_review(row, self.output))
+        row = copy.deepcopy(valid)
+        row["generation"].update(requestedDurationSeconds=4, providerDurationFrames=120)
+        self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_missing_measured_generation_timing(self):
+        for key in ("plannedCutSeconds", "requestedDurationSeconds", "providerDurationFrames", "importedSourceEndFrame"):
+            row = copy.deepcopy(self.row)
+            del row["generation"][key]
+            self.assertFalse(valid_musicvideo_review(row, self.output))
 
     def test_rejects_invalid_or_out_of_tolerance_native_take_duration(self):
         for original_end in ("4.04", "3.96", "0", "NaN", "Inf", "-Inf", "duration", "", None, 4.0):
