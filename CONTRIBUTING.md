@@ -26,11 +26,11 @@ GitHub's `macos-26` runner, which boots the current product minimum.
 
 ## Verification
 
-Pull requests run `.github/workflows/ci.yml`, which performs `swift build` and
-`swift test`. Changes to the engine, pack, package graph, scripts, or plugin
-metadata also run `.github/workflows/bundle.yml` to assemble and load-test the app
-and `.ngvpack` bundle. Documentation-only pull requests do not consume a macOS
-runner.
+Pull requests run the Linux source checks in `.github/workflows/pr-checks.yml`.
+The manually dispatched `.github/workflows/ci-batch.yml` runs compilation, unit
+tests, app and external-pack loading, native UI acceptance, and real Music Video
+audio-analysis acceptance. See [CI execution and measurement](docs/CI_EFFICIENCY.md)
+for the selected checks and their evidence. Pull requests do not start macOS jobs.
 
 Releases, signing, notarization, and DMG assembly also run only in GitHub Actions.
 Maintainers batch release work and dispatch it only with the owner's explicit

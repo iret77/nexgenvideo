@@ -130,6 +130,32 @@ public enum BeatAssembly {
         return out
     }
 
+    public static func plan(
+        beats: [Double],
+        downbeats: [Double],
+        fps: Int,
+        shots: [ShotInput],
+        requiredDurationFrames: Int
+    ) -> [Placement] {
+        let snapped = plan(beats: beats, downbeats: downbeats, fps: fps, shots: shots)
+        return snapped.enumerated().map { index, placement in
+            let start = index == 0 ? 0 : placement.startFrame
+            let end = index == snapped.count - 1
+                ? requiredDurationFrames
+                : placement.startFrame + placement.durationFrames
+            return Placement(
+                shotId: placement.shotId,
+                startFrame: start,
+                durationFrames: end - start,
+                cutSeconds: Double(start) / Double(max(fps, 1)),
+                onDownbeat: downbeats.contains {
+                    frame(seconds: $0, fps: fps) == start
+                },
+                atSectionBoundary: placement.atSectionBoundary
+            )
+        }
+    }
+
     /// Beat index a time snaps to. A section edge prefers the nearest downbeat
     /// (resolved back to its beat index); any other edge takes the nearest beat.
     private static func snapBeatIndex(_ t: Double, beats: [Double], downbeats: [Double], preferDownbeat: Bool) -> Int {

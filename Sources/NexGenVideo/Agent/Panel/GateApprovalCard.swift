@@ -227,7 +227,7 @@ struct GateApprovalCard: View {
 
     @ViewBuilder
     private func acceptanceProbe(_ part: String, enabled: Bool, text: String? = nil) -> some View {
-        if WorkspaceUIAcceptance.isRequested {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
             AppRelaunchClickProbe(identifier: "agent.gate.\(part)", acceptanceState: enabled, acceptanceText: text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
@@ -237,15 +237,24 @@ struct GateApprovalCard: View {
 
 extension EditorViewModel {
     func revealReviewSurface(for phase: String) {
+        selectProductionPhase(phase)
+        setWorkspaceFocus(.production)
+    }
+
+    func selectProductionPhase(_ phase: String) {
         if productionSelectedPhase != phase { inspectedObject = nil }
         let route = PipelineSurfaceRouting.route(for: phase, contract: uiContract,
             availablePackSurfaces: availableCockpitPackSurfaces)
         switch route?.destination {
-        case .tab(let tab): revealCockpit(tab)
+        case .tab(let tab):
+            cockpitTab = tab
+            cockpitPackSurfaceID = nil
         case .pack(let id, _):
-            revealCockpit(.pipeline)
+            cockpitTab = .pipeline
             cockpitPackSurfaceID = id
-        case nil: revealCockpit(.pipeline)
+        case nil:
+            cockpitTab = .pipeline
+            cockpitPackSurfaceID = nil
         }
         productionSelectedPhase = phase
     }

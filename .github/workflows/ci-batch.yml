@@ -16,6 +16,10 @@ on:
         description: Run the workspace UI acceptance
         type: boolean
         default: true
+      musicvideo_analysis_acceptance:
+        description: Run real audio analysis and startup handoffs with the private fixture
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -46,3 +50,12 @@ jobs:
   workspace-ui-acceptance:
     if: inputs.workspace_ui_acceptance
     uses: ./.github/workflows/workspace-ui-acceptance.yml
+
+  musicvideo-analysis-acceptance:
+    needs: workspace-ui-acceptance
+    if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance && (needs.workspace-ui-acceptance.result == 'success' || needs.workspace-ui-acceptance.result == 'skipped') }}
+    uses: ./.github/workflows/private-example-analysis.yml
+    with:
+      runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
+    secrets:
+      NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}

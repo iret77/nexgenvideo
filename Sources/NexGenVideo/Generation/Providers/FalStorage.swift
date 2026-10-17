@@ -7,7 +7,7 @@ import Foundation
 enum FalStorage {
     private static let initiateURL = "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
 
-    static func upload(fileURL: URL, contentType: String, apiKey: String) async throws -> String {
+    static func upload(fileURL: URL, contentType: String, apiKey: String, session: URLSession = .shared) async throws -> String {
         let data: Data
         do {
             data = try Data(contentsOf: fileURL)
@@ -28,7 +28,7 @@ enum FalStorage {
             "file_name": fileURL.lastPathComponent,
         ])
 
-        let (initData, initResp) = try await URLSession.shared.data(for: initReq)
+        let (initData, initResp) = try await session.data(for: initReq)
         guard (initResp as? HTTPURLResponse).map({ $0.statusCode < 400 }) ?? false,
               let json = (try? JSONSerialization.jsonObject(with: initData)) as? [String: Any],
               let uploadURLString = json["upload_url"] as? String,
@@ -42,7 +42,7 @@ enum FalStorage {
         var putReq = URLRequest(url: uploadURL)
         putReq.httpMethod = "PUT"
         putReq.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        let (_, putResp) = try await URLSession.shared.upload(for: putReq, from: data)
+        let (_, putResp) = try await session.upload(for: putReq, from: data)
         guard (putResp as? HTTPURLResponse).map({ $0.statusCode < 400 }) ?? false else {
             throw GenerationBackendError.transport("fal storage upload failed")
         }

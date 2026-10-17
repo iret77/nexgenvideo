@@ -451,7 +451,7 @@ enum MusicvideoAssemblyGate {
                 from: coverageData
             )
             let proof = try JSONDecoder().decode(MusicAssemblyProofV1.self, from: proofData)
-            try MusicAssemblyProofValidatorV1.validate(proof)
+            try MusicAssemblyProofValidatorV1.validate(proof, assembly: assembly)
             guard proof.projectID == assembly.project,
                   performance.projectID == assembly.project,
                   coverage.projectID == assembly.project,
@@ -532,6 +532,8 @@ enum MusicvideoAssemblyGate {
             guard Set(proofByKey.keys) == expectedKeys else {
                 throw MusicvideoProductionValidationErrorV1.sourceMismatch("assembly.roles")
             }
+        } catch MusicvideoProductionValidationErrorV1.coverageMissing("assembly.full_song") {
+            throw GateBlocked("Can't approve \"render\": rebuild the Musicvideo assembly to cover the complete song from frame 0 without gaps.")
         } catch let blocked as GateBlocked {
             throw blocked
         } catch {

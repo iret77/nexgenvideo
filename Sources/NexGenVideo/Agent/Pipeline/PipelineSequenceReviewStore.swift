@@ -42,7 +42,8 @@ enum PipelineSequenceReviewStore {
         )
         let reel = try await ReviewReelBuilder.build(
             plan: assembly.plan,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            timeline: editor.timeline, resolver: editor.mediaResolver.snapshot()
         )
         return Snapshot(
             home: home,
@@ -130,19 +131,22 @@ enum PipelineSequenceReviewStore {
         editor.onPipelineChanged?()
     }
 
-    static func requireCurrent(dataRoot: URL, timeline: Timeline) throws -> SequenceReviewV1 {
+    static func requireCurrent(dataRoot: URL, timeline: Timeline, resolver: MediaResolver? = nil) throws -> SequenceReviewV1 {
         let assembly = try requireCurrentAssembly(dataRoot: dataRoot, timeline: timeline)
         let fingerprints = try productionFingerprints(
             selectedMedia: assembly.plan.selectedMedia,
             dataRoot: dataRoot
         )
-        return try loadStoredReview(
+        let review = try loadStoredReview(
             selectedMedia: assembly.plan.selectedMedia,
             plan: assembly.plan,
             fingerprints: fingerprints,
             rejectBlocking: true,
             dataRoot: dataRoot
         )
+        try ReviewReelSoundtrack.requireCurrent(reel: review.reviewReel, plan: assembly.plan, dataRoot: dataRoot,
+            timeline: timeline, resolver: resolver)
+        return review
     }
 
     static func repairInstructions(dataRoot: URL, phase: String) -> String? {
@@ -215,6 +219,7 @@ enum PipelineSequenceReviewStore {
             throw GateBlocked("Resolve or explicitly supersede every blocking sequence finding before continuing.")
         }
         try validateReelAgainstPlan(review.reviewReel, plan: plan)
+        try ReviewReelSoundtrack.requireCurrent(reel: review.reviewReel, plan: plan, dataRoot: dataRoot)
         let archivePath = "\(archiveDirectory)/\(FileDigest.sha256(of: bytes)).v1.json"
         guard try Data(contentsOf: ProjectLocalFile.resolve(archivePath, dataRoot: dataRoot)) == bytes else {
             throw GateBlocked("The current sequence review has no matching immutable record.")

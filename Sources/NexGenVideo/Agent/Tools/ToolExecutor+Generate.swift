@@ -144,7 +144,7 @@ final class ProductionDesignReferenceStaging {
     }
 }
 
-private struct ProductionVideoGenerationInputs {
+struct ProductionVideoGenerationInputs {
     let assets: VideoGenerationSubmission.InputAssets
     let routingProof: ProductionGenerationRoutingProofV1
     let offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
@@ -181,7 +181,7 @@ extension ToolExecutor {
         }
     }
 
-    private func productionVideoInputs(
+    func productionVideoInputs(
         selection: PipelineProductionRouteSelection,
         editor: EditorViewModel,
         dataRoot: URL

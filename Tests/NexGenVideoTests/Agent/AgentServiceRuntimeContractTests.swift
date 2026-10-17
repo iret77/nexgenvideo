@@ -10,7 +10,9 @@ struct AgentServiceRuntimeContractTests {
     func gateContinuationReplacesHistoricalTaskPhase() async throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: temporary) }
-        let root = try ProjectScaffold.initProject(home: temporary.appendingPathComponent("project"), name: "fixture", mode: .beat)
+        let package = temporary.appendingPathComponent("project.ngv")
+        try Fixtures.prepareProjectPackage(at: package)
+        let root = try ProjectScaffold.initProject(home: package, name: "fixture", mode: .beat)
         let store = YAMLArtifactStore(dataRoot: root)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         for phase in coreGatePhases.prefix(while: { $0 != "bible" }) {
@@ -20,7 +22,10 @@ struct AgentServiceRuntimeContractTests {
         let runtime = FakeRuntimeAdapter(backend: .claudeCode)
         let service = makeService(backend: .claudeCode, adapter: runtime)
         let editor = EditorViewModel(agentService: service)
-        defer { service.cancel() }
+        defer { service.cancel(); editor.releaseWorkingCopy() }
+        editor.projectURL = package
+        await editor.refreshEngineState()
+        let liveRoot = try #require(editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
         #expect(service.sendWorkOrder(.init(title: "Complete Bible images", systemImage: "photo",
             prompt: "Complete the Bible.", phase: "bible"), direction: "", mentions: []))
         await waitUntil { runtime.sendRequests.count == 1 }
@@ -28,13 +33,13 @@ struct AgentServiceRuntimeContractTests {
         service.cancel()
         service.isStreaming = true
         let origin = ToolCallOrigin.inAppChat(sessionID: try #require(service.currentSessionId))
-        _ = try service.requestGateApproval(GateApproval(phase: "bible", dataRoot: root), origin: origin)
+        _ = try service.requestGateApproval(GateApproval(phase: "bible", dataRoot: liveRoot), origin: origin)
         let result = await service.resolveGate(.approved)
         #expect(result?.isError == false)
-        #expect(try store.load(Gates.self, at: PipelineLayout.gatesFile).get("bible").approved)
-        service.isStreaming = false
-        editor.projectState = try JSONDecoder().decode(ProjectStateData.self, from: NativeCockpitReader.stateJSON(dataRoot: root))
+        #expect(try YAMLArtifactStore(dataRoot: liveRoot).load(Gates.self, at: PipelineLayout.gatesFile).get("bible").approved)
+        await editor.refreshProjectState()
         #expect(editor.projectState?.nextPhaseName == "shotlist")
+        service.isStreaming = false
         service.noteRevisionRequest(origin: origin)
         #expect(service.resumePendingGateFollowUp(nextPhasePrompt: "Write the Shot List from the approved Bible."))
         #expect(service.currentTaskPhase == "shotlist")

@@ -1087,7 +1087,12 @@ final class EditorViewModel {
         let token = projectStateLoadToken
         let result = await CockpitDataService.projectState(projectDir: dir)
         guard token == projectStateLoadToken else { return }
+        let previousPhase = projectState?.nextPhaseName
         projectState = (try? result.get()) ?? nil
+        if let nextPhase = projectState?.nextPhaseName, nextPhase != previousPhase,
+           productionSelectedPhase == nil || productionSelectedPhase == previousPhase {
+            selectProductionPhase(nextPhase)
+        }
     }
 
     /// Best-effort snapshots of the Bible and shotlist for object inspection and name-resolved

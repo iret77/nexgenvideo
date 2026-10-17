@@ -69,7 +69,8 @@ any macOS runner receives private data.
 
 ## Analysis run
 
-`.github/workflows/private-example-analysis.yml` is manual-only. Before allocating a macOS runner it
+`.github/workflows/private-example-analysis.yml` runs by manual dispatch or from the owner-approved
+CI batch. Before allocating a macOS runner it
 uses a Linux source gate that requires the centrally configured exact fixture digest, validates the
 dataset id, verifies that both
 private packages are unlinked, confirms that its dedicated package secret exists, and rejects the
@@ -78,7 +79,8 @@ its temporary media and registry credentials before the macOS job can start.
 
 The `macrunner` build job first bundles the app and external pack without access to private fixture
 data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
-symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. The runtime job then:
+symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. A CI batch that
+already built the workspace acceptance app reuses that exact artifact. The runtime job then:
 
 1. verifies the booted macOS version before downloading any artifact or private data;
 2. restores the prebuilt app and external `.ngvpack` with their runtime layout intact;
@@ -90,6 +92,14 @@ symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runne
    private, independently produced expectations; and
 7. always pushes `provenance.json`, plus `analysis.json` and the runner-owned measurement proof
    whenever available, to the private report package.
+
+The hostflow acceptance assigns Track and Lyrics through the native intake controls, approves
+the measured analysis, resolves optional material intake, and saves/reopens the document before
+continuing the canonical planning and assembly path. Creative decisions, interpretation labels
+and imported visual sources are deterministic test inputs; the audio measurement remains real.
+`hostflow.json`, `fullflow.json`, native screenshots, the final movie and its delivery receipt are
+published together as an additional private `musicvideo-acceptance.tar.gz` layer. These files do
+not become public Actions artifacts.
 
 Successful provenance links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional

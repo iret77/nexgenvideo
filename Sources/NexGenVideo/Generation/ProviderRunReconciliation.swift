@@ -33,7 +33,7 @@ protocol MCPStatusClient: MCPToolCalling {
 
 extension MCPProviderClient: MCPStatusClient {}
 
-/// How status-only reconciliation reaches providers; tests replace every live dependency.
+/// Provider transport dependencies shared by active Fal runs and status reconciliation.
 struct ProviderRunReconciliation: Sendable {
     var session: URLSession = .shared
     var minimumInterval: TimeInterval = 60

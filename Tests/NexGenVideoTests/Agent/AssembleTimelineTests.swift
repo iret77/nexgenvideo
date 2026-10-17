@@ -254,12 +254,12 @@ struct AssembleTimelineTests {
         try recordAcceptedTakeReviews(dataRoot: dataRoot, phase: phase)
     }
 
-    private func recordAcceptedTakeReviews(dataRoot: URL, phase: String) throws {
+    private func recordAcceptedTakeReviews(dataRoot: URL, phase: String, additionalDuration: Double = 0) throws {
         let index = try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: phase)
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         for (shotID, takeID) in index.selected {
             let take = try PipelineRenderTakeStore.take(id: takeID, dataRoot: dataRoot, phase: phase)
-            let duration = try #require(shotlist.shots.first(where: { $0.id == shotID })).durationS
+            let duration = try #require(shotlist.shots.first(where: { $0.id == shotID })).durationS + additionalDuration
             let findings = TakeReview.Pass.allCases.map {
                 TakeReview.Finding(pass: $0, verdict: .conforms, observation: "Reviewed fixture pass.",
                     startSeconds: 0, endSeconds: duration)
@@ -348,6 +348,35 @@ struct AssembleTimelineTests {
     }
 
     // MARK: - re-run replaces, does not duplicate
+
+    @Test("generated takes trim the pre-handle and refuse a source shorter than the net action plus handle")
+    func trimsGeneratedHandles() async throws {
+        let (h, dataRoot, cleanup, outputs) = try setup()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
+        let brief = try Brief(project: "demo", generated: "fixture", mission: .demo,
+            targetPlatform: "YouTube", aspectRatio: .landscape16x9, projectMode: "section",
+            conceptType: .narrative, visualMedium: .liveActionRealistic, figures: .none,
+            lyricsIntegration: .ignored, cutHandlesMode: .withOverlap)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+        let timelineBefore = h.editor.timeline
+        let tooShort = await h.runRaw("assemble_timeline", args: ["phase": "final"])
+        #expect(tooShort.isError)
+        #expect(ToolHarness.textOf(tooShort).contains("shorter than its planned timeline placement"))
+        #expect(ToolHarness.textOf(tooShort).contains("Select an explicit reviewed take range"))
+        #expect(h.editor.timeline == timelineBefore)
+        try recordAcceptedTakeReviews(dataRoot: dataRoot, phase: "final", additionalDuration: 2)
+        _ = try await h.runOK("assemble_timeline", args: ["phase": "final"])
+        let state = try #require(try PipelineAssemblyStore.load(dataRoot: dataRoot))
+        #expect(state.plan.selectedMedia.map(\.sourceStartFrame) == [30, 30])
+        #expect(state.plan.selectedMedia.map(\.sourceEndFrame) == [60, 120])
+        let clips = h.editor.timeline.tracks.filter { $0.type == .video }.flatMap(\.clips)
+        #expect(clips.map(\.trimStartFrame) == [30, 30])
+        #expect(clips.map(\.durationFrames) == [30, 90])
+    }
 
     @Test("assembling again rebuilds in place — no duplicated clips or song")
     func reRunReplaces() async throws {

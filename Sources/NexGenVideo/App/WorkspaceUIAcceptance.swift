@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import AVKit
 import NexGenEngine
 import SwiftUI
 
@@ -47,6 +48,7 @@ enum WorkspaceUIAcceptance {
                 case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
                 case "hoststates": await captureHostStateHistory(evidenceURL: evidenceURL, scale: scale)
                 case "storyboard": await captureStoryboardReview(evidenceURL: evidenceURL, scale: scale)
+                case "filmreview": await captureMusicvideoReview(evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -1340,15 +1342,27 @@ enum WorkspaceUIAcceptance {
         ])
     }
 
-    private static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
-        guard let root = window.contentView, let probe = shownProbe(in: root, identifier: identifier),
-              let scroll = enclosingScrollView(for: probe), let document = scroll.documentView else { return false }
-        document.scrollToVisible(probe.convert(probe.bounds, to: document))
-        scroll.reflectScrolledClipView(scroll.contentView)
+    static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
+        guard let root = window.contentView,
+              let probe = shownProbe(in: root, identifier: identifier) else { return false }
+        var ancestor = probe.superview
+        while let view = ancestor {
+            if let scroll = view as? NSScrollView, let document = scroll.documentView {
+                document.scrollToVisible(probe.convert(probe.bounds, to: document))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                root.layoutSubtreeIfNeeded()
+            }
+            ancestor = view.superview
+        }
         return await waitUntil(timeout: .seconds(5), {
             root.layoutSubtreeIfNeeded()
-            return scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView))
-                && root.bounds.contains(probe.convert(probe.bounds, to: root))
+            var ancestor = probe.superview
+            while let view = ancestor {
+                if let scroll = view as? NSScrollView,
+                   !scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView)) { return false }
+                ancestor = view.superview
+            }
+            return root.bounds.contains(probe.convert(probe.bounds, to: root))
         })
     }
 
@@ -1740,7 +1754,7 @@ enum WorkspaceUIAcceptance {
             && visibleProbe(identifier: "production.status", in: window, containedBy: root.bounds)
     }
 
-    private static func visibleProbe(
+    static func visibleProbe(
         identifier: String,
         in window: NSWindow,
         containedBy bounds: NSRect,
@@ -2151,7 +2165,7 @@ enum WorkspaceUIAcceptance {
         ])
     }
 
-    private static func snapshot(_ view: NSView, at url: URL) -> Bool {
+    static func snapshot(_ view: NSView, at url: URL) -> Bool {
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
         view.cacheDisplay(in: view.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { return false }
@@ -2222,7 +2236,7 @@ enum WorkspaceUIAcceptance {
         } ?? findProbe(in: root, identifier: identifier)
     }
 
-    private static func findProbe(in view: NSView, identifier: String) -> NSView? {
+    static func findProbe(in view: NSView, identifier: String) -> NSView? {
         if view is AppRelaunchClickProbeView, view.identifier?.rawValue == identifier {
             return view
         }
@@ -2232,11 +2246,27 @@ enum WorkspaceUIAcceptance {
         return nil
     }
 
-    private static func probeState(identifier: String, in window: NSWindow) -> Bool? {
+    static func probeState(identifier: String, in window: NSWindow) -> Bool? {
         guard let root = window.contentView,
               let probe = findProbe(in: root, identifier: identifier)
                 as? AppRelaunchClickProbeView else { return nil }
         return probe.acceptanceState
+    }
+
+    static func probeFrame(identifier: String, in window: NSWindow) -> NSRect? {
+        guard let root = window.contentView,
+              let probe = shownProbe(in: root, identifier: identifier) else { return nil }
+        return probe.convert(probe.bounds, to: root)
+    }
+
+    static func probeText(identifier: String, in window: NSWindow) -> String? {
+        guard let root = window.contentView else { return nil }
+        return (shownProbe(in: root, identifier: identifier) as? AppRelaunchClickProbeView)?.acceptanceText
+    }
+
+    static func nativeElement<T: NSView>(_ type: T.Type, in root: NSView) -> T? {
+        if let match = root as? T { return match }
+        return root.subviews.lazy.compactMap { nativeElement(type, in: $0) }.first
     }
 
     private static func stablePanelFrames(
@@ -2260,7 +2290,7 @@ enum WorkspaceUIAcceptance {
         return nil
     }
 
-    private static func waitUntil(
+    static func waitUntil(
         timeout: Duration,
         _ predicate: () -> Bool
     ) async -> Bool {
@@ -2708,5 +2738,260 @@ extension WorkspaceUIAcceptance {
                         camera: "Slow push in", locationViewRequest: "wide.noon", framing: "Medium",
                         cameraSetup: ["angle": "frontal", "lens_hint": "wide"])])]
         )
+    }
+}
+
+
+extension WorkspaceUIAcceptance {
+    private static func captureMusicvideoReview(evidenceURL: URL, scale: Double) async {
+        do {
+            guard let path = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
+                throw ToolError("Film acceptance requires the external Musicvideo pack.")
+            }
+            let pack = PluginLoader.load(at: URL(fileURLWithPath: path))
+            guard pack.isLoaded, pack.id == "musicvideo" else {
+                throw ToolError("The external Musicvideo pack did not load.")
+            }
+            let (document, fixture, generation) = try await MusicvideoGenerationAcceptance.makeDocument()
+            var result = try await finishMusicvideoDelivery(document: document, receipt: fixture,
+                evidenceURL: evidenceURL, scale: scale)
+            guard let generationEvidence = try JSONSerialization.jsonObject(with: JSONEncoder().encode(generation)) as? [String: Any] else {
+                throw ToolError("The mixed-generation evidence could not be encoded.")
+            }
+            result["route"] = "mixed-musicvideo"
+            result["generation"] = generationEvidence
+            emit("musicvideo-film-review", scale: scale, fields: result)
+        } catch {
+            fail("native Musicvideo film review: \(error.localizedDescription)", scale: scale)
+        }
+    }
+
+    static func finishMusicvideoDelivery(document: VideoProject, receipt fixture: FullflowAcceptanceFixture.Receipt,
+                                        evidenceURL: URL, scale: Double) async throws -> [String: Any] {
+            if document.windowControllers.isEmpty { document.makeWindowControllers() }
+            let editor = document.editorViewModel
+            editor.setWorkspaceFocus(.production)
+            await editor.refreshEngineState()
+            guard let window = document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window,
+                  let host = window.contentView else { throw ToolError("The fullflow editor window is unavailable.") }
+            window.setContentSize(AppTheme.Window.projectMin)
+            window.appearance = NSAppearance(named: .darkAqua)
+            document.showWindows()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            defer { window.orderOut(nil) }
+            var screenshots: [String] = []
+            var controlFrames: [[String: Any]] = []
+            var pickerTransitions: [[String: String]] = []
+            func capture(_ name: String, view: NSView? = nil) throws {
+                let name = "scale-\(scaleLabel(scale))-filmreview-\(name).png"
+                guard snapshot(view ?? host, at: evidenceURL.appendingPathComponent(name)) else {
+                    throw ToolError("Could not capture \(name).")
+                }
+                screenshots.append(name)
+            }
+            func reach(_ identifier: String, artifact: Bool = true) async throws {
+                guard await revealProbe(identifier, in: window),
+                      let frame = probeFrame(identifier: identifier, in: window),
+                      let bounds = artifact ? probeFrame(identifier: "production.artifact", in: window) : host.bounds,
+                      bounds.insetBy(dx: -1, dy: -1).contains(frame), frame.width > 0, frame.height > 0 else {
+                    throw ToolError("Review control is clipped or unreachable: \(identifier).")
+                }
+                controlFrames.append(["id": identifier, "control": frameDescription(frame), "viewport": frameDescription(bounds)])
+            }
+            func activate(_ identifier: String, artifact: Bool = true) async throws {
+                try await reach(identifier, artifact: artifact)
+                guard click(identifier: identifier, in: window) == nil else {
+                    throw ToolError("The native review control could not be clicked: \(identifier).")
+                }
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            func fill(_ identifier: String, _ value: String) async throws {
+                try await activate(identifier)
+                guard await waitUntil(timeout: .seconds(3), { window.firstResponder is NSTextView }),
+                      let field = window.firstResponder as? NSTextView else {
+                    throw ToolError("Review input did not receive keyboard focus: \(identifier).")
+                }
+                field.setSelectedRange(NSRange(location: 0, length: (field.string as NSString).length))
+                field.insertText(value, replacementRange: NSRange(location: NSNotFound, length: 0))
+                window.makeFirstResponder(nil)
+                guard await waitUntil(timeout: .seconds(3), { probeText(identifier: identifier, in: window) == value }) else {
+                    throw ToolError("Review input did not commit its native edit: \(identifier).")
+                }
+            }
+            func choose(_ identifier: String, index: Int, expected: String) async throws {
+                try await reach(identifier)
+                guard let before = probeText(identifier: identifier, in: window), before != expected else {
+                    throw ToolError("The review picker must change its current selection: \(identifier).")
+                }
+                guard click(identifier: identifier, in: window) == nil else { throw ToolError("The review picker did not open.") }
+                postReviewKey(115, characters: "\u{f729}", in: window)
+                for _ in 0..<index { postReviewKey(125, characters: "\u{f701}", in: window) }
+                postReviewKey(36, characters: "\r", in: window)
+                guard await waitUntil(timeout: .seconds(3), { probeText(identifier: identifier, in: window) == expected }) else {
+                    throw ToolError("The native review picker did not select \(expected).")
+                }
+                pickerTransitions.append(["id": identifier, "before": before, "after": expected])
+            }
+            guard await waitUntil(timeout: .seconds(10), {
+                host.layoutSubtreeIfNeeded()
+                return window.isKeyWindow && productionControlsAreContained(in: window)
+                    && abs(host.bounds.width - AppTheme.Window.projectMin.width) < 1
+                    && abs(host.bounds.height - AppTheme.Window.projectMin.height) < 1
+            }) else { throw ToolError("The minimum-size production window did not settle.") }
+            try await activate("pipeline.overview.select.render", artifact: false)
+            guard await waitUntil(timeout: .seconds(5), {
+                editor.cockpitTab == .review && probeState(identifier: "sequence.disclosure", in: window) != nil
+            }) else { throw ToolError("The native Render phase did not open film review.") }
+            let initialTimeline = editor.timeline
+            guard let assembly = try PipelineAssemblyStore.load(dataRoot: fixture.dataRoot),
+                  assembly.plan.placements.count >= 2 else { throw ToolError("Film review requires an assembled cut.") }
+            let pair = Array(fixture.shotIDs.prefix(2))
+            let cutFrame = assembly.plan.placements[1].timelineStartFrame
+            let firstFrame = max(0, cutFrame - 1)
+            let endFrame = min(fixture.totalFrames, cutFrame + 1)
+            let fullDuration = Double(fixture.totalFrames) / Double(fixture.fps)
+            guard (try? PipelineSequenceReviewStore.requireCurrent(dataRoot: fixture.dataRoot, timeline: initialTimeline, resolver: editor.mediaResolver.snapshot())) == nil else {
+                throw ToolError("The fixture unexpectedly bypassed native sequence review.")
+            }
+            try await activate("sequence.disclosure")
+            guard await waitUntil(timeout: .seconds(3), { probeState(identifier: "sequence.build", in: window) == true }) else {
+                throw ToolError("The sequence review did not expand.")
+            }
+            try await activate("sequence.build")
+            guard await waitUntil(timeout: .seconds(30), {
+                probeState(identifier: "sequence.record", in: window) == false
+                    && nativeElement(AVPlayerView.self, in: host)?.player?.currentItem?.status == .readyToPlay
+            }), let player = nativeElement(AVPlayerView.self, in: host)?.player else {
+                throw ToolError("The real review reel did not become playable with approval still disabled.")
+            }
+            guard let reelAsset = player.currentItem?.asset,
+                  try await !reelAsset.loadTracks(withMediaType: .audio).isEmpty else {
+                throw ToolError("The Musicvideo review reel lost its original soundtrack.")
+            }
+            try await activate("sequence.play")
+            guard await waitUntil(timeout: .seconds(5), { player.currentTime().seconds > 0.1 }) else {
+                throw ToolError("The native Play reel control did not advance the real movie.")
+            }
+            try capture("playing")
+            guard await waitUntil(timeout: .seconds(fullDuration + 15), { player.currentTime().seconds >= fullDuration - 1 / Double(fixture.fps) }) else {
+                throw ToolError("The review reel did not play through the complete song.")
+            }
+            let playedSeconds = player.currentTime().seconds
+            try await fill("sequence.shots", pair.joined(separator: ","))
+            try await fill("sequence.start", String(firstFrame))
+            try await fill("sequence.end", String(endFrame))
+            let observation = "At frame \(cutFrame) the warm source cuts directly to the cool source; the soundtrack remains continuous."
+            try await fill("sequence.evidence", observation)
+            try await choose("sequence.severity", index: 0, expected: "info")
+            try await choose("sequence.action", index: 0, expected: "accept")
+            try await reach("sequence.add")
+            try capture("finding")
+            try await activate("sequence.add")
+            guard await waitUntil(timeout: .seconds(3), { probeState(identifier: "sequence.remove.0", in: window) == true }),
+                  probeState(identifier: "sequence.record", in: window) == false else {
+                throw ToolError("Adding a finding bypassed the required playback acknowledgements.")
+            }
+            try await activate("sequence.adjacent")
+            guard probeState(identifier: "sequence.record", in: window) == false else {
+                throw ToolError("Adjacent-cut acknowledgement bypassed whole-playback review.")
+            }
+            try await activate("sequence.whole")
+            guard await waitUntil(timeout: .seconds(3), { probeState(identifier: "sequence.record", in: window) == true }) else {
+                throw ToolError("The completed playback acknowledgements did not enable Record review.")
+            }
+            try await activate("sequence.record")
+            guard await waitUntil(timeout: .seconds(30), {
+                (try? PipelineSequenceReviewStore.requireCurrent(dataRoot: fixture.dataRoot, timeline: editor.timeline, resolver: editor.mediaResolver.snapshot())) != nil
+            }) else { throw ToolError("The native sequence review did not persist its current immutable record.") }
+            let sequence = try PipelineSequenceReviewStore.requireCurrent(dataRoot: fixture.dataRoot, timeline: editor.timeline, resolver: editor.mediaResolver.snapshot())
+            guard sequence.findings.count == 1, let finding = sequence.findings.first,
+                  finding.evidence == observation, finding.shotIDs == pair,
+                  finding.startFrame == firstFrame, finding.endFrame == endFrame,
+                  finding.severity == .info, finding.recommendedAction == .accept,
+                  sequence.adjacentPairCompleted, sequence.wholePlaybackCompleted,
+                  sequence.reviewReel.durationFrames == fixture.totalFrames else {
+                throw ToolError("The saved sequence review does not match the native inputs and full-song reel.")
+            }
+            try await reach("sequence.message")
+            try capture("sequence-recorded")
+            guard let style = try await TimelineStyleReview.capture(timeline: editor.timeline, resolver: editor.mediaResolver.snapshot()),
+                  !style.style.criteria.isEmpty else { throw ToolError("The fixture has no required production style review.") }
+            var initiallyBlocked = false
+            do { try TimelineStyleReview.requireCurrent(style) } catch { initiallyBlocked = true }
+            guard initiallyBlocked else { throw ToolError("The fixture bypassed native style review.") }
+            try await activate("style.disclosure")
+            try await activate("style.begin")
+            guard await waitUntil(timeout: .seconds(5), { probeState(identifier: "style.record", in: window) == false }) else {
+                throw ToolError("The style review did not require native findings and observations.")
+            }
+            let styleObservation = "Frames 0–\(fixture.totalFrames): warm and cool source clips with moving markers, direct cuts and the continuous original song. This simplified visual treatment is an explicitly accepted deviation for this fixture."
+            for criterion in style.style.criteria {
+                guard style.targetsByCriterion[criterion.auditKey]?.isEmpty == false else {
+                    throw ToolError("The style fixture has no actual evidence for \(criterion.auditKey).")
+                }
+                try await choose("style.choice.\(criterion.auditKey)", index: 3, expected: "accepted_deviation")
+                try await fill("style.observation.\(criterion.auditKey)",
+                    styleObservation)
+            }
+            try await reach("style.record")
+            try capture("style-inputs")
+            guard probeState(identifier: "style.record", in: window) == true else {
+                throw ToolError("Completed native style observations did not enable recording.")
+            }
+            try await activate("style.record")
+            guard await waitUntil(timeout: .seconds(10), { (try? TimelineStyleReview.requireCurrent(style)) != nil }) else {
+                throw ToolError("The native style review did not satisfy the exact-cut export gate.")
+            }
+            let reviewURL = fixture.dataRoot.appendingPathComponent(TimelineStyleReview.relativePath)
+            let review = try JSONDecoder().decode(TimelineStyleReview.self, from: Data(contentsOf: reviewURL))
+            guard review.findings.count == style.style.criteria.count,
+                  review.findings.allSatisfy({ $0.acceptedDeviation && !$0.evidenceReferences.isEmpty && $0.observation == styleObservation }),
+                  editor.timeline == initialTimeline else { throw ToolError("Style observations lost source evidence or changed the assembled cut.") }
+            try await reach("style.message")
+            try capture("style-recorded")
+            try await activate("production.export", artifact: false)
+            guard await waitUntil(timeout: .seconds(5), {
+                NSApp.windows.contains { $0.isVisible && probeState(identifier: "production.export.open", in: $0) != nil }
+            }), let popover = NSApp.windows.first(where: { $0.isVisible && probeState(identifier: "production.export.open", in: $0) != nil }) else {
+                throw ToolError("The production Export status did not open its native activity menu.")
+            }
+            popover.makeKeyAndOrderFront(nil)
+            guard click(identifier: "production.export.open", in: popover) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      NSApp.windows.contains { $0.isVisible && probeState(identifier: "export.require-sequence", in: $0) != nil }
+                  }), let export = NSApp.windows.first(where: { $0.isVisible && probeState(identifier: "export.require-sequence", in: $0) != nil }),
+                  let exportHost = export.contentView else { throw ToolError("The production Export action did not open native settings.") }
+            export.makeKeyAndOrderFront(nil)
+            guard await revealProbe("export.require-sequence", in: export),
+                  click(identifier: "export.require-sequence", in: export) == nil,
+                  await waitUntil(timeout: .seconds(3), { probeState(identifier: "export.require-sequence", in: export) == true }) else {
+                throw ToolError("The native Export settings did not require the recorded sequence review.")
+            }
+            try capture("export-settings", view: exportHost)
+            var result = try await MusicvideoDeliveryAcceptance.run(editor: editor, outputDirectory: evidenceURL)
+            try capture("export-completed", view: exportHost)
+            result.merge([
+                "route": "imported-musicvideo", "viewport": frameDescription(host.bounds),
+                "controls": controlFrames, "nativeSequenceReview": true, "nativeStyleReview": true,
+                "recordDisabledUntilReviewed": true, "reviewInputsPersisted": true, "reviewReelHasAudio": true,
+                "sequenceFindingCount": sequence.findings.count, "styleFindingCount": review.findings.count,
+                "pickerTransitions": pickerTransitions,
+                "recordedSequenceSelection": ["severity": finding.severity.rawValue, "action": finding.recommendedAction.rawValue],
+                "playbackSeconds": playedSeconds, "timelineUnchangedByReview": editor.timeline == initialTimeline,
+                "screenshots": screenshots, "suppliedInputs": fixture.suppliedInputs,
+                "canonicalArtifacts": fixture.canonicalArtifacts,
+            ]) { _, value in value }
+            return result
+    }
+
+    private static func postReviewKey(_ code: UInt16, characters: String, in window: NSWindow) {
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: code) else { continue }
+            NSApp.postEvent(event, atStart: false)
+        }
     }
 }

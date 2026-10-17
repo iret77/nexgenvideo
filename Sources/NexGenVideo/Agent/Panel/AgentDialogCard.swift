@@ -164,7 +164,7 @@ struct AgentDialogCard: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .background {
-                    if WorkspaceUIAcceptance.isRequested {
+                    if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                         AppRelaunchClickProbe(identifier: "agent.dialog.title", acceptanceText: dialog.title)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
@@ -465,12 +465,24 @@ struct AgentDialogCard: View {
                         direction: direction,
                         isSubmitting: isSubmitting
                     ))
+                    .background { acceptanceAction("complete", enabled: dialog.permitsCompletion(
+                        hasFiles: !pickedFiles.isEmpty, direction: direction, isSubmitting: isSubmitting)) }
             }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canSubmit)
                 .focused($focusedControl, equals: .primaryAction)
                 .accessibilityHint(canSubmit ? "" : "Complete the required fields first")
+                .background { acceptanceAction("confirm", enabled: canSubmit) }
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceAction(_ action: String, enabled: Bool) -> some View {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+            AppRelaunchClickProbe(identifier: "agent.dialog.\(action)", acceptanceState: enabled)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
         }
     }
 

@@ -5,6 +5,80 @@ import NexGenEngine
 
 @Suite("Pipeline execution-plan composer contract")
 struct PipelineExecutionPlanComposerContractTests {
+    @MainActor
+    @Test("fractional shots route the whole render including handles through the provider envelope")
+    func renderDurationMatchesProviderRequest() throws {
+        for (net, mode, expected) in [(3.5, CutHandlesMode.backToBack, 4), (4.0, .withOverlap, 6), (3.5, .withOverlap, 6)] {
+            let requirement = try durationRequirement(net: net, mode: mode)
+            #expect(requirement.duration?.preferredSeconds == Double(expected))
+            let input = PipelineProductionRoutingTests.generationInput(requirement: requirement)
+            let proof = try #require(input.productionRouting)
+            let target = ResolvedGenerationTarget(
+                modelId: input.model, provider: .fal, endpoint: input.model,
+                binding: ProviderBinding(
+                    provider: .fal, transport: .api, kind: .generation,
+                    providerRef: input.model, billing: .perCall,
+                    productionInputPolicy: proof.offeringCapabilities.inputPolicy,
+                    resolvedVideoCapabilities: proof.offeringCapabilities
+                )
+            )
+            try PipelineProductionRouting.validateProviderEnvelope(
+                genInput: input, target: target,
+                params: .video(VideoGenerationParams(
+                    prompt: input.prompt, duration: .seconds(expected),
+                    aspectRatio: input.aspectRatio, resolution: input.resolution,
+                    generateAudio: false
+                )), uploadedReferences: []
+            )
+            #expect(throws: PipelineProductionRoutingError.self) {
+                try PipelineProductionRouting.validateProviderEnvelope(
+                    genInput: input, target: target,
+                    params: .video(VideoGenerationParams(
+                        prompt: input.prompt, duration: .seconds(expected - 1),
+                        aspectRatio: input.aspectRatio, resolution: input.resolution,
+                        generateAudio: false
+                    )), uploadedReferences: []
+                )
+            }
+        }
+    }
+
+    @Test("render bounds reject a net-only maximum instead of dropping handles")
+    func renderDurationRejectsContradictoryBounds() throws {
+        #expect(throws: PipelineExecutionShotInputValidationError.self) {
+            _ = try durationRequirement(net: 4, mode: .withOverlap, maximum: 4)
+        }
+        let requirement = try durationRequirement(net: 4, mode: .withOverlap, maximum: 6)
+        #expect(requirement.duration?.maximumSeconds == 6)
+        #expect(requirement.duration?.preferredSeconds == 6)
+    }
+
+    private func durationRequirement(net: Double, mode: CutHandlesMode, maximum: Double = 15) throws -> GenerationRequirementV1 {
+        let shot = try Shot(id: "s001", timeStart: 0, timeEnd: net, durationS: net,
+            type: .bRoll, description: "Clouds move", visualPrompt: "Clouds move", mood: "calm", keyframeStrategy: .none)
+        let brief = try Brief(project: "duration-fixture", generated: "2026-10-17", mission: .demo,
+            targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "narrative",
+            conceptType: .abstract, visualMedium: .liveActionRealistic, figures: .none,
+            lyricsIntegration: .ignored, cutHandlesMode: mode)
+        let json: [String: Any] = [
+            "id": shot.id, "source_mode": "generated",
+            "start_state": ["summary": "Clouds enter", "entity_state_ids": []],
+            "end_state": ["summary": "Clouds leave", "entity_state_ids": []],
+            "blocking": [], "timed_action_beats": [], "reference_demands": [],
+            "acceptance": [["id": "clouds", "requirement": "Clouds move", "severity": "required"]],
+            "core_inputs": [:],
+            "generation_requirement": [
+                "modality_id": "video", "mode_ids": ["text-to-video"],
+                "duration": ["minimum_seconds": 1, "maximum_seconds": maximum, "allows_automatic": false],
+                "requires_output_audio": false,
+            ],
+        ]
+        let input = try JSONDecoder().decode(PipelineExecutionShotInput.self, from: JSONSerialization.data(withJSONObject: json))
+        return try #require(PipelineExecutionPlanComposer.generationRequirement(
+            shot: shot, input: input, sourceAssetID: nil, demandAssetIDs: [:], brief: brief, bible: nil
+        ))
+    }
+
     @Test("shot references and execution demands have the same exact path set")
     func exactReferencePathSet() throws {
         let fixture = try Fixture()

@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import NexGenEngine
@@ -224,14 +225,25 @@ enum ExampleAudioAnalysisSelfTest {
 
     static func runIfRequested() {
         let environment = ProcessInfo.processInfo.environment
+        guard environment["NGV_EXAMPLE_ANALYSIS_PACK"] != nil else { return }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        BundledFonts.register()
+        Task { @MainActor in
+            await runRequested(environment: environment)
+        }
+        app.run()
+    }
+
+    private static func runRequested(environment: [String: String]) async {
         let reportDirectory = Configuration.reportDirectory(environment: environment)
         var configuration: Configuration?
         do {
             guard let requested = try Configuration(
                 environment: environment
-            ) else { return }
+            ) else { throw Failure("The requested analysis pack path is empty") }
             configuration = requested
-            _ = try run(requested)
+            _ = try await run(requested)
             let message = "SELFTEST_EXAMPLE_ANALYSIS_OK report=private\n"
             FileHandle.standardOutput.write(Data(message.utf8))
             exit(0)
@@ -258,7 +270,7 @@ enum ExampleAudioAnalysisSelfTest {
         }
     }
 
-    private static func run(_ configuration: Configuration) throws -> AnalysisSummary {
+    private static func run(_ configuration: Configuration) async throws -> AnalysisSummary {
         let manifest = try JSONDecoder().decode(
             FixtureManifest.self,
             from: Data(contentsOf: configuration.manifestURL)
@@ -301,36 +313,21 @@ enum ExampleAudioAnalysisSelfTest {
         guard registry.musicUnderstandingAnalyzer == nil else {
             throw Failure("the macOS 26 acceptance run unexpectedly activated the macOS 27 adapter")
         }
-        guard let runner = registry.phases["analysis"],
+        guard registry.phases["analysis"] != nil,
               let artifactGate = registry.artifactWriteRequirements["analysis"],
               registry.artifactCandidateRequirements["analysis"] != nil,
-              let lineageProvider = registry.phaseLineageProviders["analysis"] else {
+              registry.phaseLineageProviders["analysis"] != nil,
+              let binding = PluginLoader.liveBinding(id: "musicvideo") else {
             throw Failure("loaded musicvideo pack has no complete analysis contract")
         }
 
-        let projectHome = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ngv-example-analysis-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: projectHome) }
-        let dataRoot = try ProjectScaffold.initProject(
-            home: projectHome,
-            name: "Example Analysis \(configuration.datasetID)",
-            mode: .beat,
-            extraDirs: registry.projectDirs
-        )
-        try copy(audioFiles[0].url, to: dataRoot.appendingPathComponent("audio", isDirectory: true))
-        if let lyrics = lyricsFiles.first {
-            try copy(lyrics.url, to: dataRoot.appendingPathComponent("lyrics", isDirectory: true))
-        }
-        for step in registry.deterministicSteps where step.phase == "analysis" {
-            try step.run(dataRoot)
-        }
+        let flow = try await MusicvideoHostFlowAcceptance.start(track: audioFiles[0].url,
+            lyrics: lyricsFiles.first?.url, binding: binding, evidenceURL: configuration.reportDirectory)
+        defer { flow.close() }
+        let projectHome = flow.editor.workingRoot!
+        let dataRoot = flow.dataRoot
         do {
-            try executeRunner(runner, dataRoot: dataRoot)
-            try PipelineLineageStore.record(
-                phase: "analysis",
-                snapshot: try lineageProvider(dataRoot),
-                dataRoot: dataRoot
-            )
+            try await flow.runAnalysis()
         } catch {
             try? preserveAnalysisArtifact(
                 dataRoot: dataRoot,
@@ -523,6 +520,27 @@ enum ExampleAudioAnalysisSelfTest {
             boundaryEvidenceKinds: boundaryEvidenceKinds,
             sectionBoundaryTimesS: sectionBoundaryTimes
         )
+        if acceptanceFailures.isEmpty {
+            do {
+                let suppliedLabels = expectations.audio.sectionLabels.enumerated().map {
+                    $0.element ?? "Section \($0.offset + 1)"
+                }
+                try await flow.finishPlanningIntake(sectionLabels: suppliedLabels)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
+                let planning = try await FullflowAcceptanceFixture.finishPlanning(editor: flow.editor)
+                let delivery = try await WorkspaceUIAcceptance.finishMusicvideoDelivery(document: flow.document,
+                    receipt: planning, evidenceURL: configuration.reportDirectory, scale: AppTheme.Typography.standardScale)
+                let fullflow: [String: Any] = ["complete": true, "source": "private exact-file analysis through host intake",
+                    "canonicalArtifacts": planning.canonicalArtifacts, "suppliedInputs": planning.suppliedInputs,
+                    "delivery": delivery]
+                try JSONSerialization.data(withJSONObject: fullflow, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: configuration.reportDirectory.appendingPathComponent("fullflow.json"), options: .atomic)
+            } catch {
+                acceptanceFailures.append("Host workflow failed: \(error.localizedDescription)")
+            }
+        }
         try writeReport(
             configuration: configuration,
             manifest: manifest,
@@ -580,14 +598,6 @@ enum ExampleAudioAnalysisSelfTest {
             && !NSString(string: path).isAbsolutePath
             && !components.contains("..")
             && !components.contains(".")
-    }
-
-    private static func copy(_ source: URL, to directory: URL) throws {
-        let destination = directory.appendingPathComponent(source.lastPathComponent)
-        guard !FileManager.default.fileExists(atPath: destination.path) else {
-            throw Failure("project fixture destination already exists")
-        }
-        try FileManager.default.copyItem(at: source, to: destination)
     }
 
     private static func directoryTreeSHA256(_ root: URL) throws -> String {
@@ -657,31 +667,6 @@ enum ExampleAudioAnalysisSelfTest {
         let status = diagnostic["status"] as? String ?? "unknown"
         let detail = diagnostic["detail"] as? String ?? "detail missing"
         return "status=\(status); \(detail)"
-    }
-
-    private static func executeRunner(
-        _ runner: @escaping EngineRegistry.PhaseRunner,
-        dataRoot: URL
-    ) throws {
-        let completion = SelfTestRunnerCompletion()
-        let thread = Thread {
-            do {
-                try runner(dataRoot)
-                completion.finish(.success(()))
-            } catch {
-                completion.finish(.failure(error))
-            }
-        }
-        thread.name = "NexGenVideo example analysis"
-        thread.qualityOfService = .userInitiated
-        thread.start()
-        while !completion.isFinished {
-            _ = RunLoop.current.run(
-                mode: .default,
-                before: Date(timeIntervalSinceNow: 0.05)
-            )
-        }
-        try completion.result().get()
     }
 
     private static func preserveAnalysisArtifact(
@@ -865,29 +850,5 @@ enum ExampleAudioAnalysisSelfTest {
             report,
             to: configuration.reportDirectory.appendingPathComponent("provenance.json")
         )
-    }
-}
-
-private final class SelfTestRunnerCompletion: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Result<Void, any Error>?
-
-    var isFinished: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return stored != nil
-    }
-
-    func finish(_ result: Result<Void, any Error>) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard stored == nil else { return }
-        stored = result
-    }
-
-    func result() -> Result<Void, any Error> {
-        lock.lock()
-        defer { lock.unlock() }
-        return stored ?? .failure(CocoaError(.coderInvalidValue))
     }
 }

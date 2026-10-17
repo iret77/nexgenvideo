@@ -43,7 +43,9 @@ struct ProductionStyleReviewView: View {
                             details(snapshot)
                         }
                     } else {
-                        DisclosureGroup(isExpanded: $expanded) { details(snapshot) } label: { heading(snapshot) }
+                        DisclosureGroup(isExpanded: $expanded) { details(snapshot) } label: {
+                            heading(snapshot).reviewAcceptanceProbe("style.disclosure", state: expanded)
+                        }
                     }
                 }
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -85,35 +87,41 @@ struct ProductionStyleReviewView: View {
         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
     }
 
+    @ViewBuilder
     private func details(_ snapshot: Snapshot) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                Text(snapshot.director)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                if let signature = snapshot.signature {
-                    Text(signature).interfaceFont(size: AppTheme.Typography.ui)
-                }
-                ForEach(snapshot.style.dimensions, id: \.dimension) { dimension in
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                        Text(label(dimension.dimension))
-                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                        Text(dimension.value).interfaceFont(size: AppTheme.Typography.ui)
-                        if let reason = dimension.reason {
-                            Text(reason).interfaceFont(size: AppTheme.Typography.ui)
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                        }
+        if standalone {
+            ScrollView { detailContent(snapshot) }
+        } else {
+            detailContent(snapshot)
+        }
+    }
+
+    private func detailContent(_ snapshot: Snapshot) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Text(snapshot.director)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+            if let signature = snapshot.signature {
+                Text(signature).interfaceFont(size: AppTheme.Typography.ui)
+            }
+            ForEach(snapshot.style.dimensions, id: \.dimension) { dimension in
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text(label(dimension.dimension))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    Text(dimension.value).interfaceFont(size: AppTheme.Typography.ui)
+                    if let reason = dimension.reason {
+                        Text(reason).interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                 }
-                if editor.declaredPluginName == "musicvideo" {
-                    Text("The approved original song determines the music and timing.")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                }
-                if snapshot.approved { TimelineStyleReviewView() }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, AppTheme.Spacing.sm)
+            if editor.declaredPluginName == "musicvideo" {
+                Text("The approved original song determines the music and timing.")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+            }
+            if snapshot.approved { TimelineStyleReviewView() }
         }
-        .frame(maxHeight: standalone ? .infinity : AppTheme.ComponentSize.productionStyleReviewMaxHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, AppTheme.Spacing.sm)
     }
 
     private func label(_ dimension: ProductionStyleDimensionV1) -> String {

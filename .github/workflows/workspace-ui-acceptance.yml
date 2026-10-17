@@ -38,7 +38,7 @@ jobs:
     needs: build
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -62,4 +62,6 @@ jobs:
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/scale-*.log
             ${{ runner.temp }}/evidence/scale-*.png
+            ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
+            ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
           retention-days: 14

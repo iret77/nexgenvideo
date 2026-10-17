@@ -695,6 +695,25 @@ public enum MusicAssemblyProofValidatorV1 {
         }
     }
 
+    public static func validate(_ proof: MusicAssemblyProofV1, assembly: TimelineAssemblyProofV1) throws {
+        try validate(proof)
+        try TimelineAssemblyProofValidatorV1.validate(assembly)
+        guard proof.projectID == assembly.project else {
+            throw MusicvideoProductionValidationErrorV1.sourceMismatch("assembly")
+        }
+        var coveredThrough = 0
+        for placement in assembly.placements.sorted(by: { $0.startFrame < $1.startFrame }) {
+            let end = placement.startFrame.addingReportingOverflow(placement.durationFrames)
+            guard !end.overflow, placement.startFrame <= coveredThrough else {
+                throw MusicvideoProductionValidationErrorV1.coverageMissing("assembly.full_song")
+            }
+            coveredThrough = max(coveredThrough, end.partialValue)
+        }
+        guard coveredThrough == proof.originalSong.durationFrames else {
+            throw MusicvideoProductionValidationErrorV1.coverageMissing("assembly.full_song")
+        }
+    }
+
     private static func validHash(_ value: String) -> Bool {
         value.count == 64 && value.allSatisfy(\.isHexDigit)
     }

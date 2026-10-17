@@ -17,7 +17,7 @@ struct ProductionWorkspaceSidebar: View {
             }
         }
         .background {
-            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested {
+            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                 AppRelaunchClickProbe(identifier: "production.sidebar", acceptanceState: !showsSources)
                     .allowsHitTesting(false)
             }
@@ -119,6 +119,7 @@ struct WorkbenchStatusBar: View {
                 Label(activeExport == nil ? String(localized: "Export") : String(localized: "Export · Working"),
                       systemImage: "square.and.arrow.up")
             }
+            .reviewAcceptanceProbe("production.export")
             .popover(isPresented: $showsExports, arrowEdge: .top) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text("Export activity").interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
@@ -130,6 +131,7 @@ struct WorkbenchStatusBar: View {
                     }
                     Button("Open Export…") { showsExports = false; editor.showExportDialog = true }
                         .buttonStyle(.capsule(.secondary, size: .regular))
+                        .reviewAcceptanceProbe("production.export.open")
                 }
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .padding(AppTheme.Spacing.md)
@@ -144,7 +146,7 @@ struct WorkbenchStatusBar: View {
         .background(AppTheme.Background.surfaceColor)
         .overlay(alignment: .top) { AppDivider() }
         .background {
-            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested {
+            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                 AppRelaunchClickProbe(identifier: "production.status", acceptanceText: "Budget · AI activity · Export")
                     .allowsHitTesting(false)
             }

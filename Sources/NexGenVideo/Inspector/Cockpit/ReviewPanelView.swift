@@ -63,19 +63,19 @@ struct ReviewPanelView: View {
             // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
             content
         } else {
-            VStack(spacing: AppTheme.Spacing.none) {
-                ProductionStyleReviewView()
-                FrameFindingsReviewView()
-                TakeReviewView()
-                SequenceReviewView()
-                content
-                    .frame(minHeight: AppTheme.Spacing.none)
-                    .clipped()
-                AppDivider()
-                // Sanity lives here in EVERY pipeline state — findings gate progress before frames
-                // even exist (§3: no panel is ever locked away). Fixed height: predictable galleries.
-                SanityPanelView()
-                    .frame(height: AppTheme.ComponentSize.reviewSanityStripHeight)
+            ScrollView {
+                VStack(spacing: AppTheme.Spacing.none) {
+                    ProductionStyleReviewView()
+                    FrameFindingsReviewView()
+                    TakeReviewView()
+                    SequenceReviewView()
+                        .padding(AppTheme.Spacing.md)
+                    content
+                    AppDivider()
+                    SanityPanelView()
+                        .frame(height: AppTheme.ComponentSize.reviewSanityStripHeight)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
@@ -109,16 +109,14 @@ struct ReviewPanelView: View {
     }
 
     private func loadedBody(_ data: FramesData) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                ForEach(data.shots) { shot in
-                    shotSection(shot)
-                }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            ForEach(data.shots) { shot in
+                shotSection(shot)
             }
-            .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, AppTheme.Spacing.lg)
+        .padding(.vertical, AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Shot section

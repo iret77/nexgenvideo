@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import NexGenEngine
 import Testing
@@ -65,6 +66,18 @@ struct PipelineSequenceReviewStoreTests {
             timeline: fixture.timeline
         )
         #expect(loaded == review)
+
+        let soundtrackURL = fixture.dataRoot.appendingPathComponent(ReviewReelSoundtrack.path(reelPath: reel.path))
+        let soundtrackBytes = try Data(contentsOf: soundtrackURL)
+        try FileManager.default.removeItem(at: soundtrackURL)
+        do {
+            _ = try PipelineSequenceReviewStore.requireCurrent(dataRoot: fixture.dataRoot, timeline: fixture.timeline)
+            Issue.record("A legacy review without its soundtrack record remained current.")
+        } catch {
+            #expect(error.localizedDescription.contains("Build a new review reel and record the review again"))
+            #expect(!error.localizedDescription.contains(fixture.home.path))
+        }
+        try soundtrackBytes.write(to: soundtrackURL, options: .atomic)
 
         let source = try ProjectLocalFile.resolve("assets/source.mov", dataRoot: fixture.dataRoot)
         let handle = try FileHandle(forWritingTo: source)
@@ -139,6 +152,206 @@ struct PipelineSequenceReviewStoreTests {
         ) == nil)
     }
 
+    @Test("source video audio stays suppressed while the real soundtrack preserves gain and fades")
+    func reviewReelBindsAudibleTimelineSoundtrack() async throws {
+        let fixture = try await makeFixture(withGap: false, sourceHasAudio: true)
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let song = fixture.dataRoot.appendingPathComponent("assets/song.wav")
+        try writeSong(at: song)
+        var manifest = MediaManifest()
+        manifest.entries = [.init(id: "song", name: "Song", type: .audio,
+            source: .project(relativePath: "pipeline/assets/song.wav"), duration: 3, hasAudio: true)]
+        let sourceManifest = manifest
+        let resolver = MediaResolver(manifest: { sourceManifest }, projectURL: { fixture.home })
+        var timeline = fixture.timeline
+        var songClip = Clip(mediaRef: "song", mediaType: .audio, sourceClipType: .audio,
+            startFrame: 0, durationFrames: 60)
+        songClip.trimStartFrame = 6
+        songClip.volume = 0.5
+        songClip.fadeInFrames = 15
+        songClip.fadeOutFrames = 15
+        timeline.tracks.append(Track(type: .audio, clips: [songClip]))
+        let reel = try await ReviewReelBuilder.build(plan: fixture.plan, dataRoot: fixture.dataRoot,
+            timeline: timeline, resolver: resolver)
+        let movie = try ProjectLocalFile.resolve(reel.path, dataRoot: fixture.dataRoot)
+        let samples = try await decodedAudio(movie)
+        #expect(samples.count > 90_000)
+        let middle = rms(samples, from: 0.9, to: 1.1)
+        #expect(middle > 0.05 && middle < 0.13)
+        #expect(rms(samples, from: 0.02, to: 0.1) < middle * 0.4)
+        #expect(rms(samples, from: 1.9, to: 1.98) < middle * 0.4)
+        try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+            timeline: timeline, resolver: resolver)
+        for mutation in 0..<4 {
+            var changed = timeline
+            switch mutation {
+            case 0: changed.tracks[1].clips[0].trimStartFrame += 1
+            case 1: changed.tracks[1].muted = true
+            case 2: changed.tracks[1].clips[0].volume = 0.9
+            default: changed.tracks[1].clips[0].fadeInFrames = 0
+            }
+            #expect(throws: (any Error).self) {
+                try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+                    timeline: changed, resolver: resolver)
+            }
+        }
+        let rebound = fixture.dataRoot.appendingPathComponent("assets/rebound.wav")
+        try FileManager.default.copyItem(at: song, to: rebound)
+        manifest.entries[0].source = .project(relativePath: "pipeline/assets/rebound.wav")
+        let reboundManifest = manifest
+        let reboundResolver = MediaResolver(manifest: { reboundManifest }, projectURL: { fixture.home })
+        #expect(throws: (any Error).self) {
+            try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+                timeline: timeline, resolver: reboundResolver)
+        }
+        let handle = try FileHandle(forWritingTo: song)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("changed soundtrack".utf8))
+        try handle.close()
+        #expect(throws: (any Error).self) {
+            try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+                timeline: timeline, resolver: resolver)
+        }
+    }
+
+    @Test("externally linked timeline audio remains audible and exact source changes invalidate review")
+    func reviewReelSupportsExternalAudio() async throws {
+        let fixture = try await makeFixture(withGap: false)
+        let song = fixture.home.deletingLastPathComponent().appendingPathComponent("external-review-\(UUID().uuidString).wav")
+        let alternate = song.appendingPathExtension("alternate.wav")
+        defer {
+            try? FileManager.default.removeItem(at: fixture.home)
+            try? FileManager.default.removeItem(at: song)
+            try? FileManager.default.removeItem(at: alternate)
+        }
+        try writeSong(at: song)
+        var manifest = MediaManifest()
+        manifest.entries = [.init(id: "external-song", name: "External song", type: .audio,
+            source: .external(absolutePath: song.path), duration: 3, hasAudio: true)]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { fixture.home })
+        var timeline = fixture.timeline
+        timeline.tracks.append(Track(type: .audio, clips: [Clip(mediaRef: "external-song", mediaType: .audio,
+            sourceClipType: .audio, startFrame: 0, durationFrames: 60)]))
+        let reel = try await ReviewReelBuilder.build(plan: fixture.plan, dataRoot: fixture.dataRoot,
+            timeline: timeline, resolver: resolver)
+        let samples = try await decodedAudio(ProjectLocalFile.resolve(reel.path, dataRoot: fixture.dataRoot))
+        #expect(rms(samples, from: 0.5, to: 1.5) > 0.1)
+        let binding = try ReviewReelSoundtrack.capture(timeline: timeline, resolver: resolver, fps: 30, dataRoot: fixture.dataRoot)
+        #expect(binding.sources.first?.isExternal == true)
+        #expect(binding.sources.first?.path == song.standardizedFileURL.resolvingSymlinksInPath().path)
+        timeline.tracks[1].displayHeight += 50
+        try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+            timeline: timeline, resolver: resolver)
+
+        var overlong = timeline
+        overlong.tracks[1].clips[0].durationFrames = 90
+        do {
+            _ = try await ReviewReelBuilder.build(plan: fixture.plan, dataRoot: fixture.dataRoot,
+                timeline: overlong, resolver: resolver)
+            Issue.record("A picture-only EDL incorrectly claimed to cover an audio tail.")
+        } catch {
+            #expect(error.localizedDescription.contains("Extend the picture cut to cover it or trim the audio"))
+        }
+        try FileManager.default.copyItem(at: song, to: alternate)
+        manifest.entries[0].source = .external(absolutePath: alternate.path)
+        #expect(throws: (any Error).self) {
+            try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+                timeline: timeline, resolver: resolver)
+        }
+        manifest.entries[0].source = .external(absolutePath: song.path)
+        let handle = try FileHandle(forWritingTo: song)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("changed external source".utf8))
+        try handle.close()
+        #expect(throws: (any Error).self) {
+            try ReviewReelSoundtrack.requireCurrent(reel: reel, plan: fixture.plan, dataRoot: fixture.dataRoot,
+                timeline: timeline, resolver: resolver)
+        }
+    }
+
+    @Test("project audio accepts canonical parent aliases while rejecting symlink escapes")
+    func soundtrackNormalizesParentAlias() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("review-alias-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real")
+        let home = real.appendingPathComponent("project.ngv")
+        let dataRoot = home.appendingPathComponent("pipeline")
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        let song = dataRoot.appendingPathComponent("song.wav")
+        try Data("exact source bytes".utf8).write(to: song)
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+        let aliasedHome = alias.appendingPathComponent("project.ngv")
+        let aliasedRoot = aliasedHome.appendingPathComponent("pipeline")
+        var manifest = MediaManifest()
+        manifest.entries = [.init(id: "song", name: "Song", type: .audio,
+            source: .project(relativePath: "pipeline/song.wav"), duration: 1, hasAudio: true)]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { aliasedHome })
+        var timeline = Timeline()
+        timeline.tracks = [Track(type: .audio, clips: [Clip(mediaRef: "song", mediaType: .audio,
+            sourceClipType: .audio, startFrame: 0, durationFrames: 30)])]
+        let binding = try ReviewReelSoundtrack.capture(timeline: timeline, resolver: resolver, fps: 30, dataRoot: aliasedRoot)
+        #expect(binding.sources.first?.path == "pipeline/song.wav")
+        #expect(binding.sources.first?.sha256 == FileDigest.sha256(of: Data("exact source bytes".utf8)))
+        let source = try #require(binding.sources.first)
+        #expect(try source.resolve(dataRoot: aliasedRoot).resolvingSymlinksInPath() == song.resolvingSymlinksInPath())
+        let outside = root.appendingPathComponent("outside.wav")
+        try Data("outside project".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: dataRoot.appendingPathComponent("escape.wav"), withDestinationURL: outside)
+        manifest.entries[0].source = .project(relativePath: "pipeline/escape.wav")
+        #expect(throws: (any Error).self) {
+            _ = try ReviewReelSoundtrack.capture(timeline: timeline, resolver: resolver, fps: 30, dataRoot: aliasedRoot)
+        }
+    }
+
+    private func writeSong(at url: URL, frequency: Double = 440) throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 144_000))
+        let samples = try #require(buffer.floatChannelData?[0])
+        buffer.frameLength = buffer.frameCapacity
+        for index in 0..<Int(buffer.frameLength) {
+            samples[index] = Float(sin(Double(index) * frequency * 2 * .pi / 48_000) * 0.25)
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
+
+    private func decodedAudio(_ url: URL) async throws -> [Float] {
+        let asset = AVURLAsset(url: url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
+        ])
+        reader.add(output)
+        #expect(reader.startReading())
+        var result: [Float] = []
+        while let sample = output.copyNextSampleBuffer() {
+            let block = try #require(CMSampleBufferGetDataBuffer(sample))
+            var bytes = Data(count: CMBlockBufferGetDataLength(block))
+            let status = bytes.withUnsafeMutableBytes { storage in
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: storage.count, destination: storage.baseAddress!)
+            }
+            #expect(status == noErr)
+            bytes.withUnsafeBytes { storage in
+                for offset in stride(from: 0, to: storage.count, by: MemoryLayout<Float>.size) {
+                    result.append(storage.loadUnaligned(fromByteOffset: offset, as: Float.self))
+                }
+            }
+        }
+        #expect(reader.status == .completed)
+        return result
+    }
+
+    private func rms(_ samples: [Float], from: Double, to: Double) -> Double {
+        let start = min(samples.count, Int(from * 48_000))
+        let end = min(samples.count, Int(to * 48_000))
+        guard end > start else { return 0 }
+        return sqrt(samples[start..<end].reduce(0.0) { $0 + Double($1 * $1) } / Double(end - start))
+    }
+
     private struct Fixture {
         let home: URL
         let dataRoot: URL
@@ -146,7 +359,7 @@ struct PipelineSequenceReviewStoreTests {
         let timeline: Timeline
     }
 
-    private func makeFixture(withGap: Bool) async throws -> Fixture {
+    private func makeFixture(withGap: Bool, sourceHasAudio: Bool = false) async throws -> Fixture {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("sequence-review-\(UUID().uuidString).ngv")
         let dataRoot = home.appendingPathComponent("pipeline")
@@ -162,7 +375,25 @@ struct PipelineSequenceReviewStoreTests {
             size: CGSize(width: 320, height: 180)
         )
         let source = dataRoot.appendingPathComponent("assets/source.mov")
-        try FileManager.default.copyItem(at: generated, to: source)
+        if sourceHasAudio {
+            let tone = dataRoot.appendingPathComponent("assets/provider-tone.wav")
+            try writeSong(at: tone, frequency: 880)
+            let video = AVURLAsset(url: generated)
+            let audio = AVURLAsset(url: tone)
+            let videoTrack = try #require(try await video.loadTracks(withMediaType: .video).first)
+            let audioTrack = try #require(try await audio.loadTracks(withMediaType: .audio).first)
+            let composition = AVMutableComposition()
+            let picture = try #require(composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
+            let sound = try #require(composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+            let range = CMTimeRange(start: .zero, duration: CMTime(seconds: 2, preferredTimescale: 30))
+            try picture.insertTimeRange(range, of: videoTrack, at: .zero)
+            try sound.insertTimeRange(range, of: audioTrack, at: .zero)
+            let export = try #require(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough))
+            try await export.export(to: source, as: .mov)
+            #expect(try await !AVURLAsset(url: source).loadTracks(withMediaType: .audio).isEmpty)
+        } else {
+            try FileManager.default.copyItem(at: generated, to: source)
+        }
         let sourceHash = try FileDigest.sha256(of: source)
         let sourceBytes = Int64(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
 

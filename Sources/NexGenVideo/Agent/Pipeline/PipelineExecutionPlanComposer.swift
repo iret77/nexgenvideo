@@ -369,7 +369,7 @@ enum PipelineExecutionPlanComposer {
         )
     }
 
-    private static func generationRequirement(
+    static func generationRequirement(
         shot: Shot,
         input: PipelineExecutionShotInput,
         sourceAssetID: String?,
@@ -442,6 +442,16 @@ enum PipelineExecutionPlanComposer {
               !aspectRatio.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PipelineExecutionPlanComposerError.unsupportedRequirement(shot.id)
         }
+        let renderDuration = isAnimatedStill ? shot.durationS : Double(
+            CutHandles.orderableGrossDuration(for: shot, forceAll: brief.cutHandlesMode == .withOverlap)
+        )
+        guard supplied.duration.minimumSeconds.map({ renderDuration >= $0 }) ?? true,
+              supplied.duration.maximumSeconds.map({ renderDuration <= $0 }) ?? true else {
+            throw PipelineExecutionShotInputValidationError.violation(
+                field: "execution_shots[\(shot.id)].generation_requirement.duration",
+                rule: "The provider render needs \(renderDuration) seconds including cut handles and whole-second rounding; its minimum and maximum must include that duration."
+            )
+        }
         return GenerationRequirementV1(
             modalityID: supplied.modalityID.rawValue,
             modeIDs: supplied.modeIDs,
@@ -455,7 +465,7 @@ enum PipelineExecutionPlanComposer {
             requiresLastFrame: requiresLastFrame,
             sourceVideoAssetID: sourceAssetID,
             duration: RequestedDurationV1(
-                preferredSeconds: shot.durationS,
+                preferredSeconds: renderDuration,
                 minimumSeconds: supplied.duration.minimumSeconds,
                 maximumSeconds: supplied.duration.maximumSeconds,
                 allowsAutomatic: supplied.duration.allowsAutomatic

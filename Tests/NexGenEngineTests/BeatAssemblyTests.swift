@@ -103,6 +103,35 @@ struct BeatAssemblyTests {
 
     // MARK: - degenerate inputs
 
+    @Test("whole-song assembly preserves an opening before the first beat and the exact unquantized ending")
+    func wholeSongBounds() throws {
+        let placements = BeatAssembly.plan(
+            beats: [0.25, 0.75, 1.25, 1.75, 2.25, 2.75, 3.25, 3.75],
+            downbeats: [0.25, 2.25], fps: 30,
+            shots: [
+                shot("s001", 0, 2.25, startsSection: true),
+                shot("s002", 2.25, 4.3, endsSection: true),
+            ], requiredDurationFrames: 129
+        )
+        #expect(placements.map(\.shotId) == ["s001", "s002"])
+        #expect(placements.map(\.startFrame) == [0, 68])
+        #expect(placements.map(\.durationFrames) == [68, 61])
+        #expect(placements.first?.onDownbeat == false)
+        let last = try #require(placements.last)
+        #expect(last.startFrame + last.durationFrames == 129)
+    }
+
+    @Test("one shot covers the whole song even when its downbeats end early")
+    func singleShotWholeSong() {
+        let placements = BeatAssembly.plan(
+            beats: Self.beats, downbeats: Self.downbeats, fps: 30,
+            shots: [shot("s001", 0, 4.3, startsSection: true, endsSection: true)],
+            requiredDurationFrames: 129
+        )
+        #expect(placements.first?.startFrame == 0)
+        #expect(placements.first?.durationFrames == 129)
+    }
+
     @Test("no beats → no placements (assembly can't be beat-synced)")
     func noBeatsNoPlacements() {
         let placements = BeatAssembly.plan(beats: [], downbeats: [], fps: Self.fps, shots: [shot("s001", 0.0, 1.0)])
