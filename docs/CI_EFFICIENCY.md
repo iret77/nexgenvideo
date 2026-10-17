@@ -63,7 +63,10 @@ neither represents a live paid generation-provider run or a subjective film-qual
 assessment. Runtime results are established only by the corresponding Actions run.
 
 The synthetic chat stress run also reuses the workspace app when that acceptance
-is selected and succeeds. A standalone chat run builds its own app. The recorded
+is selected. Chat stress and private analysis proceed even if the workspace UI
+checks fail, so independent failures are observed in the same batch. If its build
+failed and produced no runtime artifact, their download fails without another build.
+A standalone chat run builds its own app. The recorded
 chat replay still builds separate optimized candidate and historical transcript
 variants. Both restore the captured window dimensions, states and timing. When
 the recording includes transcript dimensions, those remain mandatory; older

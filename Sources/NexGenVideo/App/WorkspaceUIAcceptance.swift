@@ -2726,6 +2726,7 @@ extension WorkspaceUIAcceptance {
         }) else { fail("native production columns or status did not render", scale: scale) }
         var captures: [String] = []
         var inspectorSelections: [[String: Any]] = []
+        var storyboardCards: [[String: Any]] = []
         for phase in ["project_init", "brief", "storyboard"] {
             let identifier = "pipeline.overview.select.\(phase)"
             guard await revealProbe(identifier, in: window), click(identifier: identifier, in: window) == nil,
@@ -2765,12 +2766,40 @@ extension WorkspaceUIAcceptance {
                 guard let artifactHost = panelView(in: host, identifier: "projectPanel") else {
                     fail("storyboard artifact accessibility host is unavailable", scale: scale)
                 }
-                let rendered = renderedAccessibilityText(in: artifactHost).joined(separator: "\n")
-                guard rendered.contains("A train passes the empty platform."),
-                      rendered.contains("The singer turns toward the morning light."),
-                      !["basis: inferred", "angle:", "height:", "lens_hint:", "generated", "transition", "performance", "wide.noon"]
-                        .contains(where: rendered.contains) else {
-                    fail("rendered storyboard text is missing or leaks technical planning fields", scale: scale)
+                let expectedCards = [
+                    ("verse1.01", "The singer stops at the platform edge."),
+                    ("verse1.02", "A train passes the empty platform."),
+                    ("chorus1.01", "The singer turns toward the morning light."),
+                ]
+                let forbidden = ["basis: inferred", "angle:", "height:", "lens_hint:",
+                    "generated", "transition", "performance", "wide.noon"]
+                // Lazy cards must be visible before their accessibility text can be verified.
+                for (shotID, subject) in expectedCards {
+                    let control = "storyboard.shot.\(shotID)"
+                    guard await revealProbe(control, in: window) else {
+                        fail("storyboard card is not fully reachable: \(shotID)", scale: scale)
+                    }
+                    var rendered = ""
+                    var leaked: [String] = []
+                    guard await waitUntil(timeout: .seconds(5), {
+                        host.layoutSubtreeIfNeeded()
+                        rendered = renderedAccessibilityText(in: artifactHost).joined(separator: "\n")
+                        leaked = forbidden.filter { rendered.contains($0) }
+                        return visibleProbe(identifier: control, in: window,
+                            containedBy: artifactHost.convert(artifactHost.bounds, to: host))
+                            && rendered.contains(subject) && leaked.isEmpty
+                    }) else {
+                        let name = "scale-\(scaleLabel(scale))-production-storyboard-failed.png"
+                        _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
+                        emit("storyboard-text-diagnostic", scale: scale, fields: [
+                            "shotID": shotID, "missingSubject": !rendered.contains(subject),
+                            "leakedTokens": leaked, "renderedText": rendered,
+                            "geometry": probeScrollDiagnostics(control, in: window), "screenshot": name,
+                        ])
+                        fail("visible storyboard card is missing its description or leaks technical planning fields: \(shotID)", scale: scale)
+                    }
+                    storyboardCards.append(["shotID": shotID, "subject": subject,
+                        "fullyVisible": true, "renderedDescription": true, "rawFieldsAbsent": true])
                 }
             }
             try? await Task.sleep(for: .milliseconds(300))
@@ -2782,7 +2811,8 @@ extension WorkspaceUIAcceptance {
         }
         emit("production-workbench", scale: scale, fields: ["screenshots": captures,
             "threeColumns": true, "noTimelineOrEmptyPreview": true, "shotInspectorBound": true,
-            "twoStoryboardSections": true, "statusVisible": true, "shotInspectorSelections": inspectorSelections])
+            "twoStoryboardSections": true, "statusVisible": true, "shotInspectorSelections": inspectorSelections,
+            "storyboardCards": storyboardCards])
     }
 
     private static func panelView(in view: NSView, identifier: String) -> NSView? {
