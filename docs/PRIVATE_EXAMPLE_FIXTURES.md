@@ -97,6 +97,9 @@ The hostflow acceptance assigns Track and Lyrics through the native intake contr
 the measured analysis, resolves optional material intake, and saves/reopens the document before
 continuing the canonical planning and assembly path. Creative decisions, interpretation labels
 and imported visual sources are deterministic test inputs; the audio measurement remains real.
+Post-Brief approvals also use the document's native phase controls, including checks that missing
+current artifacts disable approval. The recorded agent runtime checks the packaged instructions at
+each phase handoff; it does not execute a live language model.
 `hostflow.json`, `fullflow.json`, native screenshots, the final movie and its delivery receipt are
 published together as an additional private `musicvideo-acceptance.tar.gz` layer. These files do
 not become public Actions artifacts.

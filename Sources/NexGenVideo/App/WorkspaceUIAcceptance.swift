@@ -2659,6 +2659,7 @@ extension WorkspaceUIAcceptance {
                 && productionControlsAreContained(in: window)
         }) else { fail("native production columns or status did not render", scale: scale) }
         var captures: [String] = []
+        var inspectorSelections: [[String: Any]] = []
         for phase in ["project_init", "brief", "storyboard"] {
             let identifier = "pipeline.overview.select.\(phase)"
             guard await revealProbe(identifier, in: window), click(identifier: identifier, in: window) == nil,
@@ -2668,17 +2669,40 @@ extension WorkspaceUIAcceptance {
                           && (phase != "storyboard" || findProbe(in: host, identifier: "storyboard.shot.chorus1.01") != nil)
                   }) else { fail("native production phase could not be selected: \(phase)", scale: scale) }
             if phase == "storyboard" {
-                guard click(identifier: "storyboard.shot.chorus1.01", in: window) == nil,
-                      await waitUntil(timeout: .seconds(5), {
-                          (findProbe(in: host, identifier: "storyboard.inspector") as? AppRelaunchClickProbeView)?.acceptanceText == "chorus1.01"
-                      }) else { fail("storyboard shot did not bind its technical inspector", scale: scale) }
+                let expectedSelections: [(String, [(String, String)])] = [
+                    ("verse1.01", [("Section", "Verse 1"), ("Section timing", "0.0–12.0 s"),
+                        ("Camera", "Slow dolly"), ("Framing", "Wide"), ("Angle", "Frontal"), ("Height", "Eye Level")]),
+                    ("chorus1.01", [("Section", "Chorus 1"), ("Section timing", "12.0–24.0 s"),
+                        ("Camera", "Slow push in"), ("Framing", "Medium"), ("Angle", "Frontal"),
+                        ("Lens Hint", "Wide"), ("Location view", "Wide · Noon")]),
+                ]
+                for (shotID, fields) in expectedSelections {
+                    let control = "storyboard.shot.\(shotID)"
+                    guard await revealProbe(control, in: window), click(identifier: control, in: window) == nil,
+                          await waitUntil(timeout: .seconds(5), {
+                              probeText(identifier: "storyboard.inspector", in: window) == shotID
+                          }), let inspector = panelView(in: host, identifier: "inspectorPanel") else {
+                        fail("storyboard shot did not bind its technical inspector", scale: scale)
+                    }
+                    let text = renderedAccessibilityText(in: inspector).joined(separator: "\n")
+                    guard fields.allSatisfy({ text.contains($0.0) && text.contains($0.1) }),
+                          text.contains("AI generation"),
+                          !text.contains(shotID == "chorus1.01" ? "Slow dolly" : "Slow push in"),
+                          !["basis: inferred", "angle:", "height:", "lens_hint", "eye_level", "wide.noon"]
+                            .contains(where: text.contains) else {
+                        fail("the selected Storyboard inspector omitted readable fields or retained another shot", scale: scale)
+                    }
+                    inspectorSelections.append(["shotID": shotID, "controlID": control,
+                        "renderedFields": fields.map { ["label": $0.0, "value": $0.1] },
+                        "rawFieldsAbsent": true, "previousSelectionAbsent": true])
+                }
                 guard let artifactHost = panelView(in: host, identifier: "projectPanel") else {
                     fail("storyboard artifact accessibility host is unavailable", scale: scale)
                 }
                 let rendered = renderedAccessibilityText(in: artifactHost).joined(separator: "\n")
                 guard rendered.contains("A train passes the empty platform."),
                       rendered.contains("The singer turns toward the morning light."),
-                      !["basis: inferred", "angle:", "height:", "lens_hint:", "generated", "wide.noon"]
+                      !["basis: inferred", "angle:", "height:", "lens_hint:", "generated", "transition", "performance", "wide.noon"]
                         .contains(where: rendered.contains) else {
                     fail("rendered storyboard text is missing or leaks technical planning fields", scale: scale)
                 }
@@ -2692,7 +2716,7 @@ extension WorkspaceUIAcceptance {
         }
         emit("production-workbench", scale: scale, fields: ["screenshots": captures,
             "threeColumns": true, "noTimelineOrEmptyPreview": true, "shotInspectorBound": true,
-            "twoStoryboardSections": true, "statusVisible": true])
+            "twoStoryboardSections": true, "statusVisible": true, "shotInspectorSelections": inspectorSelections])
     }
 
     private static func panelView(in view: NSView, identifier: String) -> NSView? {
@@ -2743,6 +2767,84 @@ extension WorkspaceUIAcceptance {
 
 
 extension WorkspaceUIAcceptance {
+    static func captureBibleBlocker(editor: EditorViewModel, evidenceURL: URL) async throws -> [String: Any] {
+        guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
+              let window = NSApp.windows.first(where: {
+                  ($0.windowController as? EditorWindowController)?.editorViewModel === editor
+              }), let host = window.contentView,
+              editor.projectState?.nextPhaseName == "bible", editor.agentService.pendingGateApproval == nil else {
+            throw ToolError("The Bible blocker acceptance requires the actual current phase before its artifact is written.")
+        }
+        let scale = AppTheme.Typography.validatedScale(UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey))
+        window.setContentSize(AppTheme.Window.projectMin)
+        window.makeKeyAndOrderFront(nil)
+        let bibleURL = root.appendingPathComponent("bible/bible.yaml")
+        guard !FileManager.default.fileExists(atPath: bibleURL.path) else {
+            throw ToolError("The Bible failure fixture must precede its first canonical write.")
+        }
+        try FileManager.default.createDirectory(at: bibleURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let invalidBible = Data("fixture: structurally invalid Bible\n".utf8)
+        try invalidBible.write(to: bibleURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: bibleURL) }
+        await editor.refreshEngineState()
+        let gatesURL = root.appendingPathComponent(PipelineLayout.gatesFile)
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        guard await revealProbe("pipeline.overview.select.bible", in: window),
+              click(identifier: "pipeline.overview.select.bible", in: window) == nil else {
+            throw ToolError("The native Bible sidebar action is not reachable.")
+        }
+        let readiness = await NativeGateWriter.controlReadiness(projectDir: home, phase: "bible",
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
+            executionCoordinator: editor.pipelinePhaseRunCoordinator)
+        guard !readiness.approval.isReady, let diagnostic = readiness.approval.blocker,
+              diagnostic.contains("bible/bible.yaml"),
+              await waitUntil(timeout: .seconds(10), {
+                  let reason = probeText(identifier: "pipeline.overview.dock.reason", in: window) ?? ""
+                  return reason.contains("Bible") && reason.contains("reference images")
+                      && probeText(identifier: "pipeline.overview.dock.status", in: window) == "Incomplete"
+                      && probeText(identifier: "pipeline.overview.select.shotlist", in: window) == "Upcoming"
+                      && probeState(identifier: "pipeline.overview.dock.continue", in: window) == true
+              }), let reason = probeText(identifier: "pipeline.overview.dock.reason", in: window) else {
+            throw ToolError("The incomplete Bible did not show its actual missing content and distinct current-phase state.")
+        }
+        guard !["bible.yaml", root.path, "write_bible", "schema", "Not started"].contains(where: reason.contains),
+              probeState(identifier: "pipeline.overview.approve.bible", in: window) != true,
+              await revealProbe("pipeline.overview.dock.reason", in: window),
+              visibleProbe(identifier: "pipeline.overview.dock.reason", in: window, containedBy: host.bounds),
+              findProbe(in: host, identifier: "pipeline.overview.dock.diagnostic-text") == nil else {
+            throw ToolError("The blocked Bible exposed raw diagnostics or offered approval before it was ready.")
+        }
+        let blockedImage = "scale-\(scaleLabel(scale))-bible-incomplete.png"
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(blockedImage)),
+              await revealProbe("pipeline.overview.dock.diagnostics", in: window),
+              click(identifier: "pipeline.overview.dock.diagnostics", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), {
+                  NSApp.windows.contains { $0.isVisible
+                      && probeText(identifier: "pipeline.overview.dock.diagnostic-text", in: $0) == diagnostic }
+              }), let diagnosticsWindow = NSApp.windows.first(where: { $0.isVisible
+                  && probeText(identifier: "pipeline.overview.dock.diagnostic-text", in: $0) == diagnostic }),
+              let diagnosticsHost = diagnosticsWindow.contentView,
+              renderedAccessibilityText(in: diagnosticsHost).joined(separator: "\n").contains(diagnostic),
+              await revealProbe("pipeline.overview.dock.diagnostics-done", in: diagnosticsWindow),
+              visibleProbe(identifier: "pipeline.overview.dock.diagnostics-done", in: diagnosticsWindow, containedBy: diagnosticsHost.bounds) else {
+            throw ToolError("The native Diagnostics action did not expose the raw Bible failure in a usable bounded surface.")
+        }
+        let diagnosticImage = "scale-\(scaleLabel(scale))-bible-diagnostics.png"
+        guard snapshot(diagnosticsHost, at: evidenceURL.appendingPathComponent(diagnosticImage)),
+              click(identifier: "pipeline.overview.dock.diagnostics-done", in: diagnosticsWindow) == nil,
+              await waitUntil(timeout: .seconds(5), { !diagnosticsWindow.isVisible }),
+              try Data(contentsOf: gatesURL) == gatesBefore,
+              try Data(contentsOf: bibleURL) == invalidBible else {
+            throw ToolError("Closing Bible Diagnostics changed approval state or left its surface open.")
+        }
+        return ["phase": "bible", "reason": reason, "status": "Incomplete", "futureStatus": "Upcoming",
+            "approvalUnavailable": true, "diagnosticOpenedByControl": "pipeline.overview.dock.diagnostics",
+            "diagnosticMatchesReadiness": true, "diagnosticHiddenByDefault": true,
+            "invalidArtifactPresent": true,
+            "diagnosticSHA256": FileDigest.sha256(of: Data(diagnostic.utf8)), "gatesUnchanged": true,
+            "screenshots": [blockedImage, diagnosticImage]]
+    }
+
     private static func captureMusicvideoReview(evidenceURL: URL, scale: Double) async {
         do {
             guard let path = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
@@ -2752,7 +2854,7 @@ extension WorkspaceUIAcceptance {
             guard pack.isLoaded, pack.id == "musicvideo" else {
                 throw ToolError("The external Musicvideo pack did not load.")
             }
-            let (document, fixture, generation) = try await MusicvideoGenerationAcceptance.makeDocument()
+            let (document, fixture, generation) = try await MusicvideoGenerationAcceptance.makeDocument(evidenceURL: evidenceURL)
             var result = try await finishMusicvideoDelivery(document: document, receipt: fixture,
                 evidenceURL: evidenceURL, scale: scale)
             guard let generationEvidence = try JSONSerialization.jsonObject(with: JSONEncoder().encode(generation)) as? [String: Any] else {
@@ -2971,6 +3073,7 @@ extension WorkspaceUIAcceptance {
             try capture("export-settings", view: exportHost)
             var result = try await MusicvideoDeliveryAcceptance.run(editor: editor, outputDirectory: evidenceURL)
             try capture("export-completed", view: exportHost)
+            let gateEvidence = try JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture.nativeGateApprovals))
             result.merge([
                 "route": "imported-musicvideo", "viewport": frameDescription(host.bounds),
                 "controls": controlFrames, "nativeSequenceReview": true, "nativeStyleReview": true,
@@ -2981,6 +3084,7 @@ extension WorkspaceUIAcceptance {
                 "playbackSeconds": playedSeconds, "timelineUnchangedByReview": editor.timeline == initialTimeline,
                 "screenshots": screenshots, "suppliedInputs": fixture.suppliedInputs,
                 "canonicalArtifacts": fixture.canonicalArtifacts,
+                "nativeGateApprovals": gateEvidence, "nativeBibleBlocker": fixture.nativeBibleBlocker,
             ]) { _, value in value }
             return result
     }

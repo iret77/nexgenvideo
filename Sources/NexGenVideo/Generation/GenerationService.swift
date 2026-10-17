@@ -144,7 +144,7 @@ final class GenerationService {
         let target = authorization.target
         let hosting = Self.referenceHosting(for: target)
         let validatesVideoGeneration: Bool = {
-            guard case .video? = ModelRegistry.byId[genInput.model] else { return false }
+            guard case .video? = editor.generationBatchCoordinator.modelCatalog.byId[genInput.model] else { return false }
             return true
         }()
 

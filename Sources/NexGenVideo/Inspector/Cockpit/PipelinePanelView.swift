@@ -127,6 +127,7 @@ struct PipelinePanelView: View {
         "The pipeline state is unavailable."
     )
     @State private var pendingRewind: RewindRequest?
+    @State private var showsReadinessDiagnostics = false
 
     private struct RewindRequest {
         let home: URL
@@ -374,6 +375,30 @@ struct PipelinePanelView: View {
                             .disabled(gateWriting || !mutationReadiness.isReady)
                             .background { acceptanceProbe("dock.continue", enabled: !gateWriting && mutationReadiness.isReady) }
                         }
+                    }
+                    if !approvalReadiness.isReady, let diagnostic = approvalReadiness.blocker,
+                       approvalPhase == phase.phase, !workIsRunning {
+                        Button("Diagnostics") { showsReadinessDiagnostics = true }
+                            .buttonStyle(.inlineAction(.neutral))
+                            .background { acceptanceProbe("dock.diagnostics", enabled: true) }
+                            .popover(isPresented: $showsReadinessDiagnostics) {
+                                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                                    Text("\(PhaseDisplay.label(phase.phase)) diagnostics")
+                                        .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
+                                    ScrollView {
+                                        Text(diagnostic)
+                                            .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background { acceptanceProbe("dock.diagnostic-text", text: diagnostic) }
+                                    }
+                                    Button("Done") { showsReadinessDiagnostics = false }
+                                        .buttonStyle(.inlineAction(.neutral))
+                                        .background { acceptanceProbe("dock.diagnostics-done", enabled: true) }
+                                }
+                                .padding(AppTheme.Spacing.md)
+                                .frame(width: AppTheme.Layout.activityFlyoutWidth, height: AppTheme.Layout.activityFlyoutHeight)
+                            }
                     }
                 } else if phase.approved {
                     Text("Revising this phase resets its approval and all following approvals.")

@@ -828,6 +828,24 @@ struct GenerationBatchTests {
         #expect(editor.mediaAssets.isEmpty)
     }
 
+    @Test func injectedActivationCannotAuthorizeAnUnlistedBatchRoute() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        editor.generationBatchCoordinator.modelCatalog = catalog
+        let item = batch.payload.items[0]
+        let authorization = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        for active in [ProviderActivation(), ProviderActivation(active: [.init(provider: .fal, transport: .api)])] {
+            editor.generationBatchCoordinator.providerActivation = { active }
+            #expect(throws: (any Error).self) { try authorization.requireQueued(package: item.package, editor: editor) }
+        }
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: root).journal.executions.allSatisfy { $0.state == .queued })
+    }
+
     @Test func thirteenGeminiRequestsHaveOneExactReviewTotalAndApproval() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-gemini-batch-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: root)

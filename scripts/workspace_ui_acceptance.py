@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import uuid
 
 
 EXPECTED_WORKSPACES = {"media", "production", "edit", "postproduction", "export"}
@@ -27,6 +28,165 @@ EXPECTED_KEYFRAME_LANES = {
     "video": ["position", "scale", "rotation", "opacity", "crop"],
 }
 SCALES = (1.0, 1.25, 1.5)
+MUSICVIDEO_PHASES = ["project_init", "analysis", "brief", "production_design", "treatment",
+                    "storyboard", "bible", "shotlist", "sanity", "frames", "render"]
+MUSICVIDEO_ARTIFACTS = ["Project", "Analysis", "Project Brief", "Production Design", "Treatment",
+                       "Storyboard", "Bible", "Shotlist", "Review", "Review", "Review"]
+
+
+def sha256_string(value):
+    return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def valid_native_gate_evidence(rows):
+    if (not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows)
+        or [row.get("phase") for row in rows] != MUSICVIDEO_PHASES):
+        return False
+    for index, row in enumerate(rows):
+        next_phase = MUSICVIDEO_PHASES[index + 1] if index + 1 < len(MUSICVIDEO_PHASES) else "complete"
+        if (row.get("nextPhase") != next_phase or row.get("handoffPhase") != next_phase
+            or row.get("openedFromPhase") not in MUSICVIDEO_PHASES or row.get("openedFromPhase") == row["phase"]
+            or row.get("selectedPhaseAfter") != ("render" if next_phase == "complete" else next_phase)
+            or row.get("controlID") != "agent.gate.approve" or row.get("openControlID") != "agent.gate.open"
+            or row.get("surface") != "production"
+            or row.get("artifactTitle") != MUSICVIDEO_ARTIFACTS[index]
+            or not isinstance(row.get("blockedReason"), str) or not row["blockedReason"].strip()
+            or row.get("packagedInstructions") is not (next_phase != "complete")
+            or (row.get("handoffInstructionsSHA256") is not None if next_phase == "complete"
+                else not sha256_string(row.get("handoffInstructionsSHA256")))
+            or not all(row.get(key) is True for key in (
+                "blockedBeforeApproval", "readyBeforeClick", "approvedPersisted", "handoffHidden"))
+            or not all(sha256_string(row.get(key)) for key in ("artifactSHA256", "gatesBeforeSHA256", "gatesAfterSHA256"))
+            or row["gatesBeforeSHA256"] == row["gatesAfterSHA256"]
+            or not isinstance(row.get("screenshots"), list) or len(row["screenshots"]) != 3
+            or not all(isinstance(name, str) and name and Path(name).name == name for name in row["screenshots"])):
+            return False
+        try:
+            uuid.UUID(row.get("handoffTurnID", ""))
+        except (ValueError, TypeError, AttributeError):
+            return False
+    images = [name for row in rows for name in row["screenshots"]]
+    return len(images) == len(set(images)) and len({row["handoffTurnID"] for row in rows}) == len(rows)
+
+
+def valid_bible_blocker(row):
+    if not isinstance(row, dict):
+        return False
+    reason = row.get("reason")
+    return (
+        row.get("phase") == "bible" and row.get("status") == "Incomplete" and row.get("futureStatus") == "Upcoming"
+        and isinstance(reason, str) and "Bible" in reason and "reference images" in reason
+        and not any(term in reason for term in ("bible.yaml", "/", "write_bible", "schema", "Not started"))
+        and row.get("diagnosticOpenedByControl") == "pipeline.overview.dock.diagnostics"
+        and all(row.get(key) is True for key in ("approvalUnavailable", "diagnosticMatchesReadiness",
+                                               "diagnosticHiddenByDefault", "gatesUnchanged", "invalidArtifactPresent"))
+        and sha256_string(row.get("diagnosticSHA256"))
+        and isinstance(row.get("screenshots"), list) and len(row["screenshots"]) == 2
+    )
+
+
+def valid_production_workbench(row):
+    if not isinstance(row, dict) or not all(row.get(key) is True for key in (
+        "threeColumns", "noTimelineOrEmptyPreview", "shotInspectorBound", "twoStoryboardSections", "statusVisible",
+    )) or len(row.get("screenshots", [])) != 3:
+        return False
+    expected = [
+        ("verse1.01", [("Section", "Verse 1"), ("Section timing", "0.0–12.0 s"), ("Camera", "Slow dolly"),
+                       ("Framing", "Wide"), ("Angle", "Frontal"), ("Height", "Eye Level")]),
+        ("chorus1.01", [("Section", "Chorus 1"), ("Section timing", "12.0–24.0 s"), ("Camera", "Slow push in"),
+                        ("Framing", "Medium"), ("Angle", "Frontal"), ("Lens Hint", "Wide"), ("Location view", "Wide · Noon")]),
+    ]
+    selections = row.get("shotInspectorSelections")
+    return isinstance(selections, list) and len(selections) == len(expected) and all(
+        isinstance(item, dict) and item.get("shotID") == shot
+        and item.get("controlID") == f"storyboard.shot.{shot}"
+        and item.get("renderedFields") == [{"label": label, "value": value} for label, value in fields]
+        and item.get("rawFieldsAbsent") is True and item.get("previousSelectionAbsent") is True
+        for item, (shot, fields) in zip(selections, expected)
+    )
+
+
+def native_film_screenshots(row):
+    gates = row.get("nativeGateApprovals", [])
+    bible = row.get("nativeBibleBlocker", {})
+    generation = row.get("generation", {})
+    return ([name for gate in (gates if isinstance(gates, list) else [])
+             if isinstance(gate, dict) for name in gate.get("screenshots", [])]
+            + (bible.get("screenshots", []) if isinstance(bible, dict) else [])
+            + (generation.get("nativeScreenshots", []) if isinstance(generation, dict) else []))
+
+
+def valid_native_generation(evidence):
+    approval, take = evidence.get("nativeApproval"), evidence.get("nativeTakeReview")
+    interactions, screenshots = evidence.get("nativeInteractions"), evidence.get("nativeScreenshots")
+    if (not isinstance(evidence.get("takeID"), str) or not evidence["takeID"].strip()
+        or not isinstance(approval, dict) or not isinstance(take, dict) or not isinstance(interactions, list)
+        or approval.get("authorityBefore") is not False
+        or approval.get("continuationPhases") != ["render"] or approval.get("continuationHidden") is not True
+        or any(type(approval.get(key)) is not int or approval[key] != 0
+               for key in ("journalCountBefore", "requestCountBefore", "spendCountBefore"))
+        or not isinstance(approval.get("authorityAfterID"), str) or not approval["authorityAfterID"].strip()
+        or not sha256_string(approval.get("approvedPackageSHA256"))
+        or approval["approvedPackageSHA256"] != evidence.get("packageID")
+        or not isinstance(approval.get("pricingOverrideItemIDs"), list) or len(approval["pricingOverrideItemIDs"]) != 1
+        or not all(isinstance(item, str) and item for item in approval["pricingOverrideItemIDs"])
+        or take.get("takeIDBefore") != "" or take.get("takeIDAfter") != evidence.get("takeID")
+        or type(take.get("findingsBefore")) is not int or take["findingsBefore"] != 0
+        or take.get("selectedTakeIDBefore") is not None or take.get("selectedTakeIDAfter") != evidence.get("takeID")
+        or not sha256_string(take.get("reviewSHA256"))
+        or not isinstance(screenshots, list) or len(screenshots) != 3
+        or not all(isinstance(name, str) and name and Path(name).name == name for name in screenshots)
+        or len(set(screenshots)) != 3):
+        return False
+    findings = take.get("findings")
+    passes = ["identity", "continuity", "timing", "camera", "audio", "style"]
+    if (not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings)
+        or [item.get("pass") for item in findings] != passes):
+        return False
+    expected = [("generation-batch.approve", "unapproved", approval["authorityAfterID"]),
+                ("take.open", "closed", "open"), ("take.picker", "", evidence["takeID"])]
+    for index, finding in enumerate(findings):
+        verdict = "conforms" if index == 0 else "acceptedDeviation"
+        observation = finding.get("observation")
+        if (finding.get("verdict") != verdict or finding.get("startSeconds") != 1 or finding.get("endSeconds") != 3
+            or not isinstance(observation, str) or not observation.startswith(f"Supplied acceptance decision: {passes[index]} ")):
+            return False
+        if index == 0:
+            expected += [("take.verdict", "conforms", "rejected"), ("take.verdict", "rejected", "conforms")]
+        else:
+            expected.append(("take.verdict", "conforms", "acceptedDeviation"))
+        expected += [("take.observation", "", observation), ("take.start", "0.0", "1.0"),
+                     ("take.end", "4.0", "3.0"), ("take.record-pass", str(index), str(index + 1))]
+    expected += [("take.save", "0", "6"), ("take.use", "none", evidence["takeID"]), ("take.close", "open", "closed")]
+    if len(interactions) != len(expected) or not all(isinstance(item, dict) for item in interactions):
+        return False
+    document_window = interactions[0].get("documentWindowNumber")
+    sheet_window = interactions[2].get("windowNumber")
+    if any(type(number) is not int or number <= 0 for number in (document_window, sheet_window)) or document_window == sheet_window:
+        return False
+    for index, (item, (control, before, after)) in enumerate(zip(interactions, expected)):
+        before_matches = item.get("before") == before
+        if control == "take.end":
+            try:
+                original_end = float(item.get("before"))
+            except (TypeError, ValueError):
+                return False
+            before_matches = (isinstance(item.get("before"), str) and math.isfinite(original_end)
+                              and abs(original_end - 4.0) < 1.0 / 30)
+        if (item.get("index") != index or item.get("controlID") != control
+            or not before_matches or item.get("after") != after
+            or item.get("documentWindowNumber") != document_window
+            or item.get("windowNumber") != (document_window if index < 2 else sheet_window)):
+            return False
+        frames = [item.get("frame"), item.get("viewport")]
+        if not all(isinstance(frame, list) and len(frame) == 4
+                   and all(type(value) in (int, float) and math.isfinite(value) for value in frame)
+                   and frame[2] > 0 and frame[3] > 0 for frame in frames):
+            return False
+        frame, viewport = [dict(zip(("x", "y", "width", "height"), values)) for values in frames]
+        if not contains_frame(viewport, frame):
+            return False
+    return True
 
 
 def valid_frame(frame):
@@ -123,6 +283,8 @@ def valid_keyframe_lane_evidence(row):
 def valid_generation_evidence(evidence):
     if not isinstance(evidence, dict):
         return False
+    if not valid_native_generation(evidence):
+        return False
     if (
         evidence.get("generatedShotIDs") != ["s001"]
         or evidence.get("importedShotIDs") != ["s002"]
@@ -161,6 +323,8 @@ def valid_musicvideo_review(row, output):
     if (
         row.get("route") != "mixed-musicvideo"
         or not valid_generation_evidence(row.get("generation"))
+        or not valid_native_gate_evidence(row.get("nativeGateApprovals"))
+        or not valid_bible_blocker(row.get("nativeBibleBlocker"))
         or not all(row.get(key) is True for key in (
             "nativeSequenceReview", "nativeStyleReview", "recordDisabledUntilReviewed",
             "reviewInputsPersisted", "timelineUnchangedByReview", "nativeExportSubmitted",
@@ -338,6 +502,8 @@ def run_scale(executable, output, scale):
         for row in analysis + provenance + musicvideo + host_states + storyboard + production + agent_activity + film_review
         for name in row.get("screenshots", [])
     ]
+    native_images = [name for row in film_review for name in native_film_screenshots(row)]
+    screenshots += native_images
     valid_images = all(
         isinstance(name, str)
         and (output / name).is_file()
@@ -415,11 +581,7 @@ def run_scale(executable, output, scale):
         ))
         and len(storyboard[0].get("screenshots", [])) == 2
         and len(production) == 1
-        and all(production[0].get(key) is True for key in (
-            "threeColumns", "noTimelineOrEmptyPreview", "shotInspectorBound",
-            "twoStoryboardSections", "statusVisible",
-        ))
-        and len(production[0].get("screenshots", [])) == 3
+        and valid_production_workbench(production[0])
         and len(agent_activity) == 1
         and agent_activity[0].get("complete") is True
         and len(agent_activity[0].get("screenshots", [])) == 3
@@ -436,7 +598,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 38 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 38 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES) + len(native_images)
         and valid_images
     )
     return {

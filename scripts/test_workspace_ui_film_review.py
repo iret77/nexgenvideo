@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from workspace_ui_acceptance import valid_musicvideo_review
+from workspace_ui_acceptance import valid_musicvideo_review, valid_production_workbench
 
 
 class FilmReviewEvidenceTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class FilmReviewEvidenceTests(unittest.TestCase):
             "route": "mixed-musicvideo", "viewport": frame,
             "generation": {
                 "providerEvidence": "Real FalClient against a simulator; no live provider evidence.",
-                "batchID": "batch", "packageID": "package", "takeID": "take", "generationAssetID": "asset",
+                "batchID": "batch", "packageID": "e" * 64, "takeID": "take", "generationAssetID": "asset",
                 "compiledPromptSHA256": "a" * 64, "referenceSHA256": "b" * 64,
                 "outputSHA256": "c" * 64, "selectedSourceSHA256": "c" * 64,
                 "generatedShotIDs": ["s001"], "importedShotIDs": ["s002"],
@@ -55,7 +55,69 @@ class FilmReviewEvidenceTests(unittest.TestCase):
             "sequenceFindingCount": 1, "styleFindingCount": 1, "screenshots": [f"{i}.png" for i in range(7)],
             "playbackSeconds": 4.3, "decodedAudioSamples": 206400, "decodedAudioRMS": 0.1,
             "movie": "film.mp4", "deliveryReceipt": "receipt.json", "outputSHA256": digest,
+            "nativeGateApprovals": [],
+            "nativeBibleBlocker": {
+                "phase": "bible", "reason": "Bible is incomplete: it needs a valid document with reference images for every subject.",
+                "status": "Incomplete", "futureStatus": "Upcoming", "approvalUnavailable": True,
+                "diagnosticOpenedByControl": "pipeline.overview.dock.diagnostics",
+                "diagnosticMatchesReadiness": True, "diagnosticHiddenByDefault": True,
+                "invalidArtifactPresent": True,
+                "diagnosticSHA256": "d" * 64, "gatesUnchanged": True,
+                "screenshots": ["bible-incomplete.png", "bible-diagnostics.png"],
+            },
         }
+        phases = ["project_init", "analysis", "brief", "production_design", "treatment", "storyboard",
+                  "bible", "shotlist", "sanity", "frames", "render"]
+        titles = ["Project", "Analysis", "Project Brief", "Production Design", "Treatment", "Storyboard",
+                  "Bible", "Shotlist", "Review", "Review", "Review"]
+        for index, phase in enumerate(phases):
+            next_phase = phases[index + 1] if index + 1 < len(phases) else "complete"
+            self.row["nativeGateApprovals"].append({
+                "phase": phase, "nextPhase": next_phase, "controlID": "agent.gate.approve",
+                "openControlID": "agent.gate.open", "artifactTitle": titles[index], "surface": "production",
+                "openedFromPhase": "brief" if phase == "project_init" else "project_init",
+                "blockedBeforeApproval": True, "readyBeforeClick": True, "approvedPersisted": True,
+                "selectedPhaseAfter": "render" if next_phase == "complete" else next_phase,
+                "handoffPhase": next_phase, "handoffHidden": True, "packagedInstructions": next_phase != "complete",
+                "handoffTurnID": f"00000000-0000-4000-8000-{index:012d}",
+                "handoffInstructionsSHA256": None if next_phase == "complete" else "f" * 64,
+                "blockedReason": "Complete the required artifact", "artifactSHA256": "a" * 64,
+                "gatesBeforeSHA256": "b" * 64, "gatesAfterSHA256": "c" * 64,
+                "screenshots": [f"{phase}-{state}.png" for state in ("blocked", "ready", "approved")],
+            })
+        generation = self.row["generation"]
+        generation["nativeScreenshots"] = ["native-approval.png", "native-take-review.png", "native-take-selected.png"]
+        generation["nativeApproval"] = {
+            "authorityBefore": False, "journalCountBefore": 0, "requestCountBefore": 0, "spendCountBefore": 0,
+            "authorityAfterID": "authority", "approvedPackageSHA256": generation["packageID"], "pricingOverrideItemIDs": ["item"],
+            "continuationPhases": ["render"], "continuationHidden": True,
+        }
+        findings = [
+            {"pass": pass_name, "verdict": "conforms" if index == 0 else "acceptedDeviation",
+             "observation": f"Supplied acceptance decision: {pass_name} uses a deterministic moving marker.",
+             "startSeconds": 1.0, "endSeconds": 3.0}
+            for index, pass_name in enumerate(["identity", "continuity", "timing", "camera", "audio", "style"])
+        ]
+        generation["nativeTakeReview"] = {
+            "takeIDBefore": "", "takeIDAfter": "take", "findingsBefore": 0, "findings": findings,
+            "selectedTakeIDAfter": "take", "reviewSHA256": "f" * 64,
+        }
+        actions = [("generation-batch.approve", "unapproved", "authority"), ("take.open", "closed", "open"),
+                   ("take.picker", "", "take")]
+        for index, finding in enumerate(findings):
+            if index == 0:
+                actions.extend([("take.verdict", "conforms", "rejected"), ("take.verdict", "rejected", "conforms")])
+            else:
+                actions.append(("take.verdict", "conforms", "acceptedDeviation"))
+            actions.extend([("take.observation", "", finding["observation"]), ("take.start", "0.0", "1.0"),
+                            ("take.end", "4.0", "3.0"), ("take.record-pass", str(index), str(index + 1))])
+        actions.extend([("take.save", "0", "6"), ("take.use", "none", "take"), ("take.close", "open", "closed")])
+        generation["nativeInteractions"] = [
+            {"index": index, "controlID": control, "before": before, "after": after,
+             "windowNumber": 100 if index < 2 else 200, "documentWindowNumber": 100,
+             "frame": [10, 10, 200, 30], "viewport": [0, 0, 960, 640]}
+            for index, (control, before, after) in enumerate(actions)
+        ]
         for key in (
             "nativeSequenceReview", "nativeStyleReview", "recordDisabledUntilReviewed", "reviewInputsPersisted",
             "timelineUnchangedByReview", "nativeExportSubmitted", "exportCompleted", "sequenceReviewBound",
@@ -69,9 +131,125 @@ class FilmReviewEvidenceTests(unittest.TestCase):
     def test_accepts_complete_bound_delivery(self):
         self.assertTrue(valid_musicvideo_review(self.row, self.output))
 
+    def test_rejects_missing_or_programmatic_phase_approval_evidence(self):
+        for key, value in (("controlID", "NativeGateWriter.approve"), ("readyBeforeClick", False),
+                           ("approvedPersisted", False), ("handoffPhase", "bible"),
+                           ("artifactTitle", "Pipeline"), ("gatesAfterSHA256", "b" * 64),
+                           ("openedFromPhase", "project_init"), ("handoffTurnID", ""),
+                           ("handoffInstructionsSHA256", None)):
+            with self.subTest(key=key):
+                row = copy.deepcopy(self.row)
+                row["nativeGateApprovals"][0][key] = value
+                self.assertFalse(valid_musicvideo_review(row, self.output))
+        row = copy.deepcopy(self.row)
+        del row["nativeGateApprovals"][6]
+        self.assertFalse(valid_musicvideo_review(row, self.output))
+        row = copy.deepcopy(self.row)
+        row["nativeGateApprovals"][1:3] = reversed(row["nativeGateApprovals"][1:3])
+        self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_raw_or_unreviewed_bible_failure(self):
+        for key, value in (("reason", "Cannot load bible/bible.yaml"), ("status", "Not started"),
+                           ("diagnosticHiddenByDefault", False), ("diagnosticMatchesReadiness", False),
+                           ("diagnosticOpenedByControl", ""), ("gatesUnchanged", False), ("invalidArtifactPresent", False)):
+            with self.subTest(key=key):
+                row = copy.deepcopy(self.row)
+                row["nativeBibleBlocker"][key] = value
+                self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_generation_before_native_approval(self):
+        for key, value in (("authorityBefore", True), ("journalCountBefore", 1), ("requestCountBefore", 1),
+                           ("spendCountBefore", 1), ("approvedPackageSHA256", "a" * 64), ("pricingOverrideItemIDs", []),
+                           ("continuationPhases", []), ("continuationHidden", False)):
+            row = copy.deepcopy(self.row)
+            row["generation"]["nativeApproval"][key] = value
+            self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_missing_reordered_clipped_or_wrong_window_take_actions(self):
+        for change in ("missing", "reordered", "clipped", "wrong-window", "unchanged-picker"):
+            row = copy.deepcopy(self.row)
+            actions = row["generation"]["nativeInteractions"]
+            if change == "missing":
+                del actions[-2]
+            elif change == "reordered":
+                actions[-3:-1] = reversed(actions[-3:-1])
+            elif change == "clipped":
+                actions[3]["frame"][1] = 630
+            elif change == "wrong-window":
+                actions[3]["windowNumber"] = 300
+            else:
+                actions[2]["before"] = actions[2]["after"]
+            self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_unpersisted_or_default_take_review(self):
+        for change in ("wrong-take", "missing-pass", "default-range", "empty-observation"):
+            row = copy.deepcopy(self.row)
+            review = row["generation"]["nativeTakeReview"]
+            if change == "wrong-take":
+                review["selectedTakeIDAfter"] = "another-take"
+            elif change == "missing-pass":
+                review["findings"].pop()
+            elif change == "default-range":
+                review["findings"][0]["startSeconds"] = 0
+            else:
+                review["findings"][0]["observation"] = ""
+            self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_accepts_native_take_duration_rounding_within_one_frame(self):
+        for original_end in ("4.0000000001", "3.9999999999", "4.03", "3.97"):
+            with self.subTest(original_end=original_end):
+                row = copy.deepcopy(self.row)
+                for action in row["generation"]["nativeInteractions"]:
+                    if action["controlID"] == "take.end":
+                        action["before"] = original_end
+                self.assertTrue(valid_musicvideo_review(row, self.output))
+
+    def test_rejects_invalid_or_out_of_tolerance_native_take_duration(self):
+        for original_end in ("4.04", "3.96", "0", "NaN", "Inf", "-Inf", "duration", "", None, 4.0):
+            with self.subTest(original_end=original_end):
+                row = copy.deepcopy(self.row)
+                action = next(item for item in row["generation"]["nativeInteractions"] if item["controlID"] == "take.end")
+                action["before"] = original_end
+                self.assertFalse(valid_musicvideo_review(row, self.output))
+
+    def test_take_duration_tolerance_does_not_relax_other_native_states(self):
+        for control, key, value in (("take.end", "after", "3.000"), ("take.start", "before", "0.001")):
+            row = copy.deepcopy(self.row)
+            action = next(item for item in row["generation"]["nativeInteractions"] if item["controlID"] == control)
+            action[key] = value
+            self.assertFalse(valid_musicvideo_review(row, self.output))
+
     def test_rejects_clipped_control_even_when_all_actions_claim_success(self):
         self.row["controls"][0]["control"]["y"] = 630
         self.assertFalse(valid_musicvideo_review(self.row, self.output))
+
+    def test_storyboard_inspector_requires_rendered_fields_for_both_native_selections(self):
+        fields = [
+            ("verse1.01", [("Section", "Verse 1"), ("Section timing", "0.0–12.0 s"), ("Camera", "Slow dolly"),
+                           ("Framing", "Wide"), ("Angle", "Frontal"), ("Height", "Eye Level")]),
+            ("chorus1.01", [("Section", "Chorus 1"), ("Section timing", "12.0–24.0 s"), ("Camera", "Slow push in"),
+                            ("Framing", "Medium"), ("Angle", "Frontal"), ("Lens Hint", "Wide"), ("Location view", "Wide · Noon")]),
+        ]
+        row = {key: True for key in ("threeColumns", "noTimelineOrEmptyPreview", "shotInspectorBound",
+                                    "twoStoryboardSections", "statusVisible")}
+        row["screenshots"] = ["init.png", "brief.png", "storyboard.png"]
+        row["shotInspectorSelections"] = [
+            {"shotID": shot, "controlID": f"storyboard.shot.{shot}", "rawFieldsAbsent": True,
+             "previousSelectionAbsent": True,
+             "renderedFields": [{"label": label, "value": value} for label, value in values]}
+            for shot, values in fields
+        ]
+        self.assertTrue(valid_production_workbench(row))
+        for change in ("missing-fields", "stale-selection", "raw-key"):
+            broken = copy.deepcopy(row)
+            second = broken["shotInspectorSelections"][1]
+            if change == "missing-fields":
+                second["renderedFields"] = []
+            elif change == "stale-selection":
+                second["shotID"] = "verse1.01"
+            else:
+                second["renderedFields"][-1] = {"label": "location_view_request", "value": "wide.noon"}
+            self.assertFalse(valid_production_workbench(broken))
 
     def test_rejects_larger_window_or_missing_native_input(self):
         row = copy.deepcopy(self.row)

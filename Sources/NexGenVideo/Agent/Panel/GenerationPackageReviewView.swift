@@ -254,6 +254,15 @@ private struct GenerationReferenceThumbnail: View {
                             lineWidth: AppTheme.BorderWidth.hairline
                         )
                 )
+                .background {
+                    if GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested
+                        || MusicvideoHostFlowAcceptance.isRequested {
+                        AppRelaunchClickProbe(identifier: "generation-input.preview.\(receipt.assetID)",
+                            acceptanceState: (asset?.thumbnail ?? loadedImage) != nil, acceptanceText: name)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
                 if style == .labeled {
                     Text("Input · \(role)")
                         .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)

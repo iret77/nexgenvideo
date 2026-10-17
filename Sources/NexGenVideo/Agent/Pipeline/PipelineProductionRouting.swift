@@ -447,7 +447,9 @@ enum PipelineProductionRouting {
         }
         let selection = try requireCurrent(
             shotID: proof.shotID,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            activation: editor.generationBatchCoordinator.providerActivation(),
+            candidateProvider: { editor.generationBatchCoordinator.modelCatalog.productionRouteCandidates(activation: $0) }
         )
         guard selection.modelID == proof.modelID,
               selection.target == target,

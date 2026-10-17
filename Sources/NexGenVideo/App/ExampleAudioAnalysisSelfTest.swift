@@ -271,6 +271,7 @@ enum ExampleAudioAnalysisSelfTest {
     }
 
     private static func run(_ configuration: Configuration) async throws -> AnalysisSummary {
+        UserDefaults.standard.set(AppTheme.Typography.standardScale, forKey: AppTheme.Typography.scaleKey)
         let manifest = try JSONDecoder().decode(
             FixtureManifest.self,
             from: Data(contentsOf: configuration.manifestURL)
@@ -529,11 +530,15 @@ enum ExampleAudioAnalysisSelfTest {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
-                let planning = try await FullflowAcceptanceFixture.finishPlanning(editor: flow.editor)
+                let planning = try await FullflowAcceptanceFixture.finishPlanning(editor: flow.editor,
+                    evidenceURL: configuration.reportDirectory, initialGateApprovals: flow.gateApprovals)
+                try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
                 let delivery = try await WorkspaceUIAcceptance.finishMusicvideoDelivery(document: flow.document,
                     receipt: planning, evidenceURL: configuration.reportDirectory, scale: AppTheme.Typography.standardScale)
                 let fullflow: [String: Any] = ["complete": true, "source": "private exact-file analysis through host intake",
                     "canonicalArtifacts": planning.canonicalArtifacts, "suppliedInputs": planning.suppliedInputs,
+                    "nativeGateApprovals": try JSONSerialization.jsonObject(with: encoder.encode(planning.nativeGateApprovals)),
+                    "nativeBibleBlocker": planning.nativeBibleBlocker,
                     "delivery": delivery]
                 try JSONSerialization.data(withJSONObject: fullflow, options: [.prettyPrinted, .sortedKeys])
                     .write(to: configuration.reportDirectory.appendingPathComponent("fullflow.json"), options: .atomic)
