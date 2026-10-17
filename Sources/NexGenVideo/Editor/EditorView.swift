@@ -113,9 +113,7 @@ private enum SplitAutosave {
     static let mediaRight    = "editor.media.right"
     static let verticalTop   = "editor.vertical.top"
     static let verticalLeft  = "editor.vertical.left"
-    static let productionRoot   = "editor.produce.root.v2"
-    static let productionCenter = "editor.produce.content.v2"
-    static let productionRight  = "editor.produce.right.v2"
+    static let productionRoot   = "editor.produce.root.v3"
     static let mediaRoot     = "editor.workspace.media.root.v2"
     static let mediaDetails = "editor.workspace.media.details.v1"
     static let postRoot      = "editor.workspace.postproduction.root.v1"
@@ -156,10 +154,11 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         MediaWorkspaceSidebar(workspace: .edit),
         panel: .media
     )
-    private lazy var agentHC: NSViewController     = makeHosting(AgentPanelView(), panel: .agent)
+    private lazy var productionSidebarHC: NSViewController = makeHosting(ProductionWorkspaceSidebar(), panel: .agent)
+    private lazy var productionInspectorHC: NSViewController = makeHosting(ProductionInspectorView(), panel: .inspector)
     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
-    private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(), panel: .project)
+    private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(production: true), panel: .project)
     private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
     private lazy var reviewHC: NSViewController     = makeHosting(FinishReviewPane(), panel: .project)
     private lazy var exportHC: NSViewController     = makeHosting(ExportWorkspaceSidebar(), panel: .project)
@@ -228,7 +227,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     func leafItem(for panel: EditorViewModel.FocusedPanel) -> NSSplitViewItem? {
         switch panel {
-        case .agent:     return mediaSplitItem   // Agent lives in the left sidebar now.
+        case .agent:     return mediaSplitItem
         case .media:     return mediaLibrarySplitItem ?? mediaSplitItem
         case .mediaFolders: return mediaSplitItem
         case .preview:   return previewSplitItem
@@ -401,56 +400,27 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     }
 
     // MARK: - Production layout
-    // The timeline spans the artifact and preview columns; Tasks retains its own full-height dock.
+
     private func buildProductionLayout(into target: NSSplitViewController) {
         target.splitView.isVertical = true
-        let content = makeChildSplit(isVertical: false, autosave: SplitAutosave.productionCenter)
-        let upper = makeChildSplit(isVertical: true, autosave: "editor.produce.upper.v2")
-        let cockpitItem = NSSplitViewItem(viewController: cockpitHC)
-        cockpitItem.minimumThickness = AppTheme.Layout.previewMinWidth
-        upper.addSplitViewItem(cockpitItem)
-        cockpitSplitItem = cockpitItem
-
-        let right = makeChildSplit(isVertical: false, autosave: SplitAutosave.productionRight)
-        let previewItem = makePreviewItem()
-        previewItem.minimumThickness = AppTheme.Layout.producePreviewMinHeight
-        right.addSplitViewItem(previewItem)
-        let inspectorItem = makeInspectorItem()
-        inspectorItem.minimumThickness = AppTheme.Layout.inspectorMinHeight
-        right.addSplitViewItem(inspectorItem)
-        let rightItem = NSSplitViewItem(viewController: right)
-        rightItem.minimumThickness = AppTheme.Layout.produceRightColumnMinWidth
-        rightItem.holdingPriority = .editorFixedPanel
-        upper.addSplitViewItem(rightItem)
-
-        let upperItem = NSSplitViewItem(viewController: upper)
-        upperItem.minimumThickness = AppTheme.Layout.producePreviewMinHeight + AppTheme.Layout.inspectorMinHeight
-        content.addSplitViewItem(upperItem)
-        let timelineItem = makeTimelineItem()
-        timelineItem.minimumThickness = AppTheme.Layout.produceTimelineStripHeight
-        content.addSplitViewItem(timelineItem)
-        target.addSplitViewItem(makeSidebarItem(host: agentHC, minimumThickness: AppTheme.Layout.agentPanelMin))
-        let contentItem = NSSplitViewItem(viewController: content)
-        contentItem.minimumThickness = AppTheme.Layout.previewMinWidth + AppTheme.Layout.produceRightColumnMinWidth
-        target.addSplitViewItem(contentItem)
-
-        applyAfterLayout { [weak self, weak target, weak content, weak upper, weak right] in
-            guard let self, let target, let content, let upper, let right else { return }
+        target.addSplitViewItem(makeSidebarItem(host: productionSidebarHC,
+            minimumThickness: AppTheme.Layout.workflowSidebarMin))
+        let artifact = NSSplitViewItem(viewController: cockpitHC)
+        artifact.minimumThickness = AppTheme.Layout.previewMinWidth
+        cockpitSplitItem = artifact
+        target.addSplitViewItem(artifact)
+        let inspector = NSSplitViewItem(viewController: productionInspectorHC)
+        inspector.minimumThickness = AppTheme.Layout.productionInspectorMin
+        inspector.canCollapse = true
+        inspector.holdingPriority = .editorFixedPanel
+        inspectorSplitItem = inspector
+        target.addSplitViewItem(inspector)
+        applyAfterLayout { [weak self, weak target] in
+            guard let self, let target else { return }
+            let width = target.view.bounds.width
             self.positionIfUnsaved(target) {
-                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
-            }
-            target.view.layoutSubtreeIfNeeded()
-            self.positionIfUnsaved(content) {
-                $0.setPosition(max(0, content.view.bounds.height - AppTheme.Layout.produceTimelineStripDefault), ofDividerAt: 0)
-            }
-            content.view.layoutSubtreeIfNeeded()
-            self.positionIfUnsaved(upper) {
-                $0.setPosition(max(0, upper.view.bounds.width - AppTheme.Layout.producePreviewDefaultWidth), ofDividerAt: 0)
-            }
-            upper.view.layoutSubtreeIfNeeded()
-            self.positionIfUnsaved(right) {
-                $0.setPosition(max(AppTheme.Layout.producePreviewMinHeight,
-                    right.view.bounds.height - AppTheme.Layout.inspectorMinHeight), ofDividerAt: 0)
+                $0.setPosition(AppTheme.Layout.workflowSidebarDefault, ofDividerAt: 0)
+                $0.setPosition(width - AppTheme.Layout.productionInspectorDefault, ofDividerAt: 1)
             }
         }
     }

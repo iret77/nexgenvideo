@@ -10,6 +10,7 @@ import NexGenEngine
 /// Video/image compose through the real engine builders (`PromptGenerator`); audio has no engine
 /// builder (Seedance/image only), so it keeps the deterministic intent path without visual directives.
 enum PromptComposer {
+    private static let compositionPolicy = "approved-artifacts/v2"
 
     struct Composition: Sendable {
         let text: String
@@ -196,6 +197,7 @@ enum PromptComposer {
                 payload.temporalStructure = shot.temporalStructure
             }
             try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: false)
+            try rejectDirectiveContradictions(payload, additional: videoContext.blocking + videoContext.continuityLocks)
             let ir = VideoPromptIRV1(
                 payload: payload,
                 modeID: videoContext.modeID,
@@ -239,6 +241,7 @@ enum PromptComposer {
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
             try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
+            try rejectDirectiveContradictions(payload)
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
             if shot != nil,
                let violation = ProductionPromptPolicy.stillPromptViolations(composed).first {
@@ -342,9 +345,12 @@ enum PromptComposer {
     }
 
     static func inputFingerprint(projectDir: URL?) async throws -> String {
-        guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else { return "none" }
+        guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else {
+            return FileDigest.sha256(of: Data(compositionPolicy.utf8))
+        }
         return try await Task.detached(priority: .utility) {
             struct Inputs: Encodable {
+                let compositionPolicy: String
                 let artifactHashes: [String: String]
                 let directives: [String]
                 let locked: [String]
@@ -364,7 +370,7 @@ enum PromptComposer {
                     propRefs: []
                 )
             )
-            return FileDigest.sha256(of: try GenerationPackageV1.canonicalData(Inputs(artifactHashes: hashes,
+            return FileDigest.sha256(of: try GenerationPackageV1.canonicalData(Inputs(compositionPolicy: compositionPolicy, artifactHashes: hashes,
                 directives: values.all, locked: values.locked)))
         }.value
     }
@@ -394,32 +400,16 @@ enum PromptComposer {
                 add(directive, locked: lockedSet.contains(directive.lowercased()))
             }
         }
-        for token in patternStyleTokens(dataRoot: root, store: store) { add(token, locked: false) }
         return ProjectDirectives(all: all, locked: locked)
     }
 
-    private static func patternStyleTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
-        guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
-            let id = brief.directorPattern?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return [] }
-        let activePack = ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: root))
-        guard let provider = PackCatalog.registry(activePack: activePack).patternProvider,
-            let data = try? provider.get(id: id),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        var directives: [String] = []
-        for key in ["lighting", "color"] {
-            if let block = object[key] as? [String: Any], let value = block["description"] as? String {
-                directives.append(value)
-            }
+    private static func rejectDirectiveContradictions(_ payload: PromptPayload, additional: [String] = []) throws {
+        let statements = [payload.subject, payload.setting, payload.style, payload.light,
+                          payload.composition, payload.camera] + payload.directives + additional
+        if let conflict = PromptDirectiveConflict.first(in: statements, negatives: payload.negatives) {
+            throw ComposeError.lintBlocked(code: "CONTRADICTORY_DIRECTIVES",
+                message: "The prompt both requires and excludes ‘\(conflict)’. Resolve the conflicting intent, ledger or approved artifact before compiling.")
         }
-        if let craft = object["craft_signature"] as? [[String: Any]] {
-            for entry in craft {
-                guard let levers = entry["pipeline_levers"] as? [String],
-                      levers.contains("visual_prompt"),
-                      let directive = entry["directive"] as? String else { continue }
-                directives.append(directive)
-            }
-        }
-        return directives
     }
 
     // MARK: - Audio composition (no engine builder)

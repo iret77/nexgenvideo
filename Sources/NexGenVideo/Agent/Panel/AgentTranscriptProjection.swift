@@ -17,7 +17,23 @@ struct AgentActivity: Identifiable {
 
     var currentStatus: String? { statuses.last }
     var operationLabel: String {
-        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Thinking"
+        steps.last.map { ToolRunPresentation.label(for: $0.name, inputJSON: $0.inputJSON) } ?? "Thinking"
+    }
+}
+
+struct AgentTaskActivityPresentation: Equatable {
+    let title: String
+    let expectedResult: String?
+
+    init(messages: [AgentMessage], phase: String?) {
+        let taskRecord = messages.reversed().compactMap { $0.userPresentation?.choiceRecord }
+            .first { $0.selections.contains { $0.label == "Task" } }
+        let task = taskRecord?.selections.first { $0.label == "Task" }?.values.first
+        let taskPhase = taskRecord?.selections.first { $0.label == "Phase" }?.values.first
+        let phaseLabel = (taskRecord == nil ? phase : taskPhase).map(PhaseDisplay.label)
+        title = [task ?? (phaseLabel == nil ? String(localized: "Project task") : String(localized: "Continue production")),
+                 phaseLabel].compactMap { $0 }.joined(separator: " · ")
+        expectedResult = phaseLabel.map { String(localized: "Result: \($0) for approval") }
     }
 }
 

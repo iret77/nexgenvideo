@@ -20,6 +20,7 @@ struct ToolbarIconButtonStyle: ButtonStyle {
                 .padding(.horizontal, hasLabel ? AppTheme.Spacing.sm : AppTheme.Spacing.none)
                 .frame(width: hasLabel ? nil : AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight(isActive: isEnabled && isSelected)
+                .modifier(ControlKeyboardFocusRing(radius: AppTheme.Radius.sm))
                 .opacity(isEnabled
                     ? (configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
                     : AppTheme.Opacity.disabledControl)

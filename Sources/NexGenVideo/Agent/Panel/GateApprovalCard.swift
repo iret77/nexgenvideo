@@ -237,6 +237,7 @@ struct GateApprovalCard: View {
 
 extension EditorViewModel {
     func revealReviewSurface(for phase: String) {
+        if productionSelectedPhase != phase { inspectedObject = nil }
         let route = PipelineSurfaceRouting.route(for: phase, contract: uiContract,
             availablePackSurfaces: availableCockpitPackSurfaces)
         switch route?.destination {
@@ -244,10 +245,8 @@ extension EditorViewModel {
         case .pack(let id, _):
             revealCockpit(.pipeline)
             cockpitPackSurfaceID = id
-        case .chat:
-            agentPanelVisible = true
-            focusedPanel = .agent
         case nil: revealCockpit(.pipeline)
         }
+        productionSelectedPhase = phase
     }
 }

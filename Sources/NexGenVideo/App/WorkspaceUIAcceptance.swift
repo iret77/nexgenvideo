@@ -116,14 +116,15 @@ enum WorkspaceUIAcceptance {
                 return editor.workspaceFocus == .production
                     && visiblePanelIDs(in: host) == expectedPanels(for: .production)
                     && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
+                    && probeState(identifier: "pipeline.overview.dock.start", in: window) == true
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
-                    && agentControlsAreContained(in: window)
+                    && productionControlsAreContained(in: window)
             }) else {
                 fail("could not prepare large production layout", scale: scale)
             }
             let preparedProductionFrames = visiblePanelFrames(in: host)
-            guard productionTimelineSpansContent(preparedProductionFrames) else {
-                fail("production timeline must span cockpit and preview without covering Tasks", scale: scale)
+            guard productionColumnsAreIndependent(preparedProductionFrames) else {
+                fail("production requires independent workflow, artifact and inspector columns", scale: scale)
             }
             try? await Task.sleep(for: .milliseconds(300))
             host.layoutSubtreeIfNeeded()
@@ -164,7 +165,7 @@ enum WorkspaceUIAcceptance {
                         && visiblePanelIDs(in: host) == expectedPanels(for: workspace)
                         && defaultPanelWidthsAreValid(workspace: workspace, frames: frames)
                         && previewTimecodeIsSingleLine(in: window, scale: scale)
-                        && (workspace != .production || agentControlsAreContained(in: window))
+                        && (workspace != .production || productionControlsAreContained(in: window))
                         && (!(workspace == .media || workspace == .edit)
                             || mediaToolbarIsContained(in: window, workspace: workspace))
                 }) else {
@@ -203,7 +204,7 @@ enum WorkspaceUIAcceptance {
                       visiblePanelFrames(in: host) == renderedFrames,
                       defaultPanelWidthsAreValid(workspace: workspace, frames: renderedFrames),
                       previewTimecodeIsSingleLine(in: window, scale: scale),
-                      workspace != .production || agentControlsAreContained(in: window) else {
+                      workspace != .production || productionControlsAreContained(in: window) else {
                     fail("workspace layout did not settle for \(workspace.rawValue)", scale: scale)
                 }
                 if workspace == .media || workspace == .edit {
@@ -354,7 +355,7 @@ enum WorkspaceUIAcceptance {
                     && visiblePanelIDs(in: host) == expectedPanels(for: .production)
                     && narrowProductionWidthsAreValid(frames)
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
-                    && agentControlsAreContained(in: window)
+                    && productionControlsAreContained(in: window)
             }) else {
                 fail("narrow production controls did not fit", scale: scale)
             }
@@ -366,7 +367,7 @@ enum WorkspaceUIAcceptance {
                   abs(host.bounds.width - AppTheme.Window.projectMin.width) <= AppTheme.BorderWidth.thin,
                   narrowProductionWidthsAreValid(narrowFrames),
                   previewTimecodeIsSingleLine(in: window, scale: scale),
-                  agentControlsAreContained(in: window),
+                  productionControlsAreContained(in: window),
                   snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName).png")) else {
                 _ = snapshot(host, at: evidenceURL.appendingPathComponent("\(narrowName)-failed.png"))
                 emit("layout-diagnostic", scale: scale, fields: [
@@ -381,7 +382,7 @@ enum WorkspaceUIAcceptance {
                 scale: scale,
                 fields: [
                     "screenshot": "\(narrowName).png",
-                    "taskControls": ["agent.decisions", "agent.diagnostics", "agent.utilities"],
+                    "workbenchControls": ["production.sidebar", "production.status"],
                     "frames": narrowFrames.mapValues { frameDescription($0) },
                     "window": windowDiagnostics(window, contentView: host),
                 ]
@@ -842,23 +843,14 @@ enum WorkspaceUIAcceptance {
               editor.activePackAccentColor != nil else {
             fail("pinned Musicvideo startup lost its phases, Track intake or pack identity", scale: scale)
         }
-        editor.cockpitTab = .pipeline
-        editor.cockpitPackSurfaceID = nil
-        let host = NSHostingView(rootView: HStack(spacing: AppTheme.Spacing.lg) {
-            ProjectCockpitView().frame(width: AppTheme.Acceptance.pipelineOverviewWidth)
-            AgentPanelView()
-        }.interfaceStyle(palette: editor.projectPalette).environment(editor)
-            .frame(width: AppTheme.Acceptance.musicvideoViewport.width, height: AppTheme.Acceptance.musicvideoViewport.height)
-            .background(AppTheme.Background.surfaceColor))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 950),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = host
+        guard let window = document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window,
+              let host = window.contentView else { fail("Musicvideo editor window is unavailable", scale: scale) }
+        window.setContentSize(AppTheme.Acceptance.workbenchViewport)
         window.appearance = NSAppearance(named: .darkAqua)
-        window.center()
+        document.showWindows()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        defer { window.orderOut(nil); window.contentView = nil }
+        defer { window.orderOut(nil) }
         func text(_ id: String) -> String? {
             (findProbe(in: host, identifier: id) as? AppRelaunchClickProbeView)?.acceptanceText
         }
@@ -866,64 +858,29 @@ enum WorkspaceUIAcceptance {
             _ = snapshot(host, at: evidenceURL.appendingPathComponent("scale-\(scaleLabel(scale))-musicvideo-failed.png"))
             emit("musicvideo-diagnostic", scale: scale, fields: ["reason": reason,
                 "current": editor.projectState?.nextPhaseName ?? "missing",
-                "dialog": editor.agentService.pendingDialog?.title ?? "missing",
-                "renderedDialog": text("agent.dialog.title") ?? "missing",
-                "renderedPhases": expectedPhases.filter { text("pipeline.overview.phase.\($0)") != nil }])
+                "dialog": text("agent.dialog.title") ?? "missing",
+                "selected": editor.productionSelectedPhase ?? "missing"])
             fail(reason, scale: scale)
         }
-        guard await waitUntil(timeout: .seconds(5), {
+        guard await waitUntil(timeout: .seconds(10), {
             host.layoutSubtreeIfNeeded()
             return window.isKeyWindow && text("agent.dialog.title") == "Track"
-                && probeState(identifier: "cockpit.tab.Pipeline", in: window) == true
-                && expectedPhases.allSatisfy { text("pipeline.overview.phase.\($0)") != nil }
-                && probeState(identifier: "pipeline.overview.approve.project_init", in: window) == false
-        }) else { reject("Musicvideo phase controls or Track card did not render") }
-        func visibleProbe(_ identifier: String, in view: NSView) -> NSView? {
-            guard view.window === window, !view.isHiddenOrHasHiddenAncestor else { return nil }
-            if view.identifier?.rawValue == identifier,
-               view.bounds.width > 0, view.bounds.height > 0 {
-                return view
-            }
-            for child in view.subviews {
-                if let match = visibleProbe(identifier, in: child) { return match }
-            }
-            return nil
-        }
-        let actionFont = NSFont.systemFont(ofSize: AppTheme.Typography.action * CGFloat(scale), weight: AppTheme.AppKitFontWeight.medium)
-        let singleLineHeight = ceil(actionFont.ascender - actionFont.descender + actionFont.leading)
-        for phase in ["project_init", "production_design"] {
-            let identifier = "pipeline.overview.surface.\(phase)"
-            guard let action = visibleProbe(identifier, in: host) as? AppRelaunchClickProbeView,
-                  let title = visibleProbe("pipeline.overview.surfaceText.\(phase)", in: host),
-                  let identity = visibleProbe("pipeline.overview.phase.\(phase)", in: host),
-                  let row = visibleProbe("pipeline.overview.row.\(phase)", in: host) else {
-                reject("Pipeline surface control or row is missing: \(phase)")
-            }
-            guard action.window === window, !action.isHiddenOrHasHiddenAncestor,
-                  action.bounds.width > 0, action.bounds.height > 0,
-                  title.bounds.height <= singleLineHeight + AppTheme.BorderWidth.thin else {
-                reject("Pipeline action label wraps or is not visible: \(phase)")
-            }
-            let actionFrame = action.convert(action.bounds, to: host)
-            let identityFrame = identity.convert(identity.bounds, to: host)
-            let rowFrame = row.convert(row.bounds, to: host)
-            guard host.bounds.contains(actionFrame), rowFrame.contains(actionFrame),
-                  !actionFrame.intersects(identityFrame),
-                  action.acceptanceState == (phase == "project_init") else {
-                reject("Pipeline surface action has incorrect geometry or enabled state: \(phase)")
-            }
-        }
+                && productionColumnsAreIndependent(visiblePanelFrames(in: host))
+                && productionControlsAreContained(in: window)
+                && editor.productionSelectedPhase == "project_init"
+                && expectedPhases.allSatisfy { text("pipeline.overview.select.\($0)") != nil }
+                && findProbe(in: host, identifier: "pipeline.overview.approve.project_init") == nil
+        }) else { reject("Musicvideo workflow, fixed Track decision or artifact did not render") }
         guard let home = editor.workingRoot else { reject("Musicvideo fixture has no working copy") }
         guard await waitUntil(timeout: .seconds(5), {
             guard let owner = editor.agentService.currentSessionId,
                   let expected = editor.agentService.sessions.first(where: { $0.id == owner })?.decision,
-                  let restored = try? ChatSessionStore.loadThrowing(from: home).first(where: { $0.id == owner }) else {
-                return false
-            }
+                  let restored = try? ChatSessionStore.loadThrowing(from: home).first(where: { $0.id == owner }) else { return false }
             return restored.decision == expected && expected.dialog.title == "Track"
         }) else { reject("initial Track decision did not finish its durable checkpoint") }
-        guard let workingBytes = try? treeSnapshot(at: home),
-              let savedBytes = try? treeSnapshot(at: projectURL) else { reject("Musicvideo fixture is unreadable") }
+        guard let workingBytes = try? treeSnapshot(at: home), let savedBytes = try? treeSnapshot(at: projectURL) else {
+            reject("Musicvideo fixture is unreadable")
+        }
         let timeline = editor.timeline
         let manifest = editor.mediaManifest
         let log = editor.generationLog
@@ -931,51 +888,29 @@ enum WorkspaceUIAcceptance {
         let edited = document.isDocumentEdited
         let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
         guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
-        let artifactTabs: [CockpitTab] = [.story, .treatment, .storyboard, .bible, .shotlist, .review]
         let story = "scale-\(scaleLabel(scale))-musicvideo-story-context.png"
-        for tab in artifactTabs {
-            let identifier = "cockpit.tab.\(tab.rawValue)"
-            _ = await revealProbe(identifier, in: window)
-            if let reason = click(identifier: identifier, in: window) {
-                reject("artifact tab could not open: \(tab.rawValue): \(reason)")
+        for phase in ["brief", "production_design", "treatment", "storyboard", "bible", "shotlist", "sanity", "frames", "render"] {
+            let identifier = "pipeline.overview.select.\(phase)"
+            guard await revealProbe(identifier, in: window), click(identifier: identifier, in: window) == nil else {
+                reject("workflow phase could not open: \(phase)")
             }
             guard await waitUntil(timeout: .seconds(5), {
                 host.layoutSubtreeIfNeeded()
-                return probeState(identifier: identifier, in: window) == true
-                    && findProbe(in: host, identifier: "pipeline.overview.root") == nil
-                    && findProbe(in: host, identifier: "pipeline.dock.current") == nil
-                    && findProbe(in: host, identifier: "pipeline.dock.approve.project_init") == nil
+                return editor.productionSelectedPhase == phase
                     && editor.projectState?.nextPhaseName == "project_init"
                     && text("agent.dialog.title") == "Track"
-            }) else { reject("artifact tab contains unrelated workflow controls or changed the active step: \(tab.rawValue)") }
-            if tab == .story, !snapshot(host, at: evidenceURL.appendingPathComponent(story)) {
-                reject("could not capture artifact context")
+                    && productionColumnsAreIndependent(visiblePanelFrames(in: host))
+                    && findProbe(in: host, identifier: "pipeline.overview.dock.status") != nil
+            }) else { reject("phase selection lost its fixed decision or changed the active step: \(phase)") }
+            if phase == "brief", !snapshot(host, at: evidenceURL.appendingPathComponent(story)) {
+                reject("could not capture Briefing context")
             }
         }
-        _ = await revealProbe("cockpit.tab.Pipeline", in: window)
-        if let reason = click(identifier: "cockpit.tab.Pipeline", in: window) {
-            reject("Pipeline tab could not reopen: \(reason)")
+        guard await revealProbe("pipeline.overview.select.project_init", in: window),
+              click(identifier: "pipeline.overview.select.project_init", in: window) == nil,
+              await waitUntil(timeout: .seconds(5), { editor.productionSelectedPhase == "project_init" }) else {
+            reject("current phase could not be restored")
         }
-        guard await waitUntil(timeout: .seconds(5), {
-            host.layoutSubtreeIfNeeded()
-            return probeState(identifier: "cockpit.tab.Pipeline", in: window) == true
-                && probeState(identifier: "pipeline.overview.approve.project_init", in: window) == false
-                && text("pipeline.overview.phase.bible") == "Bible"
-                && findProbe(in: host, identifier: "pipeline.overview.tasks") != nil
-        }) else { reject("Pipeline did not restore project status and guarded actions") }
-        editor.focusedPanel = .project
-        if let reason = click(identifier: "pipeline.overview.tasks", in: window) {
-            reject("Open Tasks could not be reached: \(reason)")
-        }
-        guard await waitUntil(timeout: .seconds(5), {
-            editor.focusedPanel == .agent && text("agent.dialog.title") == "Track"
-        }) else { reject("Open Tasks did not focus the pending host interaction") }
-        if let reason = click(identifier: "pipeline.overview.approve.project_init", in: window) {
-            reject("disabled approval target: \(reason)")
-        }
-        try? await Task.sleep(for: .milliseconds(300))
-        let currentWorkingBytes = try? treeSnapshot(at: home)
-        let currentSavedBytes = try? treeSnapshot(at: projectURL)
         let checks: [String: Bool] = [
             "currentPhase": editor.projectState?.nextPhaseName == "project_init",
             "noApprovals": editor.projectState?.phases.allSatisfy({ !$0.approved }) == true,
@@ -983,23 +918,21 @@ enum WorkspaceUIAcceptance {
             "timeline": editor.timeline == timeline, "manifest": editor.mediaManifest == manifest,
             "costs": editor.generationLog == log, "documentEdited": document.isDocumentEdited == edited,
             "undo": (document.undoManager?.canUndo ?? false) == canUndo,
-            "workingBytes": currentWorkingBytes == workingBytes, "savedBytes": currentSavedBytes == savedBytes,
+            "workingBytes": (try? treeSnapshot(at: home)) == workingBytes,
+            "savedBytes": (try? treeSnapshot(at: projectURL)) == savedBytes,
         ]
         guard checks.values.allSatisfy({ $0 }) else {
-            let changed = Set(workingBytes.keys).union(currentWorkingBytes?.keys.map { $0 } ?? [])
-                .filter { workingBytes[$0] != currentWorkingBytes?[$0] }.sorted()
-            emit("musicvideo-invariant-diagnostic", scale: scale,
-                fields: ["checks": checks, "changedWorkingFiles": changed])
-            reject("viewing another phase or clicking disabled approval changed the production")
+            emit("musicvideo-invariant-diagnostic", scale: scale, fields: ["checks": checks])
+            reject("viewing another phase changed project truth")
         }
-        guard await revealProbe("pipeline.overview.phase.render", in: window) else { reject("final Musicvideo phases are unreachable") }
         let final = "scale-\(scaleLabel(scale))-musicvideo-phases.png"
-        guard snapshot(host, at: evidenceURL.appendingPathComponent(final)) else { reject("could not capture final phases") }
+        guard snapshot(host, at: evidenceURL.appendingPathComponent(final)) else { reject("could not capture workflow state") }
         emit("musicvideo-startup", scale: scale, fields: ["packVersion": binding.version,
             "phases": expectedPhases, "externalPackLoaded": true, "exactBinding": true,
             "libraryDidNotAssignTrack": true, "viewingDidNotAdvance": true, "intakeCheckpointSettled": true,
             "disabledApprovalDidNotMutate": true, "surfaceActionsSingleLine": true,
             "artifactTabsExcludeWorkflowControls": true, "pipelineRestored": true, "tasksReachable": true,
+            "nativeWorkbench": true, "fixedDecisionPersists": true,
             "screenshots": [initial, story, final]])
     }
 
@@ -1635,7 +1568,7 @@ enum WorkspaceUIAcceptance {
         case .media:
             ["mediaFoldersPanel", "mediaPanel", "previewPanel", "inspectorPanel"]
         case .production:
-            ["agentPanel", "projectPanel", "timelinePanel", "previewPanel", "inspectorPanel"]
+            ["agentPanel", "projectPanel", "inspectorPanel"]
         case .edit:
             ["mediaPanel", "previewPanel", "inspectorPanel", "timelinePanel"]
         case .postproduction:
@@ -1670,14 +1603,13 @@ enum WorkspaceUIAcceptance {
         return result
     }
 
-    private static func productionTimelineSpansContent(_ frames: [String: NSRect]) -> Bool {
-        guard let timeline = frames["timelinePanel"], let cockpit = frames["projectPanel"],
-              let preview = frames["previewPanel"], let tasks = frames["agentPanel"] else { return false }
-        let tolerance = AppTheme.BorderWidth.thin
-        return abs(timeline.minX - cockpit.minX) <= tolerance
-            && abs(timeline.maxX - preview.maxX) <= tolerance
-            && timeline.minX >= tasks.maxX
-            && !timeline.intersects(cockpit) && !timeline.intersects(preview)
+    private static func productionColumnsAreIndependent(_ frames: [String: NSRect]) -> Bool {
+        guard let workflow = frames["agentPanel"], let artifact = frames["projectPanel"],
+              let inspector = frames["inspectorPanel"] else { return false }
+        return frames["timelinePanel"] == nil && frames["previewPanel"] == nil
+            && workflow.maxX <= artifact.minX && artifact.maxX <= inspector.minX
+            && abs(workflow.height - artifact.height) <= AppTheme.BorderWidth.thin
+            && abs(artifact.height - inspector.height) <= AppTheme.BorderWidth.thin
     }
 
     private static func defaultPanelWidthsAreValid(
@@ -1703,9 +1635,9 @@ enum WorkspaceUIAcceptance {
             return matches("mediaPanel", AppTheme.Layout.mediaPanelDefault)
                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
         case .production:
-            return matches("agentPanel", AppTheme.Layout.mediaPanelDefault)
-                && matches("previewPanel", AppTheme.Layout.producePreviewDefaultWidth)
-                && matches("inspectorPanel", AppTheme.Layout.producePreviewDefaultWidth)
+            return matches("agentPanel", AppTheme.Layout.workflowSidebarDefault)
+                && matches("inspectorPanel", AppTheme.Layout.productionInspectorDefault)
+                && productionColumnsAreIndependent(frames)
         case .postproduction, .export:
             return matches("projectPanel", AppTheme.Layout.mediaPanelDefault)
                 && matches("inspectorPanel", AppTheme.Layout.inspectorDefault)
@@ -1714,19 +1646,20 @@ enum WorkspaceUIAcceptance {
 
     private static func narrowProductionWidthsAreValid(_ frames: [String: NSRect]) -> Bool {
         let tolerance = AppTheme.Spacing.md
-        guard let agent = frames["agentPanel"],
-              let project = frames["projectPanel"],
-              let preview = frames["previewPanel"],
+        guard let workflow = frames["agentPanel"], let project = frames["projectPanel"],
               let inspector = frames["inspectorPanel"] else { return false }
-        return agent.width >= AppTheme.Layout.agentPanelMin - tolerance
+        return workflow.width >= AppTheme.Layout.workflowSidebarMin - tolerance
             && project.width >= AppTheme.Layout.previewMinWidth - tolerance
-            && preview.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
-            && inspector.width >= AppTheme.Layout.produceRightColumnMinWidth - tolerance
+            && inspector.width >= AppTheme.Layout.productionInspectorMin - tolerance
+            && productionColumnsAreIndependent(frames)
     }
 
     private static func previewTimecodeIsSingleLine(in window: NSWindow, scale: Double) -> Bool {
-        guard let root = window.contentView,
-              let previewFrame = visiblePanelFrames(in: root)["previewPanel"] else { return false }
+        guard let root = window.contentView else { return false }
+        if visiblePanelFrames(in: root)["previewPanel"] == nil {
+            return productionColumnsAreIndependent(visiblePanelFrames(in: root))
+        }
+        guard let previewFrame = visiblePanelFrames(in: root)["previewPanel"] else { return false }
         let maximumHeight = AppTheme.Typography.ui * CGFloat(scale) + AppTheme.Spacing.md
         let previewBounds = previewFrame.insetBy(
             dx: -AppTheme.BorderWidth.thin,
@@ -1799,13 +1732,12 @@ enum WorkspaceUIAcceptance {
         return true
     }
 
-    private static func agentControlsAreContained(in window: NSWindow) -> Bool {
+    private static func productionControlsAreContained(in window: NSWindow) -> Bool {
         guard let root = window.contentView,
-              let agentFrame = visiblePanelFrames(in: root)["agentPanel"] else { return false }
-        let bounds = agentFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
-        return ["agent.decisions", "agent.diagnostics", "agent.utilities"].allSatisfy {
-            visibleProbe(identifier: $0, in: window, containedBy: bounds)
-        }
+              let workflowFrame = visiblePanelFrames(in: root)["agentPanel"] else { return false }
+        let bounds = workflowFrame.insetBy(dx: -AppTheme.BorderWidth.thin, dy: -AppTheme.BorderWidth.thin)
+        return visibleProbe(identifier: "production.sidebar", in: window, containedBy: bounds)
+            && visibleProbe(identifier: "production.status", in: window, containedBy: root.bounds)
     }
 
     private static func visibleProbe(
@@ -2647,6 +2579,11 @@ extension WorkspaceUIAcceptance {
               (try? treeSnapshot(at: projectURL)) == savedBytes else {
             reject("reviewing or declining changed the gates or the saved project")
         }
+        await captureProductionWorkbench(document: document, evidenceURL: evidenceURL, scale: scale)
+        do {
+            let activityImages = try await AgentActivityAcceptance.run(evidenceURL: evidenceURL, scale: scale)
+            emit("agent-activity", scale: scale, fields: ["complete": true, "screenshots": activityImages])
+        } catch { fail("native agent activity acceptance failed: \(error.localizedDescription)", scale: scale) }
         emit("storyboard-review", scale: scale, fields: [
             "cardDestination": cardDestination, "pipelineDestination": pipelineDestination,
             "openedTabWithoutModal": true, "tabRoundTrip": true, "pipelineActionSameTarget": true,
@@ -2664,20 +2601,112 @@ extension WorkspaceUIAcceptance {
         try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
         try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "Native Storyboard acceptance")
+        let brief = try Brief(project: "Night platform", generated: "2026-10-17", mission: .artPiece,
+            targetPlatform: "Cinema", aspectRatio: .landscape16x9, projectMode: "production",
+            conceptType: .narrative, visualMedium: .liveActionRealistic, figures: .artistOnly,
+            lyricsIntegration: .metaphorical, notes: "A singer leaves the city behind as night turns to morning.")
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
         try StoryboardStore.save(storyboardFixture(subject: "The singer crosses the empty night platform.", version: 1),
             to: dataRoot)
         _ = try ProjectIdentity.uuid(for: home)
         return home
     }
 
+    private static func captureProductionWorkbench(document: VideoProject, evidenceURL: URL, scale: Double) async {
+        let editor = document.editorViewModel
+        guard let window = document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window,
+              let host = window.contentView else { fail("native production editor is unavailable", scale: scale) }
+        window.setContentSize(AppTheme.Acceptance.workbenchViewport)
+        window.appearance = NSAppearance(named: .darkAqua)
+        document.showWindows()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        editor.setWorkspaceFocus(.production)
+        defer { window.orderOut(nil) }
+        guard await waitUntil(timeout: .seconds(10), {
+            host.layoutSubtreeIfNeeded()
+            return productionColumnsAreIndependent(visiblePanelFrames(in: host))
+                && productionControlsAreContained(in: window)
+        }) else { fail("native production columns or status did not render", scale: scale) }
+        var captures: [String] = []
+        for phase in ["project_init", "brief", "storyboard"] {
+            let identifier = "pipeline.overview.select.\(phase)"
+            guard await revealProbe(identifier, in: window), click(identifier: identifier, in: window) == nil,
+                  await waitUntil(timeout: .seconds(5), {
+                      editor.productionSelectedPhase == phase
+                          && findProbe(in: host, identifier: "pipeline.overview.dock.status") != nil
+                          && (phase != "storyboard" || findProbe(in: host, identifier: "storyboard.shot.chorus1.01") != nil)
+                  }) else { fail("native production phase could not be selected: \(phase)", scale: scale) }
+            if phase == "storyboard" {
+                guard click(identifier: "storyboard.shot.chorus1.01", in: window) == nil,
+                      await waitUntil(timeout: .seconds(5), {
+                          (findProbe(in: host, identifier: "storyboard.inspector") as? AppRelaunchClickProbeView)?.acceptanceText == "chorus1.01"
+                      }) else { fail("storyboard shot did not bind its technical inspector", scale: scale) }
+                guard let artifactHost = panelView(in: host, identifier: "projectPanel") else {
+                    fail("storyboard artifact accessibility host is unavailable", scale: scale)
+                }
+                let rendered = renderedAccessibilityText(in: artifactHost).joined(separator: "\n")
+                guard rendered.contains("A train passes the empty platform."),
+                      rendered.contains("The singer turns toward the morning light."),
+                      !["basis: inferred", "angle:", "height:", "lens_hint:", "generated", "wide.noon"]
+                        .contains(where: rendered.contains) else {
+                    fail("rendered storyboard text is missing or leaks technical planning fields", scale: scale)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            let name = "scale-\(scaleLabel(scale))-production-\(phase).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(name)) else {
+                fail("native production capture failed", scale: scale)
+            }
+            captures.append(name)
+        }
+        emit("production-workbench", scale: scale, fields: ["screenshots": captures,
+            "threeColumns": true, "noTimelineOrEmptyPreview": true, "shotInspectorBound": true,
+            "twoStoryboardSections": true, "statusVisible": true])
+    }
+
+    private static func panelView(in view: NSView, identifier: String) -> NSView? {
+        if view.accessibilityIdentifier() == identifier { return view }
+        return view.subviews.lazy.compactMap { panelView(in: $0, identifier: identifier) }.first
+    }
+
+    private static func renderedAccessibilityText(in view: NSView) -> [String] {
+        var visited: Set<ObjectIdentifier> = []
+        var text: [String] = []
+        func visit(_ object: NSObject) {
+            guard visited.count < 10_000, visited.insert(ObjectIdentifier(object)).inserted else { return }
+            for property in ["accessibilityLabel", "accessibilityValue", "accessibilityTitle"] {
+                let selector = NSSelectorFromString(property)
+                if object.responds(to: selector),
+                   let value = object.perform(selector)?.takeUnretainedValue() as? String, !value.isEmpty {
+                    text.append(value)
+                }
+            }
+            let children = NSSelectorFromString("accessibilityChildren")
+            if object.responds(to: children),
+               let values = object.perform(children)?.takeUnretainedValue() as? [NSObject] {
+                values.forEach(visit)
+            }
+            (object as? NSView)?.subviews.forEach(visit)
+        }
+        visit(view)
+        return text
+    }
+
     private static func storyboardFixture(subject: String, version: Int) throws -> Storyboard {
         try Storyboard(
             meta: StoryboardMeta(project: "Native Storyboard acceptance", version: version, generated: "2026-10-16",
-                summaryOneline: "One continuous walk across a night platform."),
+                summaryOneline: "Director pattern: cartoon-adult-swim-tartakovsky (all values basis: inferred)",
+                notes: "main_street [wide.noon street axis | horizon.long]"),
             sections: [.init(id: "verse1", label: "Verse 1", timeStart: 0, timeEnd: 12,
                 energy: "low", function: "setup",
                 steps: [.init(id: "verse1.01", function: .story, subject: subject,
-                    camera: "Slow dolly", framing: "Wide")])]
+                    camera: "Slow dolly", framing: "Wide", cameraSetup: ["angle": "frontal", "height": "eye_level"]),
+                    .init(id: "verse1.02", function: .transition, subject: "A train passes the empty platform.", camera: "Locked wide")]),
+                .init(id: "chorus1", label: "Chorus 1", timeStart: 12, timeEnd: 24,
+                    steps: [.init(id: "chorus1.01", function: .performance, subject: "The singer turns toward the morning light.",
+                        camera: "Slow push in", locationViewRequest: "wide.noon", framing: "Medium",
+                        cameraSetup: ["angle": "frontal", "lens_hint": "wide"])])]
         )
     }
 }

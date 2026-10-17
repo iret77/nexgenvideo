@@ -6,6 +6,7 @@ struct ProductionStyleReviewView: View {
     @State private var snapshot: Snapshot?
     @State private var failed = false
     @State private var expanded = false
+    var standalone = false
 
     private struct RefreshID: Hashable {
         let project: URL?
@@ -35,50 +36,22 @@ struct ProductionStyleReviewView: View {
     var body: some View {
         Group {
             if let snapshot, snapshot.home == editor.workingRoot {
-                DisclosureGroup(isExpanded: $expanded) {
-                    ScrollView {
+                Group {
+                    if standalone {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                            Text(snapshot.director)
-                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                            if let signature = snapshot.signature {
-                                Text(signature)
-                                    .interfaceFont(size: AppTheme.Typography.ui)
-                            }
-                            ForEach(snapshot.style.dimensions, id: \.dimension) { dimension in
-                                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                                    Text(label(dimension.dimension))
-                                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                                    Text(dimension.value)
-                                        .interfaceFont(size: AppTheme.Typography.ui)
-                                    if let reason = dimension.reason {
-                                        Text(reason)
-                                            .interfaceFont(size: AppTheme.Typography.ui)
-                                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                                    }
-                                }
-                            }
-                            if editor.declaredPluginName == "musicvideo" {
-                                Text("The approved original song determines the music and timing.")
-                                    .interfaceFont(size: AppTheme.Typography.ui)
-                            }
-                            if snapshot.approved { TimelineStyleReviewView() }
+                            heading(snapshot)
+                            details(snapshot)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, AppTheme.Spacing.sm)
+                    } else {
+                        DisclosureGroup(isExpanded: $expanded) { details(snapshot) } label: { heading(snapshot) }
                     }
-                    .frame(maxHeight: AppTheme.ComponentSize.productionStyleReviewMaxHeight)
-                } label: {
-                    HStack {
-                        Text("Production style")
-                        Spacer(minLength: AppTheme.Spacing.sm)
-                        Text(snapshot.approved ? "Approved" : "Proposed")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                    }
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 }
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .padding(AppTheme.Spacing.md)
                 AppDivider()
+            } else if standalone && !failed {
+                CockpitStateView.empty(icon: "paintpalette", title: "No production design yet",
+                    message: "Production design appears here when the phase has been prepared.")
             } else if failed {
                 Text("The production style needs to be updated before review.")
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -100,6 +73,47 @@ struct ProductionStyleReviewView: View {
                 failed = true
             }
         }
+    }
+
+    private func heading(_ snapshot: Snapshot) -> some View {
+        HStack {
+            Text("Production style")
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Text(snapshot.approved ? "Approved" : "Proposed")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+        }
+        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+    }
+
+    private func details(_ snapshot: Snapshot) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                Text(snapshot.director)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                if let signature = snapshot.signature {
+                    Text(signature).interfaceFont(size: AppTheme.Typography.ui)
+                }
+                ForEach(snapshot.style.dimensions, id: \.dimension) { dimension in
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text(label(dimension.dimension))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                        Text(dimension.value).interfaceFont(size: AppTheme.Typography.ui)
+                        if let reason = dimension.reason {
+                            Text(reason).interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                        }
+                    }
+                }
+                if editor.declaredPluginName == "musicvideo" {
+                    Text("The approved original song determines the music and timing.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                }
+                if snapshot.approved { TimelineStyleReviewView() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, AppTheme.Spacing.sm)
+        }
+        .frame(maxHeight: standalone ? .infinity : AppTheme.ComponentSize.productionStyleReviewMaxHeight)
     }
 
     private func label(_ dimension: ProductionStyleDimensionV1) -> String {

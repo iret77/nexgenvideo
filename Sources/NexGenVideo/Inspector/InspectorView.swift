@@ -57,7 +57,9 @@ struct InspectorView: View {
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
         }
-        .onAppear { promoteSelection() }
+        .onAppear {
+            if editor.workspaceFocus != .production { promoteSelection() }
+        }
     }
 
     /// A multi-clip timeline selection — the one documented exception to the single-inspected-object

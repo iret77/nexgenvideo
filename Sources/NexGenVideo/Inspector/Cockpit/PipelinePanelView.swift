@@ -21,7 +21,6 @@ enum PipelineSurfaceRouting {
     enum Destination: Equatable {
         case tab(CockpitTab)
         case pack(id: String, title: String)
-        case chat
     }
 
     struct Route: Equatable {
@@ -33,7 +32,6 @@ enum PipelineSurfaceRouting {
             switch destination {
             case .tab(let tab): tab.rawValue
             case .pack(_, let title): title
-            case .chat: "Tasks"
             }
         }
     }
@@ -65,12 +63,21 @@ enum PipelineSurfaceRouting {
         return switch entry.surface {
         case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
         case "prose": Route(icon: "text.cursor", taskClass: entry.taskClass, destination: .tab(phase == "treatment" ? .treatment : .story))
-        case "choice": Route(icon: "slider.horizontal.3", taskClass: entry.taskClass, destination: .chat)
+        case "choice": choiceRoute(for: phase, taskClass: entry.taskClass)
         default: nil
         }
     }
 
-    private static func reviewRoute(for phase: String, taskClass: String) -> Route {
+    private static func choiceRoute(for phase: String, taskClass: String) -> Route? {
+        switch phase {
+        case "project_init": Route(icon: "doc", taskClass: taskClass, destination: .tab(.project))
+        case "production_design": Route(icon: "paintpalette", taskClass: taskClass, destination: .tab(.productionDesign))
+        case "render": Route(icon: "film", taskClass: taskClass, destination: .tab(.review))
+        default: nil
+        }
+    }
+
+    private static func reviewRoute(for phase: String, taskClass: String) -> Route? {
         switch phase {
         case "storyboard":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.storyboard))
@@ -81,7 +88,7 @@ enum PipelineSurfaceRouting {
         case "sanity", "frames", "render":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.review))
         default:
-            Route(icon: "slider.horizontal.3", taskClass: taskClass, destination: .chat)
+            choiceRoute(for: phase, taskClass: taskClass)
         }
     }
 }
@@ -89,7 +96,10 @@ enum PipelineSurfaceRouting {
 // Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next open phase
 // highlighted and gate mutations routed through NativeGateWriter.
 
+enum PipelinePanelPresentation { case overview, sidebar, dock }
+
 struct PipelinePanelView: View {
+    var presentation: PipelinePanelPresentation = .overview
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
 
@@ -140,11 +150,21 @@ struct PipelinePanelView: View {
         )
     }
 
+    private var activeGenerationPhase: String? {
+        let coordinator = editor.generationBatchCoordinator
+        return coordinator.snapshots.first { $0.batch.id == coordinator.activeBatchID }?.batch.payload.phase
+    }
+
+    private var workIsRunning: Bool {
+        runningPhase != nil || editor.agentService.isStreaming
+            || editor.agentService.currentSpendRun != nil || editor.generationBatchCoordinator.activeBatchID != nil
+    }
+
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             content
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: presentation == .dock ? nil : .infinity, alignment: .top)
         .background { acceptanceProbe("root") }
         .task(id: editor.projectURL) { await load() }
         // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
@@ -156,9 +176,8 @@ struct PipelinePanelView: View {
             pendingRewind = nil
             gateError = nil
         }
-        .onChange(of: runningPhase) { _, _ in
-            refreshApprovalReadiness()
-        }
+        .onChange(of: runningPhase) { _, _ in refreshApprovalReadiness() }
+        .onChange(of: editor.agentService.isStreaming) { _, _ in refreshApprovalReadiness() }
         .confirmationDialog("Rewind pipeline?", isPresented: Binding(
             get: { pendingRewind != nil }, set: { if !$0 { pendingRewind = nil } }
         ), presenting: pendingRewind) { request in
@@ -181,23 +200,228 @@ struct PipelinePanelView: View {
 
     }
 
+    private var hasHostDecision: Bool {
+        editor.agentService.isComposerBlocked || editor.generationBatchCoordinator.pending != nil
+    }
+
+    private var hasLoadedPhases: Bool {
+        if case .loaded(let data) = state { return data?.phases.isEmpty == false }
+        return false
+    }
+
     @ViewBuilder
     private var content: some View {
-        switch state {
-        case .idle, .loading:
-            centeredProgress()
-        case .failed(let error):
-            CockpitStateView.error(error, title: "Couldn't load the pipeline",
-                                   subject: "the pipeline",
-                                   activePack: InstalledPack.named(editor.activePluginName),
-                                   startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
-        case .loaded(nil):
-            CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
-                                   message: "This project has no phase state.")
-        case .loaded(.some(let data)):
-            loadedBody(data)
+        if presentation == .dock && hasHostDecision && !hasLoadedPhases {
+            bootstrapDock
+        } else {
+            switch state {
+            case .idle, .loading:
+                centeredProgress()
+            case .failed(let error):
+                if presentation == .dock && error == .notInitialized {
+                    bootstrapDock
+                } else if presentation == .sidebar {
+                    CockpitStateView.empty(icon: "list.bullet.rectangle", title: "Workflow",
+                        message: error == .notInitialized && !editor.hasProductionPipeline
+                            ? "Start production to prepare this project's workflow." : error.message)
+                } else {
+                    CockpitStateView.error(error, title: "Couldn't load the pipeline",
+                        subject: "the pipeline", activePack: InstalledPack.named(editor.activePluginName),
+                        startProduction: { editor.startProduction() }, isStarting: editor.productionStarting,
+                        hasProduction: editor.hasProductionPipeline) { Task { await load() } }
+                }
+            case .loaded(nil):
+                if presentation == .dock { bootstrapDock }
+                else {
+                    CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
+                        message: "Start production to prepare this project's workflow.")
+                }
+            case .loaded(.some(let data)):
+                switch presentation {
+                case .overview: loadedBody(data)
+                case .sidebar: workflowSidebar(data)
+                case .dock:
+                    if data.phases.isEmpty && data.confirmedIdentityRecovery == nil { bootstrapDock }
+                    else { phaseDock(data) }
+                }
+            }
         }
+    }
+
+    private var bootstrapDock: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Text(editor.agentService.pendingDialog?.title ?? String(localized: "Production"))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+            if hasHostDecision {
+                AgentPanelView(presentation: .decision)
+            } else if editor.productionStarting {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Setting up production…")
+                }
+            } else if editor.projectURL == nil {
+                Text("Open a project to start production.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            } else if editor.hasProductionPipeline {
+                Text("The existing workflow could not be loaded.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                Button("Retry") { Task { await load() } }
+                    .buttonStyle(.inlineAction(.neutral))
+            } else {
+                Text("Prepare this project's production workflow.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                Button("Start production") { editor.startProduction() }
+                    .buttonStyle(.inlineAction(.pack))
+                    .disabled(workIsRunning || editor.packWiringBroken != nil)
+                    .background { acceptanceProbe("dock.start", enabled: !workIsRunning && editor.packWiringBroken == nil) }
+            }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Background.raisedColor)
+    }
+
+    @ViewBuilder
+    private func workflowSidebar(_ data: ProjectStateData) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                ForEach(data.phases) { phase in
+                    let current = phase.phase == data.nextPhaseName
+                    let hasSurface = PipelineSurfaceRouting.route(for: phase.phase, contract: editor.uiContract,
+                        availablePackSurfaces: editor.availableCockpitPackSurfaces) != nil
+                    let running = runningPhase == phase.phase || editor.agentService.currentTaskPhase == phase.phase
+                        || activeGenerationPhase == phase.phase
+                    let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: current,
+                        isRunning: running, ready: current && approvalReadiness.isReady)
+                    Button { selectPhase(phase.phase) } label: {
+                        HStack(spacing: AppTheme.Spacing.sm) {
+                            Image(systemName: status.symbol)
+                                .frame(width: AppTheme.IconSize.md)
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                                Text(PhaseDisplay.label(phase.phase))
+                                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                                Text(status.label)
+                                    .interfaceFont(size: AppTheme.Typography.metadata)
+                                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                            }
+                            Spacer(minLength: AppTheme.Spacing.none)
+                        }
+                        .padding(AppTheme.Spacing.sm)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(editor.productionSelectedPhase == phase.phase
+                            ? editor.projectPalette.accent.opacity(AppTheme.Opacity.subtle)
+                            : AppTheme.Background.clearColor,
+                            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.inlineAction(.neutral))
+                    .disabled(!hasSurface)
+                    .accessibilityLabel("\(PhaseDisplay.label(phase.phase)), \(status.label)")
+                    .background { acceptanceProbe("select.\(phase.phase)", text: status.label) }
+                }
+            }
+            .padding(AppTheme.Spacing.sm)
+        }
+    }
+
+    private func selectPhase(_ phase: String) {
+        editor.revealReviewSurface(for: phase)
+    }
+
+    @ViewBuilder
+    private func phaseDock(_ data: ProjectStateData) -> some View {
+        let hasDecision = hasHostDecision
+        let selected = hasDecision ? data.nextPhaseName : (editor.productionSelectedPhase ?? data.nextPhaseName)
+        let phase = data.phases.first { $0.phase == selected }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if let phase {
+                let isCurrent = phase.phase == data.nextPhaseName
+                let isRunning = runningPhase == phase.phase || editor.agentService.currentTaskPhase == phase.phase
+                    || activeGenerationPhase == phase.phase
+                let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: isCurrent,
+                    isRunning: isRunning, ready: isCurrent && approvalReadiness.isReady)
+                Label("\(PhaseDisplay.label(phase.phase)) · \(status.label)", systemImage: status.symbol)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    .background { acceptanceProbe("dock.status", text: status.label) }
+                if hasDecision {
+                    AgentPanelView(presentation: .decision)
+                } else if let recovery = data.confirmedIdentityRecovery {
+                    ScrollView { confirmedIdentityRecoveryCard(recovery) }
+                        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+                } else if activeGenerationPhase == phase.phase, let batchID = editor.generationBatchCoordinator.activeBatchID {
+                    GenerationBatchProgressView(editor: editor, batchID: batchID)
+                } else if isCurrent, let run = editor.agentService.currentSpendRun {
+                    Label("\(run.actionLabel) · \(run.modelName)", systemImage: "sparkles")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                    Text("The result will appear here for review.")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                } else if isCurrent {
+                    Text(nextActionDescription(for: phase.phase))
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background { acceptanceProbe("dock.reason", text: nextActionDescription(for: phase.phase)) }
+                    if !workIsRunning {
+                        if approvalReadiness.isReady {
+                            approveButton(phase, enabled: approvalIsEnabled(for: phase.phase, isNext: true, runningPhase: runningPhase))
+                        } else {
+                            Button("Continue \(PhaseDisplay.label(phase.phase))") {
+                                continuePhase(phase.phase)
+                            }
+                            .buttonStyle(.inlineAction(.pack))
+                            .disabled(gateWriting || !mutationReadiness.isReady)
+                            .background { acceptanceProbe("dock.continue", enabled: !gateWriting && mutationReadiness.isReady) }
+                        }
+                    }
+                } else if phase.approved {
+                    Text("Revising this phase resets its approval and all following approvals.")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    Button("Revise \(PhaseDisplay.label(phase.phase))…") {
+                        guard let home = editor.workingRoot,
+                              let index = data.phases.firstIndex(where: { $0.phase == phase.phase }) else { return }
+                        pendingRewind = RewindRequest(home: home, revision: editor.engineStateRevision,
+                            phase: phase.phase, affected: data.phases[index...].map(\.phase))
+                    }
+                    .buttonStyle(.inlineAction(.neutral))
+                    .disabled(gateWriting || workIsRunning || !mutationReadiness.isReady)
+                } else if let current = data.nextPhaseName {
+                    Text("Complete \(PhaseDisplay.label(current)) before starting this phase.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    if PipelineSurfaceRouting.route(for: current, contract: editor.uiContract,
+                        availablePackSurfaces: editor.availableCockpitPackSurfaces) != nil {
+                        Button("Go to \(PhaseDisplay.label(current))") { selectPhase(current) }
+                            .buttonStyle(.inlineAction(.neutral))
+                    }
+                }
+            }
+            if phase == nil {
+                if hasDecision { AgentPanelView(presentation: .decision) }
+                else if let recovery = data.confirmedIdentityRecovery {
+                    ScrollView { confirmedIdentityRecoveryCard(recovery) }
+                        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+                } else {
+                    Text(data.isComplete ? "All phases are approved." : "Select a phase to review its result.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+            }
+            if let gateError { gateErrorBanner(gateError) }
+        }
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Background.raisedColor)
+    }
+
+    private func continuePhase(_ phase: String) {
+        let diagnostic = approvalReadiness.blocker.map { "\nApproval diagnostic: \($0)" } ?? ""
+        editor.agentService.sendWorkOrder(
+            .init(title: "Continue \(PhaseDisplay.label(phase))", systemImage: "play",
+                  prompt: "Continue the current \(phase) phase using its required workflow. Resolve its missing evidence and present the result for review. Never approve it yourself.\(diagnostic)",
+                  phase: phase), direction: "", mentions: [])
     }
 
     @ViewBuilder
@@ -257,14 +481,6 @@ struct PipelinePanelView: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .fixedSize(horizontal: false, vertical: true)
-                if editor.agentService.isComposerBlocked || !approvalReadiness.isReady {
-                    Button("Open Tasks") {
-                        editor.agentPanelVisible = true
-                        editor.focusedPanel = .agent
-                    }
-                    .buttonStyle(.inlineAction())
-                    .background { acceptanceProbe("tasks") }
-                }
             }
             ProgressView(value: data.progress)
                 .tint(AppTheme.Status.successColor)
@@ -334,7 +550,7 @@ struct PipelinePanelView: View {
             }
             .buttonStyle(.inlineAction(.approval))
             .disabled(
-                !recovery.eligible || gateWriting || runningPhase != nil
+                !recovery.eligible || gateWriting || workIsRunning
             )
             .help(
                 recovery.eligible
@@ -370,23 +586,25 @@ struct PipelinePanelView: View {
 
     private func nextActionDescription(for phase: String) -> String {
         if gateWriting { return "Saving the phase decision…" }
+        if runningPhase == phase { return "AI is working on \(PhaseDisplay.label(phase)). The result will appear here for review." }
         if let failure = editor.agentService.currentPipelineRepairFailure {
             return failure.kind == .unrequestedRevision
-                ? "Revision paused. The agent asked to revise approved work again without new direction. Open Tasks to continue."
-                : "Planning paused after repeated attempts without progress. Open Tasks to retry with current project state."
+                ? "Revision paused. The agent asked to revise approved work without new direction. Continue in the decision below."
+                : "Planning paused after repeated attempts without progress. Retry in the decision below."
         }
         if let dialog = editor.agentService.pendingDialog {
-            return "Complete ‘\(dialog.title)’ in Tasks."
+            return "Complete ‘\(dialog.title)’ in the decision below."
         }
-        if editor.agentService.pendingSpendApproval != nil { return "Review the pending generation cost before continuing." }
-        if editor.generationBatchCoordinator.pending != nil { return "Review the pending generation batch before continuing." }
-        if editor.agentService.pendingGateApproval != nil { return "Review the pending approval in Tasks." }
-        if editor.agentService.isComposerBlocked { return "Complete the current input or approval in Tasks." }
+        if editor.agentService.pendingSpendApproval != nil { return "Choose whether to generate the requested result." }
+        if editor.generationBatchCoordinator.pending != nil { return "Choose whether to generate the requested results." }
+        if editor.agentService.pendingGateApproval != nil { return "Review the phase decision below." }
+        if editor.agentService.isComposerBlocked { return "Your input is needed in the decision below." }
+        if editor.agentService.currentTaskPhase == phase { return "AI is working on \(PhaseDisplay.label(phase)). The result will appear here for review." }
         if approvalPhase != phase { return "Checking phase readiness…" }
         if !mutationReadiness.isReady { return "Phase controls are unavailable. Resolve the project or workflow error before continuing." }
         if approvalReadiness.isReady { return "Review this phase’s artifact, then approve it to continue." }
         return approvalReadiness.userMessage
-            ?? "Complete this phase’s artifact before approval. Open its tab or Tasks to continue."
+            ?? "This phase is incomplete. Continue the phase before approval."
     }
 
     private func approvalIsEnabled(for phase: String, isNext: Bool, runningPhase: String?) -> Bool {
@@ -394,7 +612,7 @@ struct PipelinePanelView: View {
             approvalReady: isNext && approvalPhase == phase && approvalReadiness.isReady,
             controlsAvailable: mutationReadiness.isReady,
             gateWriting: gateWriting,
-            pipelineIsRunning: runningPhase != nil,
+            pipelineIsRunning: workIsRunning,
             hostDecisionPending: editor.agentService.isComposerBlocked
 
         )
@@ -408,7 +626,7 @@ struct PipelinePanelView: View {
         runningPhase: String?
     ) -> some View {
         let isRunning = runningPhase == phase.phase
-        let pipelineIsRunning = runningPhase != nil
+        let pipelineIsRunning = workIsRunning
         let hostDecisionPending = editor.agentService.isComposerBlocked
         let readiness = isNext && approvalPhase == phase.phase
             ? approvalReadiness
@@ -430,7 +648,7 @@ struct PipelinePanelView: View {
             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .frame(minWidth: AppTheme.ComponentSize.pipelineApprovalMinWidth * interfaceScale,
                    minHeight: actionHeight)
-            phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
+            phaseStatus(phase, isCurrent: isNext, isRunning: isRunning || (editor.agentService.currentTaskPhase == phase.phase), awaitingApproval: isNext && readiness.isReady)
                 .frame(width: AppTheme.Control.iconTarget * interfaceScale)
                 .frame(minHeight: actionHeight)
             gateMenu(
@@ -712,7 +930,7 @@ struct PipelinePanelView: View {
             contract: editor.uiContract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces
         ) {
-            let isEnabled = route.destination != .chat || approvalPhase == phase
+            let isEnabled = true
             Button {
                 editor.revealReviewSurface(for: phase)
             } label: {
@@ -730,17 +948,11 @@ struct PipelinePanelView: View {
         }
     }
 
-    private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool, awaitingApproval: Bool) -> some View {
-        let label = isRunning ? "In progress"
-            : phase.approvalCurrent ? "Approved"
-            : phase.approved ? "Approval outdated"
-            : phase.state == "needs_revision" ? "Needs revision"
-            : awaitingApproval ? "In progress" : "Not started"
-        let symbol = isRunning ? "circle.dotted.circle"
-            : phase.approvalCurrent ? "checkmark.circle.fill"
-            : phase.approved ? "exclamationmark.triangle.fill"
-            : phase.state == "needs_revision" ? "exclamationmark.triangle.fill"
-            : awaitingApproval ? "circle.dotted.circle" : "circle"
+    private func phaseStatus(_ phase: ProjectPhase, isCurrent: Bool, isRunning: Bool, awaitingApproval: Bool) -> some View {
+        let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: isCurrent,
+            isRunning: isRunning, ready: awaitingApproval)
+        let label = status.label
+        let symbol = status.symbol
         let color = isRunning ? editor.projectPalette.accent
             : phase.approvalCurrent ? AppTheme.Status.successColor
             : phase.approved ? AppTheme.Status.warningColor
@@ -825,6 +1037,9 @@ struct PipelinePanelView: View {
         switch result {
         case .success(let data):
             state = .loaded(data)
+            if presentation == .sidebar, editor.productionSelectedPhase == nil, let phase = data?.nextPhaseName {
+                selectPhase(phase)
+            }
             refreshApprovalReadiness()
         case .failure(let error):
             approvalPhase = nil

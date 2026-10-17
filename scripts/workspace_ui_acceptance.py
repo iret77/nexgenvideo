@@ -181,6 +181,8 @@ def run_scale(executable, output, scale):
     musicvideo = [row for row in rows if row.get("event") == "musicvideo-startup"]
     host_states = [row for row in rows if row.get("event") == "host-state-history"]
     storyboard = [row for row in rows if row.get("event") == "storyboard-review"]
+    production = [row for row in rows if row.get("event") == "production-workbench"]
+    agent_activity = [row for row in rows if row.get("event") == "agent-activity"]
     inspector = [row for row in rows if row.get("event") == "inspector"]
     open_keyframes = [row for row in inspector if row.get("keyframes") == "open"]
     screenshots = [
@@ -200,7 +202,7 @@ def run_scale(executable, output, scale):
     ]
     screenshots += [
         name
-        for row in analysis + provenance + musicvideo + host_states + storyboard
+        for row in analysis + provenance + musicvideo + host_states + storyboard + production + agent_activity
         for name in row.get("screenshots", [])
     ]
     valid_images = all(
@@ -217,8 +219,8 @@ def run_scale(executable, output, scale):
         and len(workspace_rows) == len(EXPECTED_WORKSPACES)
         and len(hidden) == 1
         and len(narrow) == 1
-        and set(narrow[0].get("taskControls", []))
-        == {"agent.decisions", "agent.diagnostics", "agent.utilities"}
+        and set(narrow[0].get("workbenchControls", []))
+        == {"production.sidebar", "production.status"}
         and len(library) == 1
         and library[0].get("assetCount") == 500
         and set(library[0].get("types", [])) == {"image", "audio", "document"}
@@ -279,6 +281,15 @@ def run_scale(executable, output, scale):
             "declinedFromStoryboard", "gatesUnchanged", "savedProjectUnchanged",
         ))
         and len(storyboard[0].get("screenshots", [])) == 2
+        and len(production) == 1
+        and all(production[0].get(key) is True for key in (
+            "threeColumns", "noTimelineOrEmptyPreview", "shotInspectorBound",
+            "twoStoryboardSections", "statusVisible",
+        ))
+        and len(production[0].get("screenshots", [])) == 3
+        and len(agent_activity) == 1
+        and agent_activity[0].get("complete") is True
+        and len(agent_activity[0].get("screenshots", [])) == 3
         and len(invariants) == 1
         and {(row.get("family"), row.get("keyframes")) for row in inspector}
         == EXPECTED_INSPECTOR_CASES
@@ -290,7 +301,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 25 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
+        == 31 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES)
         and valid_images
     )
     return {

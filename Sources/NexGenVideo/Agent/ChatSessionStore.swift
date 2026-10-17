@@ -13,6 +13,7 @@ struct AgentTask: Codable, Equatable {
     var requiresDirection: Bool = false
     var originContext: String? = nil
     var replyToMessageID: UUID? = nil
+    var phase: String? = nil
 }
 
 struct ChatSessionDraft: Codable, Equatable {

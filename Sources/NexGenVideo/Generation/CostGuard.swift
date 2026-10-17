@@ -64,7 +64,7 @@ enum SpendOptionBuilder {
     ) -> SpendOption? {
         options.first {
             $0.modelId == currentModelId && $0.target == defaultTarget
-        } ?? options.first
+        } ?? options.first { $0.modelId == currentModelId }
     }
 
     /// Never falls back to another model: without a runnable required model the user chooses.
@@ -256,20 +256,16 @@ enum SpendSelectionPreferences {
             }
             return approval.preferring(preferred)
         }
-        let recommended = approval.options.first {
+        guard let recommended = approval.options.first(where: {
             $0.id == approval.recommendedOptionId
-        }
-        let preferred = approval.options.first { $0.id == optionID }
+        }) else { return approval }
+        let preferred = approval.options.first { $0.id == optionID && $0.modelId == recommended.modelId }
             ?? approval.options.first {
-                $0.target.provider == provider && $0.modelId == modelID
+                $0.target.provider == provider && $0.modelId == modelID && $0.modelId == recommended.modelId
             }
-            ?? recommended.flatMap { recommended in
-                approval.options.first {
-                    $0.target.provider == provider
-                        && $0.modelId == recommended.modelId
-                }
+            ?? approval.options.first {
+                $0.target.provider == provider && $0.modelId == recommended.modelId
             }
-            ?? approval.options.first { $0.target.provider == provider }
         guard let preferred else { return approval }
         return approval.preferring(preferred)
     }

@@ -4,6 +4,8 @@ Present one numbered manifest in the existing chat decision area. Each item show
 
 Allow removing items before approval and declining the manifest. The primary action says `Approve X requests`, with X equal to the retained request count. Changing an item prepares a new package and a new manifest. Approval is one host-owned action over that exact manifest; the agent cannot approve individual items on the user's behalf.
 
+Before either batch or phase approval becomes available, preflight checks every distinct package's current direction, reference identities, current source bytes and archived submission bytes. Approval repeats that check. A missing reference names its original filename, disables both approval actions and makes revision the next action. Revision forwards the actual failure and reference identities to the agent; a missing price estimate is never presented as its cause. A replacement proposal must pass the same preparation and preflight checks.
+
 Once approved, show completed count and each item's queued, submitting, running, complete, failed, canceled or blocked state. Keep generated media available for inspection. `Cancel remaining` cancels only items that have not entered provider submission. It does not discard completed media or cancel an already submitted provider job.
 
 Restore the same status after reopening the project. Reconnects join an existing item. A known provider request resumes status retrieval and result download. An interrupted submission without a provider receipt is blocked for reconciliation; never silently resubmit it. A failed or blocked item does not stop unrelated queued items. A retry is a new item with a new explicit approval, and does not consume the original item's authorization again.

@@ -22,19 +22,6 @@ struct NativeGateControlReadiness: Sendable, Equatable {
 enum NativeGateApprovalStage: Sendable {
     case phaseAccess, priorApprovals, artifact, productionStyle, treatment, storyboard, frames, render, executionPlan
 
-    var userMessage: String {
-        switch self {
-        case .phaseAccess: "Complete the current phase’s required input before approval."
-        case .priorApprovals: "Approve the preceding phases before continuing."
-        case .artifact: "Complete or update this phase’s artifact, then review it again."
-        case .productionStyle: "Complete the production style record before approval."
-        case .treatment: "Update the treatment’s story relationships before approval."
-        case .storyboard: "Update the storyboard’s story relationships before approval."
-        case .frames: "Review the generated frames against the current production style."
-        case .render: "Review the selected render takes before approval."
-        case .executionPlan: "Update the shot execution plan to match the current Shot List."
-        }
-    }
 }
 
 private struct NativeGateApprovalCheckContext: Sendable {
@@ -637,7 +624,9 @@ enum NativeGateWriter {
             }
             return .ready
         } catch {
-            var message = stage.userMessage
+            var message = (error as? PhaseArtifactFailure).map {
+                PipelineReadinessPresentation.message(for: $0.requirement, phase: context.phase)
+            } ?? PipelineReadinessPresentation.message(for: stage, phase: context.phase)
             if case .phaseAccess = stage {
                 let current = context.order.first { !gates.get($0).approved }
                 if current != context.phase {
@@ -649,6 +638,7 @@ enum NativeGateWriter {
                     message = "Complete the \(step.title) card before continuing."
                 }
             }
+            Log.project.debug("Pipeline approval blocked phase=\(context.phase): \(error.localizedDescription)")
             return .blocked(error.localizedDescription, userMessage: message)
         }
     }

@@ -76,9 +76,9 @@ final class GenerationReferenceSnapshot: Sendable {
         try await Task.detached(priority: .utility) { [self] in
             for index in sources.indices {
                 try Task.checkCancellation()
-                guard try FileDigest.sha256(of: sources[index].url) == receipts[index].sourceSHA256,
-                      try FileDigest.sha256(of: urls[index]) == receipts[index].submittedSHA256 else {
-                    throw GenerationRequestError.optionsInvalid("An approved reference changed. Prepare and approve the request again.")
+                guard (try? FileDigest.sha256(of: sources[index].url)) == receipts[index].sourceSHA256,
+                      (try? FileDigest.sha256(of: urls[index])) == receipts[index].submittedSHA256 else {
+                    throw GenerationRequestError.optionsInvalid("Reference ‘\(receipts[index].displayName ?? "Unnamed reference")’ is missing or changed. Prepare and approve the request again.")
                 }
             }
         }.value

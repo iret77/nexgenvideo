@@ -25,9 +25,14 @@ final class GenerationBatchReviewRuntimeEvidence {
     }
 
     private(set) var focusedRemoveItemID: String?
+    private(set) var focusedDetailsItemID: String?
 
     func recordRemoveFocus(_ itemID: String?) {
         focusedRemoveItemID = itemID
+    }
+
+    func recordDetailsFocus(_ itemID: String?) {
+        focusedDetailsItemID = itemID
     }
 }
 
@@ -41,24 +46,24 @@ struct GenerationBatchReviewControls: Equatable {
         hasVerifiedTotal: Bool,
         hasRetryablePricingFailure: Bool,
         isCommitting: Bool,
-        isRecovering: Bool
+        isRecovering: Bool,
+        referencesReady: Bool = true
     ) {
         canEdit = !isCommitting
         canRetryPricing = hasRetryablePricingFailure && !isCommitting && !isRecovering
-        canApprove = hasVerifiedTotal && !isCommitting && !isRecovering
-        canApproveWithoutEstimate = !hasVerifiedTotal && !isCommitting && !isRecovering
+        canApprove = hasVerifiedTotal && !isCommitting && !isRecovering && referencesReady
+        canApproveWithoutEstimate = !hasVerifiedTotal && !isCommitting && !isRecovering && referencesReady
     }
 }
 
 struct GenerationBatchCard: View {
-    @Environment(\.interfaceScale) private var interfaceScale
-
     let editor: EditorViewModel
     var runtimeEvidenceEnabled = false
     var runtimeEvidence: GenerationBatchReviewRuntimeEvidence? = nil
 
     @State private var expandedItemIDs: Set<String> = []
     @FocusState private var focusedRemoveItemID: String?
+    @FocusState private var focusedDetailsItemID: String?
 
     var body: some View {
         let coordinator = editor.generationBatchCoordinator
@@ -71,37 +76,23 @@ struct GenerationBatchCard: View {
                 hasVerifiedTotal: batch.totalEUR != nil,
                 hasRetryablePricingFailure: coordinator.canRetryPricing,
                 isCommitting: coordinator.approving,
-                isRecovering: coordinator.isRecovering
+                isRecovering: coordinator.isRecovering,
+                referencesReady: coordinator.canApprovePending
             )
-            GenerationBatchDecisionLayout(
-                maximumHeight: AppTheme.ComponentSize.agentDecisionMaxHeight * interfaceScale
-                    - AppTheme.Spacing.md - AppTheme.Spacing.md,
-                minimumBodyHeight: AppTheme.ComponentSize.generationBatchListMinHeight * interfaceScale,
-                spacing: AppTheme.Spacing.smMd,
+            GenerationApprovalCard(
+                title: [GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
+                    batch.payload.phase.map(PhaseDisplay.label)].compactMap { $0 }.joined(separator: " · "),
+                subtitle: requestSummary(projection),
                 fillsMaximumHeight: projection.itemCount > 1
             ) {
-                header(projection)
                 body(batch: batch, projection: projection, controls: controls)
+            } footer: {
                 footer(batch: batch, projection: projection, controls: controls)
             }
-            .padding(AppTheme.Spacing.md)
-            .background {
-                RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                    .fill(AppTheme.Background.raisedColor)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                            .strokeBorder(
-                                AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                                lineWidth: AppTheme.BorderWidth.thin
-                            )
-                    }
-            }
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(
-                "Review \(projection.itemCount) requests, estimated total \(totalLabel(batch: batch, projection: projection))"
-            )
             .accessibilityIdentifier("generationBatch.review")
+            .task(id: coordinator.preflightKey(editor: editor)) {
+                await coordinator.preflight(editor: editor, expectedBatchID: batch.id)
+            }
             .onChange(of: Set(batch.payload.items.map(\.id))) { _, currentIDs in
                 expandedItemIDs.formIntersection(currentIDs)
                 if runtimeEvidenceEnabled,
@@ -115,30 +106,10 @@ struct GenerationBatchCard: View {
             .onChange(of: focusedRemoveItemID, initial: true) { _, itemID in
                 if runtimeEvidenceEnabled { runtimeEvidence?.recordRemoveFocus(itemID) }
             }
-        }
-    }
-
-    private func header(_ projection: GenerationBatchReviewProjection) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Image(systemName: "square.stack.3d.up")
-                    .interfaceFont(size: AppTheme.FontSize.md)
-                    .foregroundStyle(AppTheme.Accent.primary)
-                Text(projection.itemCount == 1
-                    ? String(localized: "Review 1 request")
-                    : String(localized: "Review \(projection.itemCount) requests"))
-                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let summary = requestSummary(projection) {
-                Text(summary)
-                    .interfaceFont(size: AppTheme.FontSize.xxs)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
+            .onChange(of: focusedDetailsItemID, initial: true) { _, itemID in
+                if runtimeEvidenceEnabled { runtimeEvidence?.recordDetailsFocus(itemID) }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func requestSummary(_ projection: GenerationBatchReviewProjection) -> String? {
@@ -152,7 +123,8 @@ struct GenerationBatchCard: View {
                 ? String(localized: "1 route differs")
                 : String(localized: "\(differing) routes differ"))
         }
-        let values = [route, output, projection.commonDestinationLabel].compactMap { $0 }
+        let destination = projection.commonDestinationLabel.map { String(localized: "Results: \($0)") }
+        let values = [route, output, destination].compactMap { $0 }
         return values.isEmpty ? nil : values.joined(separator: " · ")
     }
 
@@ -179,6 +151,7 @@ struct GenerationBatchCard: View {
                                     canEdit: controls.canEdit,
                                     runtimeEvidenceEnabled: runtimeEvidenceEnabled && item.manifestIndex == 0,
                                     focusedRemoveItemID: $focusedRemoveItemID,
+                                    focusedDetailsItemID: $focusedDetailsItemID,
                                     onToggleDetails: { toggleDetails(item.id) },
                                     onRemove: {
                                         expandedItemIDs.remove(item.id)
@@ -236,86 +209,56 @@ struct GenerationBatchCard: View {
                         enabled: runtimeEvidenceEnabled
                     ))
             }
-            if let error = coordinator.error {
-                Text("The request could not be updated. Try again or ask the agent to revise it.")
-                    .interfaceFont(size: AppTheme.FontSize.xxs)
-                    .foregroundStyle(AppTheme.Status.warningColor)
+            if let issue = coordinator.preflightIssue {
+                Text("Generation cannot start. Ask the agent to revise this request.")
+                    .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)
+                    .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
+                Text(issue)
+                    .interfaceFont(size: AppTheme.FontSize.xxs)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(GenerationBatchRuntimeProbe(
+                        identifier: "generation-batch.preflight-issue",
+                        enabled: runtimeEvidenceEnabled,
+                        acceptanceText: issue
+                    ))
+            } else if let error = coordinator.error {
+                Text(error.hasPrefix("Generation approval failed:")
+                    ? String(localized: "Generation approval failed.")
+                    : String(localized: "The generation request could not be changed."))
+                    .interfaceFont(size: AppTheme.FontSize.xxs)
+                    .foregroundStyle(AppTheme.Status.errorColor)
                 DisclosureGroup("Error details") {
-                    Text(error)
-                        .interfaceFont(size: AppTheme.FontSize.xxs)
-                        .textSelection(.enabled)
+                    Text(error).interfaceFont(size: AppTheme.FontSize.xxs).textSelection(.enabled)
                 }
             }
-            // Narrow panels fold the secondary actions so the list keeps room for a complete request.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    declineButton(controls)
-                    reviseButton(controls)
-                    if coordinator.canRetryPricing { retryButton(controls) }
-                    Spacer(minLength: AppTheme.Spacing.sm)
-                    phaseApproveButton(batch: batch, controls: controls)
-                    approveButton(batch: batch, controls: controls)
-                }
-                VStack(alignment: .trailing, spacing: AppTheme.Spacing.sm) {
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        declineButton(controls)
-                        reviseButton(controls)
-                        if coordinator.canRetryPricing { retryButton(controls) }
-                        Spacer(minLength: AppTheme.Spacing.none)
+            GenerationApprovalActions(
+                actionLabel: GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
+                phase: batch.payload.phase,
+                canApprove: controls.canApprove || controls.canApproveWithoutEstimate,
+                canEdit: controls.canEdit,
+                onApprove: {
+                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
+                    Task {
+                        await coordinator.approve(editor: editor, expectedBatchID: batch.id,
+                            approval: batch.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
                     }
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        phaseApproveButton(batch: batch, controls: controls)
-                        approveButton(batch: batch, controls: controls)
-                    }
-                }
-                WrapLayout(spacing: AppTheme.Spacing.sm) {
-                    declineButton(controls)
-                    moreMenu(controls)
-                    phaseApproveButton(batch: batch, controls: controls)
-                    approveButton(batch: batch, controls: controls)
-                }
-            }
+                },
+                onDecline: { coordinator.decline(editor: editor) },
+                onApprovePhase: {
+                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
+                    Task { await coordinator.approveForPhase(editor: editor, expectedBatchID: batch.id) }
+                },
+                onRevise: { coordinator.requestRevision(editor: editor) },
+                onRetryPricing: coordinator.canRetryPricing
+                    ? { Task { await coordinator.retryPricing(editor: editor) } } : nil,
+                canRetryPricing: controls.canRetryPricing,
+                identifier: "generation-batch",
+                runtimeEvidenceEnabled: runtimeEvidenceEnabled,
+                revisionRequired: coordinator.preflightIssue != nil
+            )
         }
-    }
-
-    private func reviseButton(_ controls: GenerationBatchReviewControls) -> some View {
-        Button("Ask agent to revise") { editor.generationBatchCoordinator.requestRevision(editor: editor) }
-            .buttonStyle(.capsule(.secondary, size: .regular))
-            .disabled(!controls.canEdit)
-            .accessibilityIdentifier("generation-batch.revise")
-            .modifier(GenerationBatchRuntimeProbe(
-                identifier: "generation-batch.revise",
-                enabled: runtimeEvidenceEnabled
-            ))
-    }
-
-    private func moreMenu(_ controls: GenerationBatchReviewControls) -> some View {
-        let coordinator = editor.generationBatchCoordinator
-        return Menu {
-            Button("Ask agent to revise") { coordinator.requestRevision(editor: editor) }
-                .disabled(!controls.canEdit)
-            if coordinator.canRetryPricing {
-                Button("Retry pricing") { Task { await coordinator.retryPricing(editor: editor) } }
-                    .disabled(!controls.canRetryPricing)
-            }
-        } label: {
-            HStack(spacing: AppTheme.Spacing.xxs) {
-                Text("More")
-                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.capsule(.secondary, size: .regular))
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(!controls.canEdit)
-        .accessibilityLabel("More actions")
-        .accessibilityIdentifier("generation-batch.more")
-        .modifier(GenerationBatchRuntimeProbe(
-            identifier: "generation-batch.more",
-            enabled: runtimeEvidenceEnabled
-        ))
     }
 
     @ViewBuilder
@@ -336,7 +279,7 @@ struct GenerationBatchCard: View {
         } else {
             Text(unknownPriceLabel(batch: batch, projection: projection))
                 .interfaceFont(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Status.warningColor)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Provider charges apply. The cost is recorded only if the provider reports it.")
                 .interfaceFont(size: AppTheme.FontSize.xxs)
@@ -361,95 +304,13 @@ struct GenerationBatchCard: View {
             : String(localized: "\(unknown) requests: cost unknown · Known estimate: \(known)")
     }
 
-    private func retryButton(_ controls: GenerationBatchReviewControls) -> some View {
-        Button("Retry pricing") {
-            Task { await editor.generationBatchCoordinator.retryPricing(editor: editor) }
-        }
-        .buttonStyle(.capsule(.secondary, size: .regular))
-        .disabled(!controls.canRetryPricing)
-        .accessibilityIdentifier("generation-batch.retry-pricing")
-        .modifier(GenerationBatchRuntimeProbe(
-            identifier: "generation-batch.retry-pricing",
-            enabled: runtimeEvidenceEnabled
-        ))
-    }
-
-    private func declineButton(_ controls: GenerationBatchReviewControls) -> some View {
-        Button("Decline") { editor.generationBatchCoordinator.decline(editor: editor) }
-            .buttonStyle(.capsule(.secondary, size: .regular))
-            .keyboardShortcut(.cancelAction)
-            .disabled(!controls.canEdit)
-            .accessibilityIdentifier("generation-batch.decline")
-            .modifier(GenerationBatchRuntimeProbe(
-                identifier: "generation-batch.decline",
-                enabled: runtimeEvidenceEnabled
-            ))
-    }
-
-    private func approveButton(
-        batch: GenerationBatch,
-        controls: GenerationBatchReviewControls
-    ) -> some View {
-        let count = batch.payload.items.count
-        let unpriced = batch.totalEUR == nil
-        let label = unpriced
-            ? String(localized: "Approve without estimate")
-            : count == 1
-                ? String(localized: "Approve 1 request")
-                : String(localized: "Approve \(count) requests")
-        return Button(label) {
-            Task {
-                await editor.generationBatchCoordinator.approve(
-                    editor: editor,
-                    expectedBatchID: batch.id,
-                    approval: unpriced ? .acceptUnknownPrices : .verifiedPrices
-                )
-            }
-        }
-        .buttonStyle(.capsule(.prominent, size: .regular))
-        .disabled(unpriced ? !controls.canApproveWithoutEstimate : !controls.canApprove)
-        .accessibilityIdentifier("generation-batch.approve")
-        .modifier(GenerationBatchRuntimeProbe(
-            identifier: "generation-batch.approve",
-            enabled: runtimeEvidenceEnabled
-        ))
-    }
-
-    @ViewBuilder
-    private func phaseApproveButton(
-        batch: GenerationBatch,
-        controls: GenerationBatchReviewControls
-    ) -> some View {
-        if let phase = batch.payload.phase {
-            Button("Approve All in \(PhaseDisplay.label(phase))") {
-                Task {
-                    await editor.generationBatchCoordinator.approveForPhase(
-                        editor: editor,
-                        expectedBatchID: batch.id
-                    )
-                }
-            }
-            .buttonStyle(.capsule(.secondary, size: .regular))
-            .disabled(batch.totalEUR == nil ? !controls.canApproveWithoutEstimate : !controls.canApprove)
-            .help("Approve every paid agent run in this phase, including this batch. Ends when the phase is approved or rewound, when you withdraw it in Tasks, or when NexGenVideo quits.")
-            .accessibilityIdentifier("generation-batch.approve-phase")
-        }
-    }
-
     private func knownEUR(_ batch: GenerationBatch) -> Double {
         batch.payload.items.compactMap { $0.package.payload.estimate?.eurAmount }.reduce(0, +)
     }
 
-    private func totalLabel(
-        batch: GenerationBatch,
-        projection: GenerationBatchReviewProjection
-    ) -> String {
-        if let total = batch.totalEUR { return GenerationPackageReviewView.euro(total) }
-        return "\(GenerationPackageReviewView.euro(knownEUR(batch))) + \(projection.unknownPriceCount) unknown"
-    }
-
     private var busyReason: String? {
         let coordinator = editor.generationBatchCoordinator
+        if coordinator.preflighting { return String(localized: "Checking generation inputs…") }
         if coordinator.approving { return String(localized: "Approving the retained requests…") }
         guard coordinator.isRecovering else { return nil }
         let count = coordinator.recoveringItemIDs.count
@@ -488,6 +349,7 @@ private struct GenerationBatchItemRow: View {
     let canEdit: Bool
     let runtimeEvidenceEnabled: Bool
     let focusedRemoveItemID: FocusState<String?>.Binding
+    let focusedDetailsItemID: FocusState<String?>.Binding
     let onToggleDetails: () -> Void
     let onRemove: () -> Void
     let onChangeRoute: (SpendOption) -> Void
@@ -517,7 +379,12 @@ private struct GenerationBatchItemRow: View {
             }
             if item.referenceCount > 0 {
                 HStack(alignment: .bottom, spacing: AppTheme.Spacing.xs) {
-                    GenerationReferenceThumbnails(package: package, style: .compact, limit: compactReferenceLimit)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text("Input")
+                            .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                        GenerationReferenceThumbnails(package: package, style: .compact, limit: compactReferenceLimit)
+                    }
                     if item.referenceCount > compactReferenceLimit {
                         Text("+\(item.referenceCount - compactReferenceLimit)")
                             .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
@@ -528,6 +395,7 @@ private struct GenerationBatchItemRow: View {
             WrapLayout(spacing: AppTheme.Spacing.sm) {
                 Button(isExpanded ? "Hide details" : "Details", action: onToggleDetails)
                     .buttonStyle(InlineActionButtonStyle())
+                    .focused(focusedDetailsItemID, equals: item.id)
                     .accessibilityIdentifier("generation-batch.details.\(item.id)")
                     .modifier(GenerationBatchRuntimeProbe(
                         identifier: "generation-batch.details.\(item.id)",
@@ -612,7 +480,7 @@ private struct GenerationBatchItemRow: View {
     private var price: some View {
         Text(priceLabel)
             .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)
-            .foregroundStyle(item.priceEUR == nil ? AppTheme.Status.warningColor : AppTheme.Text.primaryColor)
+            .foregroundStyle(item.priceEUR == nil ? AppTheme.Text.secondaryColor : AppTheme.Text.primaryColor)
             .multilineTextAlignment(.trailing)
             .fixedSize(horizontal: true, vertical: false)
     }
@@ -647,16 +515,18 @@ private struct GenerationBatchItemRow: View {
     }
 }
 
-private struct GenerationBatchRuntimeProbe: ViewModifier {
+struct GenerationBatchRuntimeProbe: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
     let identifier: String
     let enabled: Bool
+    var acceptanceText: String? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
         content.background {
             if enabled {
                 // The probe's NSView must not answer the accessibility hit test of the control it measures.
-                AppRelaunchClickProbe(identifier: identifier)
+                AppRelaunchClickProbe(identifier: identifier, acceptanceState: isEnabled, acceptanceText: acceptanceText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -666,7 +536,7 @@ private struct GenerationBatchRuntimeProbe: ViewModifier {
 }
 
 // Prefers room for one complete request over the usual bound; a shorter offer shrinks only the list.
-private struct GenerationBatchDecisionLayout: SwiftUI.Layout {
+struct GenerationBatchDecisionLayout: SwiftUI.Layout {
     let maximumHeight: CGFloat
     let minimumBodyHeight: CGFloat
     let spacing: CGFloat
@@ -755,18 +625,25 @@ private struct GenerationBatchDecisionLayout: SwiftUI.Layout {
 
 struct GenerationBatchProgressView: View {
     let editor: EditorViewModel
+    var batchID: String? = nil
+    @State private var expanded = false
 
     var body: some View {
         let coordinator = editor.generationBatchCoordinator
         if coordinator.pending == nil, let error = coordinator.error {
-            Text(error).foregroundStyle(AppTheme.Status.warningColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("Generation needs attention. Open AI activity to continue.")
+                DisclosureGroup("Diagnostic details") { Text(error).textSelection(.enabled) }
+            }
+                .foregroundStyle(AppTheme.Text.secondaryColor)
                 .padding(.horizontal, AppTheme.Spacing.sm)
         }
-        if !coordinator.snapshots.isEmpty {
-            DisclosureGroup("Generation batches") {
+        let snapshots = coordinator.snapshots.filter { batchID == nil || $0.batch.id == batchID }
+        if !snapshots.isEmpty {
+            DisclosureGroup(isExpanded: $expanded) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                        ForEach(coordinator.snapshots, id: \.batch.id) { snapshot in
+                        ForEach(snapshots, id: \.batch.id) { snapshot in
                             let completed = snapshot.journal.executions.filter { $0.state == .complete }.count
                             Text("\(completed) of \(snapshot.batch.payload.items.count) complete")
                                 .fontWeight(AppTheme.FontWeight.semibold)
@@ -776,12 +653,16 @@ struct GenerationBatchProgressView: View {
                             }
                             if !snapshot.authorityAvailable {
                                 Text("Execution authority is not available on this Mac. This batch is history only.")
-                                    .foregroundStyle(AppTheme.Status.warningColor)
+                                    .foregroundStyle(AppTheme.Text.secondaryColor)
                             }
                             ForEach(snapshot.batch.payload.items) { item in
                                 if let execution = snapshot.journal.executions.first(where: { $0.itemID == item.id }) {
                                     Text("\(item.purpose) · \(label(execution.state))")
-                                    if let detail = execution.detail { Text(detail).foregroundStyle(AppTheme.Text.secondaryColor) }
+                                    if let detail = execution.detail {
+                                        DisclosureGroup("Diagnostic details") {
+                                            Text(detail).foregroundStyle(AppTheme.Text.secondaryColor).textSelection(.enabled)
+                                        }
+                                    }
                                     ForEach(execution.outputAssetIDs, id: \.self) { id in
                                         if let asset = editor.mediaAssets.first(where: { $0.id == id }) {
                                             Button("Open \(asset.libraryDisplayName)") { editor.selectMediaAsset(asset) }
@@ -790,9 +671,6 @@ struct GenerationBatchProgressView: View {
                                     }
                                 }
                             }
-                            Button("Cancel remaining") { coordinator.cancelRemaining(batchID: snapshot.batch.id, editor: editor) }
-                                .buttonStyle(InlineActionButtonStyle())
-                                .disabled(!snapshot.authorityAvailable || !snapshot.journal.executions.contains(where: { $0.state == .queued }))
                             if snapshot.authorityAvailable && snapshot.journal.executions.contains(where: { $0.state == .blocked && $0.providerRequestResumable }) {
                                 Button("Resume status checks") { coordinator.start(batchID: snapshot.batch.id, editor: editor, resumeBlocked: true) }
                                     .buttonStyle(InlineActionButtonStyle())
@@ -800,8 +678,14 @@ struct GenerationBatchProgressView: View {
                         }
                     }
                 }.frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+            } label: {
+                if batchID != nil, let snapshot = snapshots.first {
+                    let completed = snapshot.journal.executions.filter { $0.state == .complete }.count
+                    Text("\(completed) of \(snapshot.batch.payload.items.count) complete")
+                } else { Text("Generation batches") }
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
+            .onAppear { if batchID != nil { expanded = true } }
         }
     }
 

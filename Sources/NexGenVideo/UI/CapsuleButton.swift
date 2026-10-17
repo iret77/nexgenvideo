@@ -60,6 +60,7 @@ struct CapsuleButtonStyle: ButtonStyle {
                     )
                 )
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .modifier(ControlKeyboardFocusRing(radius: AppTheme.Radius.sm))
                 .opacity(opacity)
                 .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
                 .onHover { hovered = isEnabled && $0 }
@@ -70,6 +71,21 @@ struct CapsuleButtonStyle: ButtonStyle {
         private var opacity: Double {
             guard isEnabled else { return AppTheme.Opacity.disabledControl }
             return configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque
+        }
+    }
+}
+
+struct ControlKeyboardFocusRing: ViewModifier {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.isEnabled) private var isEnabled
+    let radius: CGFloat
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(isFocused && isEnabled ? AppTheme.Accent.primary : AppTheme.Background.clearColor,
+                    lineWidth: AppTheme.BorderWidth.medium)
+                .allowsHitTesting(false)
         }
     }
 }

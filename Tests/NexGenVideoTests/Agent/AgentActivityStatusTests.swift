@@ -6,6 +6,48 @@ import Testing
 
 @Suite("Agent activity status")
 struct AgentActivityStatusTests {
+    @Test("Task identity and phase come from the host work order, not the latest tool")
+    func taskIdentity() {
+        let request = AgentMessage(role: .user, blocks: [.text("Host command")], hidden: true,
+            userPresentation: .init(choiceRecord: .init(selections: [
+                .init(label: "Task", values: ["Complete missing Bible images"]),
+                .init(label: "Phase", values: ["bible"]),
+            ], attachmentNames: [], confirmed: true)))
+        let tool = AgentMessage(role: .assistant, blocks: [
+            .toolUse(id: "read", name: "Read", inputJSON: #"{"file_path":"/project/treatment.md"}"#),
+        ])
+        let presentation = AgentTaskActivityPresentation(messages: [request, tool], phase: "render")
+        #expect(presentation.title == "Complete missing Bible images · Bible")
+        #expect(presentation.expectedResult == "Result: Bible for approval")
+        let activity = AgentTranscriptProjection.turns(messages: [request, tool], isStreaming: true)
+            .flatMap(\.items).compactMap { item -> AgentActivity? in
+                guard case .activity(let value) = item else { return nil }
+                return value
+            }.last
+        #expect(activity?.operationLabel == "Reading · treatment.md")
+        #expect(!presentation.title.contains("Reading"))
+    }
+
+    @Test("A generic work order is never presented as an active production phase")
+    func genericTaskDoesNotBorrowCurrentPhase() {
+        let request = AgentMessage(role: .user, blocks: [], hidden: true,
+            userPresentation: .init(choiceRecord: .init(selections: [
+                .init(label: "Task", values: ["Organize media"]),
+            ], attachmentNames: [], confirmed: true)))
+        let presentation = AgentTaskActivityPresentation(messages: [request], phase: "bible")
+        #expect(presentation.title == "Organize media")
+        #expect(presentation.expectedResult == nil)
+        #expect(ToolRunPresentation.label(for: "Read", inputJSON: "invalid") == "Reading a file")
+    }
+
+    @Test("Silence becomes prominent at sixty seconds, never before")
+    func silenceThreshold() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let timing = AgentActivityTiming(startedAt: start, lastEventAt: start.addingTimeInterval(20))
+        #expect(!timing.isUnconfirmed(at: start.addingTimeInterval(79)))
+        #expect(timing.isUnconfirmed(at: start.addingTimeInterval(80)))
+    }
+
     @Test("Provider confirmation is liveness, not step progress")
     func providerConfirmationTiming() {
         let start = Date(timeIntervalSince1970: 1_000)

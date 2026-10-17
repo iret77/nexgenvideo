@@ -844,7 +844,12 @@ extension ToolExecutor {
             ).filter { targetIsCompatible($0.target) }
         }
         func requirementState(_ options: [SpendOption]) -> SpendModelRequirement? {
-            guard let modelRequirement else { return nil }
+            guard let modelRequirement else {
+                guard !options.contains(where: { $0.modelId == currentModelId }) else { return nil }
+                return SpendModelRequirement(modelId: currentModelId, modelName: currentModelName,
+                    source: "requested model", unavailableReason: noCompatibleModelReason
+                        ?? "No active provider can run the requested model with these inputs. Choose a replacement explicitly.")
+            }
             let runnable = modelRequirement.modelId.map { id in
                 options.contains { $0.modelId == id }
             } ?? false

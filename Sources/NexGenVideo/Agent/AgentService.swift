@@ -3142,6 +3142,8 @@ final class AgentService {
         let loadedSessions = ChatSessionStore.load(from: projectURL).filter(\.hasPersistedContent)
         let resumeID = loadedSessions.first { $0.isOpen && $0.decision?.belongs(to: $0.id) == true }?.id
             ?? loadedSessions.first { $0.isOpen && $0.draft?.isEmpty == false }?.id
+            ?? loadedSessions.first { $0.isOpen && !$0.messages.isEmpty }?.id
+            ?? loadedSessions.first { !$0.messages.isEmpty }?.id
         sessions = loadedSessions
             .map {
                 var session = $0
@@ -3166,7 +3168,7 @@ final class AgentService {
         pendingFunction = nil
         composerHeight = Self.preferredComposerHeight
         composerWantsFocus = false
-        if let resumeID {
+        if let resumeID, loadedSessions.first(where: { $0.id == resumeID })?.isOpen == true {
             restoreComposerState(for: resumeID)
             restoreDecision(for: resumeID)
         }
@@ -3433,7 +3435,8 @@ final class AgentService {
         let note = direction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !function.requiresDirection || Self.hasWorkOrderDirection(note, mentions: mentions) else { return false }
         let presentation = AgentUserPresentation(
-            choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])],
+            choiceRecord: AgentChoiceRecord(selections: [.init(label: "Task", values: [function.title])]
+                + (function.phase.map { [.init(label: "Phase", values: [$0])] } ?? []),
                 attachmentNames: mentions.map(\.displayName), confirmed: true),
             typedText: note.isEmpty ? nil : note
         )
@@ -3451,6 +3454,13 @@ final class AgentService {
         }
         return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
             mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
+    }
+
+    var currentTaskPhase: String? {
+        guard isStreaming, activitySessionID == currentSessionId else { return nil }
+        return messages.reversed().compactMap { $0.userPresentation?.choiceRecord }
+            .first { $0.selections.contains { $0.label == "Task" } }?
+            .selections.first { $0.label == "Phase" }?.values.first
     }
 
     @discardableResult
@@ -3816,7 +3826,7 @@ final class AgentService {
                 messages[index].blocks.append(.serverTool(block))
             }
         case .toolCall(let messageID, let id, let name, let inputJSON):
-            recordActivity(ToolRunPresentation.label(for: name))
+            recordActivity(ToolRunPresentation.label(for: name, inputJSON: inputJSON))
             let assistantID = assistantID(
                 providerMessageID: messageID,
                 messageIDs: &messageIDs,

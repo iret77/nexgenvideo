@@ -321,6 +321,9 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
+            productionSelectedPhase = nil
+            storyboardSelection = nil
+            showsAgentActivity = false
             _ = cancelAudioExtractionForProjectChange()
             if !pipelinePhaseRunCoordinator.hasRunningJobs {
                 pipelinePhaseExecution.reset()
@@ -720,10 +723,8 @@ final class EditorViewModel {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return
         }
-        // Production surfaces the cockpit + agent together, so the work is visible instead of
-        // buried in a chat panel the user has to notice.
         setWorkspaceFocus(.production)
-        agentPanelVisible = true
+        showsAgentActivity = false
         Task { [weak self] in
             // Scaffold directly via the in-process engine — no venv, no subprocess, no agent round-trip.
             // Already-initialized is benign (the pipeline exists → brief drafting is still right);
@@ -777,7 +778,11 @@ final class EditorViewModel {
             workflowHandoffPending = false
             let prompt = reconciliation.agentPrompt
                 ?? "Continue from the next unapproved production phase."
-            agentService.send(text: prompt, mentions: [], hidden: true)
+            let phase = projectState?.nextPhaseName
+            agentService.sendWorkOrder(
+                .init(title: phase.map { "Continue \(PhaseDisplay.label($0))" } ?? "Continue production",
+                      systemImage: "play", prompt: prompt, phase: phase),
+                direction: "", mentions: [])
         } else {
             startProduction()
         }
@@ -815,22 +820,14 @@ final class EditorViewModel {
     let generationBatchCoordinator = GenerationBatchCoordinator()
     let phaseSpendApproval = PhaseSpendApprovalController()
 
-    /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
-    /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
-    /// Showing the Agent routes to Production; hiding it collapses only that workspace's sidebar.
     var agentPanelVisible: Bool {
-        get { workspaceFocus == .production && isSidebarPresented }
+        get { showsAgentActivity }
         set {
             if newValue {
                 setWorkspaceFocus(.production)
                 theaterActive = false
-                maximizedPanel = nil
-                mediaPanelVisible = true
-                leftSidebarTab = .agent
-            } else if workspaceFocus == .production {
-                if maximizedPanel == .agent { maximizedPanel = nil }
-                mediaPanelVisible = false
             }
+            showsAgentActivity = newValue
         }
     }
 
@@ -917,7 +914,7 @@ final class EditorViewModel {
 
     // The marker panel is a popover on the timeline toolbar, so it opens only while that toolbar is on screen.
     var canPresentMarkerPanel: Bool {
-        workspaceFocus != .media && workspaceFocus != .export && !theaterActive
+        (workspaceFocus == .edit || workspaceFocus == .postproduction) && !theaterActive
             && (maximizedPanel == nil || maximizedPanel == .timeline)
     }
 
@@ -934,6 +931,9 @@ final class EditorViewModel {
 
     /// Selected tab of the Project cockpit. Kept on the view model (not local `@State`) so the status
     /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
+    var productionSelectedPhase: String?
+    var storyboardSelection: StoryboardShotSelection?
+    var showsAgentActivity = false
     var cockpitTab: CockpitTab = .pipeline
     var acknowledgedReviewRequests: Set<String> = []
     private var storyDraftsByProject: [URL: StoryPanelDrafts] = [:]
@@ -951,6 +951,20 @@ final class EditorViewModel {
 
     /// Reveal the Project cockpit on a specific panel without changing pipeline state.
     func revealCockpit(_ tab: CockpitTab) {
+        switch tab {
+        case .story: productionSelectedPhase = "brief"
+        case .productionDesign: productionSelectedPhase = "production_design"
+        case .treatment: productionSelectedPhase = "treatment"
+        case .storyboard: productionSelectedPhase = "storyboard"
+        case .bible: productionSelectedPhase = "bible"
+        case .shotlist: productionSelectedPhase = "shotlist"
+        case .project: productionSelectedPhase = "project_init"
+        case .pipeline: productionSelectedPhase = projectState?.nextPhaseName
+        case .review:
+            if !["sanity", "frames", "render"].contains(productionSelectedPhase ?? "") {
+                productionSelectedPhase = "sanity"
+            }
+        }
         cockpitTab = tab
         cockpitPackSurfaceID = nil
         setWorkspaceFocus(.production)

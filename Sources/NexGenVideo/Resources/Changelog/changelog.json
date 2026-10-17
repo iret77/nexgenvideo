@@ -2,6 +2,40 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.7.2",
+      "date": "2026-10-17",
+      "sections": [
+        {
+          "heading": "Production",
+          "items": [
+            "Production follows the workflow sidebar, phase workspace, object inspector, and decision dock. Budget, AI activity, and export remain available in the status bar.",
+            "Storyboard presents an ordered shot grid with subjects, section timing, and narrative purpose. Selecting a shot shows readable technical details in the inspector.",
+            "The current phase has a distinct state and explains missing Bible evidence without internal paths or tool names. Keyboard focus is visible across shared controls."
+          ]
+        },
+        {
+          "heading": "Generation",
+          "items": [
+            "Pipeline and frame reference images resolve from their verified project sources throughout preparation, preview, and approval. Missing references block approval before submission and reach the agent in revision diagnostics.",
+            "Single and batch generation share a result-focused approval card with labeled inputs, explicit phase authorization, and neutral unknown-price information. The requested model is preserved.",
+            "Director templates no longer inject prose into generation prompts. Explicit directive conflicts block compilation, and older prepared prompts must be recompiled."
+          ]
+        },
+        {
+          "heading": "Agent",
+          "items": [
+            "Resuming a project restores an existing conversation with content. Activity names the task, phase, and known object, with one stop action and detailed liveness information shown when needed."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.16 requires NexGenVideo 1.7.2 and provides typed Bible readiness diagnostics. Existing projects retain their pinned pack until an explicit upgrade."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.7.1",
       "date": "2026-10-17",
       "sections": [
