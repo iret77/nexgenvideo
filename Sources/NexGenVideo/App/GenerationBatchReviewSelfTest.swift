@@ -220,11 +220,21 @@ enum GenerationBatchReviewSelfTest {
         guard NSApp.isFullKeyboardAccessEnabled else {
             throw Failure(message: "keyboard navigation is disabled on this runner, so Remove cannot take focus")
         }
-        postRemoveKeyboardActivation(in: window)
+        let tabs = try await focusRemove(itemID: keyboardID, in: window, runtimeEvidence: runtimeEvidence)
+        let focusEvidence = "keyboard-focus item=\(keyboardID) tabs=\(tabs.map { String($0) } ?? "exhausted") "
+            + keyboardFocusDescription(window: window, runtimeEvidence: runtimeEvidence)
+        writeEvidence(focusEvidence)
+        guard tabs != nil else {
+            throw Failure(message: "Remove never took keyboard focus; \(focusEvidence)")
+        }
+        try postKey(code: 49, characters: " ", in: window)
         guard await waitUntil(timeout: .seconds(5), {
             editor.generationBatchCoordinator.pending?.payload.items.count == 11
         }), let afterKeyboard = editor.generationBatchCoordinator.pending else {
-            throw Failure(message: "the keyboard event did not activate the visible Remove action")
+            throw Failure(
+                message: "the keyboard event did not activate the visible Remove action; \(focusEvidence); after Space: "
+                    + keyboardFocusDescription(window: window, runtimeEvidence: runtimeEvidence)
+            )
         }
         guard afterKeyboard.id != afterClick.id,
               afterKeyboard.payload.items.first?.id != keyboardID,
@@ -619,34 +629,52 @@ enum GenerationBatchReviewSelfTest {
         return .success(evidence)
     }
 
-    private static func postRemoveKeyboardActivation(in window: NSWindow) {
-        let timestamp = ProcessInfo.processInfo.systemUptime
-        if let down = NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: timestamp,
-            windowNumber: window.windowNumber,
-            context: nil,
-            characters: " ",
-            charactersIgnoringModifiers: " ",
-            isARepeat: false,
-            keyCode: 49
-        ), let up = NSEvent.keyEvent(
-            with: .keyUp,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: timestamp + 0.001,
-            windowNumber: window.windowNumber,
-            context: nil,
-            characters: " ",
-            charactersIgnoringModifiers: " ",
-            isARepeat: false,
-            keyCode: 49
-        ) {
-            window.sendEvent(down)
-            window.sendEvent(up)
+    // Programmatic focus first; otherwise Tab moves focus as a keyboard user would.
+    private static func focusRemove(
+        itemID: String,
+        in window: NSWindow,
+        runtimeEvidence: GenerationBatchReviewRuntimeEvidence
+    ) async throws -> Int? {
+        if await waitUntil(timeout: .seconds(2), { runtimeEvidence.focusedRemoveItemID == itemID }) { return 0 }
+        for tab in 1...keyboardFocusTabLimit {
+            try postKey(code: 48, characters: "\t", in: window)
+            if await waitUntil(timeout: .milliseconds(500), { runtimeEvidence.focusedRemoveItemID == itemID }) {
+                return tab
+            }
         }
+        return nil
+    }
+
+    private static let keyboardFocusTabLimit = 60
+
+    // Queued like the pointer events, so AppKit routes the keys through NSApplication.sendEvent.
+    private static func postKey(code: UInt16, characters: String, in window: NSWindow) throws {
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(
+                with: type,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: code
+            ) else {
+                throw Failure(message: "AppKit could not create the key event for key code \(code)")
+            }
+            NSApp.postEvent(event, atStart: false)
+        }
+    }
+
+    private static func keyboardFocusDescription(
+        window: NSWindow,
+        runtimeEvidence: GenerationBatchReviewRuntimeEvidence
+    ) -> String {
+        let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        return "swiftUIFocus=\(runtimeEvidence.focusedRemoveItemID ?? "nil") firstResponder=\(responder) "
+            + "keyWindow=\(window.isKeyWindow)"
     }
 
     private static func isClickProbeReady(identifier: String, in window: NSWindow) -> Bool {
