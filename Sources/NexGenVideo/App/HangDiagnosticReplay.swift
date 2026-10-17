@@ -10,6 +10,9 @@ enum HangDiagnosticReplay {
     private static var scrollEventsSent = 0
     private static var lastScrollTarget: String?
     private static var scrollMotion: [String: Any] = [:]
+    private static var appliedFrames = 0
+    private static var maximumFrameLateness = 0.0
+    private static var actualTimelineDuration = 0.0
 
     static func runIfRequested() {
         let environment = ProcessInfo.processInfo.environment
@@ -69,6 +72,9 @@ enum HangDiagnosticReplay {
                 var previous: HangDiagnosticTranscript?
                 var previousDigest: String?
                 var priorTime: Double?
+                var firstTime: Double?
+                let clock = ContinuousClock()
+                var replayStart: ContinuousClock.Instant?
                 var activationIndex = 0
                 var isReplayActive = true
                 do {
@@ -79,8 +85,22 @@ enum HangDiagnosticReplay {
                                 authenticating: Data(folder.lastPathComponent.utf8))
                             return (try JSONDecoder().decode(HangDiagnosticReplayFrame.self, from: bytes), DiagnosticFiles.digest(bytes))
                         }.value
-                        if let priorTime {
-                            try await Task.sleep(for: .seconds(max(0, decoded.uptime - priorTime)))
+                        guard decoded.uptime.isFinite, decoded.uptime >= 0,
+                              priorTime.map({ decoded.uptime >= $0 }) ?? true else {
+                            throw CocoaError(.fileReadCorruptFile)
+                        }
+                        let start = replayStart ?? clock.now
+                        replayStart = start
+                        let origin = firstTime ?? decoded.uptime
+                        firstTime = origin
+                        let recordedOffset = decoded.uptime - origin
+                        guard let timing = replayFrameTiming(recordedOffset: recordedOffset,
+                            elapsed: seconds(start.duration(to: clock.now))) else {
+                            throw CocoaError(.fileReadCorruptFile)
+                        }
+                        if timing.delay > 0 {
+                            try await Task.sleep(until: start.advanced(by: .seconds(recordedOffset)),
+                                                 tolerance: .zero, clock: clock)
                         }
                         while activationIndex < activationTimeline.count,
                               activationTimeline[activationIndex].uptime <= decoded.uptime {
@@ -106,6 +126,11 @@ enum HangDiagnosticReplay {
                         let service = editor.agentService
                         if decoded.projectChanged, let project = state.project { editor.restoreDiagnosticProject(project) }
                         try service.restoreDiagnosticTranscript(state)
+                        actualTimelineDuration = seconds(start.duration(to: clock.now))
+                        guard let appliedTiming = replayFrameTiming(recordedOffset: recordedOffset,
+                            elapsed: actualTimelineDuration) else { throw CocoaError(.fileReadCorruptFile) }
+                        appliedFrames += 1
+                        maximumFrameLateness = max(maximumFrameLateness, appliedTiming.lateness)
                         if matchGeometry {
                             try await Task.sleep(for: .milliseconds(20))
                             if let geometry { try host.matchViewport(geometry.viewport) }
@@ -126,6 +151,21 @@ enum HangDiagnosticReplay {
 
     private final class ReplayWindow: NSWindow {
         override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    }
+
+    struct ReplayFrameTiming {
+        let delay: Double
+        let lateness: Double
+    }
+
+    static func replayFrameTiming(recordedOffset: Double, elapsed: Double) -> ReplayFrameTiming? {
+        guard recordedOffset.isFinite, recordedOffset >= 0, elapsed.isFinite, elapsed >= 0 else { return nil }
+        return ReplayFrameTiming(delay: max(0, recordedOffset - elapsed), lateness: max(0, elapsed - recordedOffset))
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        let parts = duration.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 
     private struct ScrollSnapshot {
@@ -182,7 +222,7 @@ enum HangDiagnosticReplay {
             ready.scroll.reflectScrolledClipView(ready.scroll.contentView)
             if let before = try await stableScrollSnapshot(in: host),
                before.scroll === ready.scroll, before.document === ready.document, before.isInterior {
-                try sendScrollGesture(to: before.scroll, delta: 20)
+                try await sendScrollGesture(to: before.scroll, delta: 20)
                 if let after = try await stableScrollSnapshot(in: host, matching: before), after.isInterior,
                    after.viewport.minY <= before.viewport.minY - 1 {
                     scrollMotion = ["target": before.target, "before": before.viewport.minY,
@@ -194,7 +234,7 @@ enum HangDiagnosticReplay {
         let current = try scrollSnapshot(in: host)
         current.scroll.contentView.scroll(to: NSPoint(x: 0, y: current.bottom))
         current.scroll.reflectScrolledClipView(current.scroll.contentView)
-        try sendScrollGesture(to: current.scroll, delta: -20)
+        try await sendScrollGesture(to: current.scroll, delta: -20)
     }
 
     static func scrollGestureEvents(delta: Int32, location: CGPoint) throws -> [NSEvent] {
@@ -210,12 +250,15 @@ enum HangDiagnosticReplay {
         }
     }
 
-    private static func sendScrollGesture(to scroll: NSScrollView, delta: Int32) throws {
+    private static func sendScrollGesture(to scroll: NSScrollView, delta: Int32) async throws {
         guard let window = scroll.window, let screen = NSScreen.screens.first else { throw CocoaError(.coderValueNotFound) }
         let center = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
         let point = window.convertPoint(toScreen: center)
         let location = CGPoint(x: point.x, y: screen.frame.height - point.y)
-        for wheel in try scrollGestureEvents(delta: delta, location: location) {
+        let wheels = try scrollGestureEvents(delta: delta, location: location)
+        for (index, wheel) in wheels.enumerated() {
+            // SwiftUI must process each phase before the next one arrives.
+            if index > 0 { try await Task.sleep(for: .milliseconds(20)) }
             scroll.scrollWheel(with: wheel)
             scrollEventsSent += 1
             lastScrollTarget = String(describing: ObjectIdentifier(scroll))
@@ -360,6 +403,9 @@ enum HangDiagnosticReplay {
                                        "windowWidth": window.frame.width,
                                        "windowHeight": window.frame.height,
                                        "maximumPulseGap": maximumPulseGap,
+                                       "appliedFrames": appliedFrames,
+                                       "maximumFrameLateness": maximumFrameLateness,
+                                       "actualTimelineDuration": actualTimelineDuration,
                                        "transcriptGeometrySource": geometry?.source ?? "unavailable",
                                        "transcriptWidth": transcriptScroll?.contentView.bounds.width ?? 0,
                                        "transcriptHeight": transcriptScroll?.contentView.bounds.height ?? 0,

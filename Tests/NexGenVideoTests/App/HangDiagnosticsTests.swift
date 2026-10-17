@@ -200,6 +200,25 @@ struct HangDiagnosticsTests {
         #expect(editor.agentService.backend == .claudeCode)
     }
 
+    @Test @MainActor func replayFrameDeadlinesSubtractElapsedWorkAndReportLateness() throws {
+        let waiting = try #require(HangDiagnosticReplay.replayFrameTiming(recordedOffset: 2, elapsed: 0.5))
+        #expect(waiting.delay == 1.5)
+        #expect(waiting.lateness == 0)
+        let due = try #require(HangDiagnosticReplay.replayFrameTiming(recordedOffset: 2, elapsed: 2))
+        #expect(due.delay == 0)
+        #expect(due.lateness == 0)
+        let late = try #require(HangDiagnosticReplay.replayFrameTiming(recordedOffset: 2, elapsed: 2.25))
+        #expect(late.delay == 0)
+        #expect(late.lateness == 0.25)
+    }
+
+    @Test @MainActor func replayFrameDeadlinesRejectInvalidTimes() {
+        for invalid in [-0.1, Double.nan, Double.infinity, -Double.infinity] {
+            #expect(HangDiagnosticReplay.replayFrameTiming(recordedOffset: invalid, elapsed: 0) == nil)
+            #expect(HangDiagnosticReplay.replayFrameTiming(recordedOffset: 0, elapsed: invalid) == nil)
+        }
+    }
+
     @Test @MainActor func replayScrollGestureUsesNativePhasesAndEndsWithoutMovement() throws {
         for delta in [Int32(20), Int32(-20)] {
             let events = try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: .zero)
