@@ -3,6 +3,7 @@
 import argparse
 import io
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -10,8 +11,42 @@ import tempfile
 import time
 import zipfile
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from replay_key import decode_base64_key
+
+
+def positive_dimension(value):
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def parse_comparison_viewport(value):
+    try:
+        width, height = map(float, value.split("x"))
+    except (AttributeError, TypeError, ValueError):
+        raise argparse.ArgumentTypeError("comparison viewport must be WIDTHxHEIGHT") from None
+    if not positive_dimension(width) or not positive_dimension(height):
+        raise argparse.ArgumentTypeError("comparison viewport dimensions must be finite and positive")
+    return width, height
+
+
+def transcript_geometry(records, comparison_viewport=None):
+    record = max(
+        (record for record in records
+         if record.get("operation") == "scroll" and len(record.get("values", [])) >= 5),
+        key=lambda record: record.get("sequence", 0), default=None,
+    )
+    if record is not None:
+        width, height = record["values"][4], record["values"][2]
+        if record.get("hadNonFiniteValues") or not all(map(positive_dimension, (width, height))):
+            raise ValueError("recorded transcript viewport is invalid")
+        return {"transcriptGeometrySource": "recorded",
+                "recordedTranscriptWidth": width, "recordedTranscriptHeight": height}
+    if comparison_viewport is None:
+        raise ValueError("recorded transcript viewport is unavailable; declare --comparison-viewport explicitly")
+    if len(comparison_viewport) != 2 or not all(map(positive_dimension, comparison_viewport)):
+        raise ValueError("comparison transcript viewport is invalid")
+    width, height = comparison_viewport
+    return {"transcriptGeometrySource": "comparison",
+            "comparisonTranscriptWidth": width, "comparisonTranscriptHeight": height}
 
 
 def recorded_editor_window(records):
@@ -21,6 +56,9 @@ def recorded_editor_window(records):
     ]
     if not windows:
         return None
+    if any(record.get("hadNonFiniteValues")
+           or not all(map(positive_dimension, record["values"][1:3])) for record in windows):
+        raise ValueError("recorded window geometry is invalid")
     editor_window_number = max(
         windows,
         key=lambda record: (
@@ -40,7 +78,13 @@ def main():
     parser.add_argument("fixture", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--match-geometry", action="store_true")
+    parser.add_argument("--comparison-viewport", type=parse_comparison_viewport,
+                        help="Explicit comparison WIDTHxHEIGHT only when the recording has no transcript viewport")
     args = parser.parse_args()
+    if args.comparison_viewport is not None and not args.match_geometry:
+        parser.error("--comparison-viewport requires --match-geometry")
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     app, fixture, output = args.app, args.fixture, args.output
     output.mkdir(parents=True, exist_ok=True)
     key = decode_base64_key(os.environ["NGV_HANG_FIXTURE_KEY"])
@@ -67,20 +111,23 @@ def main():
             for event_file in sorted(folder.glob("events-*.json")):
                 structural_records.extend(json.loads(event_file.read_text()))
         recorded_window = recorded_editor_window(structural_records)
-        recorded_scroll = max(
-            (record for record in structural_records
-             if record.get("operation") == "scroll" and len(record.get("values", [])) >= 5),
-            key=lambda record: record.get("sequence", 0), default=None,
-        )
+        if args.match_geometry and recorded_window is None:
+            raise ValueError("recorded window geometry is unavailable")
+        geometry = transcript_geometry(structural_records, args.comparison_viewport) if args.match_geometry else {}
         replay_delay = len(decoded) * (0.12 if args.match_geometry else 0)
         settling_delay = 30 if args.match_geometry else 2
         timeout = duration + replay_delay + settling_delay + 60
         environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(folder),
                        "NGV_DIAGNOSTIC_KEY_FILE": str(root / "replay.key")}
         environment.pop("NGV_HANG_FIXTURE_KEY", None)
+        environment.pop("NGV_DIAGNOSTIC_REPLAY_COMPARISON_VIEWPORT", None)
         if args.match_geometry:
             environment.update(NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY="1",
                                NGV_DIAGNOSTIC_REPLAY_PROGRESS=str(root / "progress.json"))
+            if geometry["transcriptGeometrySource"] == "comparison":
+                environment["NGV_DIAGNOSTIC_REPLAY_COMPARISON_VIEWPORT"] = (
+                    f"{geometry['comparisonTranscriptWidth']}x{geometry['comparisonTranscriptHeight']}"
+                )
         started = time.monotonic()
         observations = []
         captures = 0
@@ -139,9 +186,7 @@ def main():
         if recorded_window is not None:
             result["recordedWindowWidth"] = recorded_window["values"][1]
             result["recordedWindowHeight"] = recorded_window["values"][2]
-        if recorded_scroll is not None:
-            result["recordedTranscriptWidth"] = recorded_scroll["values"][4]
-            result["recordedTranscriptHeight"] = recorded_scroll["values"][2]
+        result.update(geometry)
         result["maxObservedCPU"] = max((o["cpu"] for o in observations), default=None)
         result["maxRSSKB"] = max((o["rssKB"] for o in observations), default=None)
         result["busySamples"] = captures

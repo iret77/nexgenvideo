@@ -74,9 +74,10 @@ struct PipelineExecutionPlanComposerContractTests {
             ],
         ]
         let input = try JSONDecoder().decode(PipelineExecutionShotInput.self, from: JSONSerialization.data(withJSONObject: json))
-        return try #require(PipelineExecutionPlanComposer.generationRequirement(
+        let requirement = try PipelineExecutionPlanComposer.generationRequirement(
             shot: shot, input: input, sourceAssetID: nil, demandAssetIDs: [:], brief: brief, bible: nil
-        ))
+        )
+        return try #require(requirement)
     }
 
     @Test("shot references and execution demands have the same exact path set")

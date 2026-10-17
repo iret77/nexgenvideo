@@ -59,7 +59,7 @@ jobs:
               if source.count(old) != 1:
                   raise SystemExit(f"Pinned baseline model picker changed; inspect: {old}")
               source = source.replace(old, new, 1)
-          # Both variants mount the full transcript in the same recorded viewport.
+          # Both variants mount the full transcript in the same declared viewport.
           source = source.replace("struct AgentPanelView: View {", "struct AgentPanelView: View {\n    var presentation: AgentPanelPresentation = .tasks\n    var replayTranscriptOnly = false", 1)
           old = "        let turns = transcriptTurns\n        VStack(spacing: AppTheme.Spacing.none) {"
           new = "        let turns = transcriptTurns\n        if replayTranscriptOnly {\n            messageList(turns: turns)\n        } else {\n        VStack(spacing: AppTheme.Spacing.none) {"
@@ -106,7 +106,7 @@ jobs:
         with:
           name: recorded-app-${{ matrix.variant }}
           path: ${{ runner.temp }}/replay
-      - name: Replay captured states with recorded dimensions
+      - name: Replay captured states with declared geometry
         env:
           NGV_HANG_FIXTURE_KEY: ${{ secrets.NGV_HANG_FIXTURE_KEY_890AD793 }}
         run: |
@@ -116,7 +116,8 @@ jobs:
           source "$RUNNER_TEMP/replay-python/bin/activate"
           pip install --quiet cryptography==46.0.5
           ditto -x -k "$RUNNER_TEMP/replay/replay-app.zip" "$RUNNER_TEMP/replay"
-          python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry
+          # Legacy fixtures lack transcript width; this comparison is not original-viewport reproduction.
+          python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry --comparison-viewport 480x560
           python3 scripts/verify_recorded_hang_result.py "$RUNNER_TEMP/evidence/result.json" --expect "${{ matrix.variant }}"
       - uses: actions/upload-artifact@v4
         if: always()

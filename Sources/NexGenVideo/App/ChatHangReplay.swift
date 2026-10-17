@@ -175,7 +175,9 @@ enum ChatHangReplay {
             guard await waitForControlWindow("production.ai") === window,
                   WorkspaceUIAcceptance.click(identifier: "production.ai", in: window) == nil else { return nil }
         }
-        return await waitForControlWindow("agent.diagnostics", requiresKeyWindow: false)
+        guard let activity = await waitForControlWindow("agent.diagnostics", requiresKeyWindow: false) else { return nil }
+        activity.makeKeyAndOrderFront(nil)
+        return await waitForControlWindow("agent.diagnostics")
     }
 
     private static func controlWindow(_ identifier: String) -> NSWindow? {

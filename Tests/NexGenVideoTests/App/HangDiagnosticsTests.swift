@@ -229,4 +229,38 @@ struct HangDiagnosticsTests {
         #expect(HangDiagnosticReplay.recordedTranscriptViewport(in: records) == CGSize(width: 328, height: 610))
         #expect(HangDiagnosticReplay.recordedTranscriptViewport(in: []) == nil)
     }
+
+    @Test @MainActor func replayComparisonViewportRequiresAnExplicitValidDeclaration() {
+        let legacy = [DiagnosticRecord(sequence: 1, uptime: 1, operation: .scroll, values: [1500, 900, 600, 0])]
+        #expect(HangDiagnosticReplay.transcriptGeometry(in: legacy, comparisonViewport: nil) == nil)
+        let comparison = HangDiagnosticReplay.transcriptGeometry(in: legacy, comparisonViewport: "480x560")
+        #expect(comparison?.source == "comparison")
+        #expect(comparison?.viewport == CGSize(width: 480, height: 560))
+        for invalid in ["", "480", "480x", "x560", "480x560x640", "truex560", "NaNx560", "480xinf", "0x560", "480x-1"] {
+            #expect(HangDiagnosticReplay.transcriptGeometry(in: legacy, comparisonViewport: invalid) == nil)
+        }
+    }
+
+    @Test @MainActor func replayComparisonViewportNeverReplacesRecordedGeometry() {
+        let records = [DiagnosticRecord(sequence: 1, uptime: 1, operation: .scroll, values: [1500, 900, 600, 0, 320])]
+        let selected = HangDiagnosticReplay.transcriptGeometry(in: records, comparisonViewport: "480x560")
+        #expect(selected?.source == "recorded")
+        #expect(selected?.viewport == CGSize(width: 320, height: 600))
+        for invalid in [Double.nan, Double.infinity, 0, -1] {
+            for index in [2, 4] {
+                var values: [Double] = [1500, 900, 600, 0, 320]
+                values[index] = invalid
+                let corrupt = [DiagnosticRecord(sequence: 2, uptime: 2, operation: .scroll, values: values)]
+                #expect(HangDiagnosticReplay.transcriptGeometry(in: corrupt, comparisonViewport: "480x560") == nil)
+            }
+        }
+    }
+
+    @Test @MainActor func replayWindowGeometryMustBeRecordedAndPositive() {
+        #expect(HangDiagnosticReplay.recordedEditorWindow(in: []) == nil)
+        for invalid in [Double.nan, Double.infinity, 0, -1] {
+            let corrupt = [DiagnosticRecord(sequence: 1, uptime: 1, operation: .window, values: [1, invalid, 1040])]
+            #expect(HangDiagnosticReplay.recordedEditorWindow(in: corrupt) == nil)
+        }
+    }
 }

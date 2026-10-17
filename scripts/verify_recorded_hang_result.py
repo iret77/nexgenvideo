@@ -53,7 +53,7 @@ def verification_errors(result, expected, maximum_pulse_gap=5.0):
     if progress.get("finished") is not True or progress.get("sequence") is not None:
         errors.append("candidate did not finish every captured state")
     pulse_gap = progress.get("maximumPulseGap")
-    if not isinstance(pulse_gap, (int, float)):
+    if type(pulse_gap) not in (int, float) or not math.isfinite(pulse_gap) or pulse_gap < 0:
         errors.append("candidate did not report main-thread pulse latency")
     elif pulse_gap > maximum_pulse_gap:
         errors.append(
@@ -66,25 +66,39 @@ def geometry_errors(result, progress, tolerance=1.0):
     if result.get("geometryRequested") is not True:
         return []
     errors = []
-    for field, label in (("WindowWidth", "window width"), ("WindowHeight", "window height"),
-                         ("TranscriptWidth", "transcript width"), ("TranscriptHeight", "transcript height")):
-        expected = result.get(f"recorded{field}")
+    source = result.get("transcriptGeometrySource")
+    if source not in ("recorded", "comparison"):
+        errors.append("transcript geometry source is unavailable")
+    if progress.get("transcriptGeometrySource") != source:
+        errors.append("replay transcript geometry source does not match the declared source")
+    if source == "comparison" and any(f"recordedTranscript{dimension}" in result for dimension in ("Width", "Height")):
+        errors.append("comparison geometry must not replace recorded transcript geometry")
+    if source == "recorded" and any(f"comparisonTranscript{dimension}" in result for dimension in ("Width", "Height")):
+        errors.append("recorded geometry must not declare a comparison viewport")
+    fields = [("WindowWidth", "window width", "recorded"), ("WindowHeight", "window height", "recorded")]
+    if source in ("recorded", "comparison"):
+        fields.extend((field, label, source) for field, label in
+                      (("TranscriptWidth", "transcript width"), ("TranscriptHeight", "transcript height")))
+    for field, label, origin in fields:
+        expected = result.get(f"{origin}{field}")
         actual = progress.get(field[0].lower() + field[1:])
         if (
             isinstance(expected, bool)
             or not isinstance(expected, (int, float))
             or not math.isfinite(expected)
+            or expected <= 0
         ):
-            errors.append(f"recorded {label} is unavailable")
+            errors.append(f"{origin} {label} is unavailable")
         elif (
             isinstance(actual, bool)
             or not isinstance(actual, (int, float))
             or not math.isfinite(actual)
+            or actual <= 0
         ):
             errors.append(f"replay {label} is unavailable")
         elif abs(actual - expected) > tolerance:
             errors.append(
-                f"replay {label} {actual:.1f} does not match recorded {expected:.1f}"
+                f"replay {label} {actual:.1f} does not match {origin} {expected:.1f}"
             )
     target = progress.get("transcriptScrollTarget")
     if not isinstance(target, str) or not target or progress.get("scrollTarget") != target:

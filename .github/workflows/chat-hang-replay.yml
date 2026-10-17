@@ -2,6 +2,11 @@ name: Chat Hang Replay
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      runtime_artifact:
+        description: Already-built app from this CI batch
+        type: string
+        default: ""
 
 concurrency:
   group: chat-hang-replay-${{ github.ref }}
@@ -9,6 +14,7 @@ concurrency:
 
 jobs:
   build:
+    if: inputs.runtime_artifact == ''
     runs-on: macrunner
     timeout-minutes: 25
     steps:
@@ -27,6 +33,7 @@ jobs:
 
   replay:
     needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.runtime_artifact != '')) }}
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 8
@@ -34,13 +41,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: chat-replay
+          name: ${{ inputs.runtime_artifact || 'chat-replay' }}
           path: ${{ runner.temp }}/chat-replay
       - name: Require production macOS and stress the real panel
+        env:
+          RUNTIME_ARCHIVE: ${{ inputs.runtime_artifact != '' && 'workspace-ui.tar.gz' || 'chat-replay.tar.gz' }}
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
-          tar -xzf "$RUNNER_TEMP/chat-replay/chat-replay.tar.gz" -C "$RUNNER_TEMP/chat-replay"
+          tar -xzf "$RUNNER_TEMP/chat-replay/$RUNTIME_ARCHIVE" -C "$RUNNER_TEMP/chat-replay"
+          test -x "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo"
           python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"
       - uses: actions/upload-artifact@v4
         if: always()
