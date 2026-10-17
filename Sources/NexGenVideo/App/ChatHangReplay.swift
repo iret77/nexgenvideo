@@ -19,15 +19,11 @@ enum ChatHangReplay {
             )
         )
         editor.setWorkspaceFocus(.production)
-        editor.agentPanelVisible = true
         let service = editor.agentService
         let image = imagePayload()
         for index in 0..<24 {
             appendGeneration(index, image: image, service: service)
         }
-        guard service.stageTask(.init(title: "Review generated sheets", systemImage: "photo",
-            prompt: "Review the generated sheets.", requiresDirection: true)) else { exit(2) }
-        service.isStreaming = true
         let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
@@ -41,7 +37,15 @@ enum ChatHangReplay {
         app.activate(ignoringOtherApps: true)
         emit("started", step: 0)
         Task { @MainActor in
+            guard await openActivity(in: window) != nil else {
+                emit("activity-open-failed", step: 0)
+                exit(2)
+            }
+            guard service.stageTask(.init(title: "Review generated sheets", systemImage: "photo",
+                prompt: "Review the generated sheets.", requiresDirection: true)) else { exit(2) }
+            service.isStreaming = true
             var focusedTicks = 0
+            var diagnosticsWindow: NSWindow?
             for step in 1...1200 {
                 NotificationCenter.default.post(
                     name: .claudeCodeStatusChanged,
@@ -64,7 +68,7 @@ enum ChatHangReplay {
                     }
                 } else if step % 80 == 35 {
                     service.abandonDialog()
-                    service.isStreaming = true
+                    service.isStreaming = false
                     service.restoreComposerFocus()
                 }
                 if step.isMultiple(of: 40) {
@@ -87,32 +91,48 @@ enum ChatHangReplay {
                 }
                 host.layoutSubtreeIfNeeded()
                 if step % 400 == 100 {
-                    guard WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: window) == nil,
-                          await waitForSheet(in: window, presented: true) else {
-                        emit("diagnostics-open-failed", step: step)
+                    guard let activity = await openActivity(in: window) else {
+                        emit("diagnostics-open-failed", step: step, reason: "activity control unavailable")
                         exit(2)
                     }
-                    if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
+                    let clickFailure = WorkspaceUIAcceptance.click(identifier: "agent.diagnostics", in: activity)
+                    guard clickFailure == nil,
+                          let presented = await waitForControlWindow("agent.diagnostics.done") else {
+                        emit("diagnostics-open-failed", step: step,
+                             reason: clickFailure ?? "diagnostic window did not settle")
+                        exit(2)
+                    }
+                    diagnosticsWindow = presented
+                    if let content = presented.contentView { snapshot(content, step: step) }
                     emit("diagnostics-opened", step: step)
                 } else if step % 400 == 300 {
-                    guard await waitForSheet(in: window, presented: true) else {
-                        emit("diagnostics-close-failed", step: step, reason: "sheet geometry did not settle")
+                    guard let presented = await waitForControlWindow("agent.diagnostics.done"),
+                          presented === diagnosticsWindow else {
+                        emit("diagnostics-close-failed", step: step, reason: "diagnostic window did not remain presented")
                         exit(2)
                     }
-                    let clickFailure = window.attachedSheet.map {
-                        WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: $0)
-                    } ?? "diagnostic sheet unavailable"
+                    let clickFailure = WorkspaceUIAcceptance.click(identifier: "agent.diagnostics.done", in: presented)
                     guard clickFailure == nil,
-                          await waitForSheet(in: window, presented: false) else {
-                        if let content = window.attachedSheet?.contentView { snapshot(content, step: step) }
+                          await WorkspaceUIAcceptance.waitUntil(timeout: .seconds(5), {
+                              !presented.isVisible && controlWindow("agent.diagnostics.done") == nil
+                          }) else {
+                        if let content = presented.contentView { snapshot(content, step: step) }
                         emit("diagnostics-close-failed", step: step,
-                             reason: clickFailure ?? "sheet remained presented after click")
+                             reason: clickFailure ?? "diagnostic window remained presented after click")
                         exit(2)
                     }
+                    diagnosticsWindow = nil
                     emit("diagnostics-closed", step: step)
+                    guard await openActivity(in: window) != nil else {
+                        emit("activity-open-failed", step: step)
+                        exit(2)
+                    }
                 }
-                let visibleHost = window.attachedSheet?.contentView ?? host
-                if window.firstResponder is NSTextView {
+                let activity = controlWindow("agent.diagnostics")
+                let visibleHost = diagnosticsWindow?.contentView ?? activity?.contentView ?? host
+                if activity?.isKeyWindow == true,
+                   let input = activity?.firstResponder as? NSTextView,
+                   !input.isHiddenOrHasHiddenAncestor, !input.visibleRect.isEmpty {
                     focusedTicks += 1
                 }
                 if step.isMultiple(of: 15),
@@ -149,28 +169,50 @@ enum ChatHangReplay {
         exit(1)
     }
 
-    private static func waitForSheet(in window: NSWindow, presented: Bool) async -> Bool {
+    private static func openActivity(in window: NSWindow) async -> NSWindow? {
+        if controlWindow("agent.diagnostics") == nil {
+            window.makeKeyAndOrderFront(nil)
+            guard await waitForControlWindow("production.ai") === window,
+                  WorkspaceUIAcceptance.click(identifier: "production.ai", in: window) == nil else { return nil }
+        }
+        guard let activity = await waitForControlWindow("agent.diagnostics", requiresKeyWindow: false) else { return nil }
+        activity.makeKeyAndOrderFront(nil)
+        return await waitForControlWindow("agent.diagnostics")
+    }
+
+    private static func controlWindow(_ identifier: String) -> NSWindow? {
+        NSApp.windows.first { window in
+            guard window.isVisible, let content = window.contentView else { return false }
+            content.layoutSubtreeIfNeeded()
+            guard let probe = WorkspaceUIAcceptance.findProbe(in: content, identifier: identifier) else { return false }
+            return !probe.isHiddenOrHasHiddenAncestor && !probe.visibleRect.isEmpty
+                && probe.bounds.width > 0 && probe.bounds.height > 0
+        }
+    }
+
+    private static func waitForControlWindow(_ identifier: String, requiresKeyWindow: Bool = true) async -> NSWindow? {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(5))
+        var previousWindow: NSWindow?
         var previousFrame: NSRect?
         var stableSince = clock.now
         while clock.now < deadline {
-            if !presented, window.attachedSheet == nil { return true }
-            if presented, let sheet = window.attachedSheet, sheet.isVisible, sheet.isKeyWindow {
-                sheet.contentView?.layoutSubtreeIfNeeded()
-                if sheet.frame != previousFrame {
-                    previousFrame = sheet.frame
+            if let window = controlWindow(identifier), !requiresKeyWindow || window.isKeyWindow {
+                if window !== previousWindow || window.frame != previousFrame {
+                    previousWindow = window
+                    previousFrame = window.frame
                     stableSince = clock.now
                 } else if clock.now - stableSince >= .milliseconds(300) {
-                    return true
+                    return window
                 }
             } else {
+                previousWindow = nil
                 previousFrame = nil
                 stableSince = clock.now
             }
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return nil }
         }
-        return false
+        return nil
     }
 
     private static func reviewDialog(_ step: Int) -> AgentDialog {

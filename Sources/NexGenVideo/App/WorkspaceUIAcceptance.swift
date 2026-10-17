@@ -1343,27 +1343,75 @@ enum WorkspaceUIAcceptance {
     }
 
     static func revealProbe(_ identifier: String, in window: NSWindow) async -> Bool {
-        guard let root = window.contentView,
-              let probe = shownProbe(in: root, identifier: identifier) else { return false }
-        var ancestor = probe.superview
-        while let view = ancestor {
-            if let scroll = view as? NSScrollView, let document = scroll.documentView {
-                document.scrollToVisible(probe.convert(probe.bounds, to: document))
-                scroll.reflectScrolledClipView(scroll.contentView)
-                root.layoutSubtreeIfNeeded()
-            }
-            ancestor = view.superview
-        }
-        return await waitUntil(timeout: .seconds(5), {
+        guard let root = window.contentView else { return false }
+        var previousProbe: ObjectIdentifier?
+        var previousFrame: NSRect?
+        let revealed = await waitUntil(timeout: .seconds(5), {
             root.layoutSubtreeIfNeeded()
+            guard let probe = shownProbe(in: root, identifier: identifier),
+                  probe.window === window, !probe.isHiddenOrHasHiddenAncestor,
+                  probe.bounds.width.isFinite, probe.bounds.height.isFinite,
+                  probe.bounds.width > 0, probe.bounds.height > 0 else {
+                previousProbe = nil
+                previousFrame = nil
+                return false
+            }
+            var clipped = false
             var ancestor = probe.superview
             while let view = ancestor {
                 if let scroll = view as? NSScrollView,
-                   !scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView)) { return false }
+                   !scroll.contentView.bounds.contains(probe.convert(probe.bounds, to: scroll.contentView)) {
+                    clipped = true
+                    if let document = scroll.documentView {
+                        let frame = probe.convert(probe.bounds, to: document)
+                        let paddingX = min(AppTheme.Spacing.xs, max(0, (scroll.contentView.bounds.width - frame.width) / 2))
+                        let paddingY = min(AppTheme.Spacing.xs, max(0, (scroll.contentView.bounds.height - frame.height) / 2))
+                        let target = frame.insetBy(dx: -paddingX, dy: -paddingY).intersection(document.bounds)
+                        if !target.isNull, !target.isEmpty {
+                            document.scrollToVisible(target)
+                            scroll.reflectScrolledClipView(scroll.contentView)
+                            root.layoutSubtreeIfNeeded()
+                        }
+                    }
+                }
                 ancestor = view.superview
             }
-            return root.bounds.contains(probe.convert(probe.bounds, to: root))
+            let frame = probe.convert(probe.bounds, to: root)
+            guard !clipped, root.bounds.contains(frame) else {
+                previousProbe = nil
+                previousFrame = nil
+                return false
+            }
+            let stable = previousProbe == ObjectIdentifier(probe) && previousFrame == frame
+            previousProbe = ObjectIdentifier(probe)
+            previousFrame = frame
+            return stable
         })
+        if !revealed, let rawScale = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_SCALE"],
+           let scale = Double(rawScale) {
+            emit("probe-reveal-diagnostic", scale: scale,
+                fields: ["identifier": identifier, "geometry": probeScrollDiagnostics(identifier, in: window)])
+        }
+        return revealed
+    }
+
+    private static func probeScrollDiagnostics(_ identifier: String, in window: NSWindow) -> [String: Any] {
+        guard let root = window.contentView, let probe = shownProbe(in: root, identifier: identifier) else {
+            return ["available": false]
+        }
+        var clips: [[String: Any]] = []
+        var ancestor = probe.superview
+        while let view = ancestor {
+            if let scroll = view as? NSScrollView {
+                clips.append(["bounds": frameDescription(scroll.contentView.bounds),
+                    "control": frameDescription(probe.convert(probe.bounds, to: scroll.contentView)),
+                    "document": scroll.documentView.map { frameDescription($0.bounds) } ?? [:]])
+            }
+            ancestor = view.superview
+        }
+        return ["available": true, "hidden": probe.isHiddenOrHasHiddenAncestor,
+            "control": frameDescription(probe.convert(probe.bounds, to: root)),
+            "window": frameDescription(root.bounds), "clips": clips]
     }
 
     private static func makeAnalysisFixture() throws -> URL {
@@ -2418,7 +2466,6 @@ extension WorkspaceUIAcceptance {
             savedBytes = try treeSnapshot(at: projectURL)
             document = try await VideoProject.load(from: projectURL)
         } catch { fail("could not open the Storyboard fixture: \(error.localizedDescription)", scale: scale) }
-        document.makeWindowControllers()
         let editor = document.editorViewModel
         editor.setWorkspaceFocus(.production)
         await editor.refreshEngineState()
@@ -2609,6 +2656,9 @@ extension WorkspaceUIAcceptance {
               (try? treeSnapshot(at: projectURL)) == savedBytes else {
             reject("reviewing or declining changed the gates or the saved project")
         }
+        window.orderOut(nil)
+        window.contentView = nil
+        document.makeWindowControllers()
         await captureProductionWorkbench(document: document, evidenceURL: evidenceURL, scale: scale)
         do {
             let activityImages = try await AgentActivityAcceptance.run(evidenceURL: evidenceURL, scale: scale)

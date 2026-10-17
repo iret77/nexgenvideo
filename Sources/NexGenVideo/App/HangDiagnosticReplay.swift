@@ -39,8 +39,9 @@ enum HangDiagnosticReplay {
             let matchGeometry = environment["NGV_DIAGNOSTIC_REPLAY_MATCH_GEOMETRY"] == "1"
             let records = try (matchGeometry ? structuralRecords(in: folder) : [])
             let recordedWindow = recordedEditorWindow(in: records)
-            let recordedScroll = recordedTranscriptViewport(in: records)
-            guard !matchGeometry || recordedScroll != nil else { exit(70) }
+            let geometry = transcriptGeometry(in: records,
+                comparisonViewport: environment["NGV_DIAGNOSTIC_REPLAY_COMPARISON_VIEWPORT"])
+            guard !matchGeometry || (recordedWindow != nil && geometry != nil) else { exit(70) }
             let activationTimeline = recordedActivationTimeline(in: records)
             let host = ReplayHost(editor: editor)
             let window = ReplayWindow(contentViewController: host)
@@ -107,14 +108,14 @@ enum HangDiagnosticReplay {
                         try service.restoreDiagnosticTranscript(state)
                         if matchGeometry {
                             try await Task.sleep(for: .milliseconds(20))
-                            if let recordedScroll { try host.matchViewport(recordedScroll) }
+                            if let geometry { try host.matchViewport(geometry.viewport) }
                             try await scrollTranscriptToBottom(in: host)
                             try await Task.sleep(for: .milliseconds(100))
-                            writeProgress(sequence: decoded.sequence, window: window, host: host, environment: environment)
+                            writeProgress(sequence: decoded.sequence, window: window, host: host, geometry: geometry, environment: environment)
                         }
                     }
                     try await Task.sleep(for: .seconds(matchGeometry ? 30 : 2))
-                    writeProgress(sequence: nil, window: window, host: host, environment: environment)
+                    writeProgress(sequence: nil, window: window, host: host, geometry: geometry, environment: environment)
                     exit(0)
                 } catch { exit(67) }
             }
@@ -172,6 +173,9 @@ enum HangDiagnosticReplay {
 
     static func recordedEditorWindow(in records: [DiagnosticRecord]) -> DiagnosticRecord? {
         let windows = records.filter { $0.operation == .window && $0.values.count >= 3 }
+        guard windows.allSatisfy({ !$0.hadNonFiniteValues
+            && $0.values[1].isFinite && $0.values[1] > 0
+            && $0.values[2].isFinite && $0.values[2] > 0 }) else { return nil }
         guard let editorWindowNumber = windows.max(by: {
             let leftArea = $0.values[1] * $0.values[2]
             let rightArea = $1.values[1] * $1.values[2]
@@ -183,10 +187,27 @@ enum HangDiagnosticReplay {
     }
 
     static func recordedTranscriptViewport(in records: [DiagnosticRecord]) -> CGSize? {
-        guard let record = records.last(where: { $0.operation == .scroll && $0.values.count >= 5 }),
+        guard let record = records.filter({ $0.operation == .scroll && $0.values.count >= 5 })
+                .max(by: { $0.sequence < $1.sequence }), !record.hadNonFiniteValues,
               record.values[4].isFinite, record.values[4] > 0,
               record.values[2].isFinite, record.values[2] > 0 else { return nil }
         return CGSize(width: record.values[4], height: record.values[2])
+    }
+
+    struct TranscriptGeometry {
+        let source: String
+        let viewport: CGSize
+    }
+
+    static func transcriptGeometry(in records: [DiagnosticRecord], comparisonViewport: String?) -> TranscriptGeometry? {
+        if records.contains(where: { $0.operation == .scroll && $0.values.count >= 5 }) {
+            guard let viewport = recordedTranscriptViewport(in: records) else { return nil }
+            return TranscriptGeometry(source: "recorded", viewport: viewport)
+        }
+        guard let parts = comparisonViewport?.split(separator: "x", omittingEmptySubsequences: false),
+              parts.count == 2, let width = Double(String(parts[0])), let height = Double(String(parts[1])),
+              width.isFinite, width > 0, height.isFinite, height > 0 else { return nil }
+        return TranscriptGeometry(source: "comparison", viewport: CGSize(width: width, height: height))
     }
 
     struct ActivationSample: Equatable {
@@ -262,24 +283,26 @@ enum HangDiagnosticReplay {
         }
     }
 
-    private static func writeProgress(sequence: UInt64?, window: NSWindow, host: ReplayHost, environment: [String: String]) {
+    private static func writeProgress(sequence: UInt64?, window: NSWindow, host: ReplayHost,
+                                      geometry: TranscriptGeometry?, environment: [String: String]) {
         guard let path = environment["NGV_DIAGNOSTIC_REPLAY_PROGRESS"],
               let content = window.contentView else { return }
         let views = descendants(of: content)
         let scrolls = views.compactMap { $0 as? NSScrollView }
             .filter { !$0.isHiddenOrHasHiddenAncestor }
-        let geometry = scrolls.map { scroll -> [String: Double] in
+        let scrollGeometry = scrolls.map { scroll -> [String: Double] in
             ["width": Double(scroll.contentView.bounds.width), "height": Double(scroll.contentView.bounds.height),
              "offset": Double(scroll.contentView.bounds.origin.y),
              "contentHeight": Double(scroll.documentView?.frame.height ?? 0)]
         }
         let transcriptScroll = try? host.transcriptScroll()
         let progress: [String: Any] = ["sequence": sequence.map { $0 as Any } ?? NSNull(),
-                                       "finished": sequence == nil, "scrolls": geometry,
+                                       "finished": sequence == nil, "scrolls": scrollGeometry,
                                        "windowNumber": window.windowNumber,
                                        "windowWidth": window.frame.width,
                                        "windowHeight": window.frame.height,
                                        "maximumPulseGap": maximumPulseGap,
+                                       "transcriptGeometrySource": geometry?.source ?? "unavailable",
                                        "transcriptWidth": transcriptScroll?.contentView.bounds.width ?? 0,
                                        "transcriptHeight": transcriptScroll?.contentView.bounds.height ?? 0,
                                        "scrollEventsSent": scrollEventsSent,

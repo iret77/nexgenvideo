@@ -34,8 +34,11 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   chat-hang-replay:
-    if: inputs.hang_replays
+    needs: workspace-ui-acceptance
+    if: ${{ !cancelled() && inputs.hang_replays && (needs.workspace-ui-acceptance.result == 'success' || needs.workspace-ui-acceptance.result == 'skipped') }}
     uses: ./.github/workflows/chat-hang-replay.yml
+    with:
+      runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
 
   recorded-hang-replay:
     if: inputs.hang_replays

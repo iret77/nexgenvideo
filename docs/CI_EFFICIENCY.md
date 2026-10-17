@@ -62,6 +62,18 @@ real analysis run and the synthetic delivery scenario provide different evidence
 neither represents a live paid generation-provider run or a subjective film-quality
 assessment. Runtime results are established only by the corresponding Actions run.
 
+The synthetic chat stress run also reuses the workspace app when that acceptance
+is selected and succeeds. A standalone chat run builds its own app. The recorded
+chat replay still builds separate optimized candidate and historical transcript
+variants. Both restore the captured window dimensions, states and timing. When
+the recording includes transcript dimensions, those remain mandatory; older
+recordings without them use the workflow's explicitly declared 480×560 comparison
+viewport. Evidence distinguishes recorded geometry from comparison geometry and
+requires the actual transcript to match it, including measured scroll movement.
+The comparison does not reconstruct the unknown original viewport or prove that
+the historical hang was reproduced. Completion and main-thread responsiveness
+remain required for the candidate.
+
 ## Release metadata
 
 The publication script dispatches CI with `metadata_version` on the version's

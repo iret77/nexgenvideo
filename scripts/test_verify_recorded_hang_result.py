@@ -8,6 +8,7 @@ class RecordedHangResultTests(unittest.TestCase):
         result = {
             "timedOut": True,
             "geometryRequested": True,
+            "transcriptGeometrySource": "recorded",
             "recordedWindowWidth": 1463,
             "recordedWindowHeight": 1040,
             "recordedTranscriptWidth": 328,
@@ -16,6 +17,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "lastSequence": 247,
             "progress": {
                 "finished": False, "sequence": 245,
+                "transcriptGeometrySource": "recorded",
                 "transcriptWidth": 328, "transcriptHeight": 610,
                 "scrollTarget": "scroll-1", "transcriptScrollTarget": "scroll-1", "scrollEventsSent": 600,
                 "scrollMotion": {"target": "scroll-1", "before": 200, "after": 140,
@@ -39,6 +41,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": False,
             "exitCode": 0,
             "geometryRequested": True,
+            "transcriptGeometrySource": "recorded",
             "recordedWindowWidth": 1463,
             "recordedWindowHeight": 1040,
             "recordedTranscriptWidth": 328,
@@ -46,6 +49,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "lastSequence": 247,
             "progress": {
                 "finished": True, "sequence": None,
+                "transcriptGeometrySource": "recorded",
                 "transcriptWidth": 328, "transcriptHeight": 610,
                 "scrollTarget": "scroll-1", "transcriptScrollTarget": "scroll-1", "scrollEventsSent": 600,
                 "scrollMotion": {"target": "scroll-1", "before": 200, "after": 140,
@@ -60,6 +64,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": False,
             "exitCode": 0,
             "geometryRequested": True,
+            "transcriptGeometrySource": "recorded",
             "recordedWindowWidth": 1463,
             "recordedWindowHeight": 1040,
             "recordedTranscriptWidth": 328,
@@ -68,6 +73,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "progress": {
                 "finished": True,
                 "sequence": None,
+                "transcriptGeometrySource": "recorded",
                 "windowWidth": 1463,
                 "windowHeight": 1040,
                 "transcriptWidth": 328, "transcriptHeight": 610,
@@ -125,6 +131,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "timedOut": True,
             "exitCode": -9,
             "geometryRequested": True,
+            "transcriptGeometrySource": "recorded",
             "recordedWindowWidth": 1463,
             "recordedWindowHeight": 1040,
             "recordedTranscriptWidth": 328,
@@ -133,6 +140,7 @@ class RecordedHangResultTests(unittest.TestCase):
             "progress": {
                 "finished": False,
                 "sequence": 245,
+                "transcriptGeometrySource": "recorded",
                 "windowWidth": 1463,
                 "windowHeight": 1040,
                 "transcriptWidth": 328, "transcriptHeight": 610,
@@ -145,6 +153,72 @@ class RecordedHangResultTests(unittest.TestCase):
         errors = verification_errors(result, "candidate")
         self.assertIn("candidate replay timed out", errors)
         self.assertIn("candidate did not finish every captured state", errors)
+
+    def comparison_result(self):
+        return {
+            "timedOut": False, "exitCode": 0, "geometryRequested": True,
+            "recordedWindowWidth": 1463, "recordedWindowHeight": 1040,
+            "transcriptGeometrySource": "comparison",
+            "comparisonTranscriptWidth": 480, "comparisonTranscriptHeight": 560,
+            "progress": {
+                "finished": True, "sequence": None, "maximumPulseGap": 0.4,
+                "windowWidth": 1463, "windowHeight": 1040,
+                "transcriptGeometrySource": "comparison", "transcriptWidth": 480, "transcriptHeight": 560,
+                "scrollTarget": "scroll-1", "transcriptScrollTarget": "scroll-1", "scrollEventsSent": 600,
+                "scrollMotion": {"target": "scroll-1", "before": 200, "after": 140,
+                                 "contentHeight": 1010, "viewportHeight": 560},
+            },
+        }
+
+    def test_declared_comparison_geometry_is_valid_for_both_variants(self):
+        for variant in ("baseline", "candidate"):
+            self.assertEqual(verification_errors(self.comparison_result(), variant), [])
+
+    def test_comparison_geometry_cannot_be_missing_or_mislabelled(self):
+        for field in ("transcriptGeometrySource", "comparisonTranscriptWidth", "comparisonTranscriptHeight"):
+            result = self.comparison_result()
+            del result[field]
+            with self.subTest(field=field):
+                self.assertTrue(verification_errors(result, "candidate"))
+        result = self.comparison_result()
+        result["progress"]["transcriptGeometrySource"] = "recorded"
+        self.assertIn("replay transcript geometry source does not match the declared source",
+                      verification_errors(result, "candidate"))
+        result = self.comparison_result()
+        result["recordedTranscriptWidth"] = 328
+        result["recordedTranscriptHeight"] = 610
+        self.assertIn("comparison geometry must not replace recorded transcript geometry",
+                      verification_errors(result, "candidate"))
+
+    def test_comparison_geometry_keeps_independent_window_and_transcript_checks(self):
+        for field in ("windowWidth", "windowHeight", "transcriptWidth", "transcriptHeight"):
+            result = self.comparison_result()
+            result["progress"][field] += 2
+            with self.subTest(field=field):
+                self.assertTrue(verification_errors(result, "candidate"))
+
+    def test_rejects_nonfinite_boolean_and_nonpositive_dimensions(self):
+        for value in (float("nan"), float("inf"), True, False, 0, -1):
+            for field in ("recordedWindowWidth", "recordedWindowHeight", "comparisonTranscriptWidth", "comparisonTranscriptHeight"):
+                result = self.comparison_result()
+                result[field] = value
+                with self.subTest(field=field, value=value):
+                    self.assertTrue(verification_errors(result, "candidate"))
+            for field in ("windowWidth", "windowHeight", "transcriptWidth", "transcriptHeight"):
+                result = self.comparison_result()
+                result["progress"][field] = value
+                with self.subTest(actual=field, value=value):
+                    self.assertTrue(verification_errors(result, "candidate"))
+
+    def test_comparison_geometry_does_not_waive_scroll_or_responsiveness(self):
+        for field, value in (("scrollTarget", "other"), ("scrollEventsSent", 0),
+                             ("maximumPulseGap", 5.1), ("maximumPulseGap", float("nan")),
+                             ("maximumPulseGap", float("inf")), ("maximumPulseGap", -0.1),
+                             ("maximumPulseGap", True)):
+            result = self.comparison_result()
+            result["progress"][field] = value
+            with self.subTest(field=field, value=value):
+                self.assertTrue(verification_errors(result, "candidate"))
 
 
 if __name__ == "__main__":
