@@ -145,7 +145,7 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     func saveAndReopen(backend: AgentBackend, expectedPhase: String) async throws {
-        try await waitUntil { !self.service.isStreaming }
+        try await waitUntil("agent idle before saving \(expectedPhase)") { !self.service.isStreaming }
         let previousMessages = service.messages.map(\.id)
         let beforeGates = try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile))
         let beforeIntake = IntakeLedger.load(dataRoot: dataRoot)
@@ -195,7 +195,7 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     private func tool(_ name: String, _ args: [String: Any]) async throws {
-        try await waitUntil { !self.service.isStreaming }
+        try await waitUntil("agent idle before \(name)") { !self.service.isStreaming }
         guard let session = service.currentSessionId else { throw Failure("No host session owns this phase") }
         var arguments = args
         arguments["project_dir"] = dataRoot.path
@@ -205,7 +205,7 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     private func waitForDialog(_ title: String, attachAs: String) async throws {
-        try await waitUntil {
+        try await waitUntil("dialog \(title)") {
             self.service.pendingDialog?.title == title && self.service.pendingDialog?.fileIntake?.attachAs == attachAs
                 && WorkspaceUIAcceptance.probeText(identifier: "agent.dialog.title", in: self.window) == title
         }
@@ -214,7 +214,12 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     private func waitForHandoff(_ phase: String, hidden: Bool = true) async throws {
-        try await waitUntil { self.runtime.phases.contains(phase) && !self.service.isStreaming }
+        try await waitUntil("handoff to \(phase)") {
+            if let error = self.service.streamError {
+                throw Failure("Hostflow handoff to \(phase) failed: \(error.localizedDescription)")
+            }
+            return self.runtime.phases.contains(phase) && !self.service.isStreaming
+        }
         try require(editor.projectState?.nextPhaseName == phase && service.pendingDialog == nil,
             "The runtime received the wrong workflow phase")
         guard let message = service.messages.last(where: { $0.role == .user }) else {
@@ -237,7 +242,7 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     private func click(_ identifier: String) async throws {
-        try await waitUntil {
+        try await waitUntil("control \(identifier)") {
             self.window.contentView?.layoutSubtreeIfNeeded()
             return WorkspaceUIAcceptance.probeState(identifier: identifier, in: self.window) == true
         }
@@ -246,13 +251,13 @@ final class MusicvideoHostFlowAcceptance {
         }
     }
 
-    private func waitUntil(_ ready: () -> Bool) async throws {
+    private func waitUntil(_ step: String = "native host control", _ ready: () throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while ContinuousClock.now < deadline {
-            if ready() { return }
+            if try ready() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
-        throw Failure("Hostflow did not settle: phase=\(editor.projectState?.nextPhaseName ?? "none"), dialog=\(service.pendingDialog?.title ?? "none"), error=\(service.dialogSubmissionError ?? service.streamError?.localizedDescription ?? "none")")
+        throw Failure("Hostflow did not settle (\(step)): phase=\(editor.projectState?.nextPhaseName ?? "none"), dialog=\(service.pendingDialog?.title ?? "none"), recorded=\(runtime.phases.joined(separator: ",")), error=\(service.dialogSubmissionError ?? service.streamError?.localizedDescription ?? "none")")
     }
 
     private func recordBackendPhases() {
@@ -295,11 +300,12 @@ final class MusicvideoHostFlowAcceptance {
         }
 
         func start(_ request: AgentRuntimeSessionRequest) throws {
-            guard request.hostContext.pack?.id == "musicvideo",
+            guard let pack = request.hostContext.pack, pack.id == "musicvideo",
                   let working = request.workingDirectory, let root = DataRootResolver.dataRoot(of: working) else {
                 throw Failure("The actual backend request omitted the current pack phase instructions")
             }
-            let projectState = try JSONDecoder().decode(ProjectStateData.self, from: NativeCockpitReader.stateJSON(dataRoot: root))
+            let projectState = try JSONDecoder().decode(ProjectStateData.self,
+                from: NativeCockpitReader.stateJSON(dataRoot: root, activePack: pack.id))
             if projectState.isComplete {
                 guard request.hostContext.pack?.currentPhase == nil, request.hostContext.phaseInstructions == nil else {
                     throw Failure("The completed workflow invented another phase or phase instructions")
@@ -314,10 +320,12 @@ final class MusicvideoHostFlowAcceptance {
                 "treatment": "# Phase K3 — Treatment", "storyboard": "# Phase K4 — Storyboard",
                 "bible": "# Phase K5 — Bible", "shotlist": "# Phase K7 — Shotlist",
                 "sanity": "# Phase S — Sanity Audit", "frames": "# Phase F — Frames", "render": "# Phase R1/R2 — Render"]
-            guard let phase = request.hostContext.pack?.currentPhase, projectState.nextPhaseName == phase,
-                  let heading = headings[phase], let instructions = request.hostContext.phaseInstructions,
+            guard let phase = pack.currentPhase, projectState.nextPhaseName == phase else {
+                throw Failure("Backend phase mismatch: host=\(pack.currentPhase ?? "none"), project=\(projectState.nextPhaseName ?? "none"), pack=\(pack.id)")
+            }
+            guard let heading = headings[phase], let instructions = request.hostContext.phaseInstructions,
                   instructions.contains(heading) else {
-                throw Failure("Backend request used another phase's packaged instructions")
+                throw Failure("Backend request omitted the packaged instructions for \(phase)")
             }
             self.phase = phase
             instructionsSHA256 = FileDigest.sha256(of: Data(instructions.utf8))

@@ -47,18 +47,21 @@ enum MusicvideoNativeAcceptance {
         return window
     }
 
-    static func waitUntil(_ ready: () -> Bool) async throws {
+    static func waitUntil(_ step: String = "native control or handoff", diagnostic: (() -> String)? = nil,
+                          file: StaticString = #fileID, line: UInt = #line, _ ready: () throws -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(20))
         while ContinuousClock.now < deadline {
-            if ready() { return }
+            if try ready() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
-        throw FullflowAcceptanceFixture.Failure("The native Musicvideo control or handoff did not settle.")
+        throw FullflowAcceptanceFixture.Failure("Native Musicvideo did not settle (\(step), \(file):\(line)): \(diagnostic?() ?? "no state available").")
     }
 
     static func click(_ identifier: String, in window: NSWindow, requiringEnabled: Bool = true) async throws {
         window.makeKeyAndOrderFront(nil)
-        try await waitUntil {
+        try await waitUntil("control \(identifier)", diagnostic: {
+            "enabled=\(String(describing: WorkspaceUIAcceptance.probeState(identifier: identifier, in: window))), text=\(WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) ?? "none")"
+        }) {
             requiringEnabled ? WorkspaceUIAcceptance.probeState(identifier: identifier, in: window) == true
                 : WorkspaceUIAcceptance.probeFrame(identifier: identifier, in: window) != nil
         }
@@ -84,7 +87,12 @@ enum MusicvideoNativeAcceptance {
         }
         let next = index + 1 < order.count ? order[index + 1] : "complete"
         let service = editor.agentService
-        try await waitUntil { !service.isStreaming }
+        func waitFor(_ step: String, until ready: () throws -> Bool) async throws {
+            try await waitUntil("\(phase): \(step)", diagnostic: {
+                "phase=\(editor.projectState?.nextPhaseName ?? "none"), selected=\(editor.productionSelectedPhase ?? "none"), pending=\(service.pendingGateApproval?.phase ?? "none"), dialog=\(service.pendingDialog?.title ?? "none"), streaming=\(service.isStreaming), recorded=\(runtime.phases.joined(separator: ",")), error=\(service.gateApprovalError ?? service.streamError?.localizedDescription ?? "none")"
+            }, ready)
+        }
+        try await waitFor("agent idle") { !service.isStreaming }
         await editor.refreshEngineState()
         guard editor.projectState?.nextPhaseName == phase, let session = service.currentSessionId else {
             throw FullflowAcceptanceFixture.Failure("The native approval is not for the current phase: \(phase).")
@@ -100,12 +108,12 @@ enum MusicvideoNativeAcceptance {
         let window = try Self.window(for: editor)
         window.makeKeyAndOrderFront(nil)
         let controlID = "agent.gate.approve"
-        try await waitUntil { WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == true }
+        try await waitFor("approval enabled") { WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == true }
         let otherPhase = phase == "project_init" ? "brief" : "project_init"
         try await click("pipeline.overview.select.\(otherPhase)", in: window, requiringEnabled: false)
-        try await waitUntil { editor.productionSelectedPhase == otherPhase }
+        try await waitFor("select \(otherPhase)") { editor.productionSelectedPhase == otherPhase }
         try await click("agent.gate.open", in: window)
-        try await waitUntil {
+        try await waitFor("open \(expectedTitle)") {
             editor.workspaceFocus == .production && editor.productionSelectedPhase == phase
                 && WorkspaceUIAcceptance.probeText(identifier: "production.artifact", in: window) == expectedTitle
         }
@@ -120,7 +128,7 @@ enum MusicvideoNativeAcceptance {
         var restored = false
         defer { if !restored { try? FileManager.default.moveItem(at: held, to: artifact) } }
         await editor.refreshEngineState()
-        try await waitUntil {
+        try await waitFor("missing artifact disables approval") {
             guard WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == false,
                   let reason = WorkspaceUIAcceptance.probeText(identifier: controlID, in: window) else { return false }
             return !reason.isEmpty && reason != "Checking the current phase…"
@@ -147,7 +155,7 @@ enum MusicvideoNativeAcceptance {
         restored = true
         guard try Data(contentsOf: artifact) == original else { throw FullflowAcceptanceFixture.Failure("The fixture did not restore exact artifact bytes.") }
         await editor.refreshEngineState()
-        try await waitUntil { WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == true }
+        try await waitFor("restored artifact enables approval") { WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == true }
         let ready = await NativeGateWriter.controlReadiness(projectDir: home, phase: phase,
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
             executionCoordinator: editor.pipelinePhaseRunCoordinator)
@@ -155,13 +163,18 @@ enum MusicvideoNativeAcceptance {
         screenshots.append(try capture(window, name: prefix + "-ready", evidenceURL: evidenceURL))
         let turnCount = runtime.phases.count
         try await click(controlID, in: window)
-        try await waitUntil { service.pendingGateApproval == nil || service.gateApprovalError != nil }
+        try await waitFor("approval persisted") { service.pendingGateApproval == nil || service.gateApprovalError != nil }
         guard service.gateApprovalError == nil else { throw FullflowAcceptanceFixture.Failure("Native gate commit failed: \(phase).") }
         await editor.refreshEngineState()
         if awaitHandoff {
-            try await waitUntil { !service.isStreaming && runtime.phases.dropFirst(turnCount).contains(next) }
+            try await waitFor("handoff to \(next)") {
+                if let error = service.streamError {
+                    throw FullflowAcceptanceFixture.Failure("Native Musicvideo \(phase) handoff to \(next) failed: \(error.localizedDescription)")
+                }
+                return !service.isStreaming && runtime.phases.dropFirst(turnCount).contains(next)
+            }
         } else {
-            try await waitUntil { service.pendingDialog?.title == "Existing story" }
+            try await waitFor("Existing story intake") { service.pendingDialog?.title == "Existing story" }
         }
         let after = try Data(contentsOf: root.appendingPathComponent(PipelineLayout.gatesFile))
         let persisted = try YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile)

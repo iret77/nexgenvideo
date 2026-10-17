@@ -104,7 +104,7 @@ struct WorkbenchStatusBar: View {
                 Label(aiActive ? String(localized: "AI · Working") : String(localized: "AI activity"), systemImage: "sparkles")
             }
             .background {
-                if WorkspaceUIAcceptance.isRequested {
+                if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
                     AppRelaunchClickProbe(identifier: "production.ai")
                         .allowsHitTesting(false)
                 }
