@@ -122,13 +122,15 @@ struct AgentTranscriptLayoutPolicyTests {
         let status = try #require(implementation.range(
             of: "AgentLiveStatusView("
         ))
-        let dock = try #require(implementation.range(
+        let decisionDock = try #require(implementation.range(
             of: "composerDock",
             range: status.upperBound..<implementation.endIndex
         ))
         let messages = try #require(implementation.range(of: "taskResult", range: status.upperBound..<implementation.endIndex))
-        #expect(status.lowerBound < messages.lowerBound)
-        #expect(messages.lowerBound < dock.lowerBound)
+        let composerDock = try #require(implementation.range(of: "composerDock", range: messages.upperBound..<implementation.endIndex))
+        #expect(status.lowerBound < decisionDock.lowerBound)
+        #expect(decisionDock.lowerBound < messages.lowerBound)
+        #expect(messages.lowerBound < composerDock.lowerBound)
 
         let dockStart = try #require(source.range(of: "private var composerDock"))
         let dockEnd = try #require(source.range(

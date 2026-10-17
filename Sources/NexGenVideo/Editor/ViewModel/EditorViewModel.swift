@@ -1237,7 +1237,8 @@ final class EditorViewModel {
         workflowHandoffPending = false
         let kickoff = reconciliation.agentPrompt
             ?? "The production pipeline is initialized. Continue from the next unapproved phase."
-        agentService.send(text: kickoff, mentions: [], hidden: true)
+        agentService.send(text: kickoff, mentions: [], hidden: true,
+            taskActivity: .init(title: "Continue production", phase: projectState?.nextPhaseName))
     }
 
     var keyframesPanelVisible: Bool = {

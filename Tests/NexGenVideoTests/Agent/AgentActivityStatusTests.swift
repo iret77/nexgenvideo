@@ -6,6 +6,17 @@ import Testing
 
 @Suite("Agent activity status")
 struct AgentActivityStatusTests {
+    @Test("An exact phase continuation avoids duplication without trimming a more specific task")
+    func phaseContinuationTitle() {
+        let continuation = AgentTaskActivityPresentation(task: .init(title: "Continue Bible", phase: "bible"))
+        #expect(continuation.title == "Continue Bible")
+        #expect(continuation.expectedResult == "Result: Bible for approval")
+        let specific = AgentTaskActivityPresentation(task: .init(title: "Continue Bible images", phase: "bible"))
+        #expect(specific.title == "Continue Bible images · Bible")
+        let otherPhase = AgentTaskActivityPresentation(task: .init(title: "Continue Bible", phase: "shotlist"))
+        #expect(otherPhase.title == "Continue Bible · Shot List")
+    }
+
     @Test("Task identity and phase come from the host work order, not the latest tool")
     func taskIdentity() {
         let request = AgentMessage(role: .user, blocks: [.text("Host command")], hidden: true,

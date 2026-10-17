@@ -284,6 +284,10 @@ final class GenerationService {
                         references: authorization.referenceSnapshot?.receipts ?? [])
                 }
                 try await authorization.generationPackage?.requireCurrentContext(editor: editor)
+                if let package = authorization.generationPackage,
+                   package.payload.modality == "image" || package.payload.modality == "video" {
+                    try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+                }
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
                 try authorization.generationPackage?.payload.destination.requireCurrent(editor: editor)
                 if validatesVideoGeneration {
@@ -1497,6 +1501,11 @@ final class GenerationService {
                 requestID: requestId,
                 requiredCandidateNames: requiredCandidateNames
             )
+            if let package = authorization.generationPackage,
+               package.payload.modality == "image" || package.payload.modality == "video" {
+                try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+                try authorization.projectMutationScope?.requireCurrent(editor: editor)
+            }
             Log.generation.notice(
                 "MCP submit provider=\(provider.rawValue) tool=\(tool.name) model=\(modelParam ?? "<implicit>") fields=\(arguments.keys.sorted().joined(separator: ","))"
             )
@@ -1866,6 +1875,10 @@ final class GenerationService {
                 aspectRatio: params.aspectRatio,
                 referenceImages: references
             )
+            if let package = authorization.generationPackage {
+                try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+                try authorization.projectMutationScope?.requireCurrent(editor: editor)
+            }
         } catch {
             return failBeforeSubmission(
                 placeholders, error.localizedDescription,

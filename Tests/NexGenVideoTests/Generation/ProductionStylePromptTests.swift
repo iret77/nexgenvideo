@@ -77,7 +77,7 @@ struct ProductionStylePromptTests {
     }
 
     @Test func explicitContradictionsBetweenLedgerAndApprovedStyleBlockComposition() async throws {
-        let home = try fixture(color: "Blue sky in clear midday light.")
+        let home = try fixture(color: "Blue sky without clouds.")
         defer { try? FileManager.default.removeItem(at: home) }
         let root = try #require(DataRootResolver.dataRoot(of: home))
         let store = YAMLArtifactStore(dataRoot: root)
@@ -99,6 +99,26 @@ struct ProductionStylePromptTests {
         #expect(PromptDirectiveConflict.first(in: ["No blue sky.", "Without blue sky."]) == nil)
         #expect(PromptDirectiveConflict.first(in: ["Warm daylight and blue sky.", "No text."]) == nil)
         #expect(PromptDirectiveConflict.first(in: ["A textured stone wall.", "No text."]) == nil)
+    }
+
+    @Test func embeddedNegationsPreservePositiveDirectionAndCheckEachExplicitExclusion() {
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky without clouds.", "No blue sky."]) == "blue sky")
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky without clouds and no text.", "Text on the wall."]) == "text")
+        #expect(PromptDirectiveConflict.first(in: ["No clouds and no blue sky.", "Blue sky above the street."]) == "blue sky")
+        #expect(PromptDirectiveConflict.first(in: ["Blauer Himmel ohne Wolken und keine Schrift.", "Schrift an der Wand."]) == "schrift")
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky without clouds.", "No clouds and no text."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Without clouds and fog.", "No fog."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky is not visible.", "No blue sky."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Not without blue sky.", "Blue sky above the street."]) == nil)
+    }
+
+    @Test func prepositionalNegationsPreserveOnlyExplicitPositivePrefixes() {
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky with no clouds.", "No blue sky."]) == "blue sky")
+        #expect(PromptDirectiveConflict.first(in: ["Blauer Himmel mit keinen Wolken.", "Kein blauer Himmel."]) == "blauer himmel")
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky with no clouds.", "No clouds."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Blauer Himmel mit keinen Wolken.", "Keine Wolken."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Blue sky with not no clouds.", "No blue sky."]) == nil)
+        #expect(PromptDirectiveConflict.first(in: ["Kein blauer Himmel mit keinen Wolken.", "Blauer Himmel."]) == nil)
     }
 
     @Test("draft still previews use the chosen palette but cannot approve production video")

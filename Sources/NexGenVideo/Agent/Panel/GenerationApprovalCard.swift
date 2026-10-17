@@ -1,7 +1,19 @@
 import SwiftUI
 
+private struct GenerationDecisionHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var generationDecisionMaximumHeight: CGFloat? {
+        get { self[GenerationDecisionHeightKey.self] }
+        set { self[GenerationDecisionHeightKey.self] = newValue }
+    }
+}
+
 struct GenerationApprovalCard<Content: View, Footer: View>: View {
     @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.generationDecisionMaximumHeight) private var availableHeight
     let title: String
     var subtitle: String? = nil
     var fillsMaximumHeight = false
@@ -10,11 +22,13 @@ struct GenerationApprovalCard<Content: View, Footer: View>: View {
 
     var body: some View {
         GenerationBatchDecisionLayout(
-            maximumHeight: AppTheme.ComponentSize.agentDecisionMaxHeight * interfaceScale
-                - AppTheme.Spacing.md - AppTheme.Spacing.md,
+            maximumHeight: max(AppTheme.Spacing.none,
+                (availableHeight ?? AppTheme.ComponentSize.agentDecisionMaxHeight * interfaceScale)
+                    - AppTheme.Spacing.md - AppTheme.Spacing.md),
             minimumBodyHeight: AppTheme.ComponentSize.generationBatchListMinHeight * interfaceScale,
             spacing: AppTheme.Spacing.smMd,
-            fillsMaximumHeight: fillsMaximumHeight
+            fillsMaximumHeight: fillsMaximumHeight,
+            allowsBodyCompression: availableHeight != nil
         ) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Label(title, systemImage: "sparkles")

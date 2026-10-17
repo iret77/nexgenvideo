@@ -18,6 +18,7 @@ struct AgentDecisionHistoryView: View {
                 Spacer(minLength: AppTheme.Spacing.sm)
                 Button("Done") { dismiss() }
                     .buttonStyle(.inlineAction())
+                    .modifier(GenerationBatchRuntimeProbe(identifier: "agent.decisions.done", enabled: WorkspaceUIAcceptance.isRequested))
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {

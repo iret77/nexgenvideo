@@ -17,7 +17,7 @@ struct ProductionWorkspaceSidebar: View {
             }
         }
         .background {
-            if WorkspaceUIAcceptance.isRequested {
+            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested {
                 AppRelaunchClickProbe(identifier: "production.sidebar", acceptanceState: !showsSources)
                     .allowsHitTesting(false)
             }
@@ -103,6 +103,12 @@ struct WorkbenchStatusBar: View {
             Button { editor.showsAgentActivity.toggle() } label: {
                 Label(aiActive ? String(localized: "AI · Working") : String(localized: "AI activity"), systemImage: "sparkles")
             }
+            .background {
+                if WorkspaceUIAcceptance.isRequested {
+                    AppRelaunchClickProbe(identifier: "production.ai")
+                        .allowsHitTesting(false)
+                }
+            }
             .popover(isPresented: $editor.showsAgentActivity, arrowEdge: .top) {
                 AgentPanelView(presentation: .activity)
                     .environment(editor)
@@ -138,7 +144,7 @@ struct WorkbenchStatusBar: View {
         .background(AppTheme.Background.surfaceColor)
         .overlay(alignment: .top) { AppDivider() }
         .background {
-            if WorkspaceUIAcceptance.isRequested {
+            if WorkspaceUIAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested {
                 AppRelaunchClickProbe(identifier: "production.status", acceptanceText: "Budget · AI activity · Export")
                     .allowsHitTesting(false)
             }

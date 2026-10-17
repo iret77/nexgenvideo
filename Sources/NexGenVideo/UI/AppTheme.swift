@@ -417,6 +417,7 @@ enum AppTheme {
         static let generationReferenceHeight: CGFloat = 41
         static let generationBatchPurposeMinWidth: CGFloat = 120
         static let generationBatchListMinHeight: CGFloat = 160
+        static let generationBatchCompactBodyMinHeight: CGFloat = 96
         static let textEditorMinHeight: CGFloat = 80
         static let dragPreviewWidth: CGFloat = 80
         static let dragPreviewHeight: CGFloat = 60
@@ -435,6 +436,7 @@ enum AppTheme {
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentDecisionMaxHeight: CGFloat = 318
+        static let productionArtifactMinHeight: CGFloat = 120
         static let choicePickerIdealWidth: CGFloat = 180
         static let choicePickerHeight: CGFloat = 32
         static let agentBlockLabelWidth: CGFloat = 96

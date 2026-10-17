@@ -66,25 +66,44 @@ def geometry_errors(result, progress, tolerance=1.0):
     if result.get("geometryRequested") is not True:
         return []
     errors = []
-    for axis in ("Width", "Height"):
-        expected = result.get(f"recordedWindow{axis}")
-        actual = progress.get(f"window{axis}")
+    for field, label in (("WindowWidth", "window width"), ("WindowHeight", "window height"),
+                         ("TranscriptWidth", "transcript width"), ("TranscriptHeight", "transcript height")):
+        expected = result.get(f"recorded{field}")
+        actual = progress.get(field[0].lower() + field[1:])
         if (
             isinstance(expected, bool)
             or not isinstance(expected, (int, float))
             or not math.isfinite(expected)
         ):
-            errors.append(f"recorded window {axis.lower()} is unavailable")
+            errors.append(f"recorded {label} is unavailable")
         elif (
             isinstance(actual, bool)
             or not isinstance(actual, (int, float))
             or not math.isfinite(actual)
         ):
-            errors.append(f"replay window {axis.lower()} is unavailable")
+            errors.append(f"replay {label} is unavailable")
         elif abs(actual - expected) > tolerance:
             errors.append(
-                f"replay window {axis.lower()} {actual:.1f} does not match recorded {expected:.1f}"
+                f"replay {label} {actual:.1f} does not match recorded {expected:.1f}"
             )
+    target = progress.get("transcriptScrollTarget")
+    if not isinstance(target, str) or not target or progress.get("scrollTarget") != target:
+        errors.append("scroll target was not the full diagnostic transcript")
+    events = progress.get("scrollEventsSent")
+    if type(events) is not int or events < 3:
+        errors.append("no complete scroll gesture was sent to the transcript")
+    motion = progress.get("scrollMotion")
+    if not isinstance(motion, dict) or motion.get("target") != target:
+        errors.append("no scroll movement was measured on the transcript")
+    else:
+        fields = [motion.get(key) for key in ("before", "after", "contentHeight", "viewportHeight")]
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+               for value in fields):
+            errors.append("transcript scroll movement has invalid geometry")
+        else:
+            before, after, content, viewport = fields
+            if not (viewport > 0 and 0 < before < content - viewport and 0 <= after <= before - 1):
+                errors.append("scroll gesture did not move the transcript away from its interior offset")
     return errors
 
 

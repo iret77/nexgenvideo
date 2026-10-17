@@ -21,9 +21,26 @@ struct AgentActivity: Identifiable {
     }
 }
 
+struct AgentTurnActivity: Equatable {
+    let title: String
+    let phase: String?
+
+    static func workOrder(_ presentation: AgentUserPresentation?) -> Self? {
+        guard let selections = presentation?.choiceRecord?.selections,
+              let title = selections.first(where: { $0.label == "Task" })?.values.first else { return nil }
+        return .init(title: title, phase: selections.first(where: { $0.label == "Phase" })?.values.first)
+    }
+}
+
 struct AgentTaskActivityPresentation: Equatable {
     let title: String
     let expectedResult: String?
+
+    init(task: AgentTurnActivity?) {
+        let phaseLabel = task?.phase.map(PhaseDisplay.label)
+        title = Self.title(task?.title ?? String(localized: "Project task"), phase: phaseLabel)
+        expectedResult = phaseLabel.map { String(localized: "Result: \($0) for approval") }
+    }
 
     init(messages: [AgentMessage], phase: String?) {
         let taskRecord = messages.reversed().compactMap { $0.userPresentation?.choiceRecord }
@@ -31,9 +48,14 @@ struct AgentTaskActivityPresentation: Equatable {
         let task = taskRecord?.selections.first { $0.label == "Task" }?.values.first
         let taskPhase = taskRecord?.selections.first { $0.label == "Phase" }?.values.first
         let phaseLabel = (taskRecord == nil ? phase : taskPhase).map(PhaseDisplay.label)
-        title = [task ?? (phaseLabel == nil ? String(localized: "Project task") : String(localized: "Continue production")),
-                 phaseLabel].compactMap { $0 }.joined(separator: " · ")
+        title = Self.title(task ?? (phaseLabel == nil ? String(localized: "Project task") : String(localized: "Continue production")),
+            phase: phaseLabel)
         expectedResult = phaseLabel.map { String(localized: "Result: \($0) for approval") }
+    }
+
+    private static func title(_ task: String, phase: String?) -> String {
+        guard let phase, task != phase, task != "Continue \(phase)" else { return task }
+        return "\(task) · \(phase)"
     }
 }
 

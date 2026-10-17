@@ -516,6 +516,10 @@ enum GenerationController {
             } else if case .audio(let audio, _) = prepared {
                 try referenceSnapshot?.requireIdentity(audio.references)
             }
+            if let package = generation.reviewedPackage,
+               package.payload.modality == "image" || package.payload.modality == "video" {
+                try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+            }
             try generation.scope?.requireCurrent(editor: editor)
         } catch { return .failure(.gate(error.localizedDescription)) }
         let authorization: GenerationAuthorization
@@ -539,6 +543,10 @@ enum GenerationController {
         } catch { return .failure(.budget(error.localizedDescription)) }
         do {
             try await referenceSnapshot?.requireUnchanged()
+            if let package = authorization.generationPackage,
+               package.payload.modality == "image" || package.payload.modality == "video" {
+                try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+            }
             if let message = generation.preflight?() { throw GenerationRequestError.optionsInvalid(message) }
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
