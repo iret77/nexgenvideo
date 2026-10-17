@@ -730,4 +730,28 @@ struct ProviderStatusTests {
         #expect(outcome(#"{"job_id":"j-5","status":"queued"}"#, tools: [])
             == .init(jobID: "j-5", queryable: false, ended: false))
     }
+
+    @Test func anElevenLabsTimeoutOrServerErrorNeverEndsTheRun() async throws {
+        Fixture.reset()
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let client = ElevenLabsClient(apiKey: "eleven-secret", session: session)
+        for status in [408, 502, 503] {
+            Fixture.stub("POST", "/sound-generation", .response(status: status, body: #"{"detail":"busy"}"#,
+                headers: ["character-cost": "18"]))
+            do {
+                _ = try await client.soundEffect(text: "Rain on glass", durationSeconds: 2)
+                Issue.record("Expected HTTP \(status) to throw")
+            } catch {
+                #expect(!GenerationService.providerRunEnded(after: error))
+            }
+        }
+        Fixture.stub("POST", "/sound-generation", .response(status: 401, body: #"{"detail":"bad key"}"#))
+        do {
+            _ = try await client.soundEffect(text: "Rain on glass", durationSeconds: 2)
+            Issue.record("Expected a rejection to throw")
+        } catch {
+            #expect(GenerationService.providerRunEnded(after: error))
+        }
+    }
 }

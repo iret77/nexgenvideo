@@ -111,6 +111,10 @@ actor ElevenLabsClient {
         guard (200..<300).contains(status) else {
             // Error bodies are JSON ({"detail": …}); surface them so failures are diagnosable.
             let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
+            // A timeout or server error does not prove the generation stopped; only a rejection does.
+            guard status != 408, status < 500 else {
+                throw GenerationBackendError.transport("ElevenLabs HTTP \(status): \(detail)")
+            }
             throw ProviderRunEndedError(
                 message: "ElevenLabs HTTP \(status): \(detail)",
                 cost: ProviderReportedCost.elevenLabs(characterCost: http?.value(forHTTPHeaderField: "character-cost"))

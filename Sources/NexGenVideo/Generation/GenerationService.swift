@@ -1267,7 +1267,8 @@ final class GenerationService {
         if let error = error as? GoogleImageClient.ClientError {
             return ProviderRunEndedError(message: error.localizedDescription)
         }
-        if let error = error as? GenerationBackendError, case .api = error {
+        // A timeout or server error does not prove the request stopped; only a rejection does.
+        if let error = error as? GenerationBackendError, case .api(let status, _, _) = error, status != 408, status < 500 {
             return ProviderRunEndedError(message: error.localizedDescription)
         }
         return error

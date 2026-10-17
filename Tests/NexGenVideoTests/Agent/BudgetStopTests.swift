@@ -1030,6 +1030,10 @@ struct BudgetStopTests {
 
         #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
             GenerationBackendError.api(status: 400, code: "400", message: "Bad request"))))
+        for ambiguous in [408, 500, 503, 504] {
+            #expect(!GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
+                GenerationBackendError.api(status: ambiguous, code: "\(ambiguous)", message: "Unavailable"))))
+        }
         #expect(GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(
             GoogleImageClient.ClientError.noImage("blocked"))))
         #expect(!GenerationService.providerRunEnded(after: GenerationService.googleImageOutcome(URLError(.timedOut))))
