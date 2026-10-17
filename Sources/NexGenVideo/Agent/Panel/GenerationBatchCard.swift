@@ -646,9 +646,11 @@ private struct GenerationBatchRuntimeProbe: ViewModifier {
     func body(content: Content) -> some View {
         content.background {
             if enabled {
+                // The probe's NSView must not answer the accessibility hit test of the control it measures.
                 AppRelaunchClickProbe(identifier: identifier)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
     }
