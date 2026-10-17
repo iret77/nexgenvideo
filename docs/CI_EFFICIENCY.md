@@ -38,10 +38,21 @@ at 960×640 with 100%, 125% and 150% interface text. It uses the real assembled
 timeline, review controls, Export sheet and save panel. Its synthetic film and
 delivery receipt are retained with the screenshots; independent decoding checks
 the full song duration, waveform identity and selected moving shot images. The
-first shot passes through prompt compilation, batch approval, the real Fal HTTP
-client, output import and take review against a simulator that rejects unexpected
-requests. The next shot uses imported footage. The report binds the generated
+first shot passes through prompt compilation, the visible batch approval card,
+the real batch runner and Fal HTTP client, output import and the native take-review
+sheet against a simulator that rejects unexpected requests. The next shot uses
+imported footage. The report binds native actions, persisted approvals, generated
 source, references, spend receipt and trimmed cut handles to the assembled film.
+Intake and phase approvals use the document's controls throughout the same run;
+missing current artifacts must disable approval before their exact bytes are restored.
+Agent responses and creative choices remain supplied fixture inputs.
+
+The missing-reference acceptance follows the visible revision action through the
+agent-facing diagnostic, a supplied repaired proposal, its rendered thumbnail and
+native approval. This focused card check stops before provider execution; the
+mixed-film scenario separately exercises the actual batch runner. Bible readiness
+and Storyboard checks inspect the displayed reason, opened diagnostics and selected
+shot details rather than treating a selected model identifier as UI evidence.
 
 The private analysis acceptance reuses the workspace app and external pack from
 the same batch instead of compiling them again. Without workspace acceptance it

@@ -12,6 +12,7 @@ final class MusicvideoHostFlowAcceptance {
         let backendPhases: [String: [String]]
         let savedAndReopened: Bool
         let screenshots: [String]
+        let nativeGateApprovals: [MusicvideoNativeAcceptance.GateEvidence]
         let interpretationSource = "supplied deterministic acceptance labels; no live LLM"
     }
 
@@ -23,6 +24,7 @@ final class MusicvideoHostFlowAcceptance {
     private var backendPhases: [String: [String]] = [:]
     private var savedAndReopened = false
     private var screenshots: [String] = []
+    private(set) var gateApprovals: [MusicvideoNativeAcceptance.GateEvidence] = []
     var editor: EditorViewModel { document.editorViewModel }
     var dataRoot: URL { DataRootResolver.dataRoot(of: editor.workingRoot!)! }
     private var service: AgentService { editor.agentService }
@@ -37,7 +39,6 @@ final class MusicvideoHostFlowAcceptance {
 
     static func start(track: URL, lyrics: URL?, binding: ProjectPackBinding, evidenceURL: URL) async throws -> MusicvideoHostFlowAcceptance {
         try FileManager.default.createDirectory(at: evidenceURL, withIntermediateDirectories: true)
-        UserDefaults.standard.set(AppTheme.Typography.standardScale, forKey: AppTheme.Typography.scaleKey)
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("MusicvideoHostFlow-\(UUID().uuidString).ngv")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
@@ -49,10 +50,12 @@ final class MusicvideoHostFlowAcceptance {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo"))
         let runtime = RecordingRuntime(backend: .claudeCode)
         let document = try await VideoProject.load(from: home, agentService: makeService(runtime))
+        MusicvideoNativeAcceptance.register(editor: document.editorViewModel, runtime: runtime)
         let flow = MusicvideoHostFlowAcceptance(document: document, projectURL: home, runtime: runtime, evidenceURL: evidenceURL)
         do {
             document.makeWindowControllers()
             document.showWindows()
+            flow.window.setContentSize(AppTheme.Window.projectMin)
             flow.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             await flow.editor.refreshEngineState()
@@ -95,7 +98,7 @@ final class MusicvideoHostFlowAcceptance {
         try capture("analysis-measured")
     }
 
-    func finishPlanningIntake(sectionLabels: [String]) async throws {
+    func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p) async throws {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
               let sections = object["sections"] as? [[String: Any]], sections.count == sectionLabels.count else {
@@ -122,11 +125,19 @@ final class MusicvideoHostFlowAcceptance {
         try await waitForDialog("Style references", attachAs: "style")
         try await click("agent.dialog.confirm")
         try await waitForHandoff("brief")
+        if let index = gateApprovals.firstIndex(where: { $0.phase == "analysis" }), let handoff = runtime.handoffs.last {
+            gateApprovals[index].handoffPhase = handoff.phase
+            gateApprovals[index].handoffHidden = service.messages.last(where: { $0.role == .user })?.hidden == true
+            gateApprovals[index].packagedInstructions = handoff.phase == "brief" && handoff.instructionsSHA256 != nil
+            gateApprovals[index].handoffTurnID = handoff.turnID
+            gateApprovals[index].handoffInstructionsSHA256 = handoff.instructionsSHA256
+        }
         try require(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent("import/script.md").path),
             "Skipping Existing story invented supplied material")
         try await tool("write_brief", ["mission": "single_release", "target_platform": "YouTube",
             "aspect_ratio": "16:9", "project_mode": "section", "concept_type": "narrative",
-            "visual_medium": "live_action_realistic", "figures": "none", "lyrics_integration": "metaphorical"])
+            "visual_medium": "live_action_realistic", "figures": "none", "lyrics_integration": "metaphorical",
+            "final_resolution": finalResolution.rawValue])
         try await approve("brief")
         try await waitForHandoff("production_design")
         try require(editor.productionSelectedPhase == "production_design", "Brief approval left the old phase selected")
@@ -147,8 +158,10 @@ final class MusicvideoHostFlowAcceptance {
         document.close()
         runtime = RecordingRuntime(backend: backend)
         document = try await VideoProject.load(from: projectURL, agentService: Self.makeService(runtime))
+        MusicvideoNativeAcceptance.register(editor: document.editorViewModel, runtime: runtime)
         document.makeWindowControllers()
         document.showWindows()
+        window.setContentSize(AppTheme.Window.projectMin)
         window.makeKeyAndOrderFront(nil)
         await editor.refreshEngineState()
         try require(editor.projectState?.nextPhaseName == expectedPhase && service.pendingDialog == nil,
@@ -166,7 +179,7 @@ final class MusicvideoHostFlowAcceptance {
     func report() -> Report {
         recordBackendPhases()
         return Report(transitions: transitions, backendPhases: backendPhases, savedAndReopened: savedAndReopened,
-            screenshots: screenshots)
+            screenshots: screenshots, nativeGateApprovals: gateApprovals)
     }
 
     func close() {
@@ -176,14 +189,8 @@ final class MusicvideoHostFlowAcceptance {
     }
 
     private func approve(_ phase: String) async throws {
-        try await tool("approve_gate", ["phase": phase])
-        try require(service.pendingGateApproval?.phase == phase, "The phase writer bypassed host approval")
-        try await click("agent.gate.approve")
-        try await waitUntil { self.service.pendingGateApproval == nil || self.service.gateApprovalError != nil }
-        try require(service.gateApprovalError == nil, "Host approval failed: \(service.gateApprovalError ?? "unknown")")
-        await editor.refreshEngineState()
-        let gates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
-        try require(gates.get(phase).approved, "The clicked host approval did not persist")
+        gateApprovals.append(try await MusicvideoNativeAcceptance.approve(phase, editor: editor,
+            evidenceURL: evidenceURL, awaitHandoff: phase != "analysis"))
         transitions.append("approved \(phase)")
     }
 
@@ -268,12 +275,19 @@ final class MusicvideoHostFlowAcceptance {
         var errorDescription: String? { message }
     }
 
-    private final class RecordingRuntime: AgentRuntimeAdapter {
+    final class RecordingRuntime: AgentRuntimeAdapter {
+        struct Handoff {
+            let turnID: String
+            let phase: String
+            let instructionsSHA256: String?
+        }
         let backend: AgentBackend
         let descriptor: AgentRuntimeDescriptor
         private(set) var state: AgentRuntimeState = .idle
-        private(set) var phases: [String] = []
+        private(set) var handoffs: [Handoff] = []
+        var phases: [String] { handoffs.map(\.phase) }
         private var phase: String?
+        private var instructionsSHA256: String?
 
         init(backend: AgentBackend) {
             self.backend = backend
@@ -281,19 +295,32 @@ final class MusicvideoHostFlowAcceptance {
         }
 
         func start(_ request: AgentRuntimeSessionRequest) throws {
-            guard request.hostContext.pack?.id == "musicvideo", let phase = request.hostContext.pack?.currentPhase,
-                  let instructions = request.hostContext.phaseInstructions, !instructions.isEmpty,
+            guard request.hostContext.pack?.id == "musicvideo",
                   let working = request.workingDirectory, let root = DataRootResolver.dataRoot(of: working) else {
                 throw Failure("The actual backend request omitted the current pack phase instructions")
             }
             let projectState = try JSONDecoder().decode(ProjectStateData.self, from: NativeCockpitReader.stateJSON(dataRoot: root))
+            if projectState.isComplete {
+                guard request.hostContext.pack?.currentPhase == nil, request.hostContext.phaseInstructions == nil else {
+                    throw Failure("The completed workflow invented another phase or phase instructions")
+                }
+                phase = "complete"
+                instructionsSHA256 = nil
+                state = .ready(sessionID: request.sessionID)
+                return
+            }
             let headings = ["project_init": "# Phase K0 — Project Init", "analysis": "# Phase A2 — Analysis",
-                "brief": "# Phase K1 — Brief", "production_design": "# Phase K2 — Production Design"]
-            guard projectState.nextPhaseName == phase,
-                  headings[phase].map({ instructions.contains($0) }) ?? true else {
+                "brief": "# Phase K1 — Brief", "production_design": "# Phase K2 — Production Design",
+                "treatment": "# Phase K3 — Treatment", "storyboard": "# Phase K4 — Storyboard",
+                "bible": "# Phase K5 — Bible", "shotlist": "# Phase K7 — Shotlist",
+                "sanity": "# Phase S — Sanity Audit", "frames": "# Phase F — Frames", "render": "# Phase R1/R2 — Render"]
+            guard let phase = request.hostContext.pack?.currentPhase, projectState.nextPhaseName == phase,
+                  let heading = headings[phase], let instructions = request.hostContext.phaseInstructions,
+                  instructions.contains(heading) else {
                 throw Failure("Backend request used another phase's packaged instructions")
             }
             self.phase = phase
+            instructionsSHA256 = FileDigest.sha256(of: Data(instructions.utf8))
             state = .ready(sessionID: request.sessionID)
         }
 
@@ -301,7 +328,7 @@ final class MusicvideoHostFlowAcceptance {
 
         func send(_ request: AgentRuntimeTurnRequest) throws -> AsyncStream<AgentRuntimeEventEnvelope> {
             guard let phase else { throw Failure("A backend turn started without phase context") }
-            phases.append(phase)
+            handoffs.append(Handoff(turnID: request.turnID.uuidString, phase: phase, instructionsSHA256: instructionsSHA256))
             state = .running(sessionID: request.sessionID, turnID: request.turnID)
             return AsyncStream { continuation in
                 continuation.yield(.init(sessionID: request.sessionID, turnID: request.turnID,

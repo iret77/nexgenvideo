@@ -10,7 +10,7 @@
           "items": [
             "Production follows the workflow sidebar, phase workspace, object inspector, and decision dock. Budget, AI activity, and export remain available in the status bar.",
             "Storyboard presents an ordered shot grid with subjects, section timing, and narrative purpose. Selecting a shot shows readable technical details in the inspector.",
-            "The current phase has a distinct state and explains missing Bible evidence without internal paths or tool names. Keyboard focus is visible across shared controls.",
+            "The current phase has a distinct state and explains missing Bible evidence without internal paths or tool names. Technical details are available through Diagnostics. Keyboard focus is visible across shared controls.",
             "Approving the current phase follows its next step. Film and style review controls remain reachable in the minimum window size with enlarged interface text."
           ]
         },

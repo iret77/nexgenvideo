@@ -22,6 +22,7 @@ struct TakeReviewView: View {
     var body: some View {
         Button("Review video takes") { presented = true }
             .buttonStyle(InlineActionButtonStyle())
+            .reviewAcceptanceProbe("take.open")
             .sheet(isPresented: $presented) { reviewSheet }
     }
 
@@ -32,6 +33,7 @@ struct TakeReviewView: View {
                 Text("Video takes").fontWeight(AppTheme.FontWeight.semibold)
                 Spacer()
                 Button("Close") { presented = false }.buttonStyle(InlineActionButtonStyle())
+                    .reviewAcceptanceProbe("take.close")
             }
             if takes.isEmpty { Text("No recorded video takes. Record a completed render to begin review.") }
             else {
@@ -40,7 +42,9 @@ struct TakeReviewView: View {
                     ForEach(takes, id: \.id) { take in
                         Text("\(take.shotID) · \(take.phase) · \(take.recordedAt) · \(take.id.prefix(8))").tag(take.id)
                     }
-                }.disabled(busy)
+                }
+                    .reviewAcceptanceProbe("take.picker", text: selectedID)
+                    .disabled(busy)
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
@@ -65,10 +69,13 @@ struct TakeReviewView: View {
                             } catch { message = error.localizedDescription }
                             busy = false
                         }
-                    }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canSelect || !canWrite)
+                    }.buttonStyle(InlineActionButtonStyle(variant: .approval))
+                        .reviewAcceptanceProbe("take.use")
+                        .disabled(busy || !canSelect || !canWrite)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
+                            .reviewAcceptanceProbe("take.pass", text: pass.rawValue)
                         if pass == .identity {
                             Text("Check subject and scene identity, including objects when no person is present.")
                                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -79,16 +86,21 @@ struct TakeReviewView: View {
                             if pass != .identity { Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation) }
                             if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
                         }
+                        .reviewAcceptanceProbe("take.verdict", text: verdict.rawValue)
                         TextField("Describe what you observed in this take", text: $observation)
+                            .reviewAcceptanceProbe("take.observation", text: observation)
                         HStack {
                             TextField("Start seconds", value: $start, format: .number)
+                                .reviewAcceptanceProbe("take.start", text: String(start))
                             TextField("End seconds", value: $end, format: .number)
+                                .reviewAcceptanceProbe("take.end", text: String(end))
                         }
                         Button("Record pass") {
                             findings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: start, endSeconds: end))
                             observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds
                         }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
+                        .reviewAcceptanceProbe("take.record-pass", text: String(findings.count))
                         .disabled(busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
                     } else {
@@ -105,13 +117,15 @@ struct TakeReviewView: View {
                                 } catch { message = error.localizedDescription }
                                 busy = false
                             }
-                        }.buttonStyle(InlineActionButtonStyle(variant: .approval)).disabled(busy || !canWrite)
+                        }.buttonStyle(InlineActionButtonStyle(variant: .approval))
+                            .reviewAcceptanceProbe("take.save", text: String(findings.count))
+                            .disabled(busy || !canWrite)
                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
                             .buttonStyle(InlineActionButtonStyle()).disabled(busy)
                     }
                 }
             }
-            if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+            if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor).reviewAcceptanceProbe("take.message", text: message) }
             if !canWrite { Text("Save reviews and select takes during Render. Rewind Render before changing an approved selection.").foregroundStyle(AppTheme.Text.secondaryColor) }
         }
         .padding(AppTheme.Spacing.lg)

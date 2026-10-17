@@ -125,12 +125,17 @@ struct SpendOption: Identifiable, Equatable, Sendable, Codable {
 
     @MainActor
     var isCurrentlyAvailable: Bool {
+        isAvailable(activation: .current())
+    }
+
+    @MainActor
+    func isAvailable(activation: @autoclosure () -> ProviderActivation, catalog: ModelCatalog = .shared) -> Bool {
         guard requiresCatalogAvailability else { return true }
-        guard ModelRegistry.exists(id: modelId),
+        guard catalog.byId[modelId] != nil,
               ModelPreferences.shared.isEnabled(modelId),
               let binding = target.binding else { return false }
-        return ProviderActivation.current().isActive(binding.provider, binding.transport)
-            && ProviderManifest.bindings(forModelId: modelId).contains(binding)
+        return activation().isActive(binding.provider, binding.transport)
+            && ProviderManifest.bindings(forModelId: modelId, catalog: catalog).contains(binding)
     }
 }
 

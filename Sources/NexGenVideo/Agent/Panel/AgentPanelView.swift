@@ -973,7 +973,8 @@ struct AgentPanelView: View {
                     .padding(.bottom, AppTheme.Spacing.xs)
             } else if editor.generationBatchCoordinator.pending != nil {
                 // The decision is offered height before the task result so its list can show a complete request.
-                GenerationBatchCard(editor: editor, runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested)
+                GenerationBatchCard(editor: editor, runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested
+                    || WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested)
                     .layoutPriority(1)
             } else if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(

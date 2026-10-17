@@ -12,6 +12,8 @@ enum FullflowAcceptanceFixture {
         let projectHome: URL
         let canonicalArtifacts: [String]
         let suppliedInputs: [String]
+        let nativeGateApprovals: [MusicvideoNativeAcceptance.GateEvidence]
+        let nativeBibleBlocker: [String: Any]
     }
 
     struct GeneratedShotScenario {
@@ -26,61 +28,28 @@ enum FullflowAcceptanceFixture {
         init(_ message: String) { self.message = message }
     }
 
-    static func makeDocument(generatedShot: GeneratedShotScenario? = nil) async throws -> (document: VideoProject, receipt: Receipt) {
+    static func makeDocument(evidenceURL: URL, generatedShot: GeneratedShotScenario? = nil) async throws -> (document: VideoProject, receipt: Receipt) {
         guard let binding = PluginLoader.liveBinding(id: "musicvideo") else {
             throw Failure("The acceptance fixture requires the loaded Musicvideo pack.")
         }
-        let home = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Musicvideo fullflow \(UUID().uuidString).ngv", isDirectory: true)
-        _ = try ProjectScaffold.initProject(home: home, name: "Fullflow", mode: .section,
-            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo"))
-        var timeline = Timeline()
-        timeline.fps = 30
-        try JSONEncoder().encode(timeline).write(to: home.appendingPathComponent(Project.timelineFilename))
-        try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
-        try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
-        _ = try ProjectIdentity.uuid(for: home)
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
-        let document = try await VideoProject.load(from: home)
-        document.makeWindowControllers()
-        let editor = document.editorViewModel
-        let root = try dataRoot(editor)
-        let song = home.appendingPathComponent("fixture-song.wav")
+        let song = FileManager.default.temporaryDirectory.appendingPathComponent("fixture-song-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: song) }
         try writeTone(to: song, duration: 4.3)
-        _ = try await editor.attachProjectSong(from: song, dataRoot: root, replace: false,
-            originalFilename: "song.wav", declaredPack: "musicvideo", declaredBinding: binding)
-        guard let pack = PackCatalog.pack(named: "musicvideo"),
-              let steps = HardStepManifest.load(pack: pack) else {
-            throw Failure("Musicvideo intake contract unavailable.")
-        }
-        for step in steps.steps(for: "project_init") where !step.required {
-            try IntakeLedger.recordDecline(step, dataRoot: root)
-        }
-        try await approve("project_init", editor: editor)
-        try writeAnalysisFixture(dataRoot: root)
-        try await run("write_analysis_interpretation", [
-            "tempo_multiplier": 1.0,
-            "section_labels": [["index": 0, "label": "opening", "confidence": 1.0]],
-            "anomalies": [], "overall_character": "A steady pulse with an unquantized ending.",
-        ], editor: editor)
-        try await approve("analysis", editor: editor)
-        for step in steps.steps(for: "brief") where !step.required {
-            try IntakeLedger.recordDecline(step, dataRoot: root)
-        }
-        try await run("write_brief", [
-            "mission": Mission.demo.rawValue, "target_platform": "YouTube",
-            "aspect_ratio": AspectRatio.landscape16x9.rawValue, "project_mode": "section",
-            "concept_type": ConceptType.narrative.rawValue,
-            "visual_medium": VisualMedium.liveActionRealistic.rawValue,
-            "figures": FigurePresence.none.rawValue, "lyrics_integration": LyricsIntegration.ignored.rawValue,
-            "final_resolution": VideoResolution.res720p.rawValue,
-        ], editor: editor)
-        try await approve("brief", editor: editor)
-        return (document, try await finishPlanning(editor: editor, generatedShot: generatedShot))
+        let flow = try await MusicvideoHostFlowAcceptance.start(track: song, lyrics: nil, binding: binding, evidenceURL: evidenceURL)
+        try writeAnalysisFixture(dataRoot: flow.dataRoot)
+        try await flow.finishPlanningIntake(sectionLabels: ["opening"], finalResolution: .res720p)
+        return (flow.document, try await finishPlanning(editor: flow.editor, evidenceURL: evidenceURL,
+            initialGateApprovals: flow.gateApprovals, generatedShot: generatedShot))
     }
 
-    static func finishPlanning(editor: EditorViewModel, generatedShot: GeneratedShotScenario? = nil) async throws -> Receipt {
+    static func finishPlanning(editor: EditorViewModel, evidenceURL: URL,
+                               initialGateApprovals: [MusicvideoNativeAcceptance.GateEvidence],
+                               generatedShot: GeneratedShotScenario? = nil) async throws -> Receipt {
         let root = try dataRoot(editor)
+        var nativeGateApprovals = initialGateApprovals
+        func approve(_ phase: String, editor: EditorViewModel) async throws {
+            nativeGateApprovals.append(try await MusicvideoNativeAcceptance.approve(phase, editor: editor, evidenceURL: evidenceURL))
+        }
         let brief = try YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile)
         guard let analysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: root),
               let analysis = try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any],
@@ -145,6 +114,7 @@ enum FullflowAcceptanceFixture {
         try await run("write_storyboard", ["origin": "agent_proposal", "summary_oneline": "Warm then cool fields follow the song.",
             "causality_bindings": bindings, "sections": storyboardSections], editor: editor)
         try await approve("storyboard", editor: editor)
+        let nativeBibleBlocker = try await WorkspaceUIAcceptance.captureBibleBlocker(editor: editor, evidenceURL: evidenceURL)
         let reference = root.appendingPathComponent("bible/stage.png")
         try writeReference(to: reference)
         try ConfirmedIdentityAssetStoreV1.recordIntake(role: .location, identityName: "Stage", identitySlug: "stage",
@@ -246,6 +216,10 @@ enum FullflowAcceptanceFixture {
               assembly.policy.requiredDurationFrames == totalFrames else {
             throw Failure("Assembly did not preserve every planned shot and the complete track.")
         }
+        guard nativeGateApprovals.map(\.phase) == ["project_init", "analysis", "brief", "production_design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frames", "render"] else {
+            throw Failure("Native approval evidence does not cover the complete ordered Musicvideo workflow.")
+        }
         return Receipt(shotIDs: assembly.plan.placements.map(\.shotID), totalFrames: totalFrames, fps: fps,
             dataRoot: root, projectHome: projectHome,
             canonicalArtifacts: [PipelineLayout.briefFile, PipelineLayout.productionDesignFile,
@@ -253,7 +227,9 @@ enum FullflowAcceptanceFixture {
                 PipelineLayout.executionPlanFile, AssemblyPlanV1.relativePath, "assembly.json", MusicAssemblyProofV1.relativePath],
             suppliedInputs: ["Creative decisions and local moving-color videos are deterministic fixture inputs.",
                 generatedShot == nil ? "No content-generation provider is called; source mode is imported."
-                    : "The first shot uses the real generation path against a deterministic HTTP simulator; later shots are imported."])
+                    : "The first shot uses the real generation path against a deterministic HTTP simulator; later shots are imported.",
+                "Agent phase handoffs use a recording transport; no live LLM is called."],
+            nativeGateApprovals: nativeGateApprovals, nativeBibleBlocker: nativeBibleBlocker)
     }
 
     private struct Section { let id: String; let label: String; let start: Double; let end: Double }
@@ -263,13 +239,6 @@ enum FullflowAcceptanceFixture {
             throw Failure("The acceptance document has no working pipeline.")
         }
         return root
-    }
-
-    private static func approve(_ phase: String, editor: EditorViewModel) async throws {
-        let root = try dataRoot(editor)
-        try await NativeGateWriter.approve(projectDir: FrameInventory.projectHome(of: root), phase: phase,
-            declaredPack: "musicvideo", declaredBinding: editor.declaredPluginBinding,
-            executionCoordinator: editor.pipelinePhaseRunCoordinator)
     }
 
     private static func run(_ name: String, _ args: [String: Any], editor: EditorViewModel, executor: ToolExecutor? = nil) async throws {
@@ -287,11 +256,12 @@ enum FullflowAcceptanceFixture {
     }
 
     private static func writeAnalysisFixture(dataRoot: URL) throws {
-        let song = dataRoot.appendingPathComponent("audio/song.wav")
+        guard let song = AudioProjectLayout.songFiles(dataRoot: dataRoot).first else { throw Failure("The fixture track was not assigned.") }
+        let project = try YAMLArtifactStore(dataRoot: dataRoot).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
         let digest = try FileDigest.sha256(of: song)
         let section: [String: Any] = ["index": 0, "start": 0.0, "end": 4.3, "cluster": 0,
             "source": "measured_track_extent", "label": "opening", "confidence": 1.0]
-        let object: [String: Any] = ["schema": "analysis/v3", "project": "Fullflow", "song_path": "audio/song.wav",
+        let object: [String: Any] = ["schema": "analysis/v3", "project": project, "song_path": "audio/\(song.lastPathComponent)",
             "song_sha256": digest, "sample_rate": 48000, "duration_s": 4.3, "bpm": 120,
             "beats": stride(from: 0.0, through: 4.0, by: 0.5).map { $0 }, "downbeats": [0.0, 2.0, 4.0],
             "sections": [section], "downbeat_source": "librosa-heuristic", "pipeline_stages": ["structure"],
@@ -304,9 +274,10 @@ enum FullflowAcceptanceFixture {
             "alignment": []]
         let dir = dataRoot.appendingPathComponent("analysis", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: dir.appendingPathComponent("song.json"))
-        try JSONSerialization.data(withJSONObject: ["schema": "analysis_measurement_proof/v1", "project": "Fullflow",
-            "song_sha256": digest], options: [.sortedKeys]).write(to: dir.appendingPathComponent("song.measurement-proof.json"))
+        let stem = song.deletingPathExtension().lastPathComponent
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: dir.appendingPathComponent("\(stem).json"))
+        try JSONSerialization.data(withJSONObject: ["schema": "analysis_measurement_proof/v1", "project": project,
+            "song_sha256": digest], options: [.sortedKeys]).write(to: dir.appendingPathComponent("\(stem).measurement-proof.json"))
     }
 
     private static func writeTone(to url: URL, duration: Double) throws {

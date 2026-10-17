@@ -16,10 +16,17 @@ enum GenerationBatchReviewSelfTest {
         app.setActivationPolicy(.regular)
         Task { @MainActor in
             do {
+                let followUps = FollowUpEvidence()
                 let editor = EditorViewModel(
                     agentService: AgentService(
                         backend: .claudeCode,
-                        refreshBackendStatusOnInit: false
+                        refreshBackendStatusOnInit: false,
+                        embeddedHostFollowUpSender: { text, _ in
+                            followUps.messages.append(text)
+                            return true
+                        },
+                        runtimeReadinessOverride: { nil },
+                        apiKeyLoader: { nil }
                     )
                 )
                 let priced = try await package(editor: editor, priced: true)
@@ -83,7 +90,8 @@ enum GenerationBatchReviewSelfTest {
                     editor: editor,
                     original: manifest,
                     pricedPackage: priced,
-                    runtimeEvidence: runtimeEvidence
+                    runtimeEvidence: runtimeEvidence,
+                    followUps: followUps
                 )
                 FileHandle.standardOutput.write(Data("SELFTEST_GENERATION_BATCH_REVIEW_OK\n".utf8))
                 window.orderOut(nil)
@@ -121,7 +129,8 @@ enum GenerationBatchReviewSelfTest {
         editor: EditorViewModel,
         original: GenerationBatch,
         pricedPackage: GenerationPackageV1,
-        runtimeEvidence: GenerationBatchReviewRuntimeEvidence
+        runtimeEvidence: GenerationBatchReviewRuntimeEvidence,
+        followUps: FollowUpEvidence
     ) async throws {
         guard await waitUntil(timeout: .seconds(10), {
             NSApp.isActive && window.isVisible && window.isKeyWindow
@@ -292,7 +301,7 @@ enum GenerationBatchReviewSelfTest {
         }
         editor.generationBatchCoordinator.decline(editor: editor)
         try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
-        try await verifyMissingReference(package: pricedPackage, editor: editor, window: window)
+        try await verifyMissingReference(package: pricedPackage, editor: editor, window: window, followUps: followUps)
         try await verifyProductionDock(editor: editor, window: window)
     }
 
@@ -363,7 +372,8 @@ enum GenerationBatchReviewSelfTest {
         }
     }
 
-    private static func verifyMissingReference(package: GenerationPackageV1, editor: EditorViewModel, window: NSWindow) async throws {
+    private static func verifyMissingReference(package: GenerationPackageV1, editor: EditorViewModel, window: NSWindow,
+                                               followUps: FollowUpEvidence) async throws {
         guard let reference = package.payload.references.first,
               reference.displayName == "Mara-front.png" else {
             throw Failure(message: "missing-reference fixture has no readable original filename")
@@ -377,7 +387,13 @@ enum GenerationBatchReviewSelfTest {
             projectKey: package.payload.binding.projectKey, phase: "bible", items: [
                 .init(id: UUID().uuidString, purpose: "Character Mara — front identity sheet", package: package),
             ]))
-        try present(batch, editor: editor)
+        editor.agentService.newChat()
+        guard let sessionID = editor.agentService.currentSessionId else {
+            throw Failure(message: "revision fixture has no originating chat")
+        }
+        _ = try editor.agentService.presentGenerationBatch(batch, recoveries: [
+            batch.payload.items[0].id: GenerationBatchRecovery(options: []) { _, _ in package },
+        ], origin: .inAppChat(sessionID: sessionID), editor: editor)
         let host = NSHostingView(rootView: VStack(spacing: AppTheme.Spacing.none) {
             Spacer(minLength: AppTheme.Spacing.none)
             GenerationBatchCard(editor: editor, runtimeEvidenceEnabled: true)
@@ -397,7 +413,9 @@ enum GenerationBatchReviewSelfTest {
         let unavailable = asset.url.appendingPathExtension("unavailable")
         try FileManager.default.moveItem(at: asset.url, to: unavailable)
         defer {
-            try? FileManager.default.moveItem(at: unavailable, to: asset.url)
+            if FileManager.default.fileExists(atPath: unavailable.path) {
+                try? FileManager.default.moveItem(at: unavailable, to: asset.url)
+            }
             editor.mediaAssets = savedAssets
         }
         editor.mediaAssets.removeAll { $0.id == reference.assetID }
@@ -427,12 +445,57 @@ enum GenerationBatchReviewSelfTest {
             throw Failure(message: failure)
         }
         guard await waitUntil(timeout: .seconds(5), {
-            editor.generationBatchCoordinator.pending == nil
+            editor.generationBatchCoordinator.pending == nil && followUps.messages.count == 1
         }), editor.generationBatchCoordinator.activeBatchID == nil,
-            editor.generationBatchCoordinator.snapshots.isEmpty else {
-            throw Failure(message: "native revision action did not dismiss the blocked request without execution")
+            editor.generationBatchCoordinator.snapshots.isEmpty,
+            followUps.messages[0].contains(issue), followUps.messages[0].contains(reference.assetID),
+            !followUps.messages[0].contains("Pricing diagnostics"),
+            !followUps.messages[0].contains("Self-test pricing outage") else {
+            throw Failure(message: "native revision did not deliver the reference failure to its originating agent without execution")
         }
-        writeEvidence("missing-reference filename=Mara-front.png approveEnabled=false phaseApprovalEnabled=false revisionActivated=true")
+        try FileManager.default.moveItem(at: unavailable, to: asset.url)
+        editor.mediaAssets = savedAssets
+        let repairedPackage = try await Self.package(editor: editor, priced: false)
+        let repaired = try GenerationBatch(payload: .init(nonce: UUID(),
+            projectKey: repairedPackage.payload.binding.projectKey, phase: "bible", items: [
+                .init(id: UUID().uuidString, purpose: "Character Mara — repaired identity reference", package: repairedPackage),
+            ]))
+        guard repaired.id != batch.id else { throw Failure(message: "revision reused the blocked batch identity") }
+        try present(repaired, editor: editor)
+        let preview = "generation-input.preview.\(reference.assetID)"
+        try await reveal(identifier: preview, in: window, context: "repaired reference proposal")
+        guard await waitUntil(timeout: .seconds(10), {
+            controlState(preview, in: window) == true
+                && controlState("generation-batch.approve", in: window) == true
+                && controlState("generation-batch.approve-phase", in: window) == true
+                && editor.generationBatchCoordinator.preflightIssue == nil
+        }) else { throw Failure(message: "the repaired proposal did not restore its rendered image and approval actions") }
+        try await requireVisible([preview, "generation-batch.approve", "generation-batch.approve-phase"],
+            in: window, context: "repaired reference proposal")
+        try captureWindow(window, name: "generation-batch-revised-reference-large.png")
+        let startsBatches = editor.generationBatchCoordinator.startsApprovedBatches
+        editor.generationBatchCoordinator.startsApprovedBatches = false
+        defer { editor.generationBatchCoordinator.startsApprovedBatches = startsBatches }
+        if let failure = postMouseClick(identifier: "generation-batch.approve", in: window) {
+            throw Failure(message: failure)
+        }
+        guard await waitUntil(timeout: .seconds(5), { editor.generationBatchCoordinator.pending == nil }),
+              let home = editor.workingRoot else { throw Failure(message: "the repaired proposal could not be approved natively") }
+        let approved = try GenerationBatchStore.load(id: repaired.id, home: home)
+        guard approved.authorityAvailable, approved.batch == repaired,
+              approved.journal.executions.allSatisfy({ $0.state == .queued }),
+              editor.generationBatchCoordinator.activeBatchID == nil, editor.generationLog.spendEvents.isEmpty else {
+            throw Failure(message: "native repaired approval did not persist exact authority without provider work")
+        }
+        editor.generationBatchCoordinator.cancelRemaining(batchID: repaired.id, editor: editor)
+        guard try GenerationBatchStore.load(id: repaired.id, home: home).journal.executions.allSatisfy({ $0.state == .canceled }) else {
+            throw Failure(message: "the focused review fixture left an executable approved request behind")
+        }
+        writeEvidence("missing-reference filename=Mara-front.png revisionDelivered=true repairedBatchApproved=true renderedPreview=true providerDispatch=false suppliedRepair=true")
+    }
+
+    private final class FollowUpEvidence {
+        var messages: [String] = []
     }
 
     private static func controlState(_ identifier: String, in window: NSWindow) -> Bool? {

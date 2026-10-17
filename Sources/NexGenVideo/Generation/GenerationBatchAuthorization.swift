@@ -130,7 +130,8 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
         guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
         let option = SpendOption(modelId: package.payload.target.modelId, modelName: package.payload.target.modelId,
             target: package.payload.target, credits: nil, requiresCatalogAvailability: true)
-        guard option.isCurrentlyAvailable else {
+        guard option.isAvailable(activation: editor.generationBatchCoordinator.providerActivation(),
+                                 catalog: editor.generationBatchCoordinator.modelCatalog) else {
             throw GenerationRequestError.gate("The approved provider and model are unavailable. This item cannot switch routes automatically.")
         }
         if let root = DataRootResolver.dataRoot(of: home) {

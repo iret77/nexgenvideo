@@ -65,6 +65,10 @@ final class GenerationBatchCoordinator {
     private(set) var preflighting = false
     @ObservationIgnored private var preflightID = UUID()
     private var preflightApprovedBatchID: String?
+    @ObservationIgnored var catalogReadiness: @MainActor () async -> Void = { _ = await CatalogDiscovery.ensureCurrent() }
+    @ObservationIgnored var quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
+    @ObservationIgnored var providerActivation: @MainActor () -> ProviderActivation = { .current() }
+    @ObservationIgnored var modelCatalog: ModelCatalog = .shared
 
     var canApprovePending: Bool {
         pending != nil && preflightApprovedBatchID == pending?.id && preflightIssue == nil && !preflighting
@@ -435,7 +439,7 @@ final class GenerationBatchCoordinator {
             }
         }
         do {
-            await CatalogDiscovery.ensureCurrent()
+            await catalogReadiness()
             guard editor.workingRoot == home else { return }
             let manifest = try GenerationBatchStore.load(id: batchID, home: home).batch
             for item in manifest.payload.items {
@@ -458,7 +462,7 @@ final class GenerationBatchCoordinator {
                     switch state.state {
                     case .queued:
                         let generation = try await GenerationController.restoreApprovedBatchItem(authorization, editor: editor)
-                        let result = try await GenerationController.submitPrepared(generation, editor: editor).get()
+                        let result = try await GenerationController.submitPrepared(generation, editor: editor, quoteLoader: quoteLoader).get()
                         await editor.generationService.waitForGeneration(placeholderId: result.placeholderId)
                     case .running:
                         try await editor.generationService.resumeBatchJob(authorization, editor: editor)

@@ -189,7 +189,8 @@ enum PromptCompiler {
                 shotId: shotId,
                 modelId: modelId,
                 shot: shot,
-                expectedBinding: binding
+                expectedBinding: binding,
+                modelCatalog: modelCatalog
             )
         } else {
             videoContext = nil
@@ -511,9 +512,11 @@ enum PromptCompiler {
             )
         }
         if case .video = modality {
-            let routing = try PipelineProductionRouting.requireCurrent(
+            let routing = try currentVideoRouting(
+                editor: editor,
                 shotID: shotId,
-                dataRoot: root
+                dataRoot: root,
+                modelCatalog: modelCatalog
             )
             if let modelId, routing.modelID != modelId {
                 throw ToolError(
@@ -616,12 +619,23 @@ enum PromptCompiler {
     }
 
     @MainActor
+    private static func currentVideoRouting(editor: EditorViewModel?, shotID: String, dataRoot: URL,
+                                            modelCatalog: ModelCatalog) throws -> PipelineProductionRouteSelection {
+        let catalog = modelCatalog === ModelCatalog.shared
+            ? (editor?.generationBatchCoordinator.modelCatalog ?? modelCatalog) : modelCatalog
+        let activation = editor?.generationBatchCoordinator.providerActivation() ?? .current()
+        return try PipelineProductionRouting.requireCurrent(shotID: shotID, dataRoot: dataRoot,
+            activation: activation, candidateProvider: { catalog.productionRouteCandidates(activation: $0) })
+    }
+
+    @MainActor
     private static func currentVideoContext(
         editor: EditorViewModel?,
         shotId: String,
         modelId: String,
         shot: PromptComposer.ShotProjection?,
-        expectedBinding: PromptBinding
+        expectedBinding: PromptBinding,
+        modelCatalog: ModelCatalog
     ) throws -> PromptComposer.VideoContext {
         guard shotId != "none" else {
             let modeID = inferredFreeVideoModeID(modelId)
@@ -644,9 +658,11 @@ enum PromptCompiler {
               let shot else {
             throw ToolError("Shot-bound video compilation requires the active project and shot projection.")
         }
-        let routing = try PipelineProductionRouting.requireCurrent(
+        let routing = try currentVideoRouting(
+            editor: editor,
             shotID: shotId,
-            dataRoot: root
+            dataRoot: root,
+            modelCatalog: modelCatalog
         )
         guard routing.modelID == modelId else {
             throw ToolError(
