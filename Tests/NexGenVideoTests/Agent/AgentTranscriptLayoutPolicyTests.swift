@@ -292,7 +292,9 @@ struct AgentTranscriptLayoutPolicyTests {
         ] {
             let source = try sourceFile(path)
             #expect(source.contains("ScrollView {"))
-            #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
+            let boundedSource = path.hasSuffix("SpendApprovalCard.swift")
+                ? try sourceFile("Sources/NexGenVideo/Agent/Panel/GenerationApprovalCard.swift") : source
+            #expect(boundedSource.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
             #expect(source.contains(".accessibilityElement(children: .contain)"))
             #expect(source.contains(".accessibilityLabel("))
         }
@@ -333,11 +335,10 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(message.contains("DisclosureGroup(isExpanded: $showsDiagnostics)"))
         #expect(message.contains("Previous fingerprint"))
         #expect(message.contains("editor.revealReviewSurface(for: state.record.phase)"))
-        #expect(batch.contains("Approve without estimate"))
         #expect(batch.contains("Provider charges apply. The cost is recorded only if the provider reports it."))
         #expect(batch.contains("expectedBatchID: batch.id"))
         #expect(batch.contains(".acceptUnknownPrices : .verifiedPrices"))
-        #expect(batch.contains(".disabled(unpriced ? !controls.canApproveWithoutEstimate : !controls.canApprove)"))
+        #expect(batch.contains("canApprove: controls.canApprove || controls.canApproveWithoutEstimate"))
         #expect(!batch.contains("Cost estimates are missing. Approval is unavailable"))
         #expect(!batch.contains("Waiting for cost estimates"))
         #expect(batch.contains("batch.totalEUR == nil"))

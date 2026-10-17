@@ -178,6 +178,17 @@ struct GenerationBatchTests {
         #expect(!committing.canApprove)
     }
 
+    @Test func unresolvedInputsBlockBothApprovalPathsRegardlessOfPrice() {
+        for priced in [false, true] {
+            let controls = GenerationBatchReviewControls(hasVerifiedTotal: priced,
+                hasRetryablePricingFailure: false, isCommitting: false,
+                isRecovering: false, referencesReady: false)
+            #expect(!controls.canApprove)
+            #expect(!controls.canApproveWithoutEstimate)
+            #expect(controls.canEdit)
+        }
+    }
+
     @Test func removingARecoveringUnknownItemKeepsThePricedRemainderAtomic() async throws {
         let (root, editor, pricedBatch) = try await fixture()
         defer { cleanup(root) }

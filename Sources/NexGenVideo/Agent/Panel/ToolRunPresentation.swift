@@ -12,6 +12,27 @@ enum ToolRunPresentation {
         return name.replacingOccurrences(of: "_", with: " ").capitalizedFirst
     }
 
+    static func label(for rawName: String, inputJSON: String) -> String {
+        guard let data = inputJSON.data(using: .utf8),
+              let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return label(for: rawName)
+        }
+        let name = stripped(rawName)
+        let path = ["file_path", "path", "source_path", "artifact_path"].compactMap { input[$0] as? String }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let object = path.map { URL(fileURLWithPath: $0).lastPathComponent }
+            ?? ["title", "name", "shot_id", "phase", "model"].compactMap { input[$0] as? String }
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard let object else { return label(for: rawName) }
+        let action = switch name {
+        case "Read": String(localized: "Reading")
+        case "Write": String(localized: "Writing")
+        case "Edit": String(localized: "Editing")
+        default: label(for: rawName)
+        }
+        return "\(action) · \(object)"
+    }
+
     /// The tool's base name regardless of transport (`mcp__nexgen__show_blocks` and
     /// `show_blocks` are the same tool to the transcript).
     static func baseName(for rawName: String) -> String {

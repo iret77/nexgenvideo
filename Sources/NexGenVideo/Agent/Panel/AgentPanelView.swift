@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AgentPanelView: View {
     @Environment(EditorViewModel.self) var editor
+    var presentation: AgentPanelPresentation = .tasks
 
     private static let starterPrompts: [AgentStarterPrompt] = [
         AgentStarterPrompt(
@@ -79,25 +80,40 @@ struct AgentPanelView: View {
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
-            taskBar
-            AgentLiveStatusView(
+            if presentation == .tasks { taskBar }
+            if presentation != .decision {
+                AgentLiveStatusView(
                 status: liveStatus,
                 onCancel: {
-                    if service.currentSpendRun != nil { service.cancelRunningSpend() } else { service.cancel() }
+                    if service.currentSpendRun != nil {
+                        service.cancelRunningSpend()
+                    } else if let batchID = editor.generationBatchCoordinator.activeBatchID {
+                        editor.generationBatchCoordinator.cancelRemaining(batchID: batchID, editor: editor)
+                    } else { service.cancel() }
                 },
-                onOpenPipeline: editor.hasProductionPipeline ? { editor.revealCockpit(.pipeline) } : nil
-            )
-            activityProgress
-            workTimeSummary
-            taskResult
-            composerDock
-            GenerationBatchProgressView(editor: editor)
+                    onOpenPipeline: presentation == .tasks && editor.hasProductionPipeline
+                        ? { editor.revealCockpit(.pipeline) } : nil
+                )
+                activityProgress
+            }
+            if surfaceState.dockOwner != .composer && surfaceState.dockOwner != .backendRecovery {
+                if presentation != .activity { composerDock.layoutPriority(1) }
+            }
+            if presentation != .decision {
+                taskResult
+                workTimeSummary
+                if surfaceState.dockOwner == .composer || surfaceState.dockOwner == .backendRecovery {
+                    composerDock
+                }
+                GenerationBatchProgressView(editor: editor)
+            }
         }
         .sheet(isPresented: $showDecisionHistory) {
             AgentDecisionHistoryView(messages: service.messages)
         }
         .sheet(isPresented: $showDiagnostics) { diagnosticTranscript }
         .onAppear {
+            guard presentation != .decision else { return }
             refreshDiscoveredPlugins()
             service.refreshBackendStatus()
         }
@@ -109,6 +125,7 @@ struct AgentPanelView: View {
         // updated, so a reopened project keeps offering "start" for the rest of the session.
         .onChange(of: packProgress) { _, _ in refreshDiscoveredPlugins() }
         .onChange(of: hangContext, initial: true) { _, context in
+            guard presentation != .decision else { return }
             MainThreadHangWatchdog.shared.update(context: context)
             HangDiagnosticRecorder.shared.record(.context, values: [
                 context.isStreaming ? 1 : 0, context.hasDialog ? 1 : 0,
@@ -122,7 +139,7 @@ struct AgentPanelView: View {
             }
         }
         .onDisappear {
-            MainThreadHangWatchdog.shared.resetContext()
+            if presentation != .decision { MainThreadHangWatchdog.shared.resetContext() }
         }
     }
 
@@ -222,11 +239,13 @@ struct AgentPanelView: View {
                     : "Generation in progress",
                 detail: "\(run.actionLabel) · \(run.modelName) via \(run.providerName)",
                 canCancel: true,
-                cancellationRequested: run.cancellationRequested
+                cancellationRequested: run.cancellationRequested,
+                stopLabel: String(localized: "Stop generation")
             )
         case .batchRun:
             return AgentLiveStatus(state: .working, title: "Generation batch in progress",
-                detail: "View progress and controls in Generation batches below.")
+                detail: "View progress and results in Generation batches.", canCancel: true,
+                stopLabel: String(localized: "Stop generation"))
         case .decisionWorking:
             return AgentLiveStatus(state: .working,
                 title: surfaceState.dockOwner == .gateApproval ? "Recording approval" : "Preparing generation options")
@@ -243,10 +262,10 @@ struct AgentPanelView: View {
                 : ""
             return AgentLiveStatus(
                 state: .working,
-                title: presentation.title,
+                title: taskActivity.title,
                 detail: pendingGateIsBlockedByPhaseRun
-                    ? "\(PhaseDisplay.label(snapshot.phase))\(count) · Approval is unavailable until this operation finishes."
-                    : "\(PhaseDisplay.label(snapshot.phase))\(count)"
+                    ? "\(presentation.title)\(count) · Approval is unavailable until this operation finishes."
+                    : "\(presentation.title)\(count)"
             )
         case .phaseFailure:
             return AgentLiveStatus(
@@ -256,19 +275,20 @@ struct AgentPanelView: View {
         case .actionRequired:
             if surfaceState.dockOwner == .gateApproval, let gate = service.pendingGateApproval {
                 return AgentLiveStatus(state: .waiting, title: gate.isRewind ? "Revision requested: \(gate.phaseLabel)" : "\(gate.phaseLabel): approval requested",
-                    detail: "Review and respond in the approval card below.")
+                    detail: decisionLocation)
             }
             return AgentLiveStatus(state: .waiting,
                 title: surfaceState.dockOwner == .spendApproval ? "Generation approval requested" : "Your response is needed",
-                detail: "Respond in the decision card below.")
+                detail: decisionLocation)
         case .hostFollowUp:
             return AgentLiveStatus(
                 state: .working,
                 title: "Resuming agent"
             )
         case .stream:
-            return AgentLiveStatus(state: .working, title: service.activityEvents.last?.label ?? "Waiting for agent response",
-                detail: "No approval request is open.", canCancel: true)
+            return AgentLiveStatus(state: .working, title: taskActivity.title,
+                detail: [taskActivity.expectedResult, service.activityEvents.last?.label]
+                    .compactMap { $0 }.joined(separator: " · "), canCancel: true)
         case .turnFailure:
             return AgentLiveStatus(state: .failed, title: "Agent request failed")
         case .backendChecking:
@@ -279,6 +299,17 @@ struct AgentPanelView: View {
             return AgentLiveStatus(state: .ready, title: service.stoppedAgent ? "Agent stopped; submitted provider jobs may continue" : "No task running",
                 detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for the next step." : nil)
         }
+    }
+
+    private var taskActivity: AgentTaskActivityPresentation {
+        AgentTaskActivityPresentation(messages: service.messages,
+            phase: editor.pipelinePhaseExecution.snapshot?.phase ?? editor.projectState?.nextPhaseName)
+    }
+
+    private var decisionLocation: String {
+        presentation == .activity
+            ? String(localized: "Respond in the phase dock.")
+            : String(localized: "Respond in the decision area.")
     }
 
     @ViewBuilder private var pipelineRepairRecovery: some View {
@@ -686,7 +717,7 @@ struct AgentPanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     if !items.isEmpty {
-                        Text("Messages · current decisions are shown below")
+                        Text("Messages")
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         ForEach(items) { item in
                             Group {
@@ -700,6 +731,10 @@ struct AgentPanelView: View {
                                                 .accessibilityAddTraits(.isHeader)
                                         }
                                         AgentMessageView(message: message, toolResults: toolResults)
+                                            .modifier(GenerationBatchRuntimeProbe(
+                                                identifier: "agent.result.\(message.id.uuidString)",
+                                                enabled: WorkspaceUIAcceptance.isRequested
+                                            ))
                                     }
                                 case .notice(let notice):
                                     Text(notice.text).textSelection(.enabled)
@@ -712,6 +747,17 @@ struct AgentPanelView: View {
                         }
                     } else if showsTaskChoices {
                         emptyState
+                    } else if statusOwnerIsRunning {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                            Text(taskActivity.title)
+                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                            if let result = taskActivity.expectedResult {
+                                Text(result).interfaceFont(size: AppTheme.Typography.ui)
+                            }
+                            Text("The task is running. Its next response will appear here.")
+                                .interfaceFont(size: AppTheme.Typography.ui)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                        }
                     }
                     errorBanner
                 }
@@ -905,6 +951,7 @@ struct AgentPanelView: View {
                     error: service.spendApprovalError,
                     isWorking: service.spendApprovalIsRunning,
                     onApprove: { option in
+                        if let phase = service.pendingSpendPhase { editor.revealReviewSurface(for: phase) }
                         Task { await service.approveSpend(option) }
                     },
                     onDecline: { service.declineSpend() },
@@ -912,6 +959,7 @@ struct AgentPanelView: View {
                     onPrepare: { service.prepareSpendOption($0) },
                     approvalPhase: service.pendingSpendPhase,
                     onApproveAll: { option in
+                        if let phase = service.pendingSpendPhase { editor.revealReviewSurface(for: phase) }
                         Task { await service.approveSpendForPhase(option) }
                     }
                 )
@@ -981,7 +1029,7 @@ struct AgentPanelView: View {
                     Spacer(minLength: AppTheme.Spacing.none)
                 }
             }
-            if service.pendingFunction != nil {
+            if service.pendingFunction != nil && !service.isStreaming {
                 AgentInputBox(
                     draft: $service.draft,
                     mentions: $service.mentions,
@@ -1006,10 +1054,6 @@ struct AgentPanelView: View {
                 HStack {
                     modelPicker
                     Spacer(minLength: AppTheme.Spacing.sm)
-                    if service.isStreaming {
-                        Button("Stop agent") { service.cancel() }
-                            .buttonStyle(.capsule(.secondary, size: .small))
-                    }
                 }
             }
         }

@@ -1423,8 +1423,14 @@ struct GateGuardTests {
             "frames", "render",
         ] {
             let requirement = try #require(registry.gateRequirements[phase])
-            #expect(throws: GateBlocked.self, "\(phase) must fail closed") {
-                try requirement(root)
+            if phase == "bible" {
+                #expect(throws: PhaseArtifactFailure.self, "Bible must fail closed with its typed requirement") {
+                    try requirement(root)
+                }
+            } else {
+                #expect(throws: GateBlocked.self, "\(phase) must fail closed") {
+                    try requirement(root)
+                }
             }
         }
     }
@@ -1832,8 +1838,12 @@ struct GateGuardTests {
             root,
             path: "bible/wide.png"
         )
-        #expect(throws: GateBlocked.self) {
+        do {
             try MusicvideoGateChecks.requireRealBible(dataRoot: root)
+            Issue.record("Bible approval must require the requested location view")
+        } catch let failure as PhaseArtifactFailure {
+            #expect(failure.requirement == .locationViews)
+            #expect(failure.diagnostic.contains("entrance"))
         }
     }
 
@@ -1897,7 +1907,7 @@ struct GateGuardTests {
             to: PipelineLayout.bibleFile
         )
 
-        #expect(throws: GateBlocked.self) {
+        #expect(throws: PhaseArtifactFailure.self) {
             try MusicvideoGateChecks.requireRealBible(dataRoot: root)
         }
         try ConfirmedIdentityAssetStoreV1.recordIntake(
@@ -1908,7 +1918,7 @@ struct GateGuardTests {
             dataRoot: root,
             confirmedAt: "2026-07-26T00:00:00Z"
         )
-        #expect(throws: GateBlocked.self) {
+        #expect(throws: PhaseArtifactFailure.self) {
             try MusicvideoGateChecks.requireRealBible(dataRoot: root)
         }
         try ConfirmedIdentityAssetStoreV1.recordIntake(
@@ -1919,7 +1929,7 @@ struct GateGuardTests {
             dataRoot: root,
             confirmedAt: "2026-07-26T00:00:00Z"
         )
-        #expect(throws: GateBlocked.self) {
+        #expect(throws: PhaseArtifactFailure.self) {
             try MusicvideoGateChecks.requireRealBible(dataRoot: root)
         }
         try ConfirmedIdentityAssetStoreV1.recordIntake(
@@ -1933,7 +1943,7 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealBible(dataRoot: root)
 
         try Data("changed-after-confirmation".utf8).write(to: image)
-        #expect(throws: GateBlocked.self) {
+        #expect(throws: PhaseArtifactFailure.self) {
             try MusicvideoGateChecks.requireRealBible(dataRoot: root)
         }
     }

@@ -137,12 +137,7 @@ extension GenerationController {
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let parameters = try package.restoreParameters()
         let snapshot = try await GenerationPackageInputs.restore(package: package, editor: editor)
-        let references = try package.payload.references.map { reference in
-            guard let asset = editor.mediaAssets.first(where: { $0.id == reference.assetID }) else {
-                throw GenerationRequestError.gate("An approved batch reference is missing.")
-            }
-            return asset
-        }
+        let references = try GenerationPackageInputs.resolveReferences(package: package, editor: editor)
         let input = package.payload.generationInput
         let submission: GenerationRequest.Submission
         let prepared: PreparedSubmission

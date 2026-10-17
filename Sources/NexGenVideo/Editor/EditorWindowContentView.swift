@@ -18,7 +18,6 @@ struct EditorWindowContentView: View {
             }
             GeometryReader { geometry in
                 EditorView()
-                    .focusEffectDisabled()
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .background {
@@ -28,6 +27,7 @@ struct EditorWindowContentView: View {
                         .allowsHitTesting(false)
                 }
             }
+            if !editor.theaterActive { WorkbenchStatusBar() }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)

@@ -87,11 +87,15 @@ jobs:
         run: |
           python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
           python3 scripts/render_generation_batch_review_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+          python3 scripts/render_workbench_reference.py --output "$RUNNER_TEMP/workbench-reference"
       - name: Upload Agent UI render evidence
         uses: actions/upload-artifact@v4
         with:
           name: agent-chat-spec-${{ github.run_id }}
-          path: ${{ runner.temp }}/agent-chat-spec
+          path: |
+            ${{ runner.temp }}/agent-chat-spec
+            ${{ runner.temp }}/workbench-reference/*.png
+            ${{ runner.temp }}/workbench-reference/reference.json
           if-no-files-found: error
           retention-days: 14
 
@@ -364,6 +368,7 @@ jobs:
           defaults write -g AppleKeyboardUIMode -int 2
           mkdir -p evidence
           status=0
+          NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$PWD/evidence" \
           NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             > evidence/generation-batch-review.log 2>&1 || status=$?
@@ -377,6 +382,7 @@ jobs:
           path: |
             evidence/*.json
             evidence/*.log
+            evidence/*.png
 
   merge_gate:
     name: Merge Gate

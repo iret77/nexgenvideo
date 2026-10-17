@@ -33,7 +33,7 @@ struct SpendSelectionPreferencesTests {
         #expect(next.options.first == fal)
     }
 
-    @Test func preferredProviderSurvivesWhenThePreviousModelIsUnavailable() throws {
+    @Test func preferredProviderNeverReplacesTheRequestedModel() throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let previousFal = option(modelID: "old-model", provider: .fal)
@@ -59,7 +59,19 @@ struct SpendSelectionPreferencesTests {
             defaults: defaults
         )
 
-        #expect(next.recommendedOptionId == fal.id)
+        #expect(next.recommendedOptionId == runway.id)
+    }
+
+    @Test func cardKeepsTheRequestModelWhenItIsNotTheFirstOption() {
+        let first = option(modelID: "sunburst", provider: .fal)
+        let requested = option(modelID: "flare", provider: .fal)
+        let approval = SpendApproval(id: "request", recommendedOptionId: requested.id,
+            options: [first, requested], actionLabel: "Generate image")
+        #expect(approval.modelRequirement == nil)
+        #expect(SpendApprovalSelection.optionID(approval: approval, current: "") == requested.id)
+        #expect(SpendApprovalSelection.optionID(approval: approval, current: first.id) == first.id)
+        let missing = approval.replacingOptions([first])
+        #expect(SpendApprovalSelection.optionID(approval: missing, current: requested.id).isEmpty)
     }
 
     @Test func imagePreferenceDoesNotChangeVideoApproval() throws {

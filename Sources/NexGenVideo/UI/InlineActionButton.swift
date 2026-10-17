@@ -28,6 +28,7 @@ struct InlineActionButtonStyle: ButtonStyle {
                         .fill(background)
                 )
                 .opacity(opacity)
+                .modifier(ControlKeyboardFocusRing(radius: AppTheme.Radius.xs))
                 .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
         }
 

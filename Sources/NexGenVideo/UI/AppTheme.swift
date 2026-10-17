@@ -6,6 +6,7 @@ enum AppTheme {
     enum Acceptance {
         static let inspectorViewport = CGSize(width: 440, height: 650)
         static let musicvideoViewport = CGSize(width: 1380, height: 950)
+        static let workbenchViewport = CGSize(width: 1470, height: 950)
         static let pipelineOverviewWidth: CGFloat = 540
     }
 
@@ -456,6 +457,15 @@ enum AppTheme {
     }
 
     enum Layout {
+        static let workflowSidebarDefault: CGFloat = 260
+        static let workflowSidebarMin: CGFloat = 220
+        static let productionInspectorDefault: CGFloat = 300
+        static let productionInspectorMin: CGFloat = 240
+        static let storyboardCardMinWidth: CGFloat = 220
+        static let storyboardCardMinHeight: CGFloat = 130
+        static let activityFlyoutWidth: CGFloat = 480
+        static let activityFlyoutHeight: CGFloat = 560
+
         static let mediaFolderTreeMin: CGFloat = 180
         static let mediaFolderTreeDefault: CGFloat = 220
         static let safeDimensionCeiling: CGFloat = 10_000

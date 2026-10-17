@@ -4,6 +4,7 @@ import SwiftUI
 enum CockpitTab: String, Hashable, CaseIterable {
     case pipeline = "Pipeline"
     case story = "Project Brief"
+    case productionDesign = "Production Design"
     case treatment = "Treatment"
     case storyboard = "Storyboard"
     case bible = "Bible"
@@ -26,6 +27,7 @@ enum CockpitReviewAttention {
 
 struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
+    var production = false
 
     var body: some View {
         @Bindable var editor = editor
@@ -36,33 +38,52 @@ struct ProjectCockpitView: View {
         let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
 
         return VStack(spacing: AppTheme.Spacing.none) {
-            HStack(spacing: AppTheme.Spacing.none) {
-                SegmentedTabBar(
-                    titles: titles,
-                    selected: selectedTitle,
-                    markedTitles: pendingReviewTitles,
-                    acceptanceProbePrefix: WorkspaceUIAcceptance.isRequested ? "cockpit.tab" : nil
-                ) { title in
-                    acknowledgeReview(title: title)
-                    if let surface = packSurfaces.first(where: { $0.title == title }) {
-                        editor.cockpitPackSurfaceID = surface.id
-                    } else if let tab = CockpitTab(rawValue: title) {
-                        editor.cockpitTab = tab
-                        editor.cockpitPackSurfaceID = nil
-                    }
+            if production {
+                HStack {
+                    Text(editor.productionSelectedPhase.map(PhaseDisplay.label) ?? selectedTitle)
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    Spacer()
                 }
-                settingsButton
+                .padding(.horizontal, AppTheme.Spacing.md)
+                .panelHeaderBar()
+            } else {
+                HStack(spacing: AppTheme.Spacing.none) {
+                    SegmentedTabBar(
+                        titles: titles,
+                        selected: selectedTitle,
+                        markedTitles: pendingReviewTitles,
+                        acceptanceProbePrefix: WorkspaceUIAcceptance.isRequested ? "cockpit.tab" : nil
+                    ) { title in
+                        acknowledgeReview(title: title)
+                        if let surface = packSurfaces.first(where: { $0.title == title }) {
+                            editor.cockpitPackSurfaceID = surface.id
+                        } else if let tab = CockpitTab(rawValue: title) {
+                            editor.cockpitTab = tab
+                            editor.cockpitPackSurfaceID = nil
+                        }
+                    }
+                    settingsButton
+                }
+                .panelHeaderBar()
             }
-            .panelHeaderBar()
             Group {
                 if let surface = selectedSurface {
                     packSurfaceView(surface)
                 } else {
                     switch editor.cockpitTab {
                     case .story, .treatment: StoryPanelView(document: editor.cockpitTab, drafts: editor.storyPanelDrafts)
+                    case .productionDesign: ProductionStyleReviewView(standalone: true)
                     case .storyboard: StoryboardPanelView()
                     case .bible: BiblePanelView()
-                    case .pipeline: PipelinePanelView()
+                    case .pipeline:
+                        if production {
+                            CockpitStateView.empty(icon: "doc", title: "No result yet",
+                                message: editor.productionSelectedPhase.map {
+                                    "\(PhaseDisplay.label($0)) has no artifact to display yet."
+                                } ?? "Select a workflow phase to review its result.")
+                        } else {
+                            PipelinePanelView()
+                        }
                     case .shotlist: ShotlistPanelView()
                     case .review: ReviewPanelView()
                     case .project: ProjectSettingsView()
@@ -70,7 +91,12 @@ struct ProjectCockpitView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()  // a panel may never paint over the cockpit tab bar
+            .clipped()
+            if production {
+                AppDivider()
+                PipelinePanelView(presentation: .dock)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .onChange(of: selectedTitle) { _, title in acknowledgeReview(title: title) }
         .task(id: editor.projectURL) {
@@ -259,7 +285,9 @@ struct ProjectSettingsView: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             WrapLayout(spacing: AppTheme.Spacing.sm) {
-                if initialized {
+                if initialized && editor.workspaceFocus == .production {
+                    EmptyView()
+                } else if initialized {
                     // Working the pipeline is Produce's job — land there, not in a sidebar tab.
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
@@ -275,6 +303,8 @@ struct ProjectSettingsView: View {
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
+                } else if editor.hasProductionPipeline && editor.workspaceFocus == .production {
+                    EmptyView()
                 } else if editor.hasProductionPipeline {
                     // The pipeline exists (e.g. the agent scaffolded it) but this view's state hasn't
                     // loaded — never offer Start again (double-start), never spin forever; the real

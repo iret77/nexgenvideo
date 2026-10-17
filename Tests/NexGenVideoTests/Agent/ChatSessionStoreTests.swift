@@ -32,6 +32,28 @@ struct ChatSessionStoreTests {
         #expect(session.decision == nil)
     }
 
+    @Test("Reopening a project restores its latest open answer without starting a new conversation")
+    @MainActor
+    func latestAnswerSurvivesReopen() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chat = home.appendingPathComponent(ChatSessionStore.dirName)
+        try FileManager.default.createDirectory(at: chat, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let answer = AgentMessage(role: .assistant, blocks: [.text("The Bible still needs two character sheets.")])
+        let saved = ChatSession(title: "Complete Bible", messages: [answer])
+        try #require(ChatSessionStore.encodeSession(saved))
+            .write(to: chat.appendingPathComponent("\(saved.id.uuidString).json"))
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: home)
+        #expect(service.currentSessionId == saved.id)
+        #expect(service.messages.map(\.id) == [answer.id])
+        #expect(service.sessions.count == 1)
+        #expect(!service.isStreaming)
+        let visible = AgentTranscriptProjection.taskItems(messages: service.messages, isStreaming: false)
+        #expect(visible.count == 1)
+        #expect(visible.first?.id == "result-\(answer.id.uuidString)")
+    }
+
     @Test("Open decisions reload in their owning session without sending or approving")
     @MainActor
     func openDecisionSurvivesReloadWithoutExecution() throws {

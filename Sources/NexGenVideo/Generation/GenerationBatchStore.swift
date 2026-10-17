@@ -84,9 +84,10 @@ enum GenerationBatchStore {
         let authorityID = try authority.authorityID(projectKey: batch.payload.projectKey, batchID: batch.id)
         let snapshot = Snapshot(batch: batch,
             journal: try GenerationBatchJournal(approving: batch, authorityID: authorityID, approval: approval), authorityAvailable: true)
-        for item in batch.payload.items {
+        var checked = Set<String>()
+        for item in batch.payload.items where checked.insert(item.package.id).inserted {
             try await item.package.requireCurrentContext(editor: editor)
-            _ = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+            try await GenerationPackageInputs.validate(package: item.package, editor: editor)
         }
         try scope.requireCurrent(editor: editor)
         if try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil {

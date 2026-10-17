@@ -29,13 +29,11 @@ struct ReviewDestinationParityTests {
                     #expect(route.destinationLabel == label, "\(phase)")
                     switch route.destination {
                     case .tab(let tab):
-                        #expect(CockpitTab.visibleTabs.contains(tab), "\(phase)")
+                        #expect(CockpitTab.allCases.contains(tab), "\(phase)")
                         #expect(label == tab.rawValue, "\(phase)")
                     case .pack(let id, let title):
                         #expect(surfaces.contains { $0.id == id && $0.title == title && $0.phase == phase })
                         #expect(label == title, "\(phase)")
-                    case .chat:
-                        #expect(label == "Tasks", "\(phase)")
                     }
                 }
             }

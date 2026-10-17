@@ -61,6 +61,46 @@ final class GenerationBatchCoordinator {
     private(set) var activeBatchID: String?
     private(set) var lastProgressAt: [String: Date] = [:]
     private(set) var providerConfirmedAt: [String: Date] = [:]
+    private(set) var preflightIssue: String?
+    private(set) var preflighting = false
+    @ObservationIgnored private var preflightID = UUID()
+    private var preflightApprovedBatchID: String?
+
+    var canApprovePending: Bool {
+        pending != nil && preflightApprovedBatchID == pending?.id && preflightIssue == nil && !preflighting
+    }
+
+    func preflightKey(editor: EditorViewModel) -> String {
+        let referenceIDs = Set(pending?.payload.items.flatMap { $0.package.payload.references.map(\.assetID) } ?? [])
+        let sources = editor.mediaAssets.filter { referenceIDs.contains($0.id) }.map {
+            [$0.id, $0.type.rawValue, $0.url.absoluteString].joined(separator: "|")
+        }.sorted().joined(separator: "\n")
+        return [pending?.id ?? "none", editor.workingRoot?.absoluteString ?? "closed", sources].joined(separator: "\n")
+    }
+
+    func preflight(editor: EditorViewModel, expectedBatchID: String) async {
+        guard let batch = pending, batch.id == expectedBatchID else { return }
+        let requestID = UUID()
+        let key = preflightKey(editor: editor)
+        preflightID = requestID
+        preflighting = true
+        preflightApprovedBatchID = nil
+        defer { if preflightID == requestID { preflighting = false } }
+        do {
+            var checked = Set<String>()
+            for item in batch.payload.items where checked.insert(item.package.id).inserted {
+                try await item.package.requireCurrentContext(editor: editor)
+                try await GenerationPackageInputs.validate(package: item.package, editor: editor)
+            }
+            guard preflightID == requestID, pending?.id == expectedBatchID,
+                  preflightKey(editor: editor) == key else { return }
+            preflightIssue = nil
+            preflightApprovedBatchID = expectedBatchID
+        } catch {
+            guard preflightID == requestID, pending?.id == expectedBatchID else { return }
+            preflightIssue = error.localizedDescription
+        }
+    }
 
     var isRecovering: Bool { !recoveringItemIDs.isEmpty }
     var canRetryPricing: Bool {
@@ -79,6 +119,8 @@ final class GenerationBatchCoordinator {
         self.recoveries = recoveries
         pending = batch
         error = nil
+        preflightIssue = nil
+        preflightApprovedBatchID = nil
     }
 
     func record(_ snapshot: GenerationBatchStore.Snapshot) {
@@ -118,17 +160,28 @@ final class GenerationBatchCoordinator {
 
     func requestRevision(editor: EditorViewModel) {
         guard !approving, let pending else { return }
-        let failures = pending.payload.items.filter { $0.package.payload.estimate == nil }.map {
-            "\($0.purpose): \($0.package.payload.target.modelId) — \($0.package.payload.pricingFailure?.detail ?? "No pricing record")"
-        }.joined(separator: "\n")
+        let message = revisionMessage()
         self.pending = nil
         error = nil
         recoveries = [:]
         recoveringItemIDs = []
-        editor.agentService.completeGenerationBatch(pending.id, message:
-            "The user requests a revised generation proposal. Nothing was submitted. Explain the intended outputs briefly, "
+        editor.agentService.completeGenerationBatch(pending.id, message: message)
+    }
+
+    func revisionMessage() -> String {
+        var message = "The user requests a revised generation proposal. Nothing was submitted. Explain the intended outputs briefly, "
             + "then offer a concrete next step. Preserve the user's chosen model; ask before substituting it. "
-            + "Do not re-present the same unresolved proposal. Pricing diagnostics:\n" + failures)
+            + "Do not re-present the same unresolved proposal. A missing price estimate is not a blocker and does not require changing the request."
+        if let failure = preflightIssue ?? error {
+            message += "\nRequest failure to resolve before preparing a new batch:\n" + failure
+            let references = pending?.payload.items.flatMap { $0.package.payload.references } ?? []
+            if !references.isEmpty {
+                message += "\nReference identities:\n" + Set(references.map {
+                    "\($0.displayName ?? "Unnamed reference"): \($0.assetID)"
+                }).sorted().joined(separator: "\n")
+            }
+        }
+        return message
     }
 
     /// Under a phase grant, authority is created only while that grant still holds; else the batch stays pending.
@@ -138,6 +191,8 @@ final class GenerationBatchCoordinator {
               manifest.totalEUR != nil || approval == .acceptUnknownPrices else { return }
         approving = true
         defer { approving = false }
+        await preflight(editor: editor, expectedBatchID: expectedBatchID)
+        guard pending?.id == expectedBatchID, canApprovePending else { return }
         var confirm: (@MainActor () throws -> Void)?
         if let grant {
             confirm = {
@@ -153,13 +208,18 @@ final class GenerationBatchCoordinator {
             if startsApprovedBatches { start(batchID: manifest.id, editor: editor) }
         } catch is PhaseSpendApprovalEnded {
             return
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            self.error = "Generation approval failed: " + error.localizedDescription
+            await preflight(editor: editor, expectedBatchID: expectedBatchID)
+        }
     }
 
     /// The user approves every paid agent run of this batch's phase, starting with this batch.
     func approveForPhase(editor: EditorViewModel, expectedBatchID: String) async {
         guard let manifest = pending, manifest.id == expectedBatchID, let phase = manifest.payload.phase,
               !approving, !isRecovering else { return }
+        await preflight(editor: editor, expectedBatchID: expectedBatchID)
+        guard pending?.id == expectedBatchID, canApprovePending, !approving, !isRecovering else { return }
         guard editor.phaseSpendApproval.grant(phase: phase, editor: editor) != nil else {
             error = "This phase can't be approved as a whole right now. Approve this batch on its own."
             return

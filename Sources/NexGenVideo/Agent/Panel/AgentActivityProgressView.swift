@@ -45,28 +45,27 @@ struct AgentActivityProgressView: View {
                     .progressViewStyle(.linear)
                     .accessibilityLabel("\(completed) of \(total) \(scope)")
                 Text("\(completed) of \(total) \(scope)")
-            } else {
-                if !reduceMotion {
-                    ProgressView().progressViewStyle(.linear)
-                        .accessibilityLabel("Progress unknown")
-                }
-                Text("Total work not yet known")
             }
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 let unconfirmed = timing.isUnconfirmed(at: context.date)
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                    Text("Elapsed \(AgentActivityTiming.clock(timing.elapsed(at: context.date)))")
-                    if let lastEventAt = timing.lastEventAt {
-                        Text("Last progress event \(Self.ago(lastEventAt, at: context.date)) ago")
-                    } else {
-                        Text("No progress event yet")
-                    }
-                    if let confirmed = timing.providerConfirmedAt {
-                        Text("Provider reports running · \(Self.ago(confirmed, at: context.date)) ago")
-                    }
                     if unconfirmed {
                         Text("No response for \(AgentActivityTiming.clock(timing.silence(at: context.date))). The current state cannot be confirmed.")
                             .foregroundStyle(AppTheme.Status.warningColor)
+                    }
+                    DisclosureGroup("Show activity") {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                            Text("Elapsed \(AgentActivityTiming.clock(timing.elapsed(at: context.date)))")
+                            if let lastEventAt = timing.lastEventAt {
+                                Text("Last progress event \(Self.ago(lastEventAt, at: context.date)) ago")
+                            }
+                            if let confirmed = timing.providerConfirmedAt {
+                                Text("Provider reports running · \(Self.ago(confirmed, at: context.date)) ago")
+                            }
+                            ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                                Text(eventText(event)).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                 }
                 .monospacedDigit()
@@ -76,16 +75,6 @@ struct AgentActivityProgressView: View {
                         ? "No recent response. The current state cannot be confirmed."
                         : "Response received"
                     AccessibilityNotification.Announcement(announcement).post()
-                }
-            }
-            if !events.isEmpty {
-                DisclosureGroup("Show activity") {
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                        ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                            Text(eventText(event)).fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .monospacedDigit()
                 }
             }
         }

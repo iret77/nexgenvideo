@@ -3,7 +3,6 @@ import SwiftUI
 private enum SpendApprovalFocusTarget: Hashable {
     case provider
     case model
-    case approve
 }
 
 struct SpendApprovalCard: View {
@@ -20,6 +19,7 @@ struct SpendApprovalCard: View {
     @State private var selectedOptionId: String
     @State private var chosenProvider: GenerationProvider?
     @State private var approvalError: String?
+    @State private var showsModelSelection = false
     @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
     init(
@@ -87,29 +87,15 @@ struct SpendApprovalCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            header
+        GenerationApprovalCard(title: [actionLabel, approvalPhase.map(PhaseDisplay.label)]
+            .compactMap { $0 }.joined(separator: " · ")) {
             ScrollView {
-                decisionBody
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                decisionBody.frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
+        } footer: {
             footerRow
         }
-        .padding(AppTheme.Spacing.md)
-        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .fill(AppTheme.Background.raisedColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(
-                    AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                    lineWidth: AppTheme.BorderWidth.thin
-                )
-        )
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
         .onAppear {
             normalizeSelection()
             requestInitialFocus()
@@ -126,15 +112,20 @@ struct SpendApprovalCard: View {
         }
         .id(approval.id)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Approve spend")
+        .accessibilityLabel(actionLabel)
     }
 
     private var decisionBody: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            summary
+            if selectedOption?.generationPackage == nil { summary }
             if let requirement = approval.modelRequirement { requirementNotice(requirement) }
             if availableOptions.count > 1 || (selectedOption == nil && !availableOptions.isEmpty) {
-                selectionControls
+                DisclosureGroup("Change model", isExpanded: $showsModelSelection) {
+                    selectionControls
+                    Text("Only connected models compatible with this request are shown.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
             }
             if approval.requiresGenerationPackage == true {
                 if let package = selectedOption?.generationPackage {
@@ -147,11 +138,6 @@ struct SpendApprovalCard: View {
                             .buttonStyle(InlineActionButtonStyle()).disabled(isWorking)
                     }
                 }
-            }
-            if !availableOptions.isEmpty {
-                Text("Only connected models compatible with this request are shown.")
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             ForEach(providerIssues, id: \.self) { message in
                 Text(message)
@@ -170,25 +156,9 @@ struct SpendApprovalCard: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: "creditcard")
-                .interfaceFont(size: AppTheme.Typography.ui)
-                .foregroundStyle(AppTheme.Accent.primary)
-            Text("Approve spend")
-                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Text.primaryColor)
-            Spacer(minLength: AppTheme.Spacing.sm)
-            Button(action: onDecline) {
-                Image(systemName: "xmark")
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-            }
-            .buttonStyle(ToolbarIconButtonStyle())
-            .accessibilityLabel("Decline")
-            .keyboardShortcut(.cancelAction)
-            .help("Decline (Esc)")
-            .disabled(isWorking)
-        }
+    private var actionLabel: String {
+        selectedOption?.generationPackage.map { GenerationApprovalPresentation.actionLabel(packages: [$0]) }
+            ?? approval.actionLabel
     }
 
     private var summary: some View {
@@ -199,7 +169,7 @@ struct SpendApprovalCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .help(selectedOption?.modelName ?? "")
             if let selectedOption {
-                Text("via \(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
+                Text("via \(selectedOption.providerLabel) · Price unknown")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
@@ -288,7 +258,7 @@ struct SpendApprovalCard: View {
                         ?? matching.first { $0.modelId == requirement.modelId }?.id
                         ?? ""
                 } else {
-                    selectedOptionId = sameModel ?? matching.first?.id ?? ""
+                    selectedOptionId = sameModel ?? ""
                 }
                 approvalError = nil
             }
@@ -296,32 +266,26 @@ struct SpendApprovalCard: View {
     }
 
     private var footerRow: some View {
-        WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
-            Button("Decline") { onDecline() }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .disabled(isWorking)
-            if let approvalPhase, let onApproveAll {
-                Button("Approve All in \(PhaseDisplay.label(approvalPhase))") {
-                    guard let selectedOption else { return }
-                    approvalError = nil
-                    onApproveAll(selectedOption)
-                }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .disabled(approveDisabled)
-                .help("Approve every paid agent run in this phase, including this one. Ends when the phase is approved or rewound, when you withdraw it in Tasks, or when NexGenVideo quits.")
-            }
-            Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
+        GenerationApprovalActions(
+            actionLabel: isWorking ? String(localized: "Preparing generation…") : actionLabel,
+            phase: approvalPhase,
+            canApprove: !approveDisabled,
+            canEdit: !isWorking,
+            onApprove: {
                 guard let selectedOption else { return }
                 approvalError = nil
                 onApprove(selectedOption)
-            }
-            .buttonStyle(.capsule(.prominent, size: .regular))
-            .disabled(approveDisabled)
-            .focused($focusedControl, equals: .approve)
-            .accessibilityHint(
-                selectedOption == nil ? "Choose an available provider and model" : ""
-            )
-        }
+            },
+            onDecline: onDecline,
+            onApprovePhase: onApproveAll.map { approvePhase in
+                {
+                    guard let selectedOption else { return }
+                    approvalError = nil
+                    approvePhase(selectedOption)
+                }
+            },
+            runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested
+        )
     }
 
     private var approveDisabled: Bool {
@@ -330,12 +294,12 @@ struct SpendApprovalCard: View {
     }
 
     private func requestInitialFocus() {
+        guard selectedOption == nil else { return }
+        showsModelSelection = true
         let target: SpendApprovalFocusTarget = if availableProviders.count > 1 {
             .provider
-        } else if modelOptions.count > 1 || selectedOption == nil {
-            .model
         } else {
-            .approve
+            .model
         }
         Task { @MainActor in
             await Task.yield()
@@ -345,11 +309,8 @@ struct SpendApprovalCard: View {
 
     private func normalizeSelection() {
         guard !availableOptions.contains(where: { $0.id == selectedOptionId }) else { return }
-        if let requirement = approval.modelRequirement {
-            selectedOptionId = availableOptions.first { $0.modelId == requirement.modelId }?.id ?? ""
-        } else {
-            selectedOptionId = availableOptions.first?.id ?? ""
-        }
+        selectedOptionId = SpendApprovalSelection.optionID(approval: approval, current: selectedOptionId)
+        if selectedOptionId.isEmpty { showsModelSelection = true }
         approvalError = nil
     }
 
@@ -385,5 +346,18 @@ enum SpendApprovalProviderDiagnostics {
                 return nil
             }
         }
+    }
+}
+
+enum SpendApprovalSelection {
+    static func optionID(approval: SpendApproval, current: String) -> String {
+        if approval.options.contains(where: { $0.id == current }) { return current }
+        if approval.options.contains(where: { $0.id == approval.recommendedOptionId }) {
+            return approval.recommendedOptionId
+        }
+        if let requirement = approval.modelRequirement {
+            return approval.options.first { $0.modelId == requirement.modelId }?.id ?? ""
+        }
+        return ""
     }
 }

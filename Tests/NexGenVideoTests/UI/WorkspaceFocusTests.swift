@@ -167,24 +167,35 @@ struct WorkspaceFocusTests {
         #expect(editor.sourcePlayheadFrame == 18)
     }
 
-    @Test func revealingAgentRoutesToProduction() {
+    @Test func agentActivityDoesNotReplaceOrCollapseWorkflow() {
         let restoreDefaults = preservePanelDefaults()
         defer { restoreDefaults() }
         let editor = EditorViewModel()
-        editor.setWorkspaceFocus(.postproduction)
-
+        editor.setWorkspaceFocus(.production)
+        editor.mediaPanelVisible = false
+        editor.maximizedPanel = .project
         editor.agentPanelVisible = true
-
         #expect(editor.workspaceFocus == .production)
-        #expect(editor.mediaPanelVisible)
-        #expect(editor.leftSidebarTab == .agent)
-
-        editor.maximizedPanel = .agent
-        editor.agentPanelVisible = false
-
+        #expect(editor.showsAgentActivity)
         #expect(!editor.mediaPanelVisible)
-        #expect(!editor.agentPanelVisible)
-        #expect(editor.maximizedPanel == nil)
+        #expect(editor.maximizedPanel == .project)
+        editor.agentPanelVisible = false
+        #expect(!editor.showsAgentActivity)
+        #expect(!editor.mediaPanelVisible)
+        #expect(editor.maximizedPanel == .project)
+    }
+
+    @Test func artifactNavigationKeepsThePhaseDockInContext() {
+        let editor = EditorViewModel()
+        editor.productionSelectedPhase = "bible"
+        editor.revealCockpit(.storyboard)
+        #expect(editor.productionSelectedPhase == "storyboard")
+        #expect(editor.cockpitTab == .storyboard)
+        editor.revealCockpit(.productionDesign)
+        #expect(editor.productionSelectedPhase == "production_design")
+        editor.productionSelectedPhase = "render"
+        editor.revealCockpit(.review)
+        #expect(editor.productionSelectedPhase == "render")
     }
 
     @Test func panelToggleExitsMaximizeAndRevealsRequestedSide() {

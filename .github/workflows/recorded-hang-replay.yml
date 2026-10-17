@@ -59,6 +59,8 @@ jobs:
               if source.count(old) != 1:
                   raise SystemExit(f"Pinned baseline model picker changed; inspect: {old}")
               source = source.replace(old, new, 1)
+          # The historical transcript ignores the new workbench placement mode.
+          source = source.replace("struct AgentPanelView: View {", "struct AgentPanelView: View {\n    var presentation: AgentPanelPresentation = .tasks", 1)
           panel.write_text(source)
           PYTHON
       - name: Build optimized replay app

@@ -8,16 +8,22 @@ struct GenerationPackageReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if !package.payload.intent.isEmpty {
+                Text(package.payload.intent)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(routeLabel)
                 .interfaceFont(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("\(outputLabel) · \(destinationLabel)")
+            Text("\(outputLabel) · Results: \(destinationLabel)")
                 .interfaceFont(size: AppTheme.FontSize.xxs)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             pricing
             if !package.payload.references.isEmpty {
-                Text("References")
+                Text("Input references")
                     .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 GenerationReferenceThumbnails(package: package, style: .labeled)
@@ -106,17 +112,13 @@ struct GenerationPackageReviewView: View {
             Text("Estimated cost: \(Self.euro(estimate.eurAmount))")
                 .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
-        } else if let failure = package.payload.pricingFailure {
-            Text(pricingFailureLabel(failure.reason))
+        } else {
+            Text("Price unknown")
                 .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Status.warningColor)
-            Text(failure.detail)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Text("Provider charges apply. The cost is recorded only if the provider reports it.")
                 .interfaceFont(size: AppTheme.FontSize.xxs)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-        } else {
-            Text("Pricing record unavailable. Prepare this request again.")
-                .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(AppTheme.Status.warningColor)
         }
     }
 
@@ -151,14 +153,6 @@ struct GenerationPackageReviewView: View {
         }
     }
 
-    private func pricingFailureLabel(_ reason: GenerationPricingFailure.Reason) -> String {
-        switch reason {
-        case .unsupportedCombination: String(localized: "No verified price for these options")
-        case .priceQueryUnavailable: String(localized: "Provider pricing unavailable")
-        case .exchangeRateUnavailable: String(localized: "EUR conversion unavailable")
-        }
-    }
-
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -183,6 +177,7 @@ struct GenerationReferenceThumbnails: View {
         WrapLayout(spacing: AppTheme.Spacing.xs) {
             ForEach(Array(package.payload.references.indices.prefix(limit ?? Int.max)), id: \.self) { index in
                 GenerationReferenceThumbnail(
+                    package: package,
                     receipt: package.payload.references[index],
                     role: roleLabel(package.payload.referenceRoles[index]),
                     style: style
@@ -208,14 +203,16 @@ private struct GenerationReferenceThumbnail: View {
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
 
+    let package: GenerationPackageV1
     let receipt: GenerationReferenceReceipt
     let role: String
     let style: GenerationReferenceThumbnails.Style
 
     @State private var loadedImage: NSImage?
+    @State private var showsPreview = false
 
     private var asset: MediaAsset? {
-        editor.mediaAssets.first { $0.id == receipt.assetID && $0.type.rawValue == receipt.type }
+        try? GenerationPackageInputs.resolveReference(receipt, package: package, editor: editor)
     }
 
     private var name: String {
@@ -228,7 +225,9 @@ private struct GenerationReferenceThumbnail: View {
 
     var body: some View {
         Button {
-            if let asset { editor.selectMediaAsset(asset) }
+            if let asset, editor.mediaAssets.contains(where: { $0.id == asset.id }) {
+                editor.selectMediaAsset(asset)
+            } else { showsPreview = true }
         } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 ZStack {
@@ -256,14 +255,14 @@ private struct GenerationReferenceThumbnail: View {
                         )
                 )
                 if style == .labeled {
-                    Text(role)
+                    Text("Input · \(role)")
                         .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(name)
                         .interfaceFont(size: AppTheme.FontSize.xxs)
                         .foregroundStyle(AppTheme.Text.mutedColor)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(
@@ -275,6 +274,19 @@ private struct GenerationReferenceThumbnail: View {
         .disabled(asset == nil)
         .help(asset == nil ? "\(role): \(name) is unavailable" : "Open \(role.lowercased()): \(name)")
         .accessibilityLabel("Open \(role), \(name)")
+        .popover(isPresented: $showsPreview) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                Text(name).interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                if let loadedImage {
+                    Image(nsImage: loadedImage).resizable().scaledToFit()
+                        .frame(maxWidth: AppTheme.Layout.chatColumnMax,
+                            maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+                } else {
+                    Text("Preview unavailable").interfaceFont(size: AppTheme.Typography.ui)
+                }
+            }
+            .padding(AppTheme.Spacing.md)
+        }
         .task(id: asset?.url) { await loadImageIfNeeded() }
     }
 

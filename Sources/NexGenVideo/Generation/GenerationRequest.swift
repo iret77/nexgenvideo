@@ -290,6 +290,9 @@ enum GenerationController {
 
         }
         try await package.requireCurrentContext(editor: editor)
+        if package.payload.modality == "image" || package.payload.modality == "video" {
+            try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
+        }
         if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
         try generation.attachReview(package)
         return package

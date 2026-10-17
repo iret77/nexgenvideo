@@ -1,4 +1,5 @@
 import AppKit
+import NexGenEngine
 import SwiftUI
 
 @MainActor
@@ -11,98 +12,91 @@ enum GenerationBatchReviewSelfTest {
 
     static func runIfRequested() {
         guard isRequested else { return }
-        do {
-            let app = NSApplication.shared
-            app.setActivationPolicy(.regular)
-            let editor = EditorViewModel(
-                agentService: AgentService(
-                    backend: .claudeCode,
-                    refreshBackendStatusOnInit: false
-                )
-            )
-            let priced = try package(editor: editor, priced: true)
-            let unpriced = try package(editor: editor, priced: false)
-            let purposes = [
-                "Character Mara — front identity sheet",
-                "Character Mara — profile identity sheet",
-                "Character Drummer — front identity sheet",
-                "Character Guitarist — front identity sheet",
-                "Location Rooftop — dusk establishing view",
-                "Location Rooftop — reverse skyline view",
-                "Location Stairwell — sodium-vapor landing",
-                "Prop Chrome microphone — hero angle",
-                "Prop Cassette recorder — continuity sheet",
-                "Character Band — wide ensemble anchor",
-                "Location Backstage corridor — long-lens anchor",
-                "Prop Silver lighter — insert sheet",
-                "Look Lighting anchor — dusk palette",
-            ]
-            let manifest = try batch(package: unpriced, purposes: purposes)
-            try present(manifest, editor: editor)
-            let runtimeEvidence = GenerationBatchReviewRuntimeEvidence()
-
-            let host = NSHostingView(
-                rootView: VStack(spacing: AppTheme.Spacing.none) {
-                    Spacer(minLength: AppTheme.Spacing.none)
-                    GenerationBatchCard(
-                        editor: editor,
-                        runtimeEvidenceEnabled: true,
-                        runtimeEvidence: runtimeEvidence
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        Task { @MainActor in
+            do {
+                let editor = EditorViewModel(
+                    agentService: AgentService(
+                        backend: .claudeCode,
+                        refreshBackendStatusOnInit: false
                     )
-                    .layoutPriority(1)
-                }
-                .environment(editor)
-                .environment(\.interfaceScale, AppTheme.Typography.largestScale)
-            )
-            // A default host grows the window to the card's zero-width minimum, far below the screen.
-            host.sizingOptions = []
-            let window = NSWindow(
-                contentRect: NSRect(
-                    x: AppTheme.Spacing.none,
-                    y: AppTheme.Spacing.none,
+                )
+                let priced = try await package(editor: editor, priced: true)
+                let unpriced = try await package(editor: editor, priced: false)
+                let purposes = [
+                    "Character Mara — front identity sheet",
+                    "Character Mara — profile identity sheet",
+                    "Character Drummer — front identity sheet",
+                    "Character Guitarist — front identity sheet",
+                    "Location Rooftop — dusk establishing view",
+                    "Location Rooftop — reverse skyline view",
+                    "Location Stairwell — sodium-vapor landing",
+                    "Prop Chrome microphone — hero angle",
+                    "Prop Cassette recorder — continuity sheet",
+                    "Character Band — wide ensemble anchor",
+                    "Location Backstage corridor — long-lens anchor",
+                    "Prop Silver lighter — insert sheet",
+                    "Look Lighting anchor — dusk palette",
+                ]
+                let manifest = try batch(package: unpriced, purposes: purposes)
+                try present(manifest, editor: editor)
+                let runtimeEvidence = GenerationBatchReviewRuntimeEvidence()
+
+                let host = NSHostingView(
+                    rootView: VStack(spacing: AppTheme.Spacing.none) {
+                        Spacer(minLength: AppTheme.Spacing.none)
+                        GenerationBatchCard(
+                            editor: editor,
+                            runtimeEvidenceEnabled: true,
+                            runtimeEvidence: runtimeEvidence
+                        )
+                        .layoutPriority(1)
+                    }
+                    .environment(editor)
+                    .environment(\.interfaceScale, AppTheme.Typography.largestScale)
+                )
+                // A default host grows the window to the card's zero-width minimum, far below the screen.
+                host.sizingOptions = []
+                let window = NSWindow(
+                    contentRect: NSRect(
+                        x: AppTheme.Spacing.none,
+                        y: AppTheme.Spacing.none,
+                        width: AppTheme.Layout.agentPanelMin,
+                        height: minimumPanelHeight
+                    ),
+                    styleMask: [.titled, .closable],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                place(window, contentSize: NSSize(
                     width: AppTheme.Layout.agentPanelMin,
                     height: minimumPanelHeight
-                ),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            window.isReleasedWhenClosed = false
-            window.contentView = host
-            place(window, contentSize: NSSize(
-                width: AppTheme.Layout.agentPanelMin,
-                height: minimumPanelHeight
-            ))
-            window.makeKeyAndOrderFront(nil)
-            app.activate(ignoringOtherApps: true)
+                ))
+                window.makeKeyAndOrderFront(nil)
+                app.activate(ignoringOtherApps: true)
 
-            Task { @MainActor in
-                do {
-                    try await verify(
-                        window: window,
-                        editor: editor,
-                        original: manifest,
-                        pricedPackage: priced,
-                        runtimeEvidence: runtimeEvidence
-                    )
-                    FileHandle.standardOutput.write(Data("SELFTEST_GENERATION_BATCH_REVIEW_OK\n".utf8))
-                    window.orderOut(nil)
-                    exit(0)
-                } catch {
-                    FileHandle.standardError.write(
-                        Data("SELFTEST_GENERATION_BATCH_REVIEW_FAIL \(error.localizedDescription)\n".utf8)
-                    )
-                    exit(1)
-                }
+                try await verify(
+                    window: window,
+                    editor: editor,
+                    original: manifest,
+                    pricedPackage: priced,
+                    runtimeEvidence: runtimeEvidence
+                )
+                FileHandle.standardOutput.write(Data("SELFTEST_GENERATION_BATCH_REVIEW_OK\n".utf8))
+                window.orderOut(nil)
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(
+                    Data("SELFTEST_GENERATION_BATCH_REVIEW_FAIL \(error.localizedDescription)\n".utf8)
+                )
+                exit(1)
             }
-            app.run()
-            exit(1)
-        } catch {
-            FileHandle.standardError.write(
-                Data("SELFTEST_GENERATION_BATCH_REVIEW_FAIL \(error.localizedDescription)\n".utf8)
-            )
-            exit(1)
         }
+        app.run()
+        exit(1)
     }
 
     // Agent panel heights in the smallest project window and in the default window on the fallback screen.
@@ -145,9 +139,10 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.remove.\(firstID)",
             "generation-batch.details.\(firstID)",
             "generation-batch.decline",
-            "generation-batch.more",
+            "generation-batch.revise",
             "generation-batch.approve",
         ], in: window, context: "13-item narrow large-text review")
+        try captureWindow(window, name: "generation-batch-narrow-large.png")
         try await verifyDetailsToggle(
             identifier: "generation-batch.details.\(firstID)",
             itemID: firstID,
@@ -197,7 +192,7 @@ enum GenerationBatchReviewSelfTest {
         try await requireVisible([
             "generation-batch.item.\(keyboardID)",
             "generation-batch.decline",
-            "generation-batch.more",
+            "generation-batch.revise",
             "generation-batch.approve",
         ], in: window, context: "12-item narrow large-text review in the default window")
 
@@ -220,6 +215,7 @@ enum GenerationBatchReviewSelfTest {
         guard NSApp.isFullKeyboardAccessEnabled else {
             throw Failure(message: "keyboard navigation is disabled on this runner, so Remove cannot take focus")
         }
+        try await verifyVisibleKeyboardFocus(itemID: keyboardID, in: window, runtimeEvidence: runtimeEvidence)
         let tabs = try await focusRemove(itemID: keyboardID, in: window, runtimeEvidence: runtimeEvidence)
         let focusEvidence = "keyboard-focus item=\(keyboardID) tabs=\(tabs.map { String($0) } ?? "exhausted") "
             + keyboardFocusDescription(window: window, runtimeEvidence: runtimeEvidence)
@@ -264,9 +260,10 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.remove.\(single.payload.items[0].id)",
             "generation-batch.details.\(single.payload.items[0].id)",
             "generation-batch.decline",
-            "generation-batch.more",
+            "generation-batch.revise",
             "generation-batch.approve",
         ], in: window, context: "single-item narrow large-text review")
+        try captureWindow(window, name: "generation-batch-single-narrow-large.png")
 
         editor.generationBatchCoordinator.decline(editor: editor)
         let fifty = try batch(
@@ -292,6 +289,109 @@ enum GenerationBatchReviewSelfTest {
                 "generation-batch.decline",
                 "generation-batch.approve",
             ], in: window, context: "50-item \(Int(width))-point large-text review")
+        }
+        editor.generationBatchCoordinator.decline(editor: editor)
+        try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
+        try await verifyMissingReference(package: pricedPackage, editor: editor, window: window)
+    }
+
+    private static func verifyMissingReference(package: GenerationPackageV1, editor: EditorViewModel, window: NSWindow) async throws {
+        guard let reference = package.payload.references.first,
+              reference.displayName == "Mara-front.png" else {
+            throw Failure(message: "missing-reference fixture has no readable original filename")
+        }
+        let asset = try GenerationPackageInputs.resolveReference(reference, package: package, editor: editor)
+        guard NSImage(contentsOf: asset.url) != nil else {
+            throw Failure(message: "missing-reference fixture did not begin with a real readable PNG")
+        }
+        try await GenerationPackageInputs.validate(package: package, editor: editor)
+        let batch = try GenerationBatch(payload: .init(nonce: UUID(),
+            projectKey: package.payload.binding.projectKey, phase: "bible", items: [
+                .init(id: UUID().uuidString, purpose: "Character Mara — front identity sheet", package: package),
+            ]))
+        try present(batch, editor: editor)
+        let host = NSHostingView(rootView: VStack(spacing: AppTheme.Spacing.none) {
+            Spacer(minLength: AppTheme.Spacing.none)
+            GenerationBatchCard(editor: editor, runtimeEvidenceEnabled: true)
+        }.environment(editor).environment(\.interfaceScale, AppTheme.Typography.largestScale))
+        host.sizingOptions = []
+        window.contentView = host
+        place(window, contentSize: NSSize(width: AppTheme.Layout.agentPanelMax, height: minimumPanelHeight))
+        guard await waitUntil(timeout: .seconds(10), {
+            editor.generationBatchCoordinator.canApprovePending
+                && controlState("generation-batch.approve", in: window) == true
+                && controlState("generation-batch.approve-phase", in: window) == true
+        }) else {
+            throw Failure(message: "valid PNG fixture never enabled both rendered approval actions")
+        }
+
+        let savedAssets = editor.mediaAssets
+        let unavailable = asset.url.appendingPathExtension("unavailable")
+        try FileManager.default.moveItem(at: asset.url, to: unavailable)
+        defer {
+            try? FileManager.default.moveItem(at: unavailable, to: asset.url)
+            editor.mediaAssets = savedAssets
+        }
+        editor.mediaAssets.removeAll { $0.id == reference.assetID }
+        guard await waitUntil(timeout: .seconds(10), {
+            !editor.generationBatchCoordinator.preflighting
+                && editor.generationBatchCoordinator.preflightIssue != nil
+                && controlState("generation-batch.approve", in: window) == false
+                && controlState("generation-batch.approve-phase", in: window) == false
+                && controlState("generation-batch.revise", in: window) == true
+        }) else {
+            throw Failure(message: "missing input did not disable both rendered approvals while keeping revision enabled")
+        }
+        try await requireVisible([
+            "generation-batch.preflight-issue", "generation-batch.approve",
+            "generation-batch.approve-phase", "generation-batch.revise",
+        ], in: window, context: "missing-reference large-text review")
+        guard let root = window.contentView,
+              let issue = findClickProbes(in: root, identifier: "generation-batch.preflight-issue")
+                .compactMap({ $0 as? AppRelaunchClickProbeView }).first?.acceptanceText,
+              issue.contains("Mara-front.png"),
+              !FileManager.default.fileExists(atPath: asset.url.path),
+              !editor.generationBatchCoordinator.canApprovePending else {
+            throw Failure(message: "rendered missing-reference explanation omitted the original filename")
+        }
+        try captureWindow(window, name: "generation-batch-missing-reference-large.png")
+        if let failure = postMouseClick(identifier: "generation-batch.revise", in: window) {
+            throw Failure(message: failure)
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.generationBatchCoordinator.pending == nil
+        }), editor.generationBatchCoordinator.activeBatchID == nil,
+            editor.generationBatchCoordinator.snapshots.isEmpty else {
+            throw Failure(message: "native revision action did not dismiss the blocked request without execution")
+        }
+        writeEvidence("missing-reference filename=Mara-front.png approveEnabled=false phaseApprovalEnabled=false revisionActivated=true")
+    }
+
+    private static func controlState(_ identifier: String, in window: NSWindow) -> Bool? {
+        guard let root = window.contentView else { return nil }
+        return findClickProbes(in: root, identifier: identifier)
+            .compactMap { $0 as? AppRelaunchClickProbeView }
+            .first { isClickProbeReady($0, root: root, window: window) }?.acceptanceState
+    }
+
+    private static func verifySingleApproval(package: GenerationPackageV1, editor: EditorViewModel, window: NSWindow) async throws {
+        let target = ResolvedGenerationTarget(modelId: package.payload.target.modelId,
+            provider: package.payload.target.provider, endpoint: package.payload.target.endpoint, binding: nil)
+        let option = SpendOption(modelId: target.modelId, modelName: "Reference image model", target: target,
+            credits: nil, requiresCatalogAvailability: false, generationPackage: package)
+        let approval = SpendApproval(id: UUID().uuidString, recommendedOptionId: option.id,
+            options: [option], actionLabel: "Generate image", requiresGenerationPackage: true)
+        let host = NSHostingView(rootView: VStack(spacing: AppTheme.Spacing.none) {
+            Spacer(minLength: AppTheme.Spacing.none)
+            SpendApprovalCard(approval: approval, onApprove: { _ in }, onDecline: {})
+        }.environment(editor).environment(\.interfaceScale, AppTheme.Typography.largestScale))
+        host.sizingOptions = []
+        window.contentView = host
+        for width in [AppTheme.Layout.agentPanelMin, AppTheme.Layout.agentPanelMax] {
+            place(window, contentSize: NSSize(width: width, height: minimumPanelHeight))
+            try await requireVisible(["generation-approval.decline", "generation-approval.approve"],
+                in: window, context: "single approval large-text review")
+            try captureWindow(window, name: "generation-single-\(Int(width))-large.png")
         }
     }
 
@@ -321,7 +421,39 @@ enum GenerationBatchReviewSelfTest {
         try editor.generationBatchCoordinator.present(batch, recoveries: recoveries)
     }
 
-    private static func package(editor: EditorViewModel, priced: Bool) throws -> GenerationPackageV1 {
+    private static func package(editor: EditorViewModel, priced: Bool) async throws -> GenerationPackageV1 {
+        if editor.workingRoot == nil {
+            let project = FileManager.default.temporaryDirectory.appendingPathComponent("batch-review-\(UUID().uuidString).ngv")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            try JSONEncoder().encode(Timeline()).write(to: project.appendingPathComponent(Project.timelineFilename))
+            try JSONEncoder().encode(MediaManifest()).write(to: project.appendingPathComponent(Project.manifestFilename))
+            try JSONEncoder().encode(GenerationLog()).write(to: project.appendingPathComponent(Project.generationLogFilename))
+            _ = try ProjectIdentity.uuid(for: project)
+            editor.projectURL = project
+        }
+        guard let home = editor.workingRoot else { throw Failure(message: "Reference fixture has no project.") }
+        let source = home.appendingPathComponent(Project.mediaDirectoryName).appendingPathComponent("Mara-front.png")
+        if !FileManager.default.fileExists(atPath: source.path) {
+            try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard let pixels = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0), let data = pixels.bitmapData else {
+                throw Failure(message: "Reference image fixture could not be created.")
+            }
+            for y in 0..<32 {
+                for x in 0..<32 {
+                    let offset = y * pixels.bytesPerRow + x * 4
+                    data[offset] = UInt8(x * 8)
+                    data[offset + 1] = UInt8(y * 8)
+                    data[offset + 2] = 180
+                    data[offset + 3] = 255
+                }
+            }
+            guard let png = pixels.representation(using: .png, properties: [:]) else {
+                throw Failure(message: "Reference image fixture could not be encoded.")
+            }
+            try png.write(to: source)
+        }
         let target = ResolvedGenerationTarget(
             modelId: "selftest-image",
             provider: .runway,
@@ -332,21 +464,16 @@ enum GenerationBatchReviewSelfTest {
             assetID: "selftest-reference",
             displayName: "Mara-front.png",
             type: ClipType.image.rawValue,
-            sourceSHA256: String(repeating: "a", count: 64),
-            submittedSHA256: String(repeating: "a", count: 64)
+            sourceSHA256: try FileDigest.sha256(of: source),
+            submittedSHA256: try FileDigest.sha256(of: source)
         )
         if !editor.mediaAssets.contains(where: { $0.id == receipt.assetID }) {
-            let thumbnail = NSImage(
-                systemSymbolName: "person.crop.rectangle",
-                accessibilityDescription: "Mara reference"
-            )
             editor.mediaAssets.append(MediaAsset(
                 id: receipt.assetID,
-                url: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("ngv-generation-batch-reference.png"),
+                url: source,
                 type: .image,
                 name: "Mara front",
-                thumbnail: thumbnail,
+                thumbnail: NSImage(contentsOf: source),
                 originalFilename: receipt.displayName
             ))
         }
@@ -370,11 +497,7 @@ enum GenerationBatchReviewSelfTest {
                 numImages: 1
             ))
         }
-        let binding = PromptBinding(
-            projectKey: "generation-batch-review-selftest",
-            shotId: "none",
-            shotFingerprint: "none"
-        )
+        let binding = try await PromptCompiler.currentBinding(editor: editor, shotId: "none", modality: .image, modelId: target.modelId)
         let money = GenerationMoney(
             nativeAmount: 0.18,
             nativeCurrency: "EUR",
@@ -390,7 +513,7 @@ enum GenerationBatchReviewSelfTest {
             endpoint: target.endpoint,
             detail: "Self-test pricing outage"
         )
-        return try GenerationPackageV1(payload: .init(
+        let package = try GenerationPackageV1(payload: .init(
             target: target,
             modality: "image",
             operation: "generate_image",
@@ -399,7 +522,7 @@ enum GenerationBatchReviewSelfTest {
             promptRevisionID: "selftest",
             generationInput: input,
             binding: binding,
-            compilerInputsSHA256: "none",
+            compilerInputsSHA256: try await PromptComposer.inputFingerprint(projectDir: home),
             recipe: nil,
             repairPlanID: nil,
             destination: try GenerationPackageV1.Destination(
@@ -422,6 +545,11 @@ enum GenerationBatchReviewSelfTest {
             estimate: priced ? money : nil,
             pricingFailure: priced ? nil : failure
         ))
+        let snapshot = try await GenerationReferenceSnapshot.capture(sources: [
+            .init(assetID: receipt.assetID, displayName: receipt.displayName, type: receipt.type, url: source),
+        ])
+        try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor)
+        return package
     }
 
     private static func waitUntil(
@@ -643,6 +771,89 @@ enum GenerationBatchReviewSelfTest {
             }
         }
         return nil
+    }
+
+    private static func verifyVisibleKeyboardFocus(
+        itemID: String, in window: NSWindow, runtimeEvidence: GenerationBatchReviewRuntimeEvidence
+    ) async throws {
+        for control in ["remove", "details"] {
+            let identifier = "generation-batch.\(control).\(itemID)"
+            window.makeFirstResponder(nil)
+            guard await waitUntil(timeout: .seconds(2), {
+                runtimeEvidence.focusedRemoveItemID == nil && runtimeEvidence.focusedDetailsItemID == nil
+            }) else { throw Failure(message: "keyboard focus did not clear for its visual comparison") }
+            try await reveal(identifier: identifier, in: window, context: "visible keyboard focus")
+            try await Task.sleep(for: .milliseconds(200))
+            let before = try controlBitmap(identifier: identifier, in: window)
+            var focused = false
+            for _ in 0..<keyboardFocusTabLimit {
+                try postKey(code: 48, characters: "\t", in: window)
+                if await waitUntil(timeout: .milliseconds(200), {
+                    control == "remove" ? runtimeEvidence.focusedRemoveItemID == itemID
+                        : runtimeEvidence.focusedDetailsItemID == itemID
+                }) { focused = true; break }
+            }
+            guard focused else { throw Failure(message: "\(control) never took Tab focus") }
+            try await Task.sleep(for: .milliseconds(200))
+            let after = try controlBitmap(identifier: identifier, in: window)
+            guard before.pixelsWide == after.pixelsWide, before.pixelsHigh == after.pixelsHigh,
+                  before.samplesPerPixel == after.samplesPerPixel,
+                  before.bytesPerRow == after.bytesPerRow,
+                  let beforeBytes = before.bitmapData, let afterBytes = after.bitmapData else {
+                throw Failure(message: "focus comparison geometry changed")
+            }
+            var changedPixels = 0
+            for y in 0..<before.pixelsHigh {
+                for x in 0..<before.pixelsWide {
+                    let offset = y * before.bytesPerRow + x * before.samplesPerPixel
+                    if (0..<min(3, before.samplesPerPixel)).contains(where: {
+                        abs(Int(beforeBytes[offset + $0]) - Int(afterBytes[offset + $0])) > 24
+                    }) { changedPixels += 1 }
+                }
+            }
+            guard changedPixels >= 12 else {
+                throw Failure(message: "\(control) has keyboard focus but no visible focus indicator")
+            }
+            try writeImage(before, name: "generation-focus-\(control)-before.png")
+            try writeImage(after, name: "generation-focus-\(control).png")
+            if let root = window.contentView, let full = root.bitmapImageRepForCachingDisplay(in: root.bounds) {
+                root.cacheDisplay(in: root.bounds, to: full)
+                try writeImage(full, name: "generation-focus-\(control)-window.png")
+            }
+            writeEvidence("visible-keyboard-focus control=\(control) changedPixels=\(changedPixels)")
+        }
+    }
+
+    private static func controlBitmap(identifier: String, in window: NSWindow) throws -> NSBitmapImageRep {
+        guard let root = window.contentView,
+              let probe = findClickProbes(in: root, identifier: identifier).first(where: {
+                  isClickProbeReady($0, root: root, window: window)
+              }) else { throw Failure(message: "focus control is not visibly contained") }
+        root.layoutSubtreeIfNeeded()
+        let frame = probe.convert(probe.bounds, to: root).insetBy(dx: -AppTheme.Spacing.xs, dy: -AppTheme.Spacing.xs)
+        guard let bitmap = root.bitmapImageRepForCachingDisplay(in: frame) else {
+            throw Failure(message: "focus control could not render its pixels")
+        }
+        root.cacheDisplay(in: frame, to: bitmap)
+        return bitmap
+    }
+
+    private static func captureWindow(_ window: NSWindow, name: String) throws {
+        guard let root = window.contentView, let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+            throw Failure(message: "review window could not capture its pixels")
+        }
+        root.cacheDisplay(in: root.bounds, to: bitmap)
+        try writeImage(bitmap, name: name)
+    }
+
+    private static func writeImage(_ bitmap: NSBitmapImageRep, name: String) throws {
+        guard let path = ProcessInfo.processInfo.environment["NGV_SELFTEST_GENERATION_BATCH_EVIDENCE"] else { return }
+        let root = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        guard let bytes = bitmap.representation(using: .png, properties: [:]) else {
+            throw Failure(message: "focus evidence could not encode its screenshot")
+        }
+        try bytes.write(to: root.appendingPathComponent(name), options: .atomic)
     }
 
     private static let keyboardFocusTabLimit = 60

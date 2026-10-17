@@ -2164,13 +2164,17 @@ enum MusicvideoGateChecks {
     /// ACTUALLY exist on disk — the agent can't record art it never generated.
     static func requireRealBible(dataRoot: URL) throws {
         guard let bible = try? loadBible(dataRoot: dataRoot) else {
-            throw GateBlocked("Can't approve \"bible\": no valid bible/bible.yaml yet (schema-valid, every "
+            throw PhaseArtifactFailure(.document, diagnostic: "Can't approve \"bible\": no valid bible/bible.yaml yet (schema-valid, every "
                 + "entity with at least one reference image or sheet).")
         }
         guard !bible.characters.isEmpty || !bible.ensembles.isEmpty || !bible.locations.isEmpty else {
-            throw GateBlocked("Can't approve \"bible\": it defines no characters, ensembles, or locations.")
+            throw PhaseArtifactFailure(.entities, diagnostic: "Can't approve \"bible\": it defines no characters, ensembles, or locations.")
         }
-        try requireProjectIdentity(bible.project, phase: "bible", dataRoot: dataRoot)
+        do {
+            try requireProjectIdentity(bible.project, phase: "bible", dataRoot: dataRoot)
+        } catch {
+            throw PhaseArtifactFailure(.projectIdentity, diagnostic: error.localizedDescription)
+        }
         guard let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
             Brief.self,
             at: PipelineLayout.briefFile
@@ -2179,7 +2183,7 @@ enum MusicvideoGateChecks {
             ProductionDesign.self,
             at: "production_design/production_design.yaml"
         ) else {
-            throw GateBlocked(
+            throw PhaseArtifactFailure(.priorArtifacts, diagnostic:
                 "Can't approve \"bible\": the approved Brief or Production Design is missing."
             )
         }
@@ -2187,7 +2191,7 @@ enum MusicvideoGateChecks {
             guard normalized(bible.look.style)
                 == normalized(design.visualMediumNotes),
                   !normalized(bible.look.style).isEmpty else {
-                throw GateBlocked(
+                throw PhaseArtifactFailure(.style, diagnostic:
                     "Can't approve \"bible\": look.style must carry the approved "
                         + "Production Design style verbatim."
                 )
@@ -2198,7 +2202,7 @@ enum MusicvideoGateChecks {
             design.lightingAnchor,
             dataRoot: dataRoot
         ) else {
-            throw GateBlocked(
+            throw PhaseArtifactFailure(.lighting, diagnostic:
                 "Can't approve \"bible\": look.lighting_anchor must match the "
                     + "approved Production Design lighting anchor."
             )
@@ -2214,17 +2218,20 @@ enum MusicvideoGateChecks {
             if !l.scene3d.panorama.isEmpty { claimed.append(l.scene3d.panorama) }
         }
         if !bible.look.lightingAnchor.isEmpty { claimed.append(bible.look.lightingAnchor) }
-        try requireProjectImages(
-            claimed,
-            phase: "bible",
-            label: "reference",
-            dataRoot: dataRoot
-        )
-        try requireBibleProjectFiles(
-            BibleViewProvenanceRequirementsV1.make(bible: bible),
-            phase: "bible",
-            dataRoot: dataRoot
-        )
+        do {
+            try requireProjectImages(claimed, phase: "bible", label: "reference", dataRoot: dataRoot)
+        } catch {
+            throw PhaseArtifactFailure(.referenceImages, diagnostic: error.localizedDescription)
+        }
+        do {
+            try requireBibleProjectFiles(
+                BibleViewProvenanceRequirementsV1.make(bible: bible),
+                phase: "bible",
+                dataRoot: dataRoot
+            )
+        } catch {
+            throw PhaseArtifactFailure(.imageProvenance, diagnostic: error.localizedDescription)
+        }
         do {
             if let variants = try BibleIdentityVariantStoreV1.loadIfPresent(
                 dataRoot: dataRoot
@@ -2236,24 +2243,24 @@ enum MusicvideoGateChecks {
                 )
             }
         } catch {
-            throw GateBlocked(
+            throw PhaseArtifactFailure(.identityVariants, diagnostic:
                 "Can't approve \"bible\": the identity-variant inheritance contract is invalid (\(error))."
             )
         }
 
         guard let storyboard = try? StoryboardStore.load(dataRoot: dataRoot, version: .current) else {
-            throw GateBlocked("Can't approve \"bible\": the approved storyboard is missing or invalid.")
+            throw PhaseArtifactFailure(.priorArtifacts, diagnostic: "Can't approve \"bible\": the approved storyboard is missing or invalid.")
         }
         let locationByID = Dictionary(uniqueKeysWithValues: bible.locations.map { ($0.id, $0) })
         for (locationID, views) in storyboard.locationViewDemand() {
             guard let location = locationByID[locationID] else {
-                throw GateBlocked(
+                throw PhaseArtifactFailure(.locations, diagnostic:
                     "Can't approve \"bible\": storyboard location \"\(locationID)\" is missing."
                 )
             }
             let missingViews = views.filter { location.sheets[$0] == nil }
             guard missingViews.isEmpty else {
-                throw GateBlocked(
+                throw PhaseArtifactFailure(.locationViews, diagnostic:
                     "Can't approve \"bible\": location \"\(locationID)\" lacks storyboard-required "
                         + "view(s): \(missingViews.sorted().joined(separator: ", "))."
                 )
@@ -2265,7 +2272,7 @@ enum MusicvideoGateChecks {
             for (characterID, view) in step.characterViewRequest {
                 guard let character = characterByID[characterID],
                       character.sheets[view] != nil else {
-                    throw GateBlocked(
+                    throw PhaseArtifactFailure(.characterViews, diagnostic:
                         "Can't approve \"bible\": step \(step.id) requires character "
                             + "\"\(characterID)\" view \"\(view)\", but that sheet is missing."
                     )
@@ -2273,7 +2280,7 @@ enum MusicvideoGateChecks {
             }
             for propID in step.propRequest {
                 guard let prop = propByID[propID], prop.hasAnchor() else {
-                    throw GateBlocked(
+                    throw PhaseArtifactFailure(.props, diagnostic:
                         "Can't approve \"bible\": step \(step.id) requires anchored prop "
                             + "\"\(propID)\", but it is missing."
                     )

@@ -15,19 +15,22 @@ struct AgentLiveStatus: Equatable {
     let detail: String?
     let canCancel: Bool
     let cancellationRequested: Bool
+    let stopLabel: String
 
     init(
         state: State,
         title: String,
         detail: String? = nil,
         canCancel: Bool = false,
-        cancellationRequested: Bool = false
+        cancellationRequested: Bool = false,
+        stopLabel: String = String(localized: "Stop task")
     ) {
         self.state = state
         self.title = title
         self.detail = detail
         self.canCancel = canCancel
         self.cancellationRequested = cancellationRequested
+        self.stopLabel = stopLabel
     }
 }
 
@@ -76,7 +79,7 @@ struct AgentLiveStatusView: View {
                 .accessibilityElement(children: .contain)
                 Spacer(minLength: AppTheme.Spacing.sm)
                 if status.canCancel {
-                    Button(status.cancellationRequested ? "Cancelling…" : "Cancel") {
+                    Button(status.cancellationRequested ? String(localized: "Stopping…") : status.stopLabel) {
                         onCancel()
                     }
                     .buttonStyle(.capsule(.secondary, size: .small))
@@ -84,8 +87,17 @@ struct AgentLiveStatusView: View {
                     .accessibilityLabel(
                         status.cancellationRequested
                             ? "Cancellation requested"
-                            : "Stop current operation"
+                            : status.stopLabel
                     )
+                    .accessibilityIdentifier("agent.stop")
+                    .background {
+                        if WorkspaceUIAcceptance.isRequested {
+                            AppRelaunchClickProbe(identifier: "agent.stop", acceptanceText: status.stopLabel)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .help("Stops the current task. Submitted provider jobs may continue.")
                 }
             }
             .padding(.horizontal, AppTheme.Spacing.mdLg)
