@@ -110,7 +110,7 @@ enum GenerationBatchReviewSelfTest {
         AppTheme.Window.projectMin.height - AppTheme.Layout.titleBarChromeHeight - AppTheme.Layout.toolbarHeight
     }
 
-    // Top-left in the visible screen area keeps every control on screen for the accessibility hit test.
+    // Top-left in the visible screen area keeps the whole review on screen, as the editor does.
     private static func place(_ window: NSWindow, contentSize: NSSize) {
         window.setContentSize(contentSize)
         guard let visible = (window.screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame else { return }
@@ -503,18 +503,9 @@ enum GenerationBatchReviewSelfTest {
                 continue
             }
             root.layoutSubtreeIfNeeded()
+            // No in-process accessibility hit test: SwiftUI builds its accessibility tree only for an assistive client.
             if isClickProbeReady(probe, root: root, window: window) {
-                let target = accessibilityTarget(for: probe, identifier: identifier, window: window)
-                let accessibility = accessibilityHitEvidence(
-                    for: probe,
-                    identifier: identifier,
-                    window: window
-                )
-                if target.frameContainsPoint, accessibility.matchesIdentifier { return }
-                lastBoundary = target.frameContainsPoint
-                    ? "geometry ready; accessibility mismatch: "
-                    : "geometry ready; accessibility element not at the control's point: "
-                lastBoundary += "hit=[\(accessibility.chainDescription)] \(target.description)"
+                return
             } else {
                 guard let scrollView = probe.enclosingScrollView else {
                     throw Failure(message: "\(context) cannot reveal \(identifier): native probe has no enclosing NSScrollView")
@@ -593,17 +584,6 @@ enum GenerationBatchReviewSelfTest {
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
         let contentPoint = root.convert(location, from: nil)
         let appKitHitChain = viewChain(from: root.hitTest(contentPoint))
-        let accessibility = accessibilityHitEvidence(
-            for: probe,
-            identifier: identifier,
-            window: window
-        )
-        guard accessibility.matchesIdentifier else {
-            return .failure(Failure(
-                message: "accessibility precondition changed before \(identifier) pointer dispatch: "
-                    + accessibility.chainDescription
-            ))
-        }
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.mouseEvent(
             with: .leftMouseDown,
@@ -633,8 +613,7 @@ enum GenerationBatchReviewSelfTest {
         let evidence = PointerDispatchEvidence(
             identifier: identifier,
             windowPoint: location,
-            appKitHitChain: appKitHitChain,
-            accessibilityHitChain: accessibility.chainDescription
+            appKitHitChain: appKitHitChain
         )
         writeEvidence(evidence.description)
         return .success(evidence)
@@ -696,74 +675,6 @@ enum GenerationBatchReviewSelfTest {
         return true
     }
 
-    private static func accessibilityHitEvidence(
-        for probe: NSView,
-        identifier: String,
-        window: NSWindow
-    ) -> AccessibilityHitEvidence {
-        let frame = probe.bounds
-        let windowPoint = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
-        let screenPoint = window.convertPoint(toScreen: windowPoint)
-        var candidate = window.accessibilityHitTest(screenPoint)
-        var chain: [String] = []
-        var matchesIdentifier = false
-        while let element = candidate as? NSAccessibilityProtocol {
-            let candidateIdentifier = element.accessibilityIdentifier() ?? "nil"
-            let role = element.accessibilityRole().map { String(describing: $0) } ?? "nil"
-            let label = element.accessibilityLabel() ?? "nil"
-            let isProbe = element is AppRelaunchClickProbeView
-            chain.append("role=\(role),id=\(candidateIdentifier),label=\(label)\(isProbe ? ",probe" : "")")
-            if candidateIdentifier == identifier, !isProbe { matchesIdentifier = true }
-            candidate = element.accessibilityParent()
-        }
-        if chain.isEmpty {
-            chain.append("none")
-        }
-        return AccessibilityHitEvidence(
-            matchesIdentifier: matchesIdentifier,
-            chainDescription: chain.joined(separator: " <- ")
-        )
-    }
-
-    // The control's own accessibility element must cover the point that the hit test probes.
-    private static func accessibilityTarget(
-        for probe: NSView,
-        identifier: String,
-        window: NSWindow
-    ) -> AccessibilityTarget {
-        let windowPoint = probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil)
-        let screenPoint = window.convertPoint(toScreen: windowPoint)
-        var pending: [Any] = [window]
-        var visited = 0
-        var frame: NSRect?
-        var role = "nil"
-        while visited < accessibilityTreeNodeLimit, let next = pending.popLast() {
-            visited += 1
-            guard let element = next as? NSAccessibilityProtocol else { continue }
-            if element.accessibilityIdentifier() == identifier, !(element is AppRelaunchClickProbeView) {
-                frame = element.accessibilityFrame()
-                role = element.accessibilityRole()?.rawValue ?? "nil"
-                break
-            }
-            pending.append(contentsOf: element.accessibilityChildren() ?? [])
-        }
-        let screens = NSScreen.screens.map { rectDescription($0.frame) }.joined(separator: ",")
-        let hostChildren = (window.contentView?.accessibilityChildren() ?? []).map { child -> String in
-            guard let element = child as? NSAccessibilityProtocol else { return "\(type(of: child))" }
-            return "\(element.accessibilityRole()?.rawValue ?? "nil"):\(element.accessibilityIdentifier() ?? "nil")"
-        }.joined(separator: ",")
-        let element = frame.map { "role=\(role),frame=\(rectDescription($0))" } ?? "absent"
-        return AccessibilityTarget(
-            frameContainsPoint: frame?.contains(screenPoint) ?? false,
-            description: "screenPoint=\(pointDescription(screenPoint)) axElement=[\(element)] "
-                + "axNodesVisited=\(visited) window=\(rectDescription(window.frame)) "
-                + "contentMinSize=\(rectDescription(NSRect(origin: .zero, size: window.contentMinSize))) "
-                + "screens=[\(screens)] hostChildren=[\(hostChildren)]"
-        )
-    }
-
-    private static let accessibilityTreeNodeLimit = 20_000
-
     private static func viewChain(from hitView: NSView?) -> String {
         var view = hitView
         var chain: [String] = []
@@ -781,12 +692,8 @@ enum GenerationBatchReviewSelfTest {
         let expandedIdentifier = "generation-batch.expanded.\(itemID)"
         let details = findClickProbes(in: root, identifier: detailsIdentifier)
         let expanded = findClickProbes(in: root, identifier: expandedIdentifier)
-        let accessibility = details.first.map {
-            accessibilityHitEvidence(for: $0, identifier: detailsIdentifier, window: window)
-                .chainDescription
-        } ?? "details probe absent"
         return "render item=\(itemID) detailsProbeCount=\(details.count) "
-            + "expandedProbeCount=\(expanded.count) accessibilityHit=[\(accessibility)]"
+            + "expandedProbeCount=\(expanded.count)"
     }
 
     private static func scrollGeometry(probe: NSView, scrollView: NSScrollView) -> String {
@@ -832,27 +739,15 @@ enum GenerationBatchReviewSelfTest {
         return matches
     }
 
-    private struct AccessibilityTarget {
-        let frameContainsPoint: Bool
-        let description: String
-    }
-
-    private struct AccessibilityHitEvidence {
-        let matchesIdentifier: Bool
-        let chainDescription: String
-    }
-
     private struct PointerDispatchEvidence {
         let identifier: String
         let windowPoint: NSPoint
         let appKitHitChain: String
-        let accessibilityHitChain: String
 
         var description: String {
             "pointer-dispatch identifier=\(identifier) "
                 + "windowPoint=\(GenerationBatchReviewSelfTest.pointDescription(windowPoint)) "
-                + "dispatch=queued appKitHit=[\(appKitHitChain)] "
-                + "accessibilityHit=[\(accessibilityHitChain)]"
+                + "dispatch=queued appKitHit=[\(appKitHitChain)]"
         }
     }
 
