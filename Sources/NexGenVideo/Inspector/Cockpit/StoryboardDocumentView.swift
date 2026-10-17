@@ -1,4 +1,5 @@
 import NexGenEngine
+import struct NexGenEngine.Section
 import SwiftUI
 
 struct StoryboardShotSelection: Equatable {
@@ -8,11 +9,11 @@ struct StoryboardShotSelection: Equatable {
 }
 
 enum StoryboardPresentation {
-    static func sectionTitle(_ section: NexGenEngine.Section) -> String {
+    static func sectionTitle(_ section: Section) -> String {
         section.label.isEmpty ? readable(section.id) : section.label
     }
 
-    static func sectionRange(_ section: NexGenEngine.Section) -> String {
+    static func sectionRange(_ section: Section) -> String {
         String(format: "%.1f–%.1f s", section.timeStart, section.timeEnd)
     }
 
@@ -88,7 +89,7 @@ struct StoryboardDocumentView: View {
         }
     }
 
-    private func shot(_ step: Step, section: NexGenEngine.Section) -> some View {
+    private func shot(_ step: Step, section: Section) -> some View {
         let selected = editor.storyboardSelection?.step.id == step.id
         return Button { select(step, section: section) } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -129,7 +130,7 @@ struct StoryboardDocumentView: View {
         }
     }
 
-    private func select(_ step: Step, section: NexGenEngine.Section) {
+    private func select(_ step: Step, section: Section) {
         editor.storyboardSelection = StoryboardShotSelection(step: step,
             sectionTitle: StoryboardPresentation.sectionTitle(section), sectionRange: StoryboardPresentation.sectionRange(section))
         editor.inspectorPanelVisible = true
