@@ -509,18 +509,19 @@ enum GenerationBatchReviewSelfTest {
                             + "its list viewport; " + scrollGeometry(probe: probe, scrollView: scrollView)
                     )
                 }
-                guard let delta = scrollDelta(toward: probe, in: scrollView) else {
-                    lastBoundary = "geometry not ready although target is inside the scroll viewport; "
-                        + scrollGeometry(probe: probe, scrollView: scrollView)
+                let before = scrollView.contentView.bounds.origin
+                if let failure = AppRelaunchSelfTest.scrollProbeToVisible(probe, in: window) {
+                    lastBoundary = failure
                     try? await Task.sleep(for: .milliseconds(100))
                     continue
                 }
-                let progress = try await dispatchScrollWheel(
-                    toward: probe,
-                    in: scrollView,
-                    delta: delta
-                )
-                writeEvidence("scroll-progress identifier=\(identifier) \(progress)")
+                root.layoutSubtreeIfNeeded()
+                let after = scrollView.contentView.bounds.origin
+                let progress = "moved=\(before != after) before=\(pointDescription(before)) "
+                    + "after=\(pointDescription(after)) " + scrollGeometry(probe: probe, scrollView: scrollView)
+                if progress != lastBoundary {
+                    writeEvidence("scroll-progress identifier=\(identifier) \(progress)")
+                }
                 lastBoundary = progress
             }
             try? await Task.sleep(for: .milliseconds(100))
@@ -620,71 +621,6 @@ enum GenerationBatchReviewSelfTest {
         )
         writeEvidence(evidence.description)
         return .success(evidence)
-    }
-
-    private static func dispatchScrollWheel(
-        toward probe: NSView,
-        in scrollView: NSScrollView,
-        delta: Int32
-    ) async throws -> String {
-        let before = scrollView.contentView.bounds.origin
-        let phases: [(CGScrollPhase, NSEvent.Phase, Int32)] = [
-            (.began, .began, 0),
-            (.changed, .changed, delta),
-            (.ended, .ended, 0),
-        ]
-        var delivered: [String] = []
-        for (cgPhase, expectedAppKitPhase, phaseDelta) in phases {
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: nil,
-                units: .pixel,
-                wheelCount: 1,
-                wheel1: phaseDelta,
-                wheel2: 0,
-                wheel3: 0
-            ) else {
-                throw Failure(message: "CGEvent creation failed while revealing a batch control")
-            }
-            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-            event.setIntegerValueField(
-                .scrollWheelEventScrollPhase,
-                value: Int64(cgPhase.rawValue)
-            )
-            guard let wheel = NSEvent(cgEvent: event) else {
-                throw Failure(message: "AppKit could not create the \(cgPhase.rawValue) scroll phase")
-            }
-            guard wheel.phase == expectedAppKitPhase else {
-                throw Failure(
-                    message: "scroll phase conversion mismatch: CG=\(cgPhase.rawValue), "
-                        + "AppKit=\(wheel.phase.rawValue), expected=\(expectedAppKitPhase.rawValue)"
-                )
-            }
-            delivered.append("CG\(cgPhase.rawValue)->NS\(wheel.phase.rawValue):\(phaseDelta)")
-            scrollView.scrollWheel(with: wheel)
-        }
-        // AppKit may apply the delta after this run-loop turn; the caller re-evaluates readiness either way.
-        let moved = await waitUntil(timeout: .seconds(2)) {
-            scrollView.layoutSubtreeIfNeeded()
-            return scrollView.contentView.bounds.origin != before
-        }
-        let after = scrollView.contentView.bounds.origin
-        return "phases=[\(delivered.joined(separator: ","))] flipped=\(scrollView.contentView.isFlipped) "
-            + "delta=\(delta) moved=\(moved) before=\(pointDescription(before)) after=\(pointDescription(after)) "
-            + scrollGeometry(probe: probe, scrollView: scrollView)
-    }
-
-    // Exactly the distance that brings the target fully into view; positive wheel deltas move toward the top.
-    private static func scrollDelta(toward probe: NSView, in scrollView: NSScrollView) -> Int32? {
-        let target = probe.convert(probe.bounds, to: scrollView.contentView)
-        let visible = scrollView.contentView.bounds
-        let move: CGFloat
-        if target.maxY > visible.maxY { move = target.maxY - visible.maxY }
-        else if target.minY < visible.minY { move = target.minY - visible.minY }
-        else { return nil }
-        let distance = Int32(min(abs(move).rounded(.up), CGFloat(Int32.max)))
-        guard distance > 0 else { return nil }
-        let increasesOrigin = move > 0
-        return increasesOrigin == scrollView.contentView.isFlipped ? -distance : distance
     }
 
     private static func postRemoveKeyboardActivation(in window: NSWindow) {
@@ -799,7 +735,8 @@ enum GenerationBatchReviewSelfTest {
     private static func scrollGeometry(probe: NSView, scrollView: NSScrollView) -> String {
         let target = probe.convert(probe.bounds, to: scrollView.contentView)
         let visible = scrollView.contentView.bounds
-        return "target=\(rectDescription(target)) visible=\(rectDescription(visible))"
+        return "target=\(rectDescription(target)) visible=\(rectDescription(visible)) "
+            + "document=\(rectDescription(scrollView.contentView.documentRect))"
     }
 
     nonisolated private static func pointDescription(_ point: NSPoint) -> String {

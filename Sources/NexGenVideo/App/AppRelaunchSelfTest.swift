@@ -347,6 +347,10 @@ enum AppRelaunchSelfTest {
               let probe = findClickProbe(in: root, identifier: identifier) else {
             return "the control geometry probe was absent"
         }
+        return scrollProbeToVisible(probe, in: window)
+    }
+
+    static func scrollProbeToVisible(_ probe: NSView, in window: NSWindow) -> String? {
         guard probe.window === window else { return "the control probe belonged to another window" }
         guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
         for clipView in clipViews(enclosing: probe) {
