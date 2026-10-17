@@ -160,9 +160,7 @@ class CIWorkflowTests(unittest.TestCase):
         analysis = text.split("  musicvideo-analysis-acceptance:\n", 1)[1]
         self.assertIn("needs: workspace-ui-acceptance", analysis)
         self.assertIn(
-            "if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance && "
-            "(needs.workspace-ui-acceptance.result == 'success' || "
-            "needs.workspace-ui-acceptance.result == 'skipped') }}",
+            "if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance }}",
             analysis,
         )
         self.assertIn(
