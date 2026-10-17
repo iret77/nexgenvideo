@@ -23,7 +23,7 @@ struct AgentActivityStatusTests {
             userPresentation: .init(choiceRecord: .init(selections: [
                 .init(label: "Task", values: ["Complete missing Bible images"]),
                 .init(label: "Phase", values: ["bible"]),
-            ], attachmentNames: [], confirmed: true)))
+            ], attachmentNames: [], confirmed: true), typedText: nil))
         let tool = AgentMessage(role: .assistant, blocks: [
             .toolUse(id: "read", name: "Read", inputJSON: #"{"file_path":"/project/treatment.md"}"#),
         ])
@@ -44,7 +44,7 @@ struct AgentActivityStatusTests {
         let request = AgentMessage(role: .user, blocks: [], hidden: true,
             userPresentation: .init(choiceRecord: .init(selections: [
                 .init(label: "Task", values: ["Organize media"]),
-            ], attachmentNames: [], confirmed: true)))
+            ], attachmentNames: [], confirmed: true), typedText: nil))
         let presentation = AgentTaskActivityPresentation(messages: [request], phase: "bible")
         #expect(presentation.title == "Organize media")
         #expect(presentation.expectedResult == nil)

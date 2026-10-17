@@ -32,6 +32,10 @@ enum MusicvideoGenerationAcceptance {
         let nativeApproval: NativeApproval
         let nativeTakeReview: NativeTakeReview
         let nativeScreenshots: [String]
+        let plannedCutSeconds: Double
+        let requestedDurationSeconds: Int
+        let providerDurationFrames: Int
+        let importedSourceEndFrame: Int
     }
 
     struct NativeInteraction: Codable {
@@ -78,6 +82,9 @@ enum MusicvideoGenerationAcceptance {
         var interactions: [NativeInteraction] = []
         var approval: NativeApproval?
         var takeReview: NativeTakeReview?
+        var plannedCutSeconds: Double?
+        var requestedDurationSeconds: Int?
+        var providerDurationFrames: Int?
     }
 
     static func makeDocument(evidenceURL: URL) async throws -> (document: VideoProject, fixture: FullflowAcceptanceFixture.Receipt, generation: Receipt) {
@@ -108,6 +115,12 @@ enum MusicvideoGenerationAcceptance {
             guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else {
                 throw FullflowAcceptanceFixture.Failure("The generation project is not open.")
             }
+            guard let shot = try loadShotlist(dataRoot: root)?.shots.first, shot.id == "s001",
+                  shot.timeStart == 0, abs(shot.timeEnd - 2) <= 0.075, editor.timeline.fps == 30 else {
+                throw FullflowAcceptanceFixture.Failure("The measured fixture cut must be within 75 ms of its two-second beat at 30 fps.")
+            }
+            let duration = Int(ceil(shot.timeEnd + 2))
+            let cutFrames = Int((shot.timeEnd * 30).rounded())
             let outputBytes = try Data(contentsOf: outputURL)
             let referenceBytes = try Data(contentsOf: root.appendingPathComponent("bible/stage.png"))
             try MusicvideoGenerationHTTP.install(endpoint: modelID, output: outputBytes)
@@ -124,21 +137,21 @@ enum MusicvideoGenerationAcceptance {
             let inputs = try await executor.productionVideoInputs(selection: selection, editor: editor, dataRoot: root)
             let projection = try PromptCompiler.currentShotProjection(editor: editor, shotId: "s001")
             let compiled = try await PromptCompiler.compile(intent: "A centered marker moves across a warm field.",
-                modelId: modelID, modality: .video, aspectRatio: "16:9", durationSeconds: 4,
+                modelId: modelID, modality: .video, aspectRatio: "16:9", durationSeconds: Double(duration),
                 editor: editor, shotId: "s001", shot: projection, modelCatalog: catalog)
             let request = GenerationRequest(modality: .video, modelId: modelID, intent: compiled.text,
-                aspectRatio: "16:9", durationSeconds: 4, outputResolution: "720p",
+                aspectRatio: "16:9", durationSeconds: Double(duration), outputResolution: "720p",
                 placement: .mediaLibrary(folderId: nil), origin: .agentTool, target: selection.target,
                 precompiled: (compiled.text, compiled.token, compiled.binding), submission: .video(make: { text in
-                    var input = GenerationInput(prompt: text, model: modelID, duration: 4, aspectRatio: "16:9", resolution: "720p")
-                    input.videoDuration = .seconds(4)
+                    var input = GenerationInput(prompt: text, model: modelID, duration: duration, aspectRatio: "16:9", resolution: "720p")
+                    input.videoDuration = .seconds(duration)
                     input.promptShotId = compiled.binding.shotId
                     input.promptProjectKey = compiled.binding.projectKey
                     input.promptShotFingerprint = compiled.binding.shotFingerprint
                     input.productionRouting = inputs.routingProof
                     return VideoGenerationSubmission.make(genInput: input, model: model,
                         offeringCapabilities: inputs.offeringCapabilities, inputAssets: inputs.assets,
-                        placeholderDuration: 4, name: "HTTP simulator · s001", generateAudio: false)
+                        placeholderDuration: Double(duration), name: "HTTP simulator · s001", generateAudio: false)
                 }))
             let prepared = try await GenerationController.prepare(request, editor: editor).get()
             let noPrice: GenerationBudgetGuard.QuoteLoader = { _, _ in
@@ -228,7 +241,7 @@ enum MusicvideoGenerationAcceptance {
                   events.allSatisfy({ $0.money == nil }),
                   MusicvideoGenerationHTTP.uploadedReference == referenceBytes,
                   MusicvideoGenerationHTTP.submittedPrompt == compiled.text,
-                  MusicvideoGenerationHTTP.submittedEnvelopeMatches,
+                  MusicvideoGenerationHTTP.submittedEnvelopeMatches(duration: duration),
                   completedBatch.journal.executions.first?.state == .complete,
                   completedBatch.journal.executions.first?.outputAssetIDs == [asset.id],
                   MusicvideoGenerationHTTP.unexpectedRequests.isEmpty else {
@@ -238,29 +251,39 @@ enum MusicvideoGenerationAcceptance {
             try requireOK(recorded, operation: "record_render")
             let takeID = PipelineRenderTakeStore.identity(eventID: asset.id, outputSHA256: FileDigest.sha256(of: outputBytes))
             let snapshot = try await TakeReview.capture(takeID: takeID, home: home)
-            guard abs(snapshot.durationSeconds - 4) < 1.0 / 30 else {
+            let providerFrames = Int((snapshot.durationSeconds * 30).rounded())
+            guard providerFrames == duration * 30, providerFrames >= cutFrames + 60 else {
                 throw FullflowAcceptanceFixture.Failure("The generated take does not include both one-second handles.")
             }
-            run.takeReview = try await reviewTake(snapshot, editor: editor, window: window, run: run, evidenceURL: evidenceURL)
+            run.takeReview = try await reviewTake(snapshot, endSeconds: Double(cutFrames + 30) / 30,
+                editor: editor, window: window, run: run, evidenceURL: evidenceURL)
             run.batchID = batch.id; run.packageID = package.id; run.takeID = takeID; run.assetID = asset.id
             run.promptSHA256 = FileDigest.sha256(of: Data(compiled.text.utf8))
             run.referenceSHA256 = FileDigest.sha256(of: referenceBytes); run.outputSHA256 = FileDigest.sha256(of: outputBytes)
+            run.plannedCutSeconds = shot.timeEnd
+            run.requestedDurationSeconds = duration
+            run.providerDurationFrames = providerFrames
         }
         let (document, fixture) = try await FullflowAcceptanceFixture.makeDocument(evidenceURL: evidenceURL, generatedShot: scenario)
         let editor = document.editorViewModel
+        guard let cutSeconds = run.plannedCutSeconds, let requestedDuration = run.requestedDurationSeconds,
+              let providerFrames = run.providerDurationFrames else {
+            throw FullflowAcceptanceFixture.Failure("The generation lacks measured cut and provider-duration evidence.")
+        }
+        let cutFrames = Int((cutSeconds * 30).rounded())
         guard let assembly = try PipelineAssemblyStore.load(dataRoot: fixture.dataRoot),
               let generated = assembly.plan.selectedMedia.first(where: { $0.shotID == "s001" }),
               let imported = assembly.plan.selectedMedia.first(where: { $0.shotID == "s002" }),
               generated.sourceKind == .generatedTake, imported.sourceKind == .importedSource,
-              generated.sourceStartFrame == 30, generated.sourceEndFrame == 90,
-              imported.sourceStartFrame == 0, imported.sourceEndFrame == 69,
+              generated.sourceStartFrame == 30, generated.sourceEndFrame == 30 + cutFrames,
+              imported.sourceStartFrame == 0, imported.sourceEndFrame == 129 - cutFrames,
               fixture.totalFrames == 129,
               let batchID = run.batchID, let packageID = run.packageID, let takeID = run.takeID,
               let assetID = run.assetID, let promptSHA256 = run.promptSHA256,
               let referenceSHA256 = run.referenceSHA256, let outputSHA256 = run.outputSHA256,
               let nativeApproval = run.approval, let nativeTakeReview = run.takeReview,
               generated.takeID == takeID, generated.sourceSHA256 == outputSHA256,
-              editor.timeline.tracks.flatMap(\.clips).contains(where: { $0.mediaRef == assetID && $0.trimStartFrame == 30 && $0.durationFrames == 60 }) else {
+              editor.timeline.tracks.flatMap(\.clips).contains(where: { $0.mediaRef == assetID && $0.trimStartFrame == 30 && $0.durationFrames == cutFrames }) else {
             throw FullflowAcceptanceFixture.Failure("Mixed assembly must select the reviewed generated take and trim its handles while preserving imported footage and all 129 song frames.")
         }
         return (document, fixture, Receipt(providerEvidence: "Real FalClient HTTP against a deny-by-default simulator; no live provider or model-quality evidence. Creative and review decisions are supplied fixture inputs.",
@@ -278,10 +301,12 @@ enum MusicvideoGenerationAcceptance {
             requestMethods: MusicvideoGenerationHTTP.requests.map { $0.method }, spendEvents: editor.generationLog.spendEvents.map { $0.kind.rawValue },
             generatedSourceStartFrame: generated.sourceStartFrame, generatedSourceEndFrame: generated.sourceEndFrame, totalFrames: fixture.totalFrames,
             nativeInteractions: run.interactions, nativeApproval: nativeApproval, nativeTakeReview: nativeTakeReview,
-            nativeScreenshots: ["generation-batch-approval", "generation-take-review", "generation-take-selected"].map(screenshotName)))
+            nativeScreenshots: ["generation-batch-approval", "generation-take-review", "generation-take-selected"].map(screenshotName),
+            plannedCutSeconds: cutSeconds, requestedDurationSeconds: requestedDuration,
+            providerDurationFrames: providerFrames, importedSourceEndFrame: imported.sourceEndFrame))
     }
 
-    private static func reviewTake(_ snapshot: TakeReview.Snapshot, editor: EditorViewModel, window: NSWindow,
+    private static func reviewTake(_ snapshot: TakeReview.Snapshot, endSeconds: Double, editor: EditorViewModel, window: NSWindow,
                                    run: Run, evidenceURL: URL) async throws -> NativeTakeReview {
         guard let root = DataRootResolver.dataRoot(of: snapshot.home) else {
             throw FullflowAcceptanceFixture.Failure("The take's project closed before native review.")
@@ -330,8 +355,8 @@ enum MusicvideoGenerationAcceptance {
             let observation = "Supplied acceptance decision: \(pass.rawValue) uses the deterministic moving marker; the synthetic scene and muted provider audio are intentional."
             try await fill("take.observation", value: observation, expected: observation, in: sheet, documentWindow: window, run: run)
             try await fill("take.start", value: "1", expected: "1.0", in: sheet, documentWindow: window, run: run)
-            try await fill("take.end", value: "3", expected: "3.0", in: sheet, documentWindow: window, run: run)
-            expectedFindings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: 1, endSeconds: 3))
+            try await fill("take.end", value: String(endSeconds), expected: String(endSeconds), in: sheet, documentWindow: window, run: run)
+            expectedFindings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: 1, endSeconds: endSeconds))
             try await interact("take.record-pass", in: sheet, documentWindow: window, before: String(index), run: run) {
                 try await MusicvideoNativeAcceptance.click("take.record-pass", in: sheet)
                 try await MusicvideoNativeAcceptance.waitUntil {
@@ -486,10 +511,10 @@ private final class MusicvideoGenerationHTTP: URLProtocol, @unchecked Sendable {
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
         return json["prompt"] as? String
     }
-    static var submittedEnvelopeMatches: Bool {
+    static func submittedEnvelopeMatches(duration: Int) -> Bool {
         guard let body = requests.first(where: { $0.url.hasPrefix("https://queue.fal.run/") && $0.method == "POST" })?.body,
               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return false }
-        return json["duration"] as? String == "4"
+        return json["duration"] as? String == String(duration)
             && json["image_urls"] as? [String] == ["https://media.invalid/stage.png"]
             && json["generate_audio"] as? Bool == false
             && json["resolution"] as? String == "720p"

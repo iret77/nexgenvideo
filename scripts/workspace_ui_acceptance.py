@@ -116,7 +116,32 @@ def native_film_screenshots(row):
             + (generation.get("nativeScreenshots", []) if isinstance(generation, dict) else []))
 
 
+def generation_timing(evidence):
+    cut = evidence.get("plannedCutSeconds")
+    duration = evidence.get("requestedDurationSeconds")
+    provider_frames = evidence.get("providerDurationFrames")
+    if (type(cut) not in (int, float) or not math.isfinite(cut) or abs(cut - 2.0) > 0.075
+        or type(duration) is not int or duration != math.ceil(cut + 2)
+        or type(provider_frames) is not int or provider_frames != duration * 30):
+        return None
+    cut_frames = math.floor(cut * 30 + 0.5)
+    if (any(type(evidence.get(key)) is not int for key in (
+            "generatedSourceStartFrame", "generatedSourceEndFrame", "importedSourceEndFrame", "totalFrames"))
+        or evidence.get("generatedSourceStartFrame") != 30
+        or evidence.get("generatedSourceEndFrame") != 30 + cut_frames
+        or evidence.get("importedSourceEndFrame") != 129 - cut_frames
+        or provider_frames < cut_frames + 60
+        or evidence.get("totalFrames") != 129):
+        return None
+    return cut_frames, duration
+
+
 def valid_native_generation(evidence):
+    timing = generation_timing(evidence)
+    if timing is None:
+        return False
+    cut_frames, duration = timing
+    review_end = (cut_frames + 30) / 30
     approval, take = evidence.get("nativeApproval"), evidence.get("nativeTakeReview")
     interactions, screenshots = evidence.get("nativeInteractions"), evidence.get("nativeScreenshots")
     if (not isinstance(evidence.get("takeID"), str) or not evidence["takeID"].strip()
@@ -148,7 +173,7 @@ def valid_native_generation(evidence):
     for index, finding in enumerate(findings):
         verdict = "conforms" if index == 0 else "acceptedDeviation"
         observation = finding.get("observation")
-        if (finding.get("verdict") != verdict or finding.get("startSeconds") != 1 or finding.get("endSeconds") != 3
+        if (finding.get("verdict") != verdict or finding.get("startSeconds") != 1 or finding.get("endSeconds") != review_end
             or not isinstance(observation, str) or not observation.startswith(f"Supplied acceptance decision: {passes[index]} ")):
             return False
         if index == 0:
@@ -156,7 +181,7 @@ def valid_native_generation(evidence):
         else:
             expected.append(("take.verdict", "conforms", "acceptedDeviation"))
         expected += [("take.observation", "", observation), ("take.start", "0.0", "1.0"),
-                     ("take.end", "4.0", "3.0"), ("take.record-pass", str(index), str(index + 1))]
+                     ("take.end", str(float(duration)), str(review_end)), ("take.record-pass", str(index), str(index + 1))]
     expected += [("take.save", "0", "6"), ("take.use", "none", evidence["takeID"]), ("take.close", "open", "closed")]
     if len(interactions) != len(expected) or not all(isinstance(item, dict) for item in interactions):
         return False
@@ -172,7 +197,7 @@ def valid_native_generation(evidence):
             except (TypeError, ValueError):
                 return False
             before_matches = (isinstance(item.get("before"), str) and math.isfinite(original_end)
-                              and abs(original_end - 4.0) < 1.0 / 30)
+                              and abs(original_end - duration) < 1.0 / 30)
         if (item.get("index") != index or item.get("controlID") != control
             or not before_matches or item.get("after") != after
             or item.get("documentWindowNumber") != document_window
@@ -290,9 +315,6 @@ def valid_generation_evidence(evidence):
         or evidence.get("importedShotIDs") != ["s002"]
         or evidence.get("spendEvents") != ["reserved", "submitted", "settled"]
         or evidence.get("requestMethods") != ["POST", "PUT", "POST", "GET", "GET", "GET"]
-        or evidence.get("generatedSourceStartFrame") != 30
-        or evidence.get("generatedSourceEndFrame") != 90
-        or evidence.get("totalFrames") != 129
         or evidence.get("unexpectedRequestCount") != 0
         or any(type(evidence.get(key)) is not int or evidence[key] != 1 for key in (
             "submitCount", "pollCount", "resultCount", "downloadCount", "uploadCount",

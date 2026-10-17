@@ -98,6 +98,7 @@ final class ToolExecutor {
     ) async throws -> Void
 
     typealias CatalogReadiness = @MainActor () async -> Bool
+    typealias AudioAnalysisConfiguration = @MainActor (EngineRegistry) -> Void
 
     private let editorProvider: () -> EditorViewModel?
     let providerActivation: () -> ProviderActivation
@@ -106,6 +107,7 @@ final class ToolExecutor {
     let isModelEnabled: @MainActor (String) -> Bool
     let modelCatalog: ModelCatalog
     private let phaseMutationRecorder: PhaseMutationRecorder
+    let configureAudioAnalysis: AudioAnalysisConfiguration
     var editor: EditorViewModel? { editorProvider() }
 
     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
@@ -121,7 +123,8 @@ final class ToolExecutor {
         productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
         catalogReadiness: @escaping CatalogReadiness = { await CatalogDiscovery.ensureCurrent() },
         isModelEnabled: @escaping @MainActor (String) -> Bool = { ModelPreferences.shared.isEnabled($0) },
-        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder,
+        configureAudioAnalysis: @escaping AudioAnalysisConfiguration = { AudioAnalysisRuntime.configure($0) }
     ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
@@ -130,6 +133,7 @@ final class ToolExecutor {
         self.catalogReadiness = catalogReadiness
         self.isModelEnabled = isModelEnabled
         self.phaseMutationRecorder = phaseMutationRecorder
+        self.configureAudioAnalysis = configureAudioAnalysis
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
         }
@@ -143,7 +147,8 @@ final class ToolExecutor {
         productionRouteCandidates: ProductionRouteCandidateProvider? = nil,
         catalogReadiness: @escaping CatalogReadiness = { await CatalogDiscovery.ensureCurrent() },
         isModelEnabled: @escaping @MainActor (String) -> Bool = { ModelPreferences.shared.isEnabled($0) },
-        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder
+        phaseMutationRecorder: @escaping PhaseMutationRecorder = ToolExecutor.defaultPhaseMutationRecorder,
+        configureAudioAnalysis: @escaping AudioAnalysisConfiguration = { AudioAnalysisRuntime.configure($0) }
     ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
@@ -152,6 +157,7 @@ final class ToolExecutor {
         self.catalogReadiness = catalogReadiness
         self.isModelEnabled = isModelEnabled
         self.phaseMutationRecorder = phaseMutationRecorder
+        self.configureAudioAnalysis = configureAudioAnalysis
         self.productionRouteCandidates = productionRouteCandidates ?? {
             modelCatalog.productionRouteCandidates(activation: $0)
         }

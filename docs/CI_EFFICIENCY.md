@@ -73,6 +73,10 @@ requires the actual transcript to match it, including measured scroll movement.
 The comparison does not reconstruct the unknown original viewport or prove that
 the historical hang was reproduced. Completion and main-thread responsiveness
 remain required for the candidate.
+An incident retry can deselect `recorded_hang_replay` while retaining chat stress
+when the optimized replay already passed and the correction does not affect its
+code or inputs. The earlier run and the unchanged replay scope belong in the PR's
+verification record.
 
 ## Release metadata
 

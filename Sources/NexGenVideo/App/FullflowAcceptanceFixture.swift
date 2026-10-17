@@ -36,7 +36,8 @@ enum FullflowAcceptanceFixture {
         defer { try? FileManager.default.removeItem(at: song) }
         try writeTone(to: song, duration: 4.3)
         let flow = try await MusicvideoHostFlowAcceptance.start(track: song, lyrics: nil, binding: binding, evidenceURL: evidenceURL)
-        try writeAnalysisFixture(dataRoot: flow.dataRoot)
+        try await flow.runAnalysis { $0.registerAudioDecoder(AVFoundationAudioDecoder()) }
+        try verifyMeasuredAnalysis(dataRoot: flow.dataRoot)
         try await flow.finishPlanningIntake(sectionLabels: ["opening"], finalResolution: .res720p)
         return (flow.document, try await finishPlanning(editor: flow.editor, evidenceURL: evidenceURL,
             initialGateApprovals: flow.gateApprovals, generatedShot: generatedShot))
@@ -115,10 +116,11 @@ enum FullflowAcceptanceFixture {
             "causality_bindings": bindings, "sections": storyboardSections], editor: editor)
         try await approve("storyboard", editor: editor)
         let nativeBibleBlocker = try await WorkspaceUIAcceptance.captureBibleBlocker(editor: editor, evidenceURL: evidenceURL)
-        let reference = root.appendingPathComponent("bible/stage.png")
-        try writeReference(to: reference)
-        try ConfirmedIdentityAssetStoreV1.recordIntake(role: .location, identityName: "Stage", identitySlug: "stage",
-            paths: ["bible/stage.png"], dataRoot: root)
+        let confirmed = try ConfirmedIdentityAssetStoreV1.load(dataRoot: root).entries.values.filter {
+            $0.role == .location && $0.identitySlug == "stage"
+        }
+        guard confirmed.count == 1 else { throw Failure("Bible requires the stage image confirmed through native location intake.") }
+        try await run("copy_project_file", ["from": confirmed[0].path, "to": "bible/stage.png"], editor: editor)
         try await run("write_bible", ["look": ["style": brief.visualMediumNotes ?? "realistic"],
             "characters": [], "ensembles": [], "props": [], "locations": [[
                 "id": "stage", "name": "Stage", "visual_prompt": "A centered marker on a colored field.",
@@ -143,7 +145,8 @@ enum FullflowAcceptanceFixture {
                 let isGenerated = generatedShot != nil && shots.isEmpty
                 let path = "fullflow-sources/\(id).mov"
                 if isGenerated { generatedOutputURL = projectHome.appendingPathComponent(path) }
-                try await writeVideo(to: projectHome.appendingPathComponent(path), duration: end - start + 2, fps: fps,
+                let renderDuration = (end - start + 2).rounded(.up)
+                try await writeVideo(to: projectHome.appendingPathComponent(path), duration: isGenerated ? renderDuration : end - start + 2, fps: fps,
                     warm: part == 0)
                 let shot = try Shot(id: id, section: section.id, timeStart: start, timeEnd: end, durationS: end - start,
                     type: .performance, sourceMode: isGenerated ? .generated : .imported, description: "A centered marker moves across a colored field.",
@@ -171,7 +174,7 @@ enum FullflowAcceptanceFixture {
                     "continuity_locks": [], "renderability": "green", "risks": []]
                 if isGenerated, let generatedShot {
                     executionShot["generation_requirement"] = ["modality_id": "video", "mode_ids": [generatedShot.modeID],
-                        "duration": ["minimum_seconds": 4, "maximum_seconds": 4, "allows_automatic": false],
+                        "duration": ["minimum_seconds": renderDuration, "maximum_seconds": renderDuration, "allows_automatic": false],
                         "requires_output_audio": false]
                     executionShot["core_inputs"] = [:] as [String: String]
                     let demand: [String: Any] = ["id": "stage-anchor", "asset_path": "bible/stage.png",
@@ -255,29 +258,19 @@ enum FullflowAcceptanceFixture {
         return object
     }
 
-    private static func writeAnalysisFixture(dataRoot: URL) throws {
-        guard let song = AudioProjectLayout.songFiles(dataRoot: dataRoot).first else { throw Failure("The fixture track was not assigned.") }
-        let project = try YAMLArtifactStore(dataRoot: dataRoot).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
-        let digest = try FileDigest.sha256(of: song)
-        let section: [String: Any] = ["index": 0, "start": 0.0, "end": 4.3, "cluster": 0,
-            "source": "measured_track_extent", "label": "opening", "confidence": 1.0]
-        let object: [String: Any] = ["schema": "analysis/v3", "project": project, "song_path": "audio/\(song.lastPathComponent)",
-            "song_sha256": digest, "sample_rate": 48000, "duration_s": 4.3, "bpm": 120,
-            "beats": stride(from: 0.0, through: 4.0, by: 0.5).map { $0 }, "downbeats": [0.0, 2.0, 4.0],
-            "sections": [section], "downbeat_source": "librosa-heuristic", "pipeline_stages": ["structure"],
-            "stage_diagnostics": [["stage": "native_dsp", "status": "succeeded", "detail": "Supplied deterministic analysis fixture; DSP is covered separately."]],
-            "structure_candidates": ["librosa", "essentia"].map { ["source": $0, "sections": [section]] as [String: Any] },
-            "structure_resolution": ["version": "adaptive-structure/v5", "status": "resolved", "method": "homogeneous_consensus",
-                "minimum_section_bars": 8, "candidate_boundary_count": 0, "consensus_boundary_count": 0,
-                "accepted_boundary_count": 0, "discarded_boundary_count": 0, "alignment_marker_count": 0,
-                "resolved_alignment_marker_count": 0, "detector_sources": ["librosa", "essentia"], "boundary_evidence": []],
-            "alignment": []]
-        let dir = dataRoot.appendingPathComponent("analysis", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let stem = song.deletingPathExtension().lastPathComponent
-        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: dir.appendingPathComponent("\(stem).json"))
-        try JSONSerialization.data(withJSONObject: ["schema": "analysis_measurement_proof/v1", "project": project,
-            "song_sha256": digest], options: [.sortedKeys]).write(to: dir.appendingPathComponent("\(stem).measurement-proof.json"))
+    private static func verifyMeasuredAnalysis(dataRoot: URL) throws {
+        guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
+              let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+              let duration = object["duration_s"] as? Double, abs(duration - 4.3) < 0.01,
+              let bpm = object["bpm"] as? Double, abs(bpm - 120) < 5,
+              let beats = object["beats"] as? [Double], beats.count >= 6,
+              let downbeats = object["downbeats"] as? [Double], !downbeats.isEmpty,
+              let sections = object["sections"] as? [[String: Any]], sections.count == 1,
+              let start = sections[0]["start"] as? Double, abs(start) < 0.01,
+              let end = sections[0]["end"] as? Double, abs(end - 4.3) < 0.01,
+              sections[0]["label"] as? String != "opening" else {
+            throw Failure("The real analysis runner did not measure the fixture's complete 4.3-second, 120-BPM section.")
+        }
     }
 
     private static func writeTone(to url: URL, duration: Double) throws {
@@ -291,15 +284,17 @@ enum FullflowAcceptanceFixture {
             let carrier = 0.65 * sin(2 * .pi * (173 * t + 71 * sweep))
                 + 0.25 * sin(2 * .pi * (421 * t + 137 * sweep))
                 + 0.1 * sin(2 * .pi * (997 * t + 293 * sweep))
-            let envelope = 0.12 + 0.08 * (0.5 + 0.5 * sin(2 * .pi * (0.31 * t + 0.017 * t * t)))
+            let envelope = 0.012 + 0.008 * (0.5 + 0.5 * sin(2 * .pi * (0.31 * t + 0.017 * t * t)))
+            let beatTime = t.truncatingRemainder(dividingBy: 0.5)
+            let click = beatTime < 0.04 ? 0.6 * exp(-40 * beatTime) * sin(2 * .pi * 1000 * beatTime) : 0
             let fade = min(1, min(t, duration - t) / 0.01)
-            samples[index] = Float(carrier * envelope * fade)
+            samples[index] = Float((carrier * envelope + click) * fade)
         }
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
     }
 
-    private static func writeReference(to url: URL) throws {
+    static func writeReference(to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,

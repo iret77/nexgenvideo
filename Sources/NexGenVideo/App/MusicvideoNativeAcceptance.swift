@@ -194,6 +194,24 @@ enum MusicvideoNativeAcceptance {
                 throw FullflowAcceptanceFixture.Failure("The gate did not cause exactly one validated next-phase handoff.")
             }
         }
+        if awaitHandoff, next != "complete" {
+            let continueID = "pipeline.overview.dock.continue"
+            let nextApprovalID = "pipeline.overview.approve.\(next)"
+            let reasonID = "pipeline.overview.dock.reason"
+            try await waitUntil("\(phase): settled \(next) phase controls", diagnostic: {
+                "reason=\(WorkspaceUIAcceptance.probeText(identifier: reasonID, in: window) ?? "missing"), continue=\(String(describing: WorkspaceUIAcceptance.probeState(identifier: continueID, in: window))), approve=\(String(describing: WorkspaceUIAcceptance.probeState(identifier: nextApprovalID, in: window))), streaming=\(service.isStreaming), dialog=\(service.pendingDialog?.title ?? "none")"
+            }) {
+                host.layoutSubtreeIfNeeded()
+                guard editor.productionSelectedPhase == next,
+                      let message = WorkspaceUIAcceptance.probeText(identifier: reasonID, in: window),
+                      !message.isEmpty, message != "Checking phase readiness…",
+                      message != "Phase controls are unavailable. Resolve the project or workflow error before continuing." else {
+                    return false
+                }
+                return WorkspaceUIAcceptance.probeState(identifier: continueID, in: window) == true
+                    || WorkspaceUIAcceptance.probeState(identifier: nextApprovalID, in: window) == true
+            }
+        }
         screenshots.append(try capture(window, name: prefix + "-approved", evidenceURL: evidenceURL))
         return GateEvidence(phase: phase, nextPhase: next, controlID: controlID, openControlID: "agent.gate.open",
             surface: editor.workspaceFocus.rawValue, artifactTitle: expectedTitle, openedFromPhase: otherPhase,
