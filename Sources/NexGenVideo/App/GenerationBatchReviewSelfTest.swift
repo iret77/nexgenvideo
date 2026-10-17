@@ -497,7 +497,8 @@ enum GenerationBatchReviewSelfTest {
                     window: window
                 )
                 if accessibility.matchesIdentifier { return }
-                lastBoundary = "geometry ready; accessibility mismatch: \(accessibility.chainDescription)"
+                lastBoundary = "geometry ready; accessibility mismatch: \(accessibility.chainDescription); "
+                    + accessibilityTargetEvidence(for: probe, identifier: identifier, root: root, window: window)
             } else {
                 guard let scrollView = probe.enclosingScrollView else {
                     throw Failure(message: "\(context) cannot reveal \(identifier): native probe has no enclosing NSScrollView")
@@ -694,8 +695,9 @@ enum GenerationBatchReviewSelfTest {
             let candidateIdentifier = element.accessibilityIdentifier() ?? "nil"
             let role = element.accessibilityRole().map { String(describing: $0) } ?? "nil"
             let label = element.accessibilityLabel() ?? "nil"
-            chain.append("role=\(role),id=\(candidateIdentifier),label=\(label)")
-            if candidateIdentifier == identifier { matchesIdentifier = true }
+            let isProbe = element is AppRelaunchClickProbeView
+            chain.append("role=\(role),id=\(candidateIdentifier),label=\(label)\(isProbe ? ",probe" : "")")
+            if candidateIdentifier == identifier, !isProbe { matchesIdentifier = true }
             candidate = element.accessibilityParent()
         }
         if chain.isEmpty {
@@ -706,6 +708,36 @@ enum GenerationBatchReviewSelfTest {
             chainDescription: chain.joined(separator: " <- ")
         )
     }
+
+    // Separates a missing or misplaced accessibility element from one that another element shadows.
+    private static func accessibilityTargetEvidence(
+        for probe: NSView,
+        identifier: String,
+        root: NSView,
+        window: NSWindow
+    ) -> String {
+        let windowPoint = probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil)
+        let screenPoint = window.convertPoint(toScreen: windowPoint)
+        let appKitHit = viewChain(from: root.hitTest(root.convert(windowPoint, from: nil)))
+        var pending: [Any] = [window]
+        var visited = 0
+        var target = "absent"
+        while visited < accessibilityTreeNodeLimit, let next = pending.popLast() {
+            visited += 1
+            guard let element = next as? NSAccessibilityProtocol else { continue }
+            if element.accessibilityIdentifier() == identifier, !(element is AppRelaunchClickProbeView) {
+                let frame = element.accessibilityFrame()
+                let role = element.accessibilityRole()?.rawValue ?? "nil"
+                target = "role=\(role),frame=\(rectDescription(frame)),containsPoint=\(frame.contains(screenPoint))"
+                break
+            }
+            pending.append(contentsOf: element.accessibilityChildren() ?? [])
+        }
+        return "screenPoint=\(pointDescription(screenPoint)) axElement=[\(target)] axNodesVisited=\(visited) "
+            + "appKitHit=[\(appKitHit)]"
+    }
+
+    private static let accessibilityTreeNodeLimit = 20_000
 
     private static func viewChain(from hitView: NSView?) -> String {
         var view = hitView
