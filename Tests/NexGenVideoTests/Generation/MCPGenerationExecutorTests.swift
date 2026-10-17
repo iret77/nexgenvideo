@@ -307,6 +307,32 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image"])
     }
 
+    @Test func aDeclaredButInvalidStatusNeverConfirmsDirectMedia() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ], outputSchema: mediaOutputSchema)
+        let payloads = [
+            #"{"job_id":"j-null","status":null,"result":{"url":"https://output.invalid/preview.png"}}"#,
+            #"{"status":null,"result":{"url":"https://output.invalid/preview.png"}}"#,
+            #"{"status":7,"result":{"url":"https://output.invalid/preview.png"}}"#,
+        ]
+        for payload in payloads {
+            let client = StubClient(responses: ["generate_image": [[payload]]])
+            do {
+                _ = try await MCPGenerationExecutor.run(
+                    generationTool: generate,
+                    arguments: ["prompt": .string("compiled anchor")],
+                    tools: [generate],
+                    provider: .higgsfield,
+                    client: client
+                )
+                Issue.record("Expected \(payload) to stay unconfirmed")
+            } catch {
+                #expect(!GenerationService.providerRunEnded(after: error))
+            }
+        }
+    }
+
     @Test func declaredStatusOutputReturnsMediaFromCompletedStatus() async throws {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),

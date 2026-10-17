@@ -91,8 +91,17 @@ enum MCPGenerationExecutor {
         let inferred = MCPGenerationLifecycle.status(from: payloads, allowRootURL: allowRootURL)
         // A job id with any status tool needs a stated terminal status; a media schema proves no completion.
         let isAsyncAcceptance = submission.jobID != nil && MCPGenerationLifecycle.statusTool(in: tools) != nil
-        let acceptance: MCPGenerationLifecycle.Status =
-            isAsyncAcceptance && MCPGenerationLifecycle.explicitStatus(from: payloads) == nil ? .pending : inferred
+        let acceptance: MCPGenerationLifecycle.Status
+        if MCPGenerationLifecycle.explicitStatus(from: payloads) != nil {
+            acceptance = inferred
+        } else if isAsyncAcceptance {
+            acceptance = .pending
+        } else if MCPGenerationLifecycle.declaresStatus(in: payloads) {
+            // Only a response without any status field may infer success from its media.
+            acceptance = .unknown(nil)
+        } else {
+            acceptance = inferred
+        }
         switch acceptance {
         case .succeeded where !submission.output.isEmpty:
             return Result(jobID: submission.jobID, output: submission.output)
@@ -120,8 +129,14 @@ enum MCPGenerationExecutor {
                 throw JobFailure(jobID: jobID, message: message, providerRunEnded: true)
             }
             throw ProviderRunEndedError(message: message)
-        case .pending, .unknown:
+        case .pending:
             break
+        case .unknown:
+            if submission.jobID == nil, !submission.output.isEmpty {
+                throw GenerationBackendError.transport(
+                    "\(provider.displayName)'s MCP returned media without a valid job status, so its result is not confirmed."
+                )
+            }
         }
         guard let jobID = submission.jobID else {
             throw GenerationBackendError.transport(
