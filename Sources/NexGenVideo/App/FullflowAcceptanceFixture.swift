@@ -37,7 +37,7 @@ enum FullflowAcceptanceFixture {
         try writeTone(to: song, duration: 4.3)
         let flow = try await MusicvideoHostFlowAcceptance.start(track: song, lyrics: nil, binding: binding, evidenceURL: evidenceURL)
         try await flow.runAnalysis { $0.registerAudioDecoder(AVFoundationAudioDecoder()) }
-        try verifyMeasuredAnalysis(dataRoot: flow.dataRoot)
+        try verifyMeasuredAnalysis(dataRoot: flow.dataRoot, evidenceURL: evidenceURL)
         try await flow.finishPlanningIntake(sectionLabels: ["opening"], finalResolution: .res720p)
         return (flow.document, try await finishPlanning(editor: flow.editor, evidenceURL: evidenceURL,
             initialGateApprovals: flow.gateApprovals, generatedShot: generatedShot))
@@ -258,18 +258,48 @@ enum FullflowAcceptanceFixture {
         return object
     }
 
-    private static func verifyMeasuredAnalysis(dataRoot: URL) throws {
+    private static func verifyMeasuredAnalysis(dataRoot: URL, evidenceURL: URL) throws {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
-              let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
-              let duration = object["duration_s"] as? Double, abs(duration - 4.3) < 0.01,
-              let bpm = object["bpm"] as? Double, abs(bpm - 120) < 5,
-              let beats = object["beats"] as? [Double], beats.count >= 6,
-              let downbeats = object["downbeats"] as? [Double], !downbeats.isEmpty,
-              let sections = object["sections"] as? [[String: Any]], sections.count == 1,
-              let start = sections[0]["start"] as? Double, abs(start) < 0.01,
-              let end = sections[0]["end"] as? Double, abs(end - 4.3) < 0.01,
-              sections[0]["label"] as? String != "opening" else {
-            throw Failure("The real analysis runner did not measure the fixture's complete 4.3-second, 120-BPM section.")
+              let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw Failure("The real analysis runner did not write a readable canonical analysis object.")
+        }
+        let beats = object["beats"] as? [Double]
+        let downbeats = object["downbeats"] as? [Double]
+        let sections = object["sections"] as? [[String: Any]]
+        let summary: [String: Any] = [
+            "analysis_sha256": try FileDigest.sha256(of: url),
+            "duration_s": object["duration_s"] ?? NSNull(), "bpm": object["bpm"] ?? NSNull(),
+            "sample_rate": object["sample_rate"] ?? NSNull(),
+            "beats_count": beats?.count ?? -1, "beats": Array((beats ?? []).prefix(16)),
+            "downbeats_count": downbeats?.count ?? -1, "downbeats": Array((downbeats ?? []).prefix(8)),
+            "sections_count": sections?.count ?? -1,
+            "sections": Array((sections ?? []).prefix(4)).map { $0.filter { ["start", "end", "label", "source"].contains($0.key) } },
+        ]
+        let diagnostic = try JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys])
+        let scale = AppTheme.Typography.validatedScale(UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey))
+        try diagnostic.write(to: evidenceURL.appendingPathComponent("scale-\(Int((scale * 100).rounded()))-fullflow-analysis.json"), options: .atomic)
+        func mismatch(_ expected: String) -> Failure {
+            Failure("Real fixture analysis expected \(expected); measured \(String(decoding: diagnostic, as: UTF8.self))")
+        }
+        guard let duration = object["duration_s"] as? Double, abs(duration - 4.3) < 0.01 else {
+            throw mismatch("4.3 seconds within 0.01 seconds")
+        }
+        guard let bpm = object["bpm"] as? Double, abs(bpm - 120) < 5 else {
+            throw mismatch("120 BPM within 5 BPM")
+        }
+        guard let measuredBeats = beats, measuredBeats.count >= 6,
+              let measuredDownbeats = downbeats, !measuredDownbeats.isEmpty else {
+            throw mismatch("at least six measured beats and a nonempty downbeat grid")
+        }
+        guard let measuredSections = sections, measuredSections.count == 1 else {
+            throw mismatch("one measured section")
+        }
+        guard let start = measuredSections[0]["start"] as? Double, abs(start) < 0.01,
+              let end = measuredSections[0]["end"] as? Double, abs(end - 4.3) < 0.01 else {
+            throw mismatch("a section covering 0–4.3 seconds within 0.01 seconds")
+        }
+        guard measuredSections[0]["label"] as? String != "opening" else {
+            throw mismatch("no supplied opening label before interpretation")
         }
     }
 

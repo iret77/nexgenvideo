@@ -64,4 +64,5 @@ jobs:
             ${{ runner.temp }}/evidence/scale-*.png
             ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
             ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
+            ${{ runner.temp }}/evidence/scale-*-fullflow-analysis.json
           retention-days: 14
