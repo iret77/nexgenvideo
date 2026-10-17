@@ -132,11 +132,11 @@ struct TimelineMarkerMutationTests {
     @Test("the marker panel opens only while the timeline toolbar is on screen")
     func markerPanelNeedsItsPresenter() {
         let editor = EditorViewModel()
-        for focus in [EditorViewModel.WorkspaceFocus.production, .edit, .postproduction] {
+        for focus in [EditorViewModel.WorkspaceFocus.edit, .postproduction] {
             editor.setWorkspaceFocus(focus)
             #expect(editor.canPresentMarkerPanel, "\(focus)")
         }
-        for focus in [EditorViewModel.WorkspaceFocus.media, .export] {
+        for focus in [EditorViewModel.WorkspaceFocus.media, .production, .export] {
             editor.setWorkspaceFocus(focus)
             #expect(!editor.canPresentMarkerPanel, "\(focus)")
         }

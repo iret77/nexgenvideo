@@ -69,7 +69,7 @@ struct WorkflowToolsTests {
         let modelID = "fixture-video-edit"
         let endpoint = "generate_video"
         let videoCaps = VideoCaps(
-            durations: [4],
+            durations: [6],
             resolutions: ["720p"],
             aspectRatios: ["16:9"],
             supportsFirstFrame: false,
@@ -141,8 +141,8 @@ struct WorkflowToolsTests {
                     CapabilityFieldIDV1.totalReferences: value(0, origin: origin),
                 ],
                 decimals: [
-                    CapabilityFieldIDV1.durationMinimum: value(4.0, origin: origin),
-                    CapabilityFieldIDV1.durationMaximum: value(4.0, origin: origin),
+                    CapabilityFieldIDV1.durationMinimum: value(6.0, origin: origin),
+                    CapabilityFieldIDV1.durationMaximum: value(6.0, origin: origin),
                 ],
                 booleans: [
                     CapabilityFieldIDV1.nativeAudio: value(false, origin: origin),
@@ -174,7 +174,7 @@ struct WorkflowToolsTests {
                 ],
                 integerLists: [
                     CapabilityFieldIDV1.durationValues: value(
-                        [4],
+                        [6],
                         semantics: .supportedSet,
                         origin: origin
                     ),
@@ -4904,6 +4904,8 @@ struct WorkflowToolsTests {
             activation: routing.activation,
             candidateProvider: routing.candidates
         )
+        #expect(currentRouting.modelID == "fixture-video-edit")
+        #expect(currentRouting.requirement.duration?.preferredSeconds == 6)
         try addGeneratedVideo(
             "s003-video",
             at: home.appendingPathComponent("s003.mp4"),

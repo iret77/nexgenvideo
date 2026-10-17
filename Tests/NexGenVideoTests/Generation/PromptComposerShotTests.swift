@@ -440,8 +440,8 @@ struct PromptComposerShotTests {
         #expect(!prompt.contains("blue wool coat"))
     }
 
-    @Test("director pattern contributes lighting without overriding the shot camera")
-    func patternDoesNotInjectCameraVocabulary() async throws {
+    @Test("approved production style contributes lighting without overriding the shot camera")
+    func approvedStyleDoesNotOverrideShotCamera() async throws {
         let modelCatalog = ModelCatalog()
         modelCatalog.load(entries: ModelCatalog.launchEntries)
         let shot = try Self.shot(height: .eyeLevel, framing: .full)
@@ -465,6 +465,25 @@ struct PromptComposerShotTests {
             brief: brief,
             musicvideo: true
         )
+        let root = try #require(DataRootResolver.dataRoot(of: project))
+        let design = try ProductionDesign(project: "prompt-test", generated: "2026-09-09", generator: "test",
+            visualMedium: .liveActionStylized, colorScript: ["verse": "daylight and practicals"])
+        try ProductionStyleStoreV1.write(design: design, selection: .init(
+            directorID: "director-wes-anderson-symmetry-deadpan", overrides: [
+                .init(dimension: .lighting,
+                    value: "A fully pre-lit set with constant exposure and a fixed light field.",
+                    reason: "Use the explicitly selected practical-light treatment.",
+                    verification: .init(scope: .frame, evidenceKind: .image, criterion: "Constant exposure in the fixed light field.")),
+                .init(dimension: .color, value: "A stable daylight/practical mix.",
+                    reason: "Keep the approved daylight and practical color balance.",
+                    verification: .init(scope: .frame, evidenceKind: .image, criterion: "Stable daylight/practical balance.")),
+                .init(dimension: .camera, value: "continuous tracking shot",
+                    reason: "Project camera guidance must defer to the individual shot."),
+                .init(dimension: .composition, value: "extreme close-up",
+                    reason: "Project composition guidance must defer to the planned full framing."),
+            ]), clearStyle: false, dataRoot: root)
+        try YAMLArtifactStore(dataRoot: root).save(
+            Gates(project: "prompt-test", gates: ["production_design": Gate(approved: true)]), to: PipelineLayout.gatesFile)
         let editor = EditorViewModel()
         editor.projectURL = project
         defer { Self.removeProject(project, editor: editor) }
@@ -482,6 +501,9 @@ struct PromptComposerShotTests {
         #expect(prompt.contains("fully pre-lit set with constant exposure"))
         #expect(prompt.contains("stable daylight/practical mix"))
         #expect(prompt.contains("fixed light field"))
+        #expect(prompt.contains("full framing"))
+        #expect(prompt.contains("eye_level camera height"))
+        #expect(!prompt.contains("extreme close-up"))
         #expect(!prompt.contains("continuous tracking shot"))
         #expect(!prompt.contains("Steadicam / gimbal long take"))
         #expect(!prompt.contains("synchronized lateral dolly"))

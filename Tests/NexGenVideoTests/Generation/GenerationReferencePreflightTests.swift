@@ -70,10 +70,11 @@ struct GenerationReferencePreflightTests {
     }
 
     private func present(_ package: GenerationPackageV1, editor: EditorViewModel) throws -> GenerationBatch {
+        let itemID = UUID().uuidString
         let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
-            phase: "bible", items: [.init(id: "mara", purpose: "Mara front", package: package)]))
+            phase: "bible", items: [.init(id: itemID, purpose: "Mara front", package: package)]))
         try editor.generationBatchCoordinator.present(batch, recoveries: [
-            "mara": GenerationBatchRecovery(options: []) { _, _ in package },
+            itemID: GenerationBatchRecovery(options: []) { _, _ in package },
         ])
         return batch
     }
