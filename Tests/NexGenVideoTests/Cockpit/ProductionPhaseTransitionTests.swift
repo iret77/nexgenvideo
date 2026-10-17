@@ -31,10 +31,19 @@ struct ProductionPhaseTransitionTests {
         defer { editor.releaseWorkingCopy(); try? FileManager.default.removeItem(at: home) }
         await editor.refreshEngineState()
         editor.selectProductionPhase("project_init")
-        _ = try editor.agentService.requestGateApproval(GateApproval(phase: "project_init"))
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        let request = await ToolExecutor(editor: editor).execute(name: "approve_gate", args: [
+            "phase": "project_init", "project_dir": dataRoot.path,
+        ])
+        #expect(!request.isError, "\(ToolHarness.textOf(request))")
+        let approval = try #require(editor.agentService.pendingGateApproval)
+        #expect(approval.phase == "project_init")
+        #expect(approval.dataRoot?.resolvingSymlinksInPath().path == dataRoot.resolvingSymlinksInPath().path)
 
-        let result = await editor.agentService.resolveGate(.approved)
-        #expect(result?.isError == false)
+        let resolved = await editor.agentService.resolveGate(.approved)
+        let result = try #require(resolved)
+        #expect(!result.isError, "\(ToolHarness.textOf(result))")
         await editor.refreshEngineState()
 
         #expect(editor.projectState?.nextPhaseName == "brief")
