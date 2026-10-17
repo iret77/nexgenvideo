@@ -54,6 +54,8 @@ enum GenerationBatchReviewSelfTest {
                 .environment(editor)
                 .environment(\.interfaceScale, AppTheme.Typography.largestScale)
             )
+            // A default host grows the window to the card's zero-width minimum, far below the screen.
+            host.sizingOptions = []
             let window = NSWindow(
                 contentRect: NSRect(
                     x: AppTheme.Spacing.none,
@@ -67,6 +69,10 @@ enum GenerationBatchReviewSelfTest {
             )
             window.isReleasedWhenClosed = false
             window.contentView = host
+            place(window, contentSize: NSSize(
+                width: AppTheme.Layout.agentPanelMin,
+                height: minimumPanelHeight
+            ))
             window.makeKeyAndOrderFront(nil)
             app.activate(ignoringOtherApps: true)
 
@@ -102,6 +108,13 @@ enum GenerationBatchReviewSelfTest {
     // Agent panel heights in the smallest project window and in the default window on the fallback screen.
     private static var minimumPanelHeight: CGFloat {
         AppTheme.Window.projectMin.height - AppTheme.Layout.titleBarChromeHeight - AppTheme.Layout.toolbarHeight
+    }
+
+    // Top-left in the visible screen area keeps every control on screen for the accessibility hit test.
+    private static func place(_ window: NSWindow, contentSize: NSSize) {
+        window.setContentSize(contentSize)
+        guard let visible = (window.screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame else { return }
+        window.setFrameTopLeftPoint(NSPoint(x: visible.minX, y: visible.maxY))
     }
 
     private static var defaultPanelHeight: CGFloat {
@@ -172,7 +185,7 @@ enum GenerationBatchReviewSelfTest {
         }
 
         let keyboardID = afterClick.payload.items[0].id
-        window.setContentSize(NSSize(
+        place(window, contentSize: NSSize(
             width: AppTheme.Layout.agentPanelMin,
             height: defaultPanelHeight
         ))
@@ -188,7 +201,7 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.approve",
         ], in: window, context: "12-item narrow large-text review in the default window")
 
-        window.setContentSize(NSSize(
+        place(window, contentSize: NSSize(
             width: AppTheme.Layout.agentPanelMax,
             height: minimumPanelHeight
         ))
@@ -228,7 +241,7 @@ enum GenerationBatchReviewSelfTest {
             ]
         )
         try present(single, editor: editor)
-        window.setContentSize(NSSize(
+        place(window, contentSize: NSSize(
             width: AppTheme.Layout.agentPanelMin,
             height: minimumPanelHeight
         ))
@@ -255,7 +268,7 @@ enum GenerationBatchReviewSelfTest {
         )
         try present(fifty, editor: editor)
         for width in [CGFloat(400), AppTheme.Layout.agentPanelMax] {
-            window.setContentSize(NSSize(
+            place(window, contentSize: NSSize(
                 width: width,
                 height: minimumPanelHeight
             ))
@@ -491,14 +504,17 @@ enum GenerationBatchReviewSelfTest {
             }
             root.layoutSubtreeIfNeeded()
             if isClickProbeReady(probe, root: root, window: window) {
+                let target = accessibilityTarget(for: probe, identifier: identifier, window: window)
                 let accessibility = accessibilityHitEvidence(
                     for: probe,
                     identifier: identifier,
                     window: window
                 )
-                if accessibility.matchesIdentifier { return }
-                lastBoundary = "geometry ready; accessibility mismatch: \(accessibility.chainDescription); "
-                    + accessibilityTargetEvidence(for: probe, identifier: identifier, root: root, window: window)
+                if target.frameContainsPoint, accessibility.matchesIdentifier { return }
+                lastBoundary = target.frameContainsPoint
+                    ? "geometry ready; accessibility mismatch: "
+                    : "geometry ready; accessibility element not at the control's point: "
+                lastBoundary += "hit=[\(accessibility.chainDescription)] \(target.description)"
             } else {
                 guard let scrollView = probe.enclosingScrollView else {
                     throw Failure(message: "\(context) cannot reveal \(identifier): native probe has no enclosing NSScrollView")
@@ -709,32 +725,41 @@ enum GenerationBatchReviewSelfTest {
         )
     }
 
-    // Separates a missing or misplaced accessibility element from one that another element shadows.
-    private static func accessibilityTargetEvidence(
+    // The control's own accessibility element must cover the point that the hit test probes.
+    private static func accessibilityTarget(
         for probe: NSView,
         identifier: String,
-        root: NSView,
         window: NSWindow
-    ) -> String {
+    ) -> AccessibilityTarget {
         let windowPoint = probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil)
         let screenPoint = window.convertPoint(toScreen: windowPoint)
-        let appKitHit = viewChain(from: root.hitTest(root.convert(windowPoint, from: nil)))
         var pending: [Any] = [window]
         var visited = 0
-        var target = "absent"
+        var frame: NSRect?
+        var role = "nil"
         while visited < accessibilityTreeNodeLimit, let next = pending.popLast() {
             visited += 1
             guard let element = next as? NSAccessibilityProtocol else { continue }
             if element.accessibilityIdentifier() == identifier, !(element is AppRelaunchClickProbeView) {
-                let frame = element.accessibilityFrame()
-                let role = element.accessibilityRole()?.rawValue ?? "nil"
-                target = "role=\(role),frame=\(rectDescription(frame)),containsPoint=\(frame.contains(screenPoint))"
+                frame = element.accessibilityFrame()
+                role = element.accessibilityRole()?.rawValue ?? "nil"
                 break
             }
             pending.append(contentsOf: element.accessibilityChildren() ?? [])
         }
-        return "screenPoint=\(pointDescription(screenPoint)) axElement=[\(target)] axNodesVisited=\(visited) "
-            + "appKitHit=[\(appKitHit)]"
+        let screens = NSScreen.screens.map { rectDescription($0.frame) }.joined(separator: ",")
+        let hostChildren = (window.contentView?.accessibilityChildren() ?? []).map { child -> String in
+            guard let element = child as? NSAccessibilityProtocol else { return "\(type(of: child))" }
+            return "\(element.accessibilityRole()?.rawValue ?? "nil"):\(element.accessibilityIdentifier() ?? "nil")"
+        }.joined(separator: ",")
+        let element = frame.map { "role=\(role),frame=\(rectDescription($0))" } ?? "absent"
+        return AccessibilityTarget(
+            frameContainsPoint: frame?.contains(screenPoint) ?? false,
+            description: "screenPoint=\(pointDescription(screenPoint)) axElement=[\(element)] "
+                + "axNodesVisited=\(visited) window=\(rectDescription(window.frame)) "
+                + "contentMinSize=\(rectDescription(NSRect(origin: .zero, size: window.contentMinSize))) "
+                + "screens=[\(screens)] hostChildren=[\(hostChildren)]"
+        )
     }
 
     private static let accessibilityTreeNodeLimit = 20_000
@@ -805,6 +830,11 @@ enum GenerationBatchReviewSelfTest {
             matches.append(contentsOf: findClickProbes(in: child, identifier: identifier))
         }
         return matches
+    }
+
+    private struct AccessibilityTarget {
+        let frameContainsPoint: Bool
+        let description: String
     }
 
     private struct AccessibilityHitEvidence {
