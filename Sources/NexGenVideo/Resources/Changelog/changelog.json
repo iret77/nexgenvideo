@@ -2,6 +2,24 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.7.1",
+      "date": "2026-10-17",
+      "sections": [
+        {
+          "heading": "Interface",
+          "items": [
+            "Runs whose provider answers with a server error, a timeout or a status that is not a real status stay unconfirmed in the budget instead of counting as finished, so a run that may still be billed is never hidden."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.5.15 requires NexGenVideo 1.7.1 and carries no content changes since 0.5.14. Existing projects keep their pinned pack version."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.7.0",
       "date": "2026-10-16",
       "sections": [
