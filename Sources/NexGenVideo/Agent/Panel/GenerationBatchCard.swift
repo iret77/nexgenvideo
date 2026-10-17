@@ -23,6 +23,12 @@ final class GenerationBatchReviewRuntimeEvidence {
             expandedItemIDsAfter: expandedItemIDsAfter
         ))
     }
+
+    private(set) var focusedRemoveItemID: String?
+
+    func recordRemoveFocus(_ itemID: String?) {
+        focusedRemoveItemID = itemID
+    }
 }
 
 struct GenerationBatchReviewControls: Equatable {
@@ -105,6 +111,9 @@ struct GenerationBatchCard: View {
             }
             .onAppear {
                 if runtimeEvidenceEnabled { focusedRemoveItemID = batch.payload.items.first?.id }
+            }
+            .onChange(of: focusedRemoveItemID, initial: true) { _, itemID in
+                if runtimeEvidenceEnabled { runtimeEvidence?.recordRemoveFocus(itemID) }
             }
         }
     }
