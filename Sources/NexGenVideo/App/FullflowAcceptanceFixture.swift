@@ -334,13 +334,12 @@ enum FullflowAcceptanceFixture {
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw Failure("Reference allocation failed.") }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        NSColor.orange.setFill()
-        NSRect(x: 0, y: 0, width: 320, height: 180).fill()
-        NSColor.white.setFill()
-        NSRect(x: 140, y: 70, width: 40, height: 40).fill()
-        NSGraphicsContext.restoreGraphicsState()
+        // Fixture pixels must stay fixed when the app theme changes.
+        let pixels = context.cgContext
+        pixels.setFillColor(CGColor(red: 1, green: 0.5, blue: 0, alpha: 1))
+        pixels.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        pixels.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        pixels.fill(CGRect(x: 140, y: 70, width: 40, height: 40))
         guard let data = bitmap.representation(using: .png, properties: [:]) else { throw Failure("Reference encoding failed.") }
         try data.write(to: url)
     }
