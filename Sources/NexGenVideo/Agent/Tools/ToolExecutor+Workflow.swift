@@ -4104,9 +4104,22 @@ extension ToolExecutor {
             label: String
         ) throws -> [RenderInputProof] {
             try assetIds.map { id in
-                guard let source = editor.mediaAssets.first(where: {
+                let source: MediaAsset
+                if id.hasPrefix("pipeline-reference:"), gi.productionRouting != nil {
+                    guard let packageID = gi.generationPackageID else {
+                        throw ToolError("\(label) '\(id)' has no approved generation package.")
+                    }
+                    try PipelineRenderTakeStore.requirePackage(input: gi, dataRoot: dataRoot)
+                    let package = try GenerationPackageV1.load(id: packageID, home: home)
+                    guard let receipt = package.payload.references.first(where: { $0.assetID == id }) else {
+                        throw ToolError("\(label) '\(id)' is not an approved generation input.")
+                    }
+                    source = try GenerationPackageInputs.resolveReference(receipt, package: package, editor: editor)
+                } else if let existing = editor.mediaAssets.first(where: {
                     $0.id == id
-                }) else {
+                }) {
+                    source = existing
+                } else {
                     throw ToolError(
                         "\(label) '\(id)' is no longer in the open project's media library."
                     )

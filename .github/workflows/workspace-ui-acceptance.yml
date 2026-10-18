@@ -2,6 +2,12 @@ name: Workspace UI Acceptance
 on:
   workflow_dispatch:
     inputs:
+      acceptance_scope:
+        description: Native workspace cases to verify
+        required: false
+        type: choice
+        options: [all, filmreview]
+        default: all
       unit_test_filter:
         description: Optional Swift test filter for the affected regression suite
         required: false
@@ -9,6 +15,11 @@ on:
         default: ''
   workflow_call:
     inputs:
+      acceptance_scope:
+        description: Native workspace cases to verify (all or filmreview)
+        required: false
+        type: string
+        default: all
       unit_test_filter:
         description: Optional Swift test filter for the affected regression suite
         required: false
@@ -25,6 +36,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Validate acceptance scope
+        env:
+          NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
+        run: |
+          case "$NGV_ACCEPTANCE_SCOPE" in
+            all|filmreview) ;;
+            *) echo "::error::Unknown acceptance scope"; exit 1 ;;
+          esac
       - run: python3 scripts/lint_app_theme.py
 
   build:
@@ -72,12 +91,14 @@ jobs:
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
           tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
       - name: Exercise native workspace and panel controls
+        env:
+          NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
         run: |
           set -euo pipefail
           export NGV_WORKSPACE_UI_PACK="$RUNNER_TEMP/workspace-ui/plugins/musicvideo.ngvpack"
           python3 scripts/workspace_ui_acceptance.py \
             "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
-            "$RUNNER_TEMP/evidence"
+            "$RUNNER_TEMP/evidence" --scope "$NGV_ACCEPTANCE_SCOPE"
       - name: Verify generation batch pointer and keyboard review on macOS 26
         if: ${{ !cancelled() }}
         run: |

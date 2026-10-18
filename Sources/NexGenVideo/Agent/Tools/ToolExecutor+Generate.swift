@@ -202,26 +202,6 @@ extension ToolExecutor {
         var proofs: [ProductionGenerationRoutingBindingV1] = []
 
         for binding in selection.referencePlan.bindings {
-            guard let asset = await resolveRenderedAsset(
-                binding.path,
-                editor: editor,
-                dataRoot: dataRoot
-            ) else {
-                throw ToolError(
-                    "Planned input '\(binding.demandID)' is no longer available as project media."
-                )
-            }
-            let plannedURL = try ProjectLocalFile.requireHash(
-                binding.sha256,
-                at: binding.path,
-                dataRoot: dataRoot
-            ).standardizedFileURL.resolvingSymlinksInPath()
-            let actualURL = asset.url.standardizedFileURL.resolvingSymlinksInPath()
-            guard actualURL == plannedURL else {
-                throw ToolError(
-                    "Planned input '\(binding.demandID)' resolves to different media bytes."
-                )
-            }
             let expectedType: ClipType
             switch binding.modality {
             case .image: expectedType = .image
@@ -232,6 +212,30 @@ extension ToolExecutor {
                     "The selected provider submission does not implement geometry input slot "
                         + "'\(binding.inputSlotID)'."
                 )
+            }
+            let plannedURL = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            ).standardizedFileURL.resolvingSymlinksInPath()
+            guard ClipType(fileExtension: plannedURL.pathExtension.lowercased()) == expectedType else {
+                throw ToolError("Planned input '\(binding.demandID)' has the wrong media type.")
+            }
+            let asset: MediaAsset
+            if let existing = editor.mediaAssets.first(where: {
+                $0.url.standardizedFileURL.resolvingSymlinksInPath() == plannedURL
+            }) {
+                asset = existing
+            } else {
+                asset = MediaAsset(id: "pipeline-reference:\(binding.path)", url: plannedURL, type: expectedType,
+                    name: plannedURL.deletingPathExtension().lastPathComponent, originalFilename: plannedURL.lastPathComponent)
+                await asset.loadMetadata()
+            }
+            let currentURL = try ProjectLocalFile.requireHash(binding.sha256, at: binding.path, dataRoot: dataRoot)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            guard asset.url.standardizedFileURL.resolvingSymlinksInPath() == currentURL,
+                  currentURL == plannedURL else {
+                throw ToolError("Planned input '\(binding.demandID)' no longer matches its exact project path.")
             }
             guard asset.type == expectedType else {
                 throw ToolError(

@@ -773,7 +773,7 @@ enum GenerationBatchReviewSelfTest {
             throw Failure(message: "\(context) has no last request")
         }
         let identifier = "generation-batch.details.\(lastID)"
-        try await reveal(identifier: identifier, in: window, context: context)
+        try await reveal(identifier: identifier, in: window, context: context, searchTowardEnd: true)
         try await requireVisible([
             identifier,
             "generation-batch.remove.\(lastID)",
@@ -795,13 +795,24 @@ enum GenerationBatchReviewSelfTest {
     private static func reveal(
         identifier: String,
         in window: NSWindow,
-        context: String
+        context: String,
+        searchTowardEnd: Bool = false
     ) async throws {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(10))
+        let started = clock.now
+        // CI exhausted 10 s after 35 steps; reserve a bounded full pass through the 12,296 pt list.
+        let maximumSearchSeconds = 30.0
+        let hardDeadline = started.advanced(by: .seconds(maximumSearchSeconds))
+        var deadline = started.advanced(by: .seconds(10))
+        var lastProgress = started
         var lastBoundary = "native probe absent"
-        var searchIncreasingY: Bool?
-        while clock.now < deadline {
+        var searchSteps = 0
+        var progressingSteps = 0
+        var progressingStepSeconds = 0.0
+        var maximumEstimatedSteps = 0.0
+        var searchedPastIntroduction = false
+        while clock.now < deadline && clock.now < lastProgress.advanced(by: .seconds(10)) {
+            let stepStarted = clock.now
             guard let root = window.contentView else {
                 throw Failure(message: "\(context) has no window content view while revealing \(identifier)")
             }
@@ -809,28 +820,61 @@ enum GenerationBatchReviewSelfTest {
                 lastBoundary = "native probe absent"
                 if let list = findClickProbes(in: root, identifier: "generation-batch.list").first,
                    let scrollView = list.enclosingScrollView {
+                    let lookupSeconds = durationSeconds(stepStarted.duration(to: clock.now))
+                    let layoutStarted = clock.now
                     root.layoutSubtreeIfNeeded()
+                    var layoutSeconds = durationSeconds(layoutStarted.duration(to: clock.now))
                     let clip = scrollView.contentView
                     let before = clip.bounds
                     let document = clip.documentRect
                     guard before.minY.isFinite, before.height.isFinite, before.height > 0,
-                          document.minY.isFinite, document.maxY.isFinite else {
+                          document.minY.isFinite, document.maxY.isFinite, document.height.isFinite else {
                         throw Failure(message: "\(context) has invalid native list geometry")
                     }
-                    let maximumY = max(document.minY, document.maxY - before.height)
-                    var increasing = searchIncreasingY ?? !clip.isFlipped
-                    if before.minY <= document.minY { increasing = true }
-                    else if before.minY >= maximumY { increasing = false }
-                    searchIncreasingY = increasing
+                    let startY = clip.isFlipped ? document.minY : max(document.minY, document.maxY - before.height)
+                    let reachedStart = clip.isFlipped ? before.minY <= startY : before.minY >= startY
+                    if !searchTowardEnd, !searchedPastIntroduction, reachedStart {
+                        searchedPastIntroduction = true
+                        writeEvidence("scroll-search-direction identifier=\(identifier) towardEnd=true "
+                            + "reason=document-start-reached startY=\(startY) before=\(rectDescription(before)) "
+                            + "document=\(rectDescription(document)) clipFlipped=\(clip.isFlipped)")
+                    }
+                    let stepTowardEnd = searchTowardEnd || searchedPastIntroduction
+                    let increasing = stepTowardEnd == clip.isFlipped
                     let distance = Int32(min(CGFloat(Int32.max), max(1, floor(before.height * 0.75))))
                     let delta = increasing == clip.isFlipped ? -distance : distance
+                    let gestureStarted = clock.now
                     try await scrollList(scrollView, delta: delta, in: window)
-                    root.layoutSubtreeIfNeeded()
-                    lastBoundary = "searching native list delta=\(delta) before=\(rectDescription(before)) "
-                        + "after=\(rectDescription(clip.bounds)) document=\(rectDescription(clip.documentRect)) "
-                        + "clipFlipped=\(clip.isFlipped)"
-                    writeEvidence("scroll-search identifier=\(identifier) \(lastBoundary)")
+                    let gestureSeconds = durationSeconds(gestureStarted.duration(to: clock.now))
+                    let settleStarted = clock.now
                     try await Task.sleep(for: .milliseconds(20))
+                    let settleSeconds = durationSeconds(settleStarted.duration(to: clock.now))
+                    let finalLayoutStarted = clock.now
+                    root.layoutSubtreeIfNeeded()
+                    layoutSeconds += durationSeconds(finalLayoutStarted.duration(to: clock.now))
+                    let after = clip.bounds
+                    let stepFinished = clock.now
+                    let stepSeconds = durationSeconds(stepStarted.duration(to: stepFinished))
+                    searchSteps += 1
+                    let progressed = increasing ? after.minY > before.minY : after.minY < before.minY
+                    if progressed {
+                        lastProgress = stepFinished
+                        progressingSteps += 1
+                        progressingStepSeconds += stepSeconds
+                        maximumEstimatedSteps = max(maximumEstimatedSteps, Double(ceil(document.height / CGFloat(distance))))
+                        let allowance = min(maximumSearchSeconds,
+                            10 + maximumEstimatedSteps * progressingStepSeconds / Double(progressingSteps))
+                        deadline = min(hardDeadline, max(deadline, started.advanced(by: .seconds(allowance))))
+                    }
+                    lastBoundary = "searching native list delta=\(delta) before=\(rectDescription(before)) "
+                        + "after=\(rectDescription(after)) document=\(rectDescription(clip.documentRect)) "
+                        + "clipFlipped=\(clip.isFlipped) towardEnd=\(stepTowardEnd) "
+                        + "reversedAtStart=\(searchedPastIntroduction) steps=\(searchSteps) "
+                        + "elapsedSeconds=\(durationSeconds(started.duration(to: stepFinished))) stepSeconds=\(stepSeconds) "
+                        + "lookupSeconds=\(lookupSeconds) layoutSeconds=\(layoutSeconds) "
+                        + "gestureSeconds=\(gestureSeconds) settleSeconds=\(settleSeconds) "
+                        + "deadlineSeconds=\(durationSeconds(started.duration(to: deadline)))"
+                    writeEvidence("scroll-search identifier=\(identifier) \(lastBoundary)")
                     continue
                 }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -839,6 +883,8 @@ enum GenerationBatchReviewSelfTest {
             root.layoutSubtreeIfNeeded()
             // No in-process accessibility hit test: SwiftUI builds its accessibility tree only for an assistive client.
             if isClickProbeReady(probe, root: root, window: window) {
+                writeEvidence("reveal-complete identifier=\(identifier) searchSteps=\(searchSteps) "
+                    + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now)))")
                 return
             } else {
                 guard let scrollView = probe.enclosingScrollView else {
@@ -859,6 +905,7 @@ enum GenerationBatchReviewSelfTest {
                 }
                 root.layoutSubtreeIfNeeded()
                 let after = scrollView.contentView.bounds.origin
+                if before != after { lastProgress = clock.now }
                 let progress = "moved=\(before != after) before=\(pointDescription(before)) "
                     + "after=\(pointDescription(after)) " + scrollGeometry(probe: probe, scrollView: scrollView)
                 if progress != lastBoundary {
@@ -870,8 +917,14 @@ enum GenerationBatchReviewSelfTest {
         }
         throw Failure(
             message: "\(context) could not establish concrete control readiness for \(identifier); "
-                + "last boundary: \(lastBoundary)"
+                + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now))) "
+                + "idleSeconds=\(durationSeconds(lastProgress.duration(to: clock.now))); last boundary: \(lastBoundary)"
         )
+    }
+
+    private static func durationSeconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 
     private static func scrollList(_ scroll: NSScrollView, delta: Int32, in window: NSWindow) async throws {

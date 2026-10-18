@@ -69,14 +69,157 @@ struct GenerationReferencePreflightTests {
         return package
     }
 
-    private func present(_ package: GenerationPackageV1, editor: EditorViewModel) throws -> GenerationBatch {
+    private func present(_ package: GenerationPackageV1, editor: EditorViewModel, phase: String = "bible") throws -> GenerationBatch {
         let itemID = UUID().uuidString
         let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
-            phase: "bible", items: [.init(id: itemID, purpose: "Mara front", package: package)]))
+            phase: phase, items: [.init(id: itemID, purpose: "Mara front", package: package)]))
         try editor.generationBatchCoordinator.present(batch, recoveries: [
             itemID: GenerationBatchRecovery(options: []) { _, _ in package },
         ])
         return batch
+    }
+
+    private func routedSelection(_ fixture: Fixture) throws -> PipelineProductionRouteSelection {
+        let home = try #require(fixture.editor.workingRoot)
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        let path = "bible/characters/mara/Mara-front.png"
+        let modelID = "bytedance/seedance-2.5/image-to-video"
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        let activation = ProviderActivation(active: [.init(provider: .fal, transport: .api)])
+        let candidate = try #require(catalog.productionRouteCandidates(activation: activation).first { $0.modelID == modelID })
+        let target = try #require(candidate.target)
+        let mode = try #require(candidate.candidate.inputSlots.first { $0.id == CoreReferenceInputSlotIDV1.firstFrame }?.modeIDs.first)
+        let requirement = ProductionRequirementV1(modalityID: "video", modeIDs: [mode], visibleEntityCount: 1,
+            requiresFirstFrame: true, duration: .init(preferredSeconds: 5, minimumSeconds: 5, maximumSeconds: 5),
+            resolution: "720p", aspectRatio: "16:9", requiresOutputAudio: false)
+        let projectID = "references", shotID = "shot-001"
+        let asset = AssetGraphNodeV1(id: "mara", version: 1, path: path,
+            sha256: try FileDigest.sha256(of: fixture.source), modality: .image, approval: .approved,
+            provenance: .init(kindID: "fixture.import", recordedAt: "2026-10-18T00:00:00Z"),
+            allowedUseIDs: [CoreReferenceSemanticJobIDV1.firstFrame])
+        let graph = AssetGraphV1(id: try AssetGraphContentAddressV1.graphID(projectID: projectID, assets: [asset]),
+            projectID: projectID, assets: [asset])
+        let demand = ReferenceDemandV1(id: "mara-anchor", assetID: asset.id, modality: .image,
+            semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame, isRequired: true, priority: 0,
+            inputSlotID: CoreReferenceInputSlotIDV1.firstFrame, modeID: mode)
+        let demandSet = ReferenceDemandSetV1(id: "demands-shot-001", projectID: projectID, shotID: shotID,
+            assetGraph: .init(id: graph.id, role: AssetGraphV1.artifactRole, path: PipelineLayout.assetGraphFile,
+                sha256: FileDigest.sha256(of: try AssetGraphCanonicalCodecV1.encode(graph))), demands: [demand])
+        try PipelineProductionInputsWriter.write(graph: graph, demandSets: [demandSet], templates: [
+            .init(id: "inputs-shot-001", projectID: projectID, shotID: shotID,
+                coreInputs: .init(firstFrameModeID: mode)),
+        ], dataRoot: root)
+        let matches = try ProductionRequirementResolverV1.matchingRoutes(requirement: requirement, demandSet: demandSet,
+            assetGraph: graph, dataRoot: root, candidates: [candidate.candidate])
+        let route = try #require(matches.first?.route)
+        let result = try ReferencePlannerV2.plan(id: "reference-plan-shot-001", dataRoot: root, route: route,
+            requirement: requirement, demandSet: demandSet, graph: graph, candidate: candidate.candidate)
+        guard case .plan(let plan) = result else { throw ToolError("The fixture reference plan is not executable.") }
+        return PipelineProductionRouteSelection(modelID: modelID, target: target, requirement: requirement,
+            route: route, routeArtifactSHA256: FileDigest.sha256(of: try ReferencePlanCanonicalCodecV2.encode(route)), referencePlan: plan,
+            referencePlanSHA256: FileDigest.sha256(of: try ReferencePlanCanonicalCodecV2.encode(plan)),
+            orderedBindingsSHA256: FileDigest.sha256(of: try ReferencePlanCanonicalCodecV2.encode(plan.bindings)))
+    }
+
+    @Test func routedProjectInputsKeepExactPathsThroughArchivePreflightAndRenderRecord() async throws {
+        let fixture = try fixture(kind: "pipeline")
+        defer { fixture.cleanup() }
+        let home = try #require(fixture.editor.workingRoot)
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        let original = try Data(contentsOf: fixture.source)
+        let selection = try routedSelection(fixture)
+        let shot = try Shot(id: selection.route.shotID, timeStart: 0, timeEnd: 5, durationS: 5,
+            type: .performance, description: "Mara holds her pose.", visualPrompt: "Mara holds her opening pose.", mood: "calm")
+        _ = try saveShotlist(Shotlist(schema_: shotlistSchemaVersion, mode: .beat, project: "references",
+            song: Song(title: "Song", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: 120, durationS: 5),
+            generated: "2026-10-18", generator: "test", shots: [shot]), to: root)
+        let executor = ToolExecutor(editor: fixture.editor, enforceHardGates: false)
+        let inputs = try await executor.productionVideoInputs(selection: selection, editor: fixture.editor, dataRoot: root)
+        let reference = try #require(inputs.assets.frames.first)
+        #expect(reference.url.standardizedFileURL.resolvingSymlinksInPath()
+            == fixture.source.standardizedFileURL.resolvingSymlinksInPath())
+        #expect(reference.id == fixture.reference.id)
+        #expect(fixture.editor.mediaAssets.isEmpty)
+        #expect(inputs.routingProof.orderedBindings.first?.path == "bible/characters/mara/Mara-front.png")
+        #expect(inputs.routingProof.orderedBindings.first?.sha256 == FileDigest.sha256(of: original))
+
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        let model = try #require(catalog.video.first(where: { $0.id == selection.modelID }))
+        let shotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        let request = GenerationRequest(modality: .video, modelId: model.id, intent: "Mara holds her opening pose.", aspectRatio: "16:9",
+            durationSeconds: 5, placement: .mediaLibrary(folderId: nil), origin: .panel, target: selection.target,
+            submission: .video { prompt in
+                var input = GenerationInput(prompt: prompt, model: model.id, duration: 5, aspectRatio: "16:9", resolution: "720p")
+                input.videoDuration = .seconds(5)
+                input.promptShotId = shot.id
+                input.promptProjectKey = fixture.editor.projectId
+                input.promptShotFingerprint = shotFingerprint
+                input.productionRouting = inputs.routingProof
+                return VideoGenerationSubmission.make(genInput: input, model: model,
+                    offeringCapabilities: inputs.offeringCapabilities, inputAssets: inputs.assets,
+                    placeholderDuration: 5, generateAudio: false)
+            })
+        let generation = try await GenerationController.prepare(request, editor: fixture.editor).get()
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: fixture.editor,
+            quoteLoader: { _, _ in GenerationPackageFixture.money() })
+        let snapshot = try #require(generation.references)
+        try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: fixture.editor)
+        let restored = try await GenerationPackageInputs.restore(package: package, editor: fixture.editor)
+        #expect(restored.sources.map { $0.url.standardizedFileURL.resolvingSymlinksInPath() }
+            == [reference.url.standardizedFileURL.resolvingSymlinksInPath()])
+        #expect(restored.receipts == package.payload.references)
+        let archived = try #require(restored.urls.first)
+        #expect(try Data(contentsOf: archived) == original)
+        let batch = try present(package, editor: fixture.editor, phase: "render")
+        let coordinator = fixture.editor.generationBatchCoordinator
+        await coordinator.preflight(editor: fixture.editor, expectedBatchID: batch.id)
+        try #require(coordinator.canApprovePending, "\(coordinator.preflightIssue ?? "")")
+
+        let output = home.appendingPathComponent("rendered.mp4")
+        try Data("fixture provider output".utf8).write(to: output)
+        var recordedInput = package.payload.generationInput
+        recordedInput.generationPackageID = package.id
+        let rendered = MediaAsset(id: "rendered-video", url: output, type: .video, name: "Mara take", generationInput: recordedInput)
+        fixture.editor.mediaAssets.append(rendered)
+        func record() async -> ToolResult {
+            await executor.execute(name: "record_render", args: ["project_dir": root.path, "phase": "preview",
+                "shot_id": shot.id, "output": rendered.id])
+        }
+        let recorded = await record()
+        try #require(!recorded.isError, "\(ToolHarness.textOf(recorded))")
+        let proof = try loadRenderProofManifest(dataRoot: root, phase: "preview")
+        #expect(proof.entries[shot.id]?.startFrame?.path == "pipeline/bible/characters/mara/Mara-front.png")
+        #expect(proof.entries[shot.id]?.startFrame?.sha256 == FileDigest.sha256(of: original))
+        let proofURL = root.appendingPathComponent(PipelineLayout.renderProofFile(phase: "preview"))
+        let proofBytes = try Data(contentsOf: proofURL)
+
+        let changedImage = try #require(NSBitmapImageRep(data: original))
+        let changedPixels = try #require(changedImage.bitmapData)
+        changedPixels.pointee ^= 0xff
+        let changedBytes = try #require(changedImage.representation(using: .png, properties: [:]))
+        #expect(FileDigest.sha256(of: changedBytes) != FileDigest.sha256(of: original))
+        let held = fixture.source.appendingPathExtension("held")
+        for removed in [false, true] {
+            if removed { try FileManager.default.moveItem(at: fixture.source, to: held) }
+            else { try changedBytes.write(to: fixture.source) }
+            await #expect(throws: (any Error).self) {
+                try await executor.productionVideoInputs(selection: selection, editor: fixture.editor, dataRoot: root)
+            }
+            await #expect(throws: (any Error).self) {
+                try await GenerationPackageInputs.restore(package: package, editor: fixture.editor)
+            }
+            await coordinator.preflight(editor: fixture.editor, expectedBatchID: batch.id)
+            #expect(!coordinator.canApprovePending)
+            let rejected = await record()
+            #expect(rejected.isError)
+            #expect(try Data(contentsOf: proofURL) == proofBytes)
+            if removed { try FileManager.default.moveItem(at: held, to: fixture.source) }
+            else { try original.write(to: fixture.source) }
+        }
+        #expect(fixture.editor.mediaAssets.map(\.id) == [rendered.id])
+        #expect(fixture.editor.generationLog.spendEvents.isEmpty)
     }
 
     @Test func projectAndFrameReferencesResolveWithoutInventingLibraryEntries() async throws {

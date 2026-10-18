@@ -17,7 +17,7 @@
         {
           "heading": "Generation",
           "items": [
-            "Pipeline and frame reference images resolve from their verified project sources throughout preparation, preview, and approval. Missing references block approval before submission and reach the agent in revision diagnostics.",
+            "Pipeline, frame and planned video inputs retain their approved project paths and exact source bytes through preparation, preview, approval and render recording. Missing references block approval before submission and reach the agent in revision diagnostics.",
             "Single and batch generation share a result-focused approval card with labeled inputs, explicit phase authorization, and neutral unknown-price information. Batch requests scroll within the available panel height while approval actions remain visible. The requested model is preserved.",
             "Director templates no longer inject prose into generation prompts. Explicit directive conflicts block compilation, and older prepared prompts must be recompiled.",
             "Planned video requests include the required cut handles and whole-second render duration while preserving the intended shot length in the timeline."
