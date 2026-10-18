@@ -171,10 +171,12 @@ enum PipelineRenderTakeStore {
                 }
             }
         }
-        if index.selected[shotID] != takeID {
-            index.decisions.append(.init(id: UUID().uuidString.lowercased(), shotID: shotID, takeID: takeID,
-                reason: takeID == nil ? "Render result cleared; historical takes retained."
-                    : completed?.reviewedSelection == true ? "Selected the reviewed take." : "Recorded candidate; quality review remains pending.", recordedAt: currentTimestamp()))
+        let selection = completed == nil ? nil
+            : completed?.reviewedSelection == true ? takeID : index.selected[shotID]
+        if index.selected[shotID] != selection {
+            index.decisions.append(.init(id: UUID().uuidString.lowercased(), shotID: shotID, takeID: selection,
+                reason: selection == nil ? "Render result cleared; historical takes retained."
+                    : "Selected the reviewed take.", recordedAt: currentTimestamp()))
         }
         if !files.isEmpty || !index.takeIDs.isEmpty { files.append((indexPath(phase: manifest.phase), try canonical(index))) }
         return Prepared(files: files, takeID: takeID)

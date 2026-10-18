@@ -14,7 +14,7 @@ struct PipelineRenderTakeTests {
         return value
     }
 
-    @Test("equal output bytes from different generation events remain separate takes of one prompt revision")
+    @Test("distinct candidates preserve immutable identity and change selection only after review")
     func distinctEvents() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -30,8 +30,8 @@ struct PipelineRenderTakeTests {
         let bytes = try JSONEncoder().encode(proof)
         let artifact = RenderPublishedArtifactV1(path: "proof.json", sha256: FileDigest.sha256(of: bytes))
         try bytes.write(to: root.appendingPathComponent(artifact.path))
-        func prepare(_ event: String, _ value: GenerationInput) throws -> PipelineRenderTakeStore.Prepared {
-            try PipelineRenderTakeStore.prepare(completed: .init(eventID: event, generationInput: value), provenance: artifact,
+        func prepare(_ event: String, _ value: GenerationInput, reviewedSelection: Bool = false) throws -> PipelineRenderTakeStore.Prepared {
+            try PipelineRenderTakeStore.prepare(completed: .init(eventID: event, generationInput: value, reviewedSelection: reviewedSelection), provenance: artifact,
                 shotProof: proof, manifest: manifest, shotID: "s001", dataRoot: root)
         }
         func persist(_ value: PipelineRenderTakeStore.Prepared) throws {
@@ -44,11 +44,36 @@ struct PipelineRenderTakeTests {
         let firstInput = input(date: Date(timeIntervalSince1970: 100), transaction: "spend-1")
         let first = try prepare("event-1", firstInput)
         try persist(first)
+        let unreviewed = try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final")
+        #expect(unreviewed.selected.isEmpty)
+        #expect(unreviewed.decisions.isEmpty)
         let repeated = try prepare("event-1", firstInput)
         #expect(repeated.takeID == first.takeID)
         #expect(repeated.files.count == 1)
-        let second = try prepare("event-2", input(date: Date(timeIntervalSince1970: 200), transaction: "spend-2"))
+        try persist(prepare("event-1", firstInput, reviewedSelection: true))
+        let firstSelected = try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final")
+        #expect(firstSelected.selected["s001"] == first.takeID)
+        #expect(firstSelected.decisions.count == 1)
+        let secondInput = input(date: Date(timeIntervalSince1970: 200), transaction: "spend-2")
+        let second = try prepare("event-2", secondInput)
         try persist(second)
+        let additionalCandidate = try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final")
+        #expect(additionalCandidate.selected["s001"] == first.takeID)
+        #expect(additionalCandidate.decisions == firstSelected.decisions)
+        try persist(prepare("event-2", secondInput, reviewedSelection: true))
+        let secondSelected = try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final")
+        #expect(secondSelected.selected["s001"] == second.takeID)
+        #expect(secondSelected.decisions.count == 2)
+        try persist(prepare("event-2", secondInput, reviewedSelection: true))
+        #expect(try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final") == secondSelected)
+        var clearedManifest = manifest
+        record(&clearedManifest, shotId: "s001", output: nil, costEur: 0, status: .pending, phase: "final")
+        try persist(PipelineRenderTakeStore.prepare(completed: nil, provenance: nil, shotProof: nil,
+            manifest: clearedManifest, shotID: "s001", dataRoot: root))
+        let cleared = try PipelineRenderTakeStore.load(dataRoot: root, project: "demo", phase: "final")
+        #expect(cleared.selected.isEmpty)
+        #expect(cleared.takeIDs == secondSelected.takeIDs)
+        #expect(cleared.decisions.count == 3)
         let firstRecord = try PipelineRenderTakeStore.take(id: #require(first.takeID), dataRoot: root)
         let secondRecord = try PipelineRenderTakeStore.take(id: #require(second.takeID), dataRoot: root)
         #expect(firstRecord.id != secondRecord.id)
