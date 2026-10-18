@@ -7,12 +7,16 @@ A pull request starts only `pr-checks.yml`: one Linux job, `Light Checks`
 It is the required status check for `main`, without an up-to-date requirement.
 No push, pull request or schedule starts a macOS runner (`macrunner` or `macos-26`).
 
-Heavy verification runs only through `ci-batch.yml`, a manual dispatch the owner
-approves per run. It calls `ci.yml` and, selectable per run, the hang replays,
+Heavy verification starts manually through `ci-batch.yml` or a focused acceptance
+workflow. When approval is required, it covers the build incident rather than
+each run. The batch calls `ci.yml` and, selectable per run, the hang replays,
 signing preflight, native workspace acceptance and private Music Video analysis
-acceptance, covering every merge since the previous batch. A red batch
-is fixed or reverted before further merges; a release starts only from a `main`
-commit with a green batch run. `ci.yml`'s first job carries the same name,
+acceptance, covering every merge since the previous batch. After a scoped fix,
+the incident resumes only the affected failed checks. The PR records the earlier
+successful run and commit, the new run and commit, and why the retained checks'
+code and inputs remain applicable. Release readiness combines those documented
+results for the release's `main` commit; an unresolved failure cannot count as
+passing evidence. `ci.yml`'s first job carries the same name,
 `Light Checks`, so a dispatched run (for example the release metadata flow) also
 satisfies the required check.
 
@@ -46,6 +50,13 @@ source, references, spend receipt and trimmed cut handles to the assembled film.
 Intake and phase approvals use the document's controls throughout the same run;
 missing current artifacts must disable approval before their exact bytes are restored.
 Agent responses and creative choices remain supplied fixture inputs.
+
+The same Workspace UI Acceptance workflow also runs the generation batch pointer
+and keyboard review with that built app. This review runs even after a workspace
+check fails. Both checks' logs and screenshots, along with the workspace JSON,
+are retained in `workspace-ui-evidence`. Its standalone dispatch repeats these two native surfaces
+without rerunning the unit, HDR, pack, startup or chat suites whose earlier
+successful evidence remains applicable to the scoped fix.
 
 The missing-reference acceptance follows the visible revision action through the
 agent-facing diagnostic, a supplied repaired proposal, its rendered thumbnail and

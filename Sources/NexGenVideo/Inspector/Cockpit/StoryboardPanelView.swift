@@ -38,8 +38,12 @@ struct StoryboardPanelView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             if source == currentSource {
-                if settledBinding == .changed { changedNotice }
-                content
+                if scrollsState {
+                    ScrollView { stateContent }
+                        .scrollBounceBehavior(.basedOnSize)
+                } else {
+                    stateContent
+                }
             } else {
                 centeredProgress()
             }
@@ -48,6 +52,20 @@ struct StoryboardPanelView: View {
         .background { acceptanceProbe("storyboard.review", text: settledBinding?.rawValue) }
         .task(id: currentSource) { await load() }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+    }
+
+    private var scrollsState: Bool {
+        switch state {
+        case .loaded(nil), .failed: true
+        default: false
+        }
+    }
+
+    private var stateContent: some View {
+        VStack(spacing: AppTheme.Spacing.none) {
+            if settledBinding == .changed { changedNotice }
+            content
+        }
     }
 
     @ViewBuilder

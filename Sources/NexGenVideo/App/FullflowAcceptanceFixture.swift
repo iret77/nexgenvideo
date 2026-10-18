@@ -169,9 +169,7 @@ enum FullflowAcceptanceFixture {
                     "start_state": ["summary": "The marker enters the field.", "entity_state_ids": []],
                     "end_state": ["summary": "The marker holds its final position.", "entity_state_ids": []],
                     "blocking": [], "timed_action_beats": [],
-                    "acceptance": [["id": "accept-\(id)", "requirement": "Preserve the moving composition.", "severity": "required"]],
-                    "primary_action": "The marker moves.", "camera": ["movement_id": "static"],
-                    "continuity_locks": [], "renderability": "green", "risks": []]
+                    "acceptance": [["id": "accept-\(id)", "requirement": "Preserve the moving composition.", "severity": "required"]]]
                 if isGenerated, let generatedShot {
                     executionShot["generation_requirement"] = ["modality_id": "video", "mode_ids": [generatedShot.modeID],
                         "duration": ["minimum_seconds": renderDuration, "maximum_seconds": renderDuration, "allows_automatic": false],
@@ -185,6 +183,12 @@ enum FullflowAcceptanceFixture {
                     executionShot["reference_demands"] = [demand]
                     executionShot["conditioning"] = ["strategy": "reference_anchor", "rationale": "Retain the confirmed stage image.",
                         "mode_ids": [generatedShot.modeID], "anchor_demand_ids": ["stage-anchor"]]
+                } else {
+                    executionShot["primary_action"] = "The marker moves."
+                    executionShot["camera"] = ["movement_id": "static"]
+                    executionShot["continuity_locks"] = [] as [String]
+                    executionShot["renderability"] = "green"
+                    executionShot["risks"] = [] as [String]
                 }
                 execution.append(executionShot)
                 sectionShotIDs.append(id)

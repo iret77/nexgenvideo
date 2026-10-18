@@ -96,6 +96,27 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
         self.assertIn("evidence/export-actions.json", release)
 
+    def test_generation_review_reuses_workspace_runtime_and_survives_ui_failure(self):
+        step = "      - name: Verify generation batch pointer and keyboard review on macOS 26\n"
+        self.assertNotIn(step, CI.read_text())
+        workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
+        acceptance = workspace.split("  acceptance:\n", 1)[1]
+        self.assertIn("runs-on: macos-26", acceptance)
+        self.assertIn("name: workspace-ui-app", acceptance)
+        self.assertLess(acceptance.index("tar -xzf"), acceptance.index("scripts/workspace_ui_acceptance.py"))
+        self.assertLess(acceptance.index("scripts/workspace_ui_acceptance.py"), acceptance.index(step))
+        review, upload = acceptance.split(step, 1)[1].split("      - uses: actions/upload-artifact@v4", 1)
+        self.assertIn("if: ${{ !cancelled() }}", review)
+        self.assertNotIn("continue-on-error", review)
+        self.assertIn('"$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo"', review)
+        self.assertIn('NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence"', review)
+        self.assertIn("NGV_SELFTEST_GENERATION_BATCH_REVIEW=1", review)
+        self.assertIn('test "$status" -eq 0', review)
+        self.assertIn("grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK'", review)
+        self.assertIn("if: always()", upload)
+        for suffix in ("json", "log", "png"):
+            self.assertIn("${{ runner.temp }}/evidence/generation-*." + suffix, upload)
+
     def test_only_the_light_pull_request_check_starts_automatically(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
             automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS
