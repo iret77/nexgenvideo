@@ -45,10 +45,10 @@ enum AgentActivityAcceptance {
             window.contentView = nil
         }
         let resultID = "agent.result.\(answer.id.uuidString)"
-        try await openActivity(in: window)
+        try await openActivity(in: window, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { utilityWindow(resultID) != nil && utilityWindow("agent.stop") == nil }
-        try await verifyUtilities(editor: editor, controller: controller)
-        try await openActivity(in: window)
+        try await verifyUtilities(editor: editor, controller: controller, evidenceURL: evidenceURL, scale: scale)
+        try await openActivity(in: window, evidenceURL: evidenceURL, scale: scale)
         guard let activityWindow = utilityWindow(resultID), let host = activityWindow.contentView else {
             throw Failure("The status bar did not present the restored activity popover")
         }
@@ -84,9 +84,7 @@ enum AgentActivityAcceptance {
                 && visibleProbes("agent.stop", in: host).first?.acceptanceText == "Stop agent"
         }
         screenshots.append(try capture(host, name: "agent-streaming", scale: scale, directory: evidenceURL))
-        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: activityWindow) == nil else {
-            throw Failure("The native Stop task control is not clickable")
-        }
+        try await activate("agent.stop", in: activityWindow, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { !service.isStreaming && service.currentTaskPhase == nil }
         guard editor.pipelinePhaseExecution.snapshot?.isRunning == true,
               editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: home) == "bible" else {
@@ -117,9 +115,7 @@ enum AgentActivityAcceptance {
             throw Failure("The generation action does not name generation")
         }
         screenshots.append(try capture(host, name: "agent-generating", scale: scale, directory: evidenceURL))
-        guard WorkspaceUIAcceptance.click(identifier: "agent.stop", in: activityWindow) == nil else {
-            throw Failure("The native Stop generation control is not clickable")
-        }
+        try await activate("agent.stop", in: activityWindow, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { service.currentSpendRun == nil }
         editor.showsAgentActivity = false
         try await waitUntil { utilityWindow(resultID) == nil }
@@ -132,21 +128,22 @@ enum AgentActivityAcceptance {
         return screenshots
     }
 
-    private static func verifyUtilities(editor: EditorViewModel, controller: EditorWindowController) async throws {
+    private static func verifyUtilities(editor: EditorViewModel, controller: EditorWindowController,
+                                        evidenceURL: URL, scale: Double) async throws {
         guard let statusWindow = controller.window else { throw Failure("The editor window is unavailable") }
         for utility in ["sessions", "decisions", "diagnostics"] {
             let action = "agent.\(utility)"
             let done = "\(action).done"
-            try await openActivity(in: statusWindow)
-            guard let window = utilityWindow(action),
-                  WorkspaceUIAcceptance.click(identifier: action, in: window) == nil else {
+            try await openActivity(in: statusWindow, evidenceURL: evidenceURL, scale: scale)
+            guard let window = utilityWindow(action) else {
                 throw Failure("The activity flyout cannot open \(utility)")
             }
+            try await activate(action, in: window, evidenceURL: evidenceURL, scale: scale)
             try await waitUntil { utilityWindow(done) != nil }
-            guard let presented = utilityWindow(done),
-                  WorkspaceUIAcceptance.click(identifier: done, in: presented) == nil else {
+            guard let presented = utilityWindow(done) else {
                 throw Failure("The activity flyout did not present usable \(utility)")
             }
+            try await activate(done, in: presented, evidenceURL: evidenceURL, scale: scale)
             try await waitUntil { utilityWindow(done) == nil }
         }
         editor.showsAgentActivity = false
@@ -157,20 +154,52 @@ enum AgentActivityAcceptance {
             throw Failure("The Sessions menu action was not handled by the editor window")
         }
         try await waitUntil { utilityWindow("agent.sessions.done") != nil }
-        guard let history = utilityWindow("agent.sessions.done"),
-              WorkspaceUIAcceptance.click(identifier: "agent.sessions.done", in: history) == nil else {
+        guard let history = utilityWindow("agent.sessions.done") else {
             throw Failure("The Sessions menu action did not present usable history from the closed flyout")
         }
+        try await activate("agent.sessions.done", in: history, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { utilityWindow("agent.sessions.done") == nil }
     }
 
-    private static func openActivity(in window: NSWindow) async throws {
+    private static func openActivity(in window: NSWindow, evidenceURL: URL, scale: Double) async throws {
         if utilityWindow("agent.sessions") != nil { return }
-        window.makeKeyAndOrderFront(nil)
-        guard WorkspaceUIAcceptance.click(identifier: "production.ai", in: window) == nil else {
-            throw Failure("The actual status bar AI control is not clickable")
-        }
+        try await activate("production.ai", in: window, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { utilityWindow("agent.sessions") != nil }
+    }
+
+    private static func activate(_ identifier: String, in window: NSWindow, evidenceURL: URL, scale: Double) async throws {
+        var stage = "window activation"
+        do {
+            window.makeKeyAndOrderFront(nil)
+            try await waitUntil { window.isVisible && window.isKeyWindow && !window.ignoresMouseEvents }
+            stage = "control layout"
+            guard await WorkspaceUIAcceptance.revealProbe(identifier, in: window) else {
+                throw Failure("The control did not settle with its full click area inside the window")
+            }
+            stage = "native click"
+            if let reason = WorkspaceUIAcceptance.click(identifier: identifier, in: window) {
+                throw Failure(reason)
+            }
+        } catch {
+            let root = window.contentView
+            let probe = root.flatMap { WorkspaceUIAcceptance.findProbe(in: $0, identifier: identifier) }
+            let screenshot = root.flatMap {
+                try? capture($0, name: "agent-control-failed", scale: scale, directory: evidenceURL)
+            }
+            let diagnostic: [String: Any] = ["event": "agent-activity-control-diagnostic", "scale": scale,
+                "controlID": identifier, "stage": stage, "reason": error.localizedDescription,
+                "windowVisible": window.isVisible, "windowKey": window.isKeyWindow,
+                "windowNumber": window.windowNumber, "keyWindowNumber": NSApp.keyWindow?.windowNumber ?? -1,
+                "windowBounds": root.map { NSStringFromRect($0.bounds) } ?? "unavailable",
+                "probeFound": probe != nil, "probeHidden": probe?.isHiddenOrHasHiddenAncestor ?? true,
+                "probeFrameInWindow": probe.map { NSStringFromRect($0.convert($0.bounds, to: nil)) } ?? "unavailable",
+                "probeVisibleRect": probe.map { NSStringFromRect($0.visibleRect) } ?? "unavailable",
+                "screenshot": screenshot ?? "unavailable"]
+            if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]) {
+                FileHandle.standardOutput.write(data + Data([10]))
+            }
+            throw Failure("The native control \(identifier) failed during \(stage): \(error.localizedDescription)")
+        }
     }
 
     private static func utilityWindow(_ identifier: String) -> NSWindow? {

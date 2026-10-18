@@ -97,7 +97,7 @@ struct ProjectCockpitView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: AppTheme.Spacing.none, maxHeight: .infinity, alignment: .top)
             .background {
                 if GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                     AppRelaunchClickProbe(identifier: "production.artifact", acceptanceText: selectedTitle)

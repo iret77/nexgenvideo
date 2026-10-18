@@ -28,7 +28,7 @@ struct GenerationApprovalCard<Content: View, Footer: View>: View {
             minimumBodyHeight: AppTheme.ComponentSize.generationBatchListMinHeight * interfaceScale,
             spacing: AppTheme.Spacing.smMd,
             fillsMaximumHeight: fillsMaximumHeight,
-            allowsBodyCompression: availableHeight != nil
+            hasExplicitHeightLimit: availableHeight != nil
         ) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Label(title, systemImage: "sparkles")

@@ -45,15 +45,34 @@ jobs:
         with:
           name: workspace-ui-app
           path: ${{ runner.temp }}/workspace-ui
-      - name: Exercise native workspace and panel controls
+      - name: Prepare acceptance app on macOS 26
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
           tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
+      - name: Exercise native workspace and panel controls
+        run: |
+          set -euo pipefail
           export NGV_WORKSPACE_UI_PACK="$RUNNER_TEMP/workspace-ui/plugins/musicvideo.ngvpack"
           python3 scripts/workspace_ui_acceptance.py \
             "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             "$RUNNER_TEMP/evidence"
+      - name: Verify generation batch pointer and keyboard review on macOS 26
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          # Keyboard navigation lets Remove take focus during the native review.
+          defaults write -g AppleKeyboardUIMode -int 2
+          mkdir -p "$RUNNER_TEMP/evidence"
+          status=0
+          NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence" \
+          NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
+            "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
+            > "$RUNNER_TEMP/evidence/generation-batch-review.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/evidence/generation-batch-review.log"
+          test "$status" -eq 0
+          grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK' "$RUNNER_TEMP/evidence/generation-batch-review.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -65,4 +84,7 @@ jobs:
             ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
             ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
             ${{ runner.temp }}/evidence/scale-*-fullflow-analysis.json
+            ${{ runner.temp }}/evidence/generation-*.json
+            ${{ runner.temp }}/evidence/generation-*.log
+            ${{ runner.temp }}/evidence/generation-*.png
           retention-days: 14

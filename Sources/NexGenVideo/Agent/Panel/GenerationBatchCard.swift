@@ -82,7 +82,6 @@ struct GenerationBatchCard: View {
             GenerationApprovalCard(
                 title: [GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
                     batch.payload.phase.map(PhaseDisplay.label)].compactMap { $0 }.joined(separator: " · "),
-                subtitle: requestSummary(projection),
                 fillsMaximumHeight: projection.itemCount > 1
             ) {
                 body(batch: batch, projection: projection, controls: controls)
@@ -135,6 +134,18 @@ struct GenerationBatchCard: View {
     ) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                if let summary = requestSummary(projection) {
+                    Text(summary)
+                        .interfaceFont(size: AppTheme.FontSize.xxs)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if batch.totalEUR == nil {
+                    Text("Provider charges apply. The cost is recorded only if the provider reports it.")
+                        .interfaceFont(size: AppTheme.FontSize.xxs)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(projection.sections) { section in
                     Section {
                         ForEach(section.items) { item in
@@ -149,7 +160,9 @@ struct GenerationBatchCard: View {
                                     isRecovering: editor.generationBatchCoordinator.recoveringItemIDs.contains(item.id),
                                     routeOptions: editor.generationBatchCoordinator.routeOptions(itemID: item.id),
                                     canEdit: controls.canEdit,
-                                    runtimeEvidenceEnabled: runtimeEvidenceEnabled && item.manifestIndex == 0,
+                                    runtimeEvidenceEnabled: runtimeEvidenceEnabled && (
+                                        item.manifestIndex == 0 || item.manifestIndex == projection.itemCount - 1
+                                    ),
                                     focusedRemoveItemID: $focusedRemoveItemID,
                                     focusedDetailsItemID: $focusedDetailsItemID,
                                     onToggleDetails: { toggleDetails(item.id) },
@@ -186,6 +199,7 @@ struct GenerationBatchCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(GenerationBatchRuntimeProbe(identifier: "generation-batch.list", enabled: runtimeEvidenceEnabled))
         }
         .scrollBounceBehavior(.basedOnSize)
     }
@@ -279,10 +293,6 @@ struct GenerationBatchCard: View {
         } else {
             Text(unknownPriceLabel(batch: batch, projection: projection))
                 .interfaceFont(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold)
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Provider charges apply. The cost is recorded only if the provider reports it.")
-                .interfaceFont(size: AppTheme.FontSize.xxs)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -541,7 +551,7 @@ struct GenerationBatchDecisionLayout: SwiftUI.Layout {
     let minimumBodyHeight: CGFloat
     let spacing: CGFloat
     let fillsMaximumHeight: Bool
-    var allowsBodyCompression = false
+    var hasExplicitHeightLimit = false
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -557,10 +567,13 @@ struct GenerationBatchDecisionLayout: SwiftUI.Layout {
             + (finite(subviews[2].sizeThatFits(childProposal).height) ?? AppTheme.Spacing.none)
             + spacing + spacing
         let body = finite(subviews[1].sizeThatFits(childProposal).height) ?? minimumBodyHeight
-        let minimumBody = allowsBodyCompression
+        let minimumBody = hasExplicitHeightLimit
             ? min(minimumBodyHeight, AppTheme.ComponentSize.generationBatchCompactBodyMinHeight) : minimumBodyHeight
-        let ceiling = max(maximumHeight, fixed + minimumBody)
-        let available = min(max(finite(proposal.height) ?? ceiling, fixed), ceiling)
+        let proposedHeight = finite(proposal.height)
+        let preferredMaximum = fillsMaximumHeight && !hasExplicitHeightLimit
+            ? max(maximumHeight, proposedHeight ?? maximumHeight) : maximumHeight
+        let ceiling = max(preferredMaximum, fixed + minimumBody)
+        let available = min(max(proposedHeight ?? ceiling, fixed), ceiling)
         let height = fillsMaximumHeight ? available : min(fixed + body, available)
         return CGSize(width: width, height: height)
     }

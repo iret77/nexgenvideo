@@ -137,19 +137,27 @@ enum MusicvideoNativeAcceptance {
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
             executionCoordinator: editor.pipelinePhaseRunCoordinator)
         guard !blocked.approval.isReady, let reason = WorkspaceUIAcceptance.probeText(identifier: controlID, in: window),
-              !reason.isEmpty, await WorkspaceUIAcceptance.revealProbe(controlID, in: window),
-              WorkspaceUIAcceptance.visibleProbe(identifier: controlID, in: window, containedBy: host.bounds, requiredState: false),
-              WorkspaceUIAcceptance.click(identifier: controlID, in: window) == nil else {
+              !reason.isEmpty, WorkspaceUIAcceptance.probeState(identifier: controlID, in: window) == false else {
             throw FullflowAcceptanceFixture.Failure("The missing current \(phase) artifact did not disable native approval.")
+        }
+        let scale = UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey)
+        let scaleLabel = Int((scale > 0 ? scale : AppTheme.Typography.standardScale) * 100)
+        let prefix = "scale-\(scaleLabel)-native-gate-\(phase)-\(UUID().uuidString)"
+        guard await WorkspaceUIAcceptance.revealProbe(controlID, in: window),
+              let dock = WorkspaceUIAcceptance.probeFrame(identifier: "production.dock", in: window),
+              host.bounds.contains(dock),
+              WorkspaceUIAcceptance.visibleProbe(identifier: controlID, in: window, containedBy: dock, requiredState: false) else {
+            _ = try? capture(window, name: prefix + "-blocked-unreachable", evidenceURL: evidenceURL)
+            throw FullflowAcceptanceFixture.Failure("The \(phase) approval is disabled, but its control or phase dock is clipped outside the visible workspace.")
+        }
+        if let error = WorkspaceUIAcceptance.click(identifier: controlID, in: window) {
+            throw FullflowAcceptanceFixture.Failure("The disabled \(phase) approval could not receive the native test click: \(error).")
         }
         try await Task.sleep(for: .milliseconds(150))
         guard try Data(contentsOf: root.appendingPathComponent(PipelineLayout.gatesFile)) == before,
               service.pendingGateApproval?.id == approval.id else {
             throw FullflowAcceptanceFixture.Failure("Clicking disabled \(phase) approval changed the gate.")
         }
-        let scale = UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey)
-        let scaleLabel = Int((scale > 0 ? scale : AppTheme.Typography.standardScale) * 100)
-        let prefix = "scale-\(scaleLabel)-native-gate-\(phase)-\(UUID().uuidString)"
         var screenshots = [try capture(window, name: prefix + "-blocked", evidenceURL: evidenceURL)]
         try FileManager.default.moveItem(at: held, to: artifact)
         restored = true

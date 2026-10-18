@@ -151,6 +151,11 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.revise",
             "generation-batch.approve",
         ], in: window, context: "13-item narrow large-text review")
+        try writeListViewportEvidence(identifier: "generation-batch.details.\(firstID)", in: window,
+                                      context: "13-item narrow large-text review")
+        try await verifyLastRequest(original, in: window, context: "13-item narrow large-text review")
+        try await reveal(identifier: "generation-batch.details.\(firstID)", in: window,
+                         context: "13-item review returned to its first request")
         try captureWindow(window, name: "generation-batch-narrow-large.png")
         try await verifyDetailsToggle(
             identifier: "generation-batch.details.\(firstID)",
@@ -204,6 +209,8 @@ enum GenerationBatchReviewSelfTest {
             "generation-batch.revise",
             "generation-batch.approve",
         ], in: window, context: "12-item narrow large-text review in the default window")
+        try writeListViewportEvidence(identifier: "generation-batch.item.\(keyboardID)", in: window,
+                                      context: "12-item narrow large-text review in the default window")
 
         place(window, contentSize: NSSize(
             width: AppTheme.Layout.agentPanelMax,
@@ -298,6 +305,7 @@ enum GenerationBatchReviewSelfTest {
                 "generation-batch.decline",
                 "generation-batch.approve",
             ], in: window, context: "50-item \(Int(width))-point large-text review")
+            try await verifyLastRequest(fifty, in: window, context: "50-item \(Int(width))-point large-text review")
         }
         editor.generationBatchCoordinator.decline(editor: editor)
         try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
@@ -754,20 +762,60 @@ enum GenerationBatchReviewSelfTest {
         writeEvidence("render-boundary expectedExpanded=\(expectExpanded) \(renderEvidence)")
     }
 
+    private static func verifyLastRequest(_ batch: GenerationBatch, in window: NSWindow, context: String) async throws {
+        guard let lastID = batch.payload.items.last?.id else {
+            throw Failure(message: "\(context) has no last request")
+        }
+        let identifier = "generation-batch.details.\(lastID)"
+        try await reveal(identifier: identifier, in: window, context: context, searchFromEnd: true)
+        try await requireVisible([
+            identifier,
+            "generation-batch.remove.\(lastID)",
+            "generation-batch.decline",
+            "generation-batch.approve",
+        ], in: window, context: "\(context) last request")
+        try writeListViewportEvidence(identifier: identifier, in: window, context: "\(context) last request")
+    }
+
+    private static func writeListViewportEvidence(identifier: String, in window: NSWindow, context: String) throws {
+        guard let root = window.contentView,
+              let probe = findClickProbes(in: root, identifier: identifier).first,
+              let scrollView = probe.enclosingScrollView else {
+            throw Failure(message: "\(context) has no native list viewport for \(identifier)")
+        }
+        writeEvidence("list-viewport context=\(context) " + scrollGeometry(probe: probe, scrollView: scrollView))
+    }
+
     private static func reveal(
         identifier: String,
         in window: NSWindow,
-        context: String
+        context: String,
+        searchFromEnd: Bool = false
     ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
         var lastBoundary = "native probe absent"
+        var searchedFromTop = false
         while clock.now < deadline {
             guard let root = window.contentView else {
                 throw Failure(message: "\(context) has no window content view while revealing \(identifier)")
             }
             guard let probe = findClickProbes(in: root, identifier: identifier).first else {
                 lastBoundary = "native probe absent"
+                if let list = findClickProbes(in: root, identifier: "generation-batch.list").first,
+                   let scrollView = list.enclosingScrollView, let document = scrollView.documentView {
+                    root.layoutSubtreeIfNeeded()
+                    let before = scrollView.contentView.bounds.origin
+                    let viewportHeight = scrollView.contentView.bounds.height
+                    let bottom = max(0, document.frame.height - viewportHeight)
+                    let next = searchFromEnd ? bottom
+                        : (searchedFromTop ? min(bottom, before.y + viewportHeight / 2) : 0)
+                    searchedFromTop = true
+                    scrollView.contentView.scroll(to: NSPoint(x: before.x, y: next))
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                    lastBoundary = "searching native list before=\(pointDescription(before)) "
+                        + "after=\(pointDescription(scrollView.contentView.bounds.origin))"
+                }
                 try? await Task.sleep(for: .milliseconds(100))
                 continue
             }
