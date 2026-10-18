@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import SwiftUI
+import Vision
 
 private struct Shot: Identifiable {
     let id: String
@@ -65,6 +66,7 @@ private struct Storyboard: View {
             }
             Text("Storyboard · Upcoming").frame(maxWidth: .infinity, alignment: .leading).padding(12)
         }
+        .foregroundStyle(Color.white).background(Color.black)
     }
 }
 
@@ -119,13 +121,25 @@ private enum StoryboardAccessibilityProbe {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         Task { @MainActor in
-            var report: [String: Any] = ["schema": "storyboard-accessibility-probe/v1", "measurementOnly": true,
+            var report: [String: Any] = ["schema": "storyboard-accessibility-probe/v2", "measurementOnly": true,
                 "os": ProcessInfo.processInfo.operatingSystemVersionString, "finished": false]
             do {
                 guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26 else {
                     throw Failure(message: "The probe requires macOS 26.")
                 }
-                report.merge(try await measure()) { _, new in new }
+                let baseline = try await measure(accessibilityEnabled: false, destination: destination)
+                report["defaultEnvironment"] = baseline
+                try write(report, to: destination)
+                let enabled = try await measure(accessibilityEnabled: true, destination: destination)
+                report["accessibilityEnabledEnvironment"] = enabled
+                let negative = try await measureRawTokens(destination: destination)
+                report["rawTokenControl"] = negative
+                let axVerified = enabled["accessibilityTextVerified"] as? Bool == true
+                let pixelsVerified = baseline["pixelsVerified"] as? Bool == true
+                    && negative["allTokensDetected"] as? Bool == true
+                report["verifiedMechanisms"] = (axVerified ? ["accessibilityEnabledEnvironment"] : [])
+                    + (pixelsVerified ? ["pixelRecognitionWithRawTokenControl"] : [])
+                report["textVerified"] = axVerified || pixelsVerified
                 report["finished"] = true
                 try write(report, to: destination)
                 exit(report["textVerified"] as? Bool == true ? 0 : 2)
@@ -138,7 +152,7 @@ private enum StoryboardAccessibilityProbe {
         app.run()
     }
 
-    private static func measure() async throws -> [String: Any] {
+    private static func measure(accessibilityEnabled: Bool, destination: URL) async throws -> [String: Any] {
         let shots = [Shot(id: "verse1.01", subject: "The singer stops at the platform edge.", purpose: "Story"),
             Shot(id: "verse1.02", subject: "A train passes the empty platform.", purpose: "Transition"),
             Shot(id: "chorus1.01", subject: "The singer turns toward the morning light.", purpose: "Performance")]
@@ -148,7 +162,9 @@ private enum StoryboardAccessibilityProbe {
             "generated", "transition", "performance", "wide.noon"]
         let root = NSViewController()
         root.view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 650))
-        let artifact = PanelHost(content: Storyboard(shots: shots), identifier: "projectPanel")
+        let storyboard = Storyboard(shots: shots)
+        let content = accessibilityEnabled ? AnyView(storyboard.environment(\.accessibilityEnabled, true)) : AnyView(storyboard)
+        let artifact = PanelHost(content: content, identifier: "projectPanel")
         let inspector = PanelHost(content: ScrollView {
             VStack(alignment: .leading) {
                 Text("Inspector control text")
@@ -227,9 +243,100 @@ private enum StoryboardAccessibilityProbe {
             sample["inspectorOriginal"] = scan(inspector.view, mode: .original).json
             samples.append(sample)
         }
-        return ["samples": samples, "hits": hits, "textVerified": verified,
+        var pixels: [[String: Any]] = []
+        for (index, shot) in shots.enumerated() {
+            guard let probe = probes.first(where: { $0.identifier?.rawValue == "storyboard.shot.\(shot.id)" }) else {
+                throw Failure(message: "A rendered card lost its native probe.")
+            }
+            let frame = probe.convert(probe.bounds, to: artifact.view)
+            let image = try capture(artifact.view, frame: frame)
+            let prefix = accessibilityEnabled ? "enabled" : "default"
+            let name = "storyboard-probe-\(prefix)-\(shot.id).png"
+            try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
+            var read = try recognize(image)
+            let text = read["text"] as? String ?? ""
+            let leaked = forbidden.filter { text.contains($0) }
+            read["shotID"] = shot.id
+            read["screenshot"] = name
+            read["missingSubject"] = !text.contains(expected[index])
+            read["leakedTokens"] = leaked
+            read["verified"] = text.contains(expected[index]) && leaked.isEmpty
+            pixels.append(read)
+        }
+        return ["samples": samples, "hits": hits, "accessibilityTextVerified": verified,
+            "pixels": pixels, "pixelsVerified": pixels.allSatisfy { $0["verified"] as? Bool == true },
             "expectedSubjects": expected, "forbiddenTokens": forbidden,
             "artifactClass": className(artifact.view), "artifactFrame": rect(artifact.view.frame)]
+    }
+
+    private static func measureRawTokens(destination: URL) async throws -> [String: Any] {
+        let forbidden = ["basis: inferred", "angle:", "height:", "lens_hint:",
+            "generated", "transition", "performance", "wide.noon"]
+        var samples: [[String: Any]] = []
+        for scale in [1.0, 1.25, 1.5] {
+            let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 8) {
+                ForEach(forbidden, id: \.self) { token in
+                    Text(token).font(.system(size: 14 * scale))
+                }
+            }.padding(16).frame(width: 414, height: 360, alignment: .topLeading)
+                .foregroundStyle(Color.white).background(Color.black))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 414, height: 360),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil); window.contentView = nil; window.close() }
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+            let image = try capture(host, frame: host.bounds)
+            let name = "storyboard-probe-raw-\(Int(scale * 100)).png"
+            try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
+            var read = try recognize(image)
+            let text = read["text"] as? String ?? ""
+            let missing = forbidden.filter { !text.contains($0) }
+            read["scale"] = scale
+            read["screenshot"] = name
+            read["undetectedTokens"] = missing
+            read["allTokensDetected"] = missing.isEmpty
+            samples.append(read)
+        }
+        return ["samples": samples, "allTokensDetected": samples.allSatisfy { $0["allTokensDetected"] as? Bool == true }]
+    }
+
+    private static func recognize(_ image: CGImage) throws -> [String: Any] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        let observations = (request.results ?? []).sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+        let lines = observations.compactMap { observation -> [String: Any]? in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            return ["text": candidate.string, "confidence": Double(candidate.confidence), "bounds": rect(observation.boundingBox)]
+        }
+        let text = lines.compactMap { $0["text"] as? String }.joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return ["text": text, "lines": lines, "pixelWidth": image.width, "pixelHeight": image.height,
+            "usesLanguageCorrection": false, "customWords": [String](), "minimumTextHeight": 0]
+    }
+
+    private static func capture(_ view: NSView, frame: NSRect) throws -> CGImage {
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: frame) else {
+            throw Failure(message: "The native card could not allocate its pixel snapshot.")
+        }
+        view.cacheDisplay(in: frame, to: bitmap)
+        guard let image = bitmap.cgImage else { throw Failure(message: "The native card snapshot contains no image.") }
+        return image
+    }
+
+    private static func save(_ image: CGImage, to destination: URL) throws {
+        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw Failure(message: "A pixel evidence image could not be encoded.")
+        }
+        try png.write(to: destination, options: .atomic)
     }
 
     private static func scan(_ root: Any, mode: Scan) -> Read {

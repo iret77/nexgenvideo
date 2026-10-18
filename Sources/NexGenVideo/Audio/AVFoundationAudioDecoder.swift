@@ -58,49 +58,59 @@ struct AVFoundationAudioDecoder: AudioPCMDecoding {
         // Average channels on downmix, matching librosa's mono=True.
         converter.downmix = true
 
-        guard let readBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(frameCount)) else {
-            throw DecodeError.conversionFailed("could not allocate read buffer")
-        }
-        do {
-            try file.read(into: readBuffer)
-        } catch {
-            throw DecodeError.unreadable("\(name) (\(error.localizedDescription))")
-        }
-
-        // Output capacity: source frames scaled by the sample-rate ratio, plus
-        // slack for the resampler's tail.
         let ratio = analysisSampleRate / sourceFormat.sampleRate
-        let outCapacity = AVAudioFrameCount((Double(frameCount) * ratio).rounded(.up)) + 4096
+        let outCapacity: AVAudioFrameCount = 4096
         guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCapacity) else {
             throw DecodeError.conversionFailed("could not allocate output buffer")
         }
 
-        var fed = false
+        var inputError: Error?
         var samples: [Float] = []
-        samples.reserveCapacity(Int(outCapacity))
+        samples.reserveCapacity(Int((Double(frameCount) * ratio).rounded(.up)))
         while true {
             outBuffer.frameLength = 0
             var conversionError: NSError?
-            let status = converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
-                if fed {
+            let positionBeforeConversion = file.framePosition
+            let status = converter.convert(to: outBuffer, error: &conversionError) { requestedFrames, outStatus in
+                guard inputError == nil else {
                     outStatus.pointee = .endOfStream
                     return nil
                 }
-                fed = true
-                outStatus.pointee = .haveData
-                return readBuffer
+                do {
+                    guard requestedFrames > 0, let buffer = AVAudioPCMBuffer(
+                        pcmFormat: sourceFormat, frameCapacity: requestedFrames
+                    ) else { throw DecodeError.conversionFailed("could not allocate requested input frames") }
+                    try file.read(into: buffer, frameCount: requestedFrames)
+                    guard buffer.frameLength > 0 else {
+                        guard file.framePosition >= frameCount else {
+                            throw DecodeError.unreadable("\(name) (stopped at frame \(file.framePosition) of \(frameCount))")
+                        }
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+                    outStatus.pointee = .haveData
+                    return buffer
+                } catch {
+                    inputError = error
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
             }
+            if let inputError { throw inputError }
             if let conversionError {
                 throw DecodeError.conversionFailed(conversionError.localizedDescription)
             }
             guard status != .error else {
                 throw DecodeError.conversionFailed("converter returned an error")
             }
-            if outBuffer.frameLength > 0, let channel = outBuffer.floatChannelData?[0] {
+            if outBuffer.frameLength > 0 {
+                guard let channel = outBuffer.floatChannelData?[0] else {
+                    throw DecodeError.conversionFailed("converted buffer has no Float32 channel")
+                }
                 samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
             }
             if status == .endOfStream { break }
-            guard outBuffer.frameLength > 0 else {
+            guard outBuffer.frameLength > 0 || file.framePosition > positionBeforeConversion else {
                 throw DecodeError.conversionFailed("converter stopped producing frames before reaching the end of the stream")
             }
         }
@@ -109,23 +119,30 @@ struct AVFoundationAudioDecoder: AudioPCMDecoding {
         return PCMBuffer(samples: samples, sampleRate: analysisSampleRate)
     }
 
-    /// Already mono/Float32 at the target rate: read the whole file into one
-    /// buffer and lift the channel out.
     private func readDirect(file: AVAudioFile, frameCount: AVAudioFramePosition, name: String) throws -> PCMBuffer {
         guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(frameCount)
+            pcmFormat: file.processingFormat, frameCapacity: 4096
         ) else {
             throw DecodeError.conversionFailed("could not allocate read buffer")
         }
+        var samples: [Float] = []
+        samples.reserveCapacity(Int(frameCount))
         do {
-            try file.read(into: buffer)
+            while true {
+                try file.read(into: buffer, frameCount: buffer.frameCapacity)
+                guard buffer.frameLength > 0 else { break }
+                guard let channel = buffer.floatChannelData?[0] else {
+                    throw DecodeError.conversionFailed("decoded buffer has no Float32 channel")
+                }
+                samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+            }
         } catch {
             throw DecodeError.unreadable("\(name) (\(error.localizedDescription))")
         }
-        guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else {
-            throw DecodeError.emptyAudio(name)
+        guard file.framePosition >= frameCount else {
+            throw DecodeError.unreadable("\(name) (stopped at frame \(file.framePosition) of \(frameCount))")
         }
-        let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+        guard !samples.isEmpty else { throw DecodeError.emptyAudio(name) }
         return PCMBuffer(samples: samples, sampleRate: analysisSampleRate)
     }
 }

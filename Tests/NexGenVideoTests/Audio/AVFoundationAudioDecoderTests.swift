@@ -49,7 +49,7 @@ struct AVFoundationAudioDecoderTests {
         #expect(pcm.samples.contains { abs($0) > 0.01 })
     }
 
-    @Test("resampling preserves all 4.3 seconds and the real final audio", arguments: [44_100.0, 48_000.0])
+    @Test("decoding preserves all 4.3 seconds and the real final audio", arguments: [22_050.0, 44_100.0, 48_000.0])
     func preservesFinalSamples(sourceRate: Double) throws {
         let url = Self.tempURL("wav")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -85,7 +85,7 @@ struct AVFoundationAudioDecoderTests {
 
         let pcm = try AVFoundationAudioDecoder().decode(url)
         #expect(pcm.sampleRate == analysisSampleRate)
-        #expect(abs(pcm.durationSeconds - 1.0) < 0.05, "duration=\(pcm.durationSeconds)")
+        #expect(pcm.samples.count == 22_050, "duration=\(pcm.durationSeconds)")
         #expect(pcm.samples.contains { abs($0) > 0.01 })
     }
 
