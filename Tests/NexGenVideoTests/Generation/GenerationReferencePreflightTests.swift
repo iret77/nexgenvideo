@@ -94,10 +94,10 @@ struct GenerationReferencePreflightTests {
             requiresFirstFrame: true, duration: .init(preferredSeconds: 5, minimumSeconds: 5, maximumSeconds: 5),
             resolution: "720p", aspectRatio: "16:9", requiresOutputAudio: false)
         let projectID = "references", shotID = "shot-001"
-        let asset = AssetGraphNodeV1(id: "mara", version: 1, path: path,
+        let asset = try AssetGraphContentAddressV1.reidentified(AssetGraphNodeV1(id: "pending", version: 1, path: path,
             sha256: try FileDigest.sha256(of: fixture.source), modality: .image, approval: .approved,
             provenance: .init(kindID: "fixture.import", recordedAt: "2026-10-18T00:00:00Z"),
-            allowedUseIDs: [CoreReferenceSemanticJobIDV1.firstFrame])
+            allowedUseIDs: [CoreReferenceSemanticJobIDV1.firstFrame]))
         let graph = AssetGraphV1(id: try AssetGraphContentAddressV1.graphID(projectID: projectID, assets: [asset]),
             projectID: projectID, assets: [asset])
         let demand = ReferenceDemandV1(id: "mara-anchor", assetID: asset.id, modality: .image,

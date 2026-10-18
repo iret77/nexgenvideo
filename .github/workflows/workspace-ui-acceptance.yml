@@ -50,6 +50,9 @@ jobs:
     needs: source
     runs-on: macrunner
     timeout-minutes: 25
+    outputs:
+      app_ready: ${{ steps.upload_app.outcome == 'success' && steps.upload_app.outputs.artifact-id != '' }}
+      app_artifact_id: ${{ steps.upload_app.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-xcode-27
@@ -59,6 +62,14 @@ jobs:
           scripts/bundle.sh debug
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
           tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+      - name: Upload acceptance app
+        id: upload_app
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-ui-app
+          path: ${{ runner.temp }}/workspace-ui.tar.gz
+          if-no-files-found: error
+          retention-days: 3
       - name: Run selected unit regressions
         if: inputs.unit_test_filter != ''
         env:
@@ -68,14 +79,10 @@ jobs:
           swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
           scripts/stage_test_runtime.sh debug
           swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: workspace-ui-app
-          path: ${{ runner.temp }}/workspace-ui.tar.gz
-          retention-days: 3
 
   acceptance:
     needs: build
+    if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 15
@@ -83,7 +90,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: workspace-ui-app
+          artifact-ids: ${{ needs.build.outputs.app_artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/workspace-ui
       - name: Prepare acceptance app on macOS 26
         run: |
