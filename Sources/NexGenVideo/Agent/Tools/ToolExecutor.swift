@@ -220,7 +220,8 @@ final class ToolExecutor {
            workingRoot.standardizedFileURL.resolvingSymlinksInPath() == target {
             return ProjectPackGate.MutationDeclaration(
                 packName: editor.declaredPluginName,
-                binding: editor.declaredPluginBinding
+                binding: editor.declaredPluginBinding,
+                productionContract: editor.declaredProductionContract
             )
         }
         do {
@@ -281,7 +282,8 @@ final class ToolExecutor {
             tool: tool,
             dataRoot: dataRoot,
             declaredPack: declaration.packName,
-            declaredBinding: declaration.binding
+            declaredBinding: declaration.binding,
+            declaredProductionContract: declaration.productionContract
         )
     }
 
@@ -388,7 +390,8 @@ final class ToolExecutor {
                         phase: phase,
                         dataRoot: root,
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                 } else if tool.usesCurrentPipelinePhase {
                     let root = try resolveDataRoot(resolved, editor: editor)
@@ -400,7 +403,8 @@ final class ToolExecutor {
                         tool: tool,
                         dataRoot: root,
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                     guardedRoot = root
                     guardedDeclaration = declaration
@@ -435,7 +439,8 @@ final class ToolExecutor {
                     _ = try ProjectPackGate.requireLiveMutation(
                         projectURL: FrameInventory.projectHome(of: mutationRoot),
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                 } catch {
                     throw ToolError(error.localizedDescription, kind: .reopenProject)
@@ -501,6 +506,7 @@ final class ToolExecutor {
                 && !result.isError
                 && result.turnDisposition == .continueTurn
             if tool != .runPhase,
+               !ProductionWorkflowV2.newWriterNames.contains(tool.rawValue),
                tool != .writeShotlist,
                !result.isError,
                result.turnDisposition == .continueTurn,
@@ -975,6 +981,10 @@ final class ToolExecutor {
         case .writeProductionDesign: return try writeProductionDesignTool(editor, args)
         case .writeTreatment:       return try writeTreatmentTool(editor, args)
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)
+        case .writeScript: return try writeScriptTool(editor, args)
+        case .writeStoryboardBundle: return try writeStoryboardBundleTool(editor, args)
+        case .writeShotPlanningDraft: return try writeShotPlanningDraftTool(editor, args)
+        case .writeRenderReview: throw ToolError("The exact host review evidence is unavailable. Review the current production inputs first.")
         case .writeBible:           return try writeBibleTool(editor, args)
         case .writeShotlist:        return try await writeShotlistTool(editor, args)
         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)

@@ -92,6 +92,10 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeProductionDesign = "write_production_design"
     case writeTreatment = "write_treatment"
     case writeStoryboard = "write_storyboard"
+    case writeScript = "write_script"
+    case writeStoryboardBundle = "write_storyboard_bundle"
+    case writeShotPlanningDraft = "write_shot_planning_draft"
+    case writeRenderReview = "write_render_review"
     case writeBible = "write_bible"
     case writeShotlist = "write_shotlist"
     case writePhaseExtension = "write_phase_extension"
@@ -107,6 +111,7 @@ enum ToolName: String, CaseIterable, Sendable {
              .recoverConfirmedIdentityProvenance,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
+             .writeScript, .writeStoryboardBundle, .writeShotPlanningDraft, .writeRenderReview,
              .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
             return true
         case .nextRenderShot:
@@ -129,6 +134,10 @@ enum ToolName: String, CaseIterable, Sendable {
         case .writeProductionDesign:      return "production_design"
         case .writeTreatment:             return "treatment"
         case .writeStoryboard:            return "storyboard"
+        case .writeScript:                return "script"
+        case .writeStoryboardBundle:      return "storyboard"
+        case .writeShotPlanningDraft:     return "shot_planning"
+        case .writeRenderReview:          return "render_review"
         case .writeBible:                 return "bible"
         case .writeShotlist:              return "shotlist"
         case .writePhaseExtension:
@@ -160,7 +169,7 @@ enum ToolName: String, CaseIterable, Sendable {
         switch self {
         case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
              .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
-             .writePhaseExtension:
+             .writePhaseExtension, .writeScript, .writeStoryboardBundle, .writeShotPlanningDraft, .writeRenderReview:
             true
         default:
             false
@@ -184,7 +193,8 @@ enum ToolName: String, CaseIterable, Sendable {
             return phase == "frames" || phase == "final"
         case .writeAnalysisInterpretation, .writeBrief,
              .writeProductionDesign, .writeTreatment, .writeStoryboard,
-             .writeBible, .writeShotlist, .writePhaseExtension, .runSanity, .saveFrameAudit:
+             .writeBible, .writeShotlist, .writePhaseExtension, .writeScript, .writeStoryboardBundle,
+             .writeShotPlanningDraft, .writeRenderReview, .runSanity, .saveFrameAudit:
             return true
         default:
             return false
@@ -1359,6 +1369,15 @@ enum ToolDefinitions {
             description: "Write the next validated storyboard version and update storyboard/current.yaml as an exact mirror. Use this instead of authoring YAML. The host owns schema/project/version/generated/generator. Provide every measured analysis section in order, with its exact interval/label and 4–12 gaplessly numbered, fully composed steps; every nested field is closed and enum-constrained.",
             inputSchema: PipelineArtifactWriteContract.storyboardSchema
         ),
+        AgentTool(name: .writeScript,
+            description: "Write the next canonical Script revision from approved Treatment beats and exact source anchors. Host-owned headers, immutable inputs and revision are not arguments.",
+            inputSchema: PipelineArtifactWriteContract.scriptV1Schema),
+        AgentTool(name: .writeStoryboardBundle,
+            description: "Atomically write Storyboard v2, adaptation, timing and stable shot identity. Omit shot id to allocate a new UUID; retain an id only for unchanged action. Sketch assets may reference existing verified host evidence; this tool cannot fabricate selection or generation receipts. Image-less plans remain drafts.",
+            inputSchema: PipelineArtifactWriteContract.storyboardBundleSchema),
+        AgentTool(name: .writeShotPlanningDraft,
+            description: "Write a technical draft for every approved planned-shot UUID. Preserve Storyboard framing/timing, declare source modes and explicit unresolved obligations; nonexistent files never count as source evidence.",
+            inputSchema: PipelineArtifactWriteContract.shotPlanningDraftSchema),
         AgentTool(
             name: .writeBible,
             description: "Write bible/bible.yaml and its versioned identity-variant contract through the engine models. Use this instead of authoring YAML or JSON. The host owns schema/project/generated/generator and variant revision; validates globally unique ids, exact generated or explicitly user-confirmed Canon provenance, every Storyboard-requested entity/view, synchronized Production Design style/lighting, and variant inheritance. Represent a real outfit/state variant as its own Bible entity plus identity_variants entry; unchanged attributes must equal the base and inherited_identity_paths must name the base Canon inherited by the variant. The previous artifacts are preserved in history.",

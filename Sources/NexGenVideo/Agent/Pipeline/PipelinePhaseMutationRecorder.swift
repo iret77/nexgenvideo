@@ -7,31 +7,37 @@ enum PipelinePhaseMutationRecorder {
         dataRoot: URL,
         captureLineage: Bool,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws {
         let packName: String?
         do {
             packName = try ProjectPackGate.requireMutation(
                 projectURL: FrameInventory.projectHome(of: dataRoot),
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             throw ToolError(error.localizedDescription)
         }
         let registry = PackCatalog.registry(activePack: packName)
-        let order = try PhaseContractRuntime.order(activePack: packName)
+        let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract)
+        let order = try workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: packName)
         guard let index = order.firstIndex(of: phase) else {
             throw ToolError("The pipeline has no registered phase named '\(phase)'.")
         }
         let lineageSnapshot: PhaseLineageSnapshot?
         let lineageFailure: String?
-        if captureLineage,
-           let provider = try PhaseContractRuntime.lineageProvider(
-               activePack: packName,
-               phase: phase,
-               registry: registry
-           ) {
+        let provider: EngineRegistry.PhaseLineageProvider?
+        if let workflow {
+            provider = try PhaseContractRuntime.lineageProvider(workflow: workflow, phase: phase, registry: registry)
+        } else {
+            provider = try PhaseContractRuntime.lineageProvider(activePack: packName, phase: phase, registry: registry)
+        }
+        if captureLineage, let provider {
             do {
                 lineageSnapshot = try provider(dataRoot)
                 lineageFailure = nil
@@ -66,7 +72,8 @@ enum PipelinePhaseMutationRecorder {
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: dataRoot),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
                 try store.save(gates, to: PipelineLayout.gatesFile)
             } catch {
@@ -86,7 +93,8 @@ enum PipelinePhaseMutationRecorder {
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: dataRoot),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
                 try PipelineLineageStore.record(
                     phase: phase,
@@ -98,7 +106,8 @@ enum PipelinePhaseMutationRecorder {
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: dataRoot),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
                 try PipelineLineageStore.record(
                     phase: PipelineExecutionPlanWriter.lineagePhaseID,

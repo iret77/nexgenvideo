@@ -778,7 +778,7 @@ extension ToolExecutor {
         }
     }
 
-    private func currentMeasuredAnalysis(
+    func currentMeasuredAnalysis(
         dataRoot: URL
     ) throws -> (url: URL, object: [String: Any], song: URL) {
         let songFiles = AudioProjectLayout.songFiles(dataRoot: dataRoot)
