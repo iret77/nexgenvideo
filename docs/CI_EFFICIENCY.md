@@ -81,6 +81,13 @@ when the optimized replay already passed and the correction does not affect its
 code or inputs. The earlier run and the unchanged replay scope belong in the PR's
 verification record.
 
+The manual Native Acceptance Probes workflow diagnoses audio duration and native
+Storyboard accessibility without compiling the app. It compiles the actual
+decoder with the engine PCM contract on `macrunner`, then measures it alongside
+a standalone hosting/accessibility probe on macOS 26. Bounded JSON and logs retain
+conversion status, real final audio and observed accessibility text. These probes
+do not replace the full workspace or private-file acceptance.
+
 ## Release metadata
 
 The publication script dispatches CI with `metadata_version` on the version's

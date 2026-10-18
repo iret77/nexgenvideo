@@ -76,27 +76,36 @@ struct AVFoundationAudioDecoder: AudioPCMDecoding {
         }
 
         var fed = false
-        var conversionError: NSError?
-        let status = converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
-            if fed {
-                outStatus.pointee = .endOfStream
-                return nil
+        var samples: [Float] = []
+        samples.reserveCapacity(Int(outCapacity))
+        while true {
+            outBuffer.frameLength = 0
+            var conversionError: NSError?
+            let status = converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
+                if fed {
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
+                fed = true
+                outStatus.pointee = .haveData
+                return readBuffer
             }
-            fed = true
-            outStatus.pointee = .haveData
-            return readBuffer
-        }
-        if let conversionError {
-            throw DecodeError.conversionFailed(conversionError.localizedDescription)
-        }
-        guard status != .error else {
-            throw DecodeError.conversionFailed("converter returned an error")
+            if let conversionError {
+                throw DecodeError.conversionFailed(conversionError.localizedDescription)
+            }
+            guard status != .error else {
+                throw DecodeError.conversionFailed("converter returned an error")
+            }
+            if outBuffer.frameLength > 0, let channel = outBuffer.floatChannelData?[0] {
+                samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
+            }
+            if status == .endOfStream { break }
+            guard outBuffer.frameLength > 0 else {
+                throw DecodeError.conversionFailed("converter stopped producing frames before reaching the end of the stream")
+            }
         }
 
-        guard let channel = outBuffer.floatChannelData?[0], outBuffer.frameLength > 0 else {
-            throw DecodeError.emptyAudio(name)
-        }
-        let samples = Array(UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
+        guard !samples.isEmpty else { throw DecodeError.emptyAudio(name) }
         return PCMBuffer(samples: samples, sampleRate: analysisSampleRate)
     }
 

@@ -1,0 +1,100 @@
+name: Native Acceptance Probes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-acceptance-probes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macrunner
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Compile actual audio decoder and standalone accessibility probe
+        run: |
+          set -euo pipefail
+          PROBE_BUILD="$RUNNER_TEMP/native-probes"
+          mkdir -p "$PROBE_BUILD"
+          xcrun swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos26.0 \
+            -module-name NexGenEngine -emit-module -emit-module-path "$PROBE_BUILD/NexGenEngine.swiftmodule" \
+            -emit-object Engine/Sources/NexGenEngine/Audio/PCM.swift -o "$PROBE_BUILD/PCM.o"
+          xcrun swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos26.0 \
+            -I "$PROBE_BUILD" "$PROBE_BUILD/PCM.o" Sources/NexGenVideo/Audio/AVFoundationAudioDecoder.swift \
+            scripts/audio_decoder_probe.swift -o "$PROBE_BUILD/audio-decoder-probe"
+          xcrun swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos26.0 \
+            scripts/storyboard_accessibility_probe.swift -o "$PROBE_BUILD/storyboard-accessibility-probe"
+          tar -czf "$RUNNER_TEMP/native-probes.tar.gz" -C "$PROBE_BUILD" audio-decoder-probe storyboard-accessibility-probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-acceptance-probes-binaries
+          path: ${{ runner.temp }}/native-probes.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  probe:
+    needs: build
+    # ci-lint: allow-CI005 Isolated audio and accessibility diagnosis on the macOS 26 production floor.
+    runs-on: macos-26
+    timeout-minutes: 3
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-acceptance-probes-binaries
+          path: ${{ runner.temp }}
+      - name: Require the production runtime and restore probes
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          tar -xzf "$RUNNER_TEMP/native-probes.tar.gz" -C "$RUNNER_TEMP"
+      - name: Measure exact decoder duration and final audio
+        id: audio
+        continue-on-error: true
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          root = Path(os.environ["RUNNER_TEMP"])
+          with (root / "audio-decoder-probe.log").open("w") as log:
+              result = subprocess.run([str(root / "audio-decoder-probe"), str(root / "audio-decoder-probe.json")],
+                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log, timeout=60, check=False)
+          raise SystemExit(result.returncode)
+          PYTHON
+      - name: Measure storyboard accessibility extraction
+        id: accessibility
+        continue-on-error: true
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          root = Path(os.environ["RUNNER_TEMP"])
+          with (root / "storyboard-accessibility-probe.log").open("w") as log:
+              result = subprocess.run([str(root / "storyboard-accessibility-probe"), str(root / "storyboard-accessibility-probe.json")],
+                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log, timeout=60, check=False)
+          raise SystemExit(result.returncode)
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-acceptance-probes-evidence
+          path: |
+            ${{ runner.temp }}/audio-decoder-probe.json
+            ${{ runner.temp }}/audio-decoder-probe.log
+            ${{ runner.temp }}/storyboard-accessibility-probe.json
+            ${{ runner.temp }}/storyboard-accessibility-probe.log
+          if-no-files-found: error
+          retention-days: 3
+      - name: Require both probe steps to complete
+        if: always()
+        env:
+          AUDIO_OUTCOME: ${{ steps.audio.outcome }}
+          ACCESSIBILITY_OUTCOME: ${{ steps.accessibility.outcome }}
+        run: test "$AUDIO_OUTCOME" = success && test "$ACCESSIBILITY_OUTCOME" = success
