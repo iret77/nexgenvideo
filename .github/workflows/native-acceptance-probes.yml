@@ -90,6 +90,7 @@ jobs:
             ${{ runner.temp }}/audio-decoder-probe.log
             ${{ runner.temp }}/storyboard-accessibility-probe.json
             ${{ runner.temp }}/storyboard-accessibility-probe.log
+            ${{ runner.temp }}/storyboard-probe-*.png
           if-no-files-found: error
           retention-days: 3
       - name: Require both probe steps to complete

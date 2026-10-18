@@ -39,7 +39,10 @@ struct AudioDecoderProbe {
 
     struct LegacyTrace: Codable {
         let sourceFrames: Int64
+        let inputFramesBeforeConversion: UInt32
+        let filePositionBeforeConversion: Int64
         let inputFrames: UInt32
+        let filePositionAfterConversion: Int64
         let leadingFrames: UInt32
         let trailingFrames: UInt32
         let calls: [Conversion]
@@ -69,7 +72,7 @@ struct AudioDecoderProbe {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         var cases: [Case] = []
-        for rate in [44_100.0, 48_000.0] {
+        for rate in [22_050.0, 44_100.0, 48_000.0] {
             var legacy: LegacyTrace?
             do {
                 let url = directory.appendingPathComponent("marker-\(Int(rate)).wav")
@@ -82,7 +85,7 @@ struct AudioDecoderProbe {
                 cases.append(Case(sourceRate: rate, legacy: legacy, actualDecoder: nil, error: String(describing: error)))
             }
         }
-        let passed = cases.count == 2 && cases.allSatisfy {
+        let passed = cases.count == 3 && cases.allSatisfy {
             $0.actualDecoder?.exactDuration == true && $0.actualDecoder?.finalMarkerPreserved == true && $0.error == nil
         }
         let report = Report(os: ProcessInfo.processInfo.operatingSystemVersionString, cases: cases, actualDecoderPassed: passed)
@@ -118,6 +121,8 @@ struct AudioDecoderProbe {
         }
         converter.downmix = true
         try file.read(into: input)
+        let inputFramesBeforeConversion = input.frameLength
+        let filePositionBeforeConversion = file.framePosition
         let capacity = AVAudioFrameCount((Double(file.length) * 22_050 / source.sampleRate).rounded(.up)) + 4096
         guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
             throw Failure(message: "Could not allocate legacy output.")
@@ -146,7 +151,9 @@ struct AudioDecoderProbe {
             calls.append(Conversion(status: status.rawValue, outputFrames: Int(output.frameLength), requestedInputFrames: requests))
             if status == .endOfStream { reachedEnd = true; break }
         }
-        return LegacyTrace(sourceFrames: file.length, inputFrames: input.frameLength,
+        return LegacyTrace(sourceFrames: file.length, inputFramesBeforeConversion: inputFramesBeforeConversion,
+            filePositionBeforeConversion: filePositionBeforeConversion, inputFrames: input.frameLength,
+            filePositionAfterConversion: file.framePosition,
             leadingFrames: converter.primeInfo.leadingFrames, trailingFrames: converter.primeInfo.trailingFrames,
             calls: calls, firstPass: Measurement(first), drained: Measurement(drained), reachedEndOfStream: reachedEnd)
     }
