@@ -138,6 +138,22 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn('swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"', run)
         self.assertNotIn("scripts/bundle.sh", run)
 
+    def test_workspace_scope_is_validated_before_build_and_passed_as_quoted_argument(self):
+        workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
+        for trigger in ("workflow_dispatch", "workflow_call"):
+            inputs = workspace.split(f"  {trigger}:\n", 1)[1].split("\n\n", 1)[0].split("  workflow_call:", 1)[0]
+            self.assertIn("acceptance_scope:", inputs)
+            self.assertIn("default: all", inputs)
+        source = workspace.split("  source:\n", 1)[1].split("  build:\n", 1)[0]
+        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", source)
+        self.assertIn('case "$NGV_ACCEPTANCE_SCOPE" in', source)
+        self.assertIn("all|filmreview)", source)
+        self.assertIn("exit 1", source)
+        runtime = workspace.split("      - name: Exercise native workspace and panel controls\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", runtime)
+        self.assertIn('--scope "$NGV_ACCEPTANCE_SCOPE"', runtime)
+        self.assertNotIn("${{", runtime.split("        run: |\n", 1)[1])
+
     def test_only_the_light_pull_request_check_starts_automatically(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
             automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS

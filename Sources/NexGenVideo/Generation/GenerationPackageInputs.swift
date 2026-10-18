@@ -134,8 +134,19 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
             throw GenerationRequestError.gate("Reference ‘\(label)’ is no longer in the media library. Restore it or revise the request.")
         }
         let path: String?
-        if reference.assetID.hasPrefix("pipeline-reference:"), reference.type == "image" {
-            path = String(reference.assetID.dropFirst("pipeline-reference:".count))
+        if reference.assetID.hasPrefix("pipeline-reference:") {
+            if let routing = package.payload.routing {
+                guard let binding = routing.orderedBindings.first(where: {
+                    $0.mediaAssetID == reference.assetID && $0.modalityID == reference.type
+                        && $0.sha256 == reference.sourceSHA256
+                        && reference.assetID == "pipeline-reference:\($0.path)"
+                }) else {
+                    throw GenerationRequestError.gate("Reference ‘\(label)’ no longer matches its approved project path. Prepare the request again.")
+                }
+                path = binding.path
+            } else {
+                path = reference.type == "image" ? String(reference.assetID.dropFirst("pipeline-reference:".count)) : nil
+            }
         } else if let plan = package.payload.generationInput.frameReferencePlan,
                   let binding = plan.bindings.enumerated().first(where: {
                       "frame-reference:\($0.offset):\($0.element.sha256)" == reference.assetID

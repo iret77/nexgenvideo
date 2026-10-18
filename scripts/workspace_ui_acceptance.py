@@ -1,4 +1,5 @@
 """Exercise and verify the native five-workspace editor on a macOS 26 runner."""
+import argparse
 import hashlib
 import json
 import math
@@ -28,6 +29,8 @@ EXPECTED_KEYFRAME_LANES = {
     "video": ["position", "scale", "rotation", "opacity", "crop"],
 }
 SCALES = (1.0, 1.25, 1.5)
+ALL_CASES = ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard", "filmreview")
+ACCEPTANCE_SCOPES = {"all": ALL_CASES, "filmreview": ("filmreview",)}
 MUSICVIDEO_PHASES = ["project_init", "analysis", "brief", "production_design", "treatment",
                     "storyboard", "bible", "shotlist", "sanity", "frames", "render"]
 MUSICVIDEO_ARTIFACTS = ["Project", "Analysis", "Project Brief", "Production Design", "Treatment",
@@ -434,13 +437,35 @@ def valid_musicvideo_review(row, output):
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return False
 
-def run_scale(executable, output, scale):
+def filmreview_evidence(rows, output, scale):
+    reviews = [row for row in rows if row.get("event") == "musicvideo-film-review"]
+    completions = [row for row in rows if row.get("event") == "completed"]
+    if (len(reviews) != 1 or len(completions) != 1
+        or completions[0].get("case") != "filmreview"
+        or any(row.get("scale") != scale for row in reviews + completions)
+        or any(row.get("event") == "failed" for row in rows)
+        or not valid_musicvideo_review(reviews[0], output)):
+        return False, []
+    screenshots = reviews[0]["screenshots"] + native_film_screenshots(reviews[0])
+    valid_images = len(screenshots) == 45 and all(
+        isinstance(name, str) and name and Path(name).name == name
+        and (output / name).is_file()
+        and (output / name).stat().st_size > 1000
+        and (output / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        for name in screenshots
+    )
+    return valid_images, screenshots
+
+
+def run_scale(executable, output, scale, scope="all"):
+    if scope not in ACCEPTANCE_SCOPES:
+        raise ValueError(f"Unknown acceptance scope: {scope}")
     label = str(round(scale * 100))
     log_path = output / f"scale-{label}.log"
     started = time.monotonic()
     case_results = []
     output_chunks = []
-    for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard", "filmreview"):
+    for scenario in ACCEPTANCE_SCOPES[scope]:
         case_started = time.monotonic()
         try:
             # AppKit must not reopen documents left by an earlier acceptance process.
@@ -485,6 +510,21 @@ def run_scale(executable, output, scale):
             continue
         if isinstance(row, dict) and "event" in row:
             rows.append(row)
+
+    if scope == "filmreview":
+        valid_evidence, screenshots = filmreview_evidence(rows, output, scale)
+        valid = return_code == 0 and valid_evidence
+        return {
+            "completed": valid,
+            "elapsedSeconds": time.monotonic() - started,
+            "events": rows,
+            "exitCode": return_code,
+            "cases": case_results,
+            "reason": "scope-completed" if valid else "invalid-evidence",
+            "scale": scale,
+            "scope": scope,
+            "screenshots": screenshots,
+        }
 
     workspace_rows = [row for row in rows if row.get("event") == "workspace"]
     workspaces = {row.get("workspace") for row in workspace_rows}
@@ -638,17 +678,27 @@ def run_scale(executable, output, scale):
         "cases": case_results,
         "reason": "completed" if valid else "invalid-evidence",
         "scale": scale,
+        "scope": scope,
         "screenshots": screenshots,
     }
 
 
-def main():
-    executable, output_path = sys.argv[1:]
-    output = Path(output_path)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("executable")
+    parser.add_argument("output")
+    parser.add_argument("--scope", choices=ACCEPTANCE_SCOPES, default="all")
+    args = parser.parse_args(argv)
+    output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    results = [run_scale(executable, output, scale) for scale in SCALES]
+    results = [run_scale(args.executable, output, scale, args.scope) for scale in SCALES]
+    completed = all(item["completed"] for item in results)
     result = {
-        "completed": all(item["completed"] for item in results),
+        "completed": completed,
+        "scope": args.scope,
+        "selectedCases": list(ACCEPTANCE_SCOPES[args.scope]),
+        "unexecutedCases": [case for case in ALL_CASES if case not in ACCEPTANCE_SCOPES[args.scope]],
+        "fullWorkspaceAcceptance": args.scope == "all" and completed,
         "runs": results,
     }
     (output / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True))

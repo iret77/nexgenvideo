@@ -1,11 +1,17 @@
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
-from workspace_ui_acceptance import valid_musicvideo_review, valid_production_workbench
+from workspace_ui_acceptance import (
+    ALL_CASES, main, native_film_screenshots, run_scale,
+    valid_musicvideo_review, valid_production_workbench,
+)
 
 
 class FilmReviewEvidenceTests(unittest.TestCase):
@@ -132,6 +138,86 @@ class FilmReviewEvidenceTests(unittest.TestCase):
 
     def test_accepts_complete_bound_delivery(self):
         self.assertTrue(valid_musicvideo_review(self.row, self.output))
+
+    def film_rows(self, scale=1.0):
+        return [{**self.row, "event": "musicvideo-film-review", "scale": scale},
+                {"event": "completed", "case": "filmreview", "scale": scale}]
+
+    def write_film_images(self):
+        for name in self.row["screenshots"] + native_film_screenshots(self.row):
+            (self.output / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"pixels" * 200)
+
+    def test_film_scope_runs_all_scales_without_claiming_full_workspace_acceptance(self):
+        self.write_film_images()
+
+        def launch(command, **kwargs):
+            self.assertEqual(command, ["fixture-app", "-ApplePersistenceIgnoreState", "YES"])
+            self.assertEqual(kwargs["env"]["NGV_WORKSPACE_UI_CASE"], "filmreview")
+            self.assertEqual(kwargs["timeout"], 180)
+            scale = float(kwargs["env"]["NGV_WORKSPACE_UI_SCALE"])
+            return SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, self.film_rows(scale))))
+
+        with patch("workspace_ui_acceptance.subprocess.run", side_effect=launch) as process, patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(main(["fixture-app", str(self.output), "--scope", "filmreview"]), 0)
+        self.assertEqual(process.call_count, 3)
+        report = json.loads((self.output / "result.json").read_text())
+        self.assertTrue(report["completed"])
+        self.assertFalse(report["fullWorkspaceAcceptance"])
+        self.assertEqual(report["scope"], "filmreview")
+        self.assertEqual(report["selectedCases"], ["filmreview"])
+        self.assertEqual(report["unexecutedCases"], list(ALL_CASES[:-1]))
+        self.assertEqual([run["scale"] for run in report["runs"]], [1.0, 1.25, 1.5])
+        self.assertTrue(all(run["scope"] == "filmreview" and len(run["screenshots"]) == 45 for run in report["runs"]))
+
+    def test_film_scope_requires_exit_completion_native_actions_and_all_delivery_files(self):
+        for failure in ("exit", "missing-completion", "wrong-case", "wrong-scale", "duplicate-review",
+                        "failed-event", "native-action", "film-image", "gate-image", "generation-image", "movie", "receipt"):
+            with self.subTest(failure=failure):
+                self.write_film_images()
+                rows = copy.deepcopy(self.film_rows())
+                code = 1 if failure == "exit" else 0
+                if failure == "missing-completion":
+                    rows.pop()
+                elif failure == "wrong-case":
+                    rows[-1]["case"] = "workspace"
+                elif failure == "wrong-scale":
+                    rows[-1]["scale"] = 1.5
+                elif failure == "duplicate-review":
+                    rows.append(copy.deepcopy(rows[0]))
+                elif failure == "failed-event":
+                    rows.append({"event": "failed", "scale": 1.0})
+                elif failure == "native-action":
+                    rows[0]["generation"]["nativeInteractions"].pop()
+                elif failure in ("movie", "receipt"):
+                    rows[0]["movie" if failure == "movie" else "deliveryReceipt"] = "missing"
+                elif failure == "film-image":
+                    (self.output / rows[0]["screenshots"][0]).write_bytes(b"invalid")
+                elif failure == "gate-image":
+                    (self.output / rows[0]["nativeGateApprovals"][0]["screenshots"][0]).write_bytes(b"invalid")
+                elif failure == "generation-image":
+                    (self.output / rows[0]["generation"]["nativeScreenshots"][0]).write_bytes(b"invalid")
+                output = "\n".join(map(json.dumps, rows))
+                with patch("workspace_ui_acceptance.subprocess.run", return_value=SimpleNamespace(returncode=code, stdout=output)):
+                    result = run_scale("fixture-app", self.output, 1.0, "filmreview")
+                self.assertFalse(result["completed"])
+
+    def test_default_scope_keeps_every_case_and_requires_non_film_evidence(self):
+        self.write_film_images()
+        output = "\n".join(map(json.dumps, self.film_rows()))
+        with patch("workspace_ui_acceptance.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout=output)) as process:
+            result = run_scale("fixture-app", self.output, 1.0)
+        self.assertEqual([call.kwargs["env"]["NGV_WORKSPACE_UI_CASE"] for call in process.call_args_list], list(ALL_CASES))
+        self.assertEqual(result["scope"], "all")
+        self.assertFalse(result["completed"])
+
+    def test_unknown_scope_fails_before_launch(self):
+        with patch("workspace_ui_acceptance.subprocess.run") as process, patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(ValueError):
+                run_scale("fixture-app", self.output, 1.0, "unknown")
+            with self.assertRaises(SystemExit) as error:
+                main(["fixture-app", str(self.output), "--scope", "unknown"])
+        self.assertEqual(error.exception.code, 2)
+        process.assert_not_called()
 
     def test_rejects_missing_or_programmatic_phase_approval_evidence(self):
         for key, value in (("controlID", "NativeGateWriter.approve"), ("readyBeforeClick", False),

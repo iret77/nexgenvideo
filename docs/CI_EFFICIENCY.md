@@ -64,6 +64,14 @@ adds the affected unit suite, such as `MusicvideoChecksTests`. The existing
 are staged, and `swift test --skip-build --filter` runs only the selected tests
 before the app artifact is uploaded. An empty filter skips this step.
 
+The optional `acceptance_scope=filmreview` repeats only the mixed Musicvideo film
+case at 100%, 125% and 150%, plus the separate generation pointer/keyboard review.
+The default `all` retains every workspace case. Film-only results require the same
+native actions, 45 screenshots, delivered movie and bound receipt; the JSON names
+the selected and unexecuted cases and never marks full workspace acceptance for
+that partial scope. Earlier passing cases remain identified by run and commit in
+the PR's verification record.
+
 The missing-reference acceptance follows the visible revision action through the
 agent-facing diagnostic, a supplied repaired proposal, its rendered thumbnail and
 native approval. This focused card check stops before provider execution; the
