@@ -93,7 +93,7 @@ struct GenerationReferencePreflightTests {
         let requirement = ProductionRequirementV1(modalityID: "video", modeIDs: [mode], visibleEntityCount: 1,
             requiresFirstFrame: true, duration: .init(preferredSeconds: 5, minimumSeconds: 5, maximumSeconds: 5),
             resolution: "720p", aspectRatio: "16:9", requiresOutputAudio: false)
-        let projectID = "references", shotID = "shot-001"
+        let projectID = "references", shotID = "s001"
         let asset = try AssetGraphContentAddressV1.reidentified(AssetGraphNodeV1(id: "pending", version: 1, path: path,
             sha256: try FileDigest.sha256(of: fixture.source), modality: .image, approval: .approved,
             provenance: .init(kindID: "fixture.import", recordedAt: "2026-10-18T00:00:00Z"),
@@ -103,17 +103,17 @@ struct GenerationReferencePreflightTests {
         let demand = ReferenceDemandV1(id: "mara-anchor", assetID: asset.id, modality: .image,
             semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame, isRequired: true, priority: 0,
             inputSlotID: CoreReferenceInputSlotIDV1.firstFrame, modeID: mode)
-        let demandSet = ReferenceDemandSetV1(id: "demands-shot-001", projectID: projectID, shotID: shotID,
+        let demandSet = ReferenceDemandSetV1(id: "demands-\(shotID)", projectID: projectID, shotID: shotID,
             assetGraph: .init(id: graph.id, role: AssetGraphV1.artifactRole, path: PipelineLayout.assetGraphFile,
                 sha256: FileDigest.sha256(of: try AssetGraphCanonicalCodecV1.encode(graph))), demands: [demand])
         try PipelineProductionInputsWriter.write(graph: graph, demandSets: [demandSet], templates: [
-            .init(id: "inputs-shot-001", projectID: projectID, shotID: shotID,
+            .init(id: "inputs-\(shotID)", projectID: projectID, shotID: shotID,
                 coreInputs: .init(firstFrameModeID: mode)),
         ], dataRoot: root)
         let matches = try ProductionRequirementResolverV1.matchingRoutes(requirement: requirement, demandSet: demandSet,
             assetGraph: graph, dataRoot: root, candidates: [candidate.candidate])
         let route = try #require(matches.first?.route)
-        let result = try ReferencePlannerV2.plan(id: "reference-plan-shot-001", dataRoot: root, route: route,
+        let result = try ReferencePlannerV2.plan(id: "reference-plan-\(shotID)", dataRoot: root, route: route,
             requirement: requirement, demandSet: demandSet, graph: graph, candidate: candidate.candidate)
         guard case .plan(let plan) = result else { throw ToolError("The fixture reference plan is not executable.") }
         return PipelineProductionRouteSelection(modelID: modelID, target: target, requirement: requirement,
@@ -129,7 +129,7 @@ struct GenerationReferencePreflightTests {
         let root = try #require(DataRootResolver.dataRoot(of: home))
         let original = try Data(contentsOf: fixture.source)
         let selection = try routedSelection(fixture)
-        let shot = try Shot(id: selection.route.shotID, timeStart: 0, timeEnd: 5, durationS: 5,
+        let shot = try Shot(id: selection.route.shotID, section: "verse", timeStart: 0, timeEnd: 5, durationS: 5,
             type: .performance, description: "Mara holds her pose.", visualPrompt: "Mara holds her opening pose.", mood: "calm")
         _ = try saveShotlist(Shotlist(schema_: shotlistSchemaVersion, mode: .beat, project: "references",
             song: Song(title: "Song", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: 120, durationS: 5),

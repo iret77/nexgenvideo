@@ -251,15 +251,16 @@ struct AssembleTimelineTests {
         _ = try await h.runOK("record_render", args: [
             "project_dir": dataRoot.path, "phase": phase, "shot_id": "s002", "output": outputs[1],
         ])
-        try recordAcceptedTakeReviews(dataRoot: dataRoot, phase: phase)
+        #expect(try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: phase).selected.isEmpty)
+        try await recordAcceptedTakeReviews(h, dataRoot: dataRoot, phase: phase)
     }
 
-    private func recordAcceptedTakeReviews(dataRoot: URL, phase: String, additionalDuration: Double = 0) throws {
+    private func recordAcceptedTakeReviews(_ h: ToolHarness, dataRoot: URL, phase: String, additionalDuration: Double = 0) async throws {
         let index = try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: phase)
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
-        for (shotID, takeID) in index.selected {
+        for takeID in index.takeIDs {
             let take = try PipelineRenderTakeStore.take(id: takeID, dataRoot: dataRoot, phase: phase)
-            let duration = try #require(shotlist.shots.first(where: { $0.id == shotID })).durationS + additionalDuration
+            let duration = try #require(shotlist.shots.first(where: { $0.id == take.shotID })).durationS + additionalDuration
             let findings = TakeReview.Pass.allCases.map {
                 TakeReview.Finding(pass: $0, verdict: .conforms, observation: "Reviewed fixture pass.",
                     startSeconds: 0, endSeconds: duration)
@@ -278,10 +279,35 @@ struct AssembleTimelineTests {
             try FileManager.default.createDirectory(at: current.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: current, options: .atomic)
             try data.write(to: archived, options: .atomic)
+            _ = try await h.runOK("record_render", args: [
+                "project_dir": dataRoot.path, "phase": phase, "shot_id": take.shotID,
+                "output": take.generationEventID, "expected_take_id": takeID,
+            ])
         }
     }
 
     // MARK: - hard gate
+
+    @Test("recording a candidate cannot select it without an accepted review")
+    func unreviewedCandidateCannotBeSelected() async throws {
+        let (h, dataRoot, cleanup, outputs) = try setup()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        _ = try await h.runOK("record_render", args: ["phase": "final", "shot_id": "s001", "output": outputs[0]])
+        let before = try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: "final")
+        let takeID = try #require(before.takeIDs.first)
+        #expect(before.selected.isEmpty)
+        let rejected = await h.runRaw("record_render", args: [
+            "phase": "final", "shot_id": "s001", "output": outputs[0], "expected_take_id": takeID,
+        ])
+        #expect(rejected.isError)
+        #expect(ToolHarness.textOf(rejected).contains("Review and accept the exact take before selecting it."))
+        #expect(try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: "final") == before)
+        try await recordAcceptedTakeReviews(h, dataRoot: dataRoot, phase: "final")
+        #expect(try PipelineRenderTakeStore.load(dataRoot: dataRoot, project: "demo", phase: "final").selected["s001"] == takeID)
+    }
 
     @Test("assemble_timeline is blocked until the plan chain is approved")
     func assembleBlockedOnUnapprovedPlan() async throws {
@@ -368,7 +394,7 @@ struct AssembleTimelineTests {
         #expect(ToolHarness.textOf(tooShort).contains("shorter than its planned timeline placement"))
         #expect(ToolHarness.textOf(tooShort).contains("Select an explicit reviewed take range"))
         #expect(h.editor.timeline == timelineBefore)
-        try recordAcceptedTakeReviews(dataRoot: dataRoot, phase: "final", additionalDuration: 2)
+        try await recordAcceptedTakeReviews(h, dataRoot: dataRoot, phase: "final", additionalDuration: 2)
         _ = try await h.runOK("assemble_timeline", args: ["phase": "final"])
         let state = try #require(try PipelineAssemblyStore.load(dataRoot: dataRoot))
         #expect(state.plan.selectedMedia.map(\.sourceStartFrame) == [30, 30])
