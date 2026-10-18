@@ -3,6 +3,7 @@ import AVFoundation
 import AVKit
 import NexGenEngine
 import SwiftUI
+import Vision
 
 @MainActor
 enum WorkspaceUIAcceptance {
@@ -2764,7 +2765,7 @@ extension WorkspaceUIAcceptance {
                         "rawFieldsAbsent": true, "previousSelectionAbsent": true])
                 }
                 guard let artifactHost = panelView(in: host, identifier: "projectPanel") else {
-                    fail("storyboard artifact accessibility host is unavailable", scale: scale)
+                    fail("storyboard artifact host is unavailable", scale: scale)
                 }
                 let expectedCards = [
                     ("verse1.01", "The singer stops at the platform edge."),
@@ -2773,7 +2774,7 @@ extension WorkspaceUIAcceptance {
                 ]
                 let forbidden = ["basis: inferred", "angle:", "height:", "lens_hint:",
                     "generated", "transition", "performance", "wide.noon"]
-                // Lazy cards must be visible before their accessibility text can be verified.
+                // SwiftUI's in-process AX tree omits these cards; verify the visible pixels.
                 for (shotID, subject) in expectedCards {
                     let control = "storyboard.shot.\(shotID)"
                     guard await revealProbe(control, in: window) else {
@@ -2781,25 +2782,76 @@ extension WorkspaceUIAcceptance {
                     }
                     var rendered = ""
                     var leaked: [String] = []
-                    guard await waitUntil(timeout: .seconds(5), {
+                    var pixelEvidence: [String: Any] = [:]
+                    var crop: Data?
+                    var captureError: String?
+                    let verified = await waitUntil(timeout: .seconds(5), {
                         host.layoutSubtreeIfNeeded()
-                        rendered = renderedAccessibilityText(in: artifactHost).joined(separator: "\n")
-                        leaked = forbidden.filter { rendered.contains($0) }
-                        return visibleProbe(identifier: control, in: window,
-                            containedBy: artifactHost.convert(artifactHost.bounds, to: host))
-                            && rendered.contains(subject) && leaked.isEmpty
-                    }) else {
+                        rendered = ""
+                        leaked = []
+                        crop = nil
+                        pixelEvidence = [:]
+                        captureError = nil
+                        guard let probe = shownProbe(in: host, identifier: control),
+                              probe.window === window, probe.isDescendant(of: artifactHost),
+                              !probe.isHiddenOrHasHiddenAncestor,
+                              visibleProbe(identifier: control, in: window,
+                                containedBy: artifactHost.convert(artifactHost.bounds, to: host)) else { return false }
+                        var ancestor = probe.superview
+                        while let view = ancestor, view !== artifactHost {
+                            if let clip = view as? NSClipView,
+                               !clip.bounds.contains(probe.convert(probe.bounds, to: clip)) { return false }
+                            ancestor = view.superview
+                        }
+                        let frame = probe.convert(probe.bounds, to: artifactHost)
+                        guard frame.width > 0, frame.height > 0, artifactHost.bounds.contains(frame),
+                              let pixels = storyboardCardPixels(in: artifactHost, frame: frame) else {
+                            captureError = "The visible card could not be captured."
+                            return false
+                        }
+                        crop = pixels.png
+                        pixelEvidence = ["captureMultiplierOverBacking": 2,
+                            "pixelsPerPointX": Double(pixels.image.width) / Double(frame.width),
+                            "pixelsPerPointY": Double(pixels.image.height) / Double(frame.height),
+                            "backingScaleFactor": Double(window.backingScaleFactor), "frame": frameDescription(frame),
+                            "pixelWidth": pixels.image.width, "pixelHeight": pixels.image.height]
+                        do {
+                            let raw = try recognizedStoryboardText(in: pixels.image, correctingLanguage: false)
+                            rendered = raw.text
+                            pixelEvidence["rawRecognition"] = raw.evidence
+                            let corrected = try recognizedStoryboardText(in: pixels.image, correctingLanguage: true)
+                            pixelEvidence["languageCorrectedRecognition"] = corrected.evidence
+                            leaked = forbidden.filter { rendered.contains($0) || corrected.text.contains($0) }
+                            return rendered.contains(subject) && leaked.isEmpty
+                        } catch {
+                            captureError = error.localizedDescription
+                            return false
+                        }
+                    })
+                    let cropName = "scale-\(scaleLabel(scale))-storyboard-card-\(shotID).png"
+                    var cropSaved = false
+                    if let crop {
+                        do {
+                            try crop.write(to: evidenceURL.appendingPathComponent(cropName), options: .atomic)
+                            cropSaved = true
+                        } catch { captureError = error.localizedDescription }
+                    }
+                    var diagnostic: [String: Any] = ["shotID": shotID, "missingSubject": !rendered.contains(subject),
+                        "leakedTokens": leaked, "renderedText": rendered, "pixelEvidence": pixelEvidence,
+                        "geometry": probeScrollDiagnostics(control, in: window), "cropSaved": cropSaved,
+                        "cropScreenshot": cropName]
+                    if let captureError { diagnostic["error"] = captureError }
+                    emit("storyboard-card-text", scale: scale, fields: diagnostic)
+                    guard verified, cropSaved else {
                         let name = "scale-\(scaleLabel(scale))-production-storyboard-failed.png"
                         _ = snapshot(host, at: evidenceURL.appendingPathComponent(name))
-                        emit("storyboard-text-diagnostic", scale: scale, fields: [
-                            "shotID": shotID, "missingSubject": !rendered.contains(subject),
-                            "leakedTokens": leaked, "renderedText": rendered,
-                            "geometry": probeScrollDiagnostics(control, in: window), "screenshot": name,
-                        ])
+                        diagnostic["screenshot"] = name
+                        emit("storyboard-text-diagnostic", scale: scale, fields: diagnostic)
                         fail("visible storyboard card is missing its description or leaks technical planning fields: \(shotID)", scale: scale)
                     }
                     storyboardCards.append(["shotID": shotID, "subject": subject,
-                        "fullyVisible": true, "renderedDescription": true, "rawFieldsAbsent": true])
+                        "fullyVisible": true, "renderedDescription": true, "rawFieldsAbsent": true,
+                        "screenshot": cropName, "pixelEvidence": pixelEvidence])
                 }
             }
             try? await Task.sleep(for: .milliseconds(300))
@@ -2818,6 +2870,40 @@ extension WorkspaceUIAcceptance {
     private static func panelView(in view: NSView, identifier: String) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         return view.subviews.lazy.compactMap { panelView(in: $0, identifier: identifier) }.first
+    }
+
+    private static func storyboardCardPixels(in view: NSView, frame: NSRect) -> (image: CGImage, png: Data)? {
+        guard let native = view.bitmapImageRepForCachingDisplay(in: frame),
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: native.pixelsWide * 2, pixelsHigh: native.pixelsHigh * 2,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        bitmap.size = frame.size
+        view.cacheDisplay(in: frame, to: bitmap)
+        guard let image = bitmap.cgImage,
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return (image, png)
+    }
+
+    private static func recognizedStoryboardText(
+        in image: CGImage, correctingLanguage: Bool
+    ) throws -> (text: String, evidence: [String: Any]) {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = correctingLanguage
+        request.minimumTextHeight = 0
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        let observations = (request.results ?? []).sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+        let lines = observations.compactMap { observation -> [String: Any]? in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            return ["text": candidate.string, "confidence": Double(candidate.confidence),
+                "bounds": frameDescription(observation.boundingBox)]
+        }
+        let text = lines.compactMap { $0["text"] as? String }.joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return (text, ["text": text, "lines": lines, "usesLanguageCorrection": correctingLanguage,
+            "customWords": [String](), "minimumTextHeight": 0])
     }
 
     private static func renderedAccessibilityText(in view: NSView) -> [String] {
