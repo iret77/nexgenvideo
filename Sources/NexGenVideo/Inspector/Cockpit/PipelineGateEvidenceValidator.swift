@@ -5,13 +5,23 @@ enum PipelineGateEvidenceValidator {
     nonisolated static func requireCurrent(
         phase: String,
         dataRoot: URL,
-        requirement: EngineRegistry.GateRequirement?
+        requirement: EngineRegistry.GateRequirement?,
+        workflow: HostWorkflowKey? = nil
     ) throws {
         try GateGuard.checkApprovable(
             phase: phase,
             dataRoot: dataRoot,
             requirement: requirement
         )
+        if let workflow, workflow.isProductionV2 {
+            guard let provider = try PhaseContractRuntime.lineageProvider(workflow: workflow, phase: phase,
+                registry: PackCatalog.registry(activePack: workflow.packID)) else {
+                if phase == "project_init" { return }
+                throw PhaseContractError.registryMismatch("The production phase has no exact input lineage provider")
+            }
+            try PipelineLineageStore.requireCurrent(phase: phase, snapshot: provider(dataRoot), dataRoot: dataRoot)
+            return
+        }
         if phase == "production_design" {
             _ = try ProductionStyleStoreV1.load(dataRoot: dataRoot)
         }
