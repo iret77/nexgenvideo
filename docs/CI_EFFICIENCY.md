@@ -58,6 +58,12 @@ are retained in `workspace-ui-evidence`. Its standalone dispatch repeats these t
 without rerunning the unit, HDR, pack, startup or chat suites whose earlier
 successful evidence remains applicable to the scoped fix.
 
+An optional `unit_test_filter` on the standalone or reusable workspace workflow
+adds the affected unit suite, such as `MusicvideoChecksTests`. The existing
+`macrunner` build directory is extended with test targets, their runtime inputs
+are staged, and `swift test --skip-build --filter` runs only the selected tests
+before the app artifact is uploaded. An empty filter skips this step.
+
 The missing-reference acceptance follows the visible revision action through the
 agent-facing diagnostic, a supplied repaired proposal, its rendered thumbnail and
 native approval. This focused card check stops before provider execution; the

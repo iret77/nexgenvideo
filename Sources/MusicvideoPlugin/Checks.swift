@@ -300,7 +300,7 @@ public enum MusicvideoChecks {
     /// anchor. Escape `text_to_video_ok:` in notes. Port of `sanity/checks/keyframe_anchor.py`.
     public static let keyframeAnchorCheck: SanityCheck = { ctx in
         var out: [Finding] = []
-        for shot in ctx.shotlist.shots {
+        for shot in ctx.shotlist.shots where shot.sourceMode == .generated {
             guard shot.keyframeStrategy == .none else { continue }
             if shot.chainWithPreviousEnd { continue }
             var refs: [String] = []

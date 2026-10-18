@@ -443,8 +443,9 @@ def run_scale(executable, output, scale):
     for scenario in ("workspace", "cards", "analysis", "provenance", "musicvideo", "hoststates", "storyboard", "filmreview"):
         case_started = time.monotonic()
         try:
+            # AppKit must not reopen documents left by an earlier acceptance process.
             process = subprocess.run(
-                [executable],
+                [executable, "-ApplePersistenceIgnoreState", "YES"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env={

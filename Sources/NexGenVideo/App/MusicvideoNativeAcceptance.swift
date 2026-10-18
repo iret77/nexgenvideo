@@ -102,8 +102,12 @@ enum MusicvideoNativeAcceptance {
         guard !gates.get(phase).approved else { throw FullflowAcceptanceFixture.Failure("The fixture tried to approve an already approved phase.") }
         let result = await ToolExecutor(editor: editor).execute(name: "approve_gate", args: ["phase": phase, "project_dir": root.path],
             origin: .inAppChat(sessionID: session), toolUseID: "native-gate-\(UUID().uuidString)")
-        guard !result.isError, let approval = service.pendingGateApproval, approval.phase == phase else {
-            throw FullflowAcceptanceFixture.Failure("The canonical writer did not offer the native \(phase) approval.")
+        guard !result.isError else {
+            let message = result.content.compactMap { if case .text(let text) = $0 { return text }; return nil }.joined(separator: "\n")
+            throw FullflowAcceptanceFixture.Failure("Native \(phase) approve_gate failed: \(message)")
+        }
+        guard let approval = service.pendingGateApproval, approval.phase == phase else {
+            throw FullflowAcceptanceFixture.Failure("Native \(phase) approve_gate returned without its approval: pending=\(service.pendingGateApproval?.phase ?? "none").")
         }
         let window = try Self.window(for: editor)
         window.makeKeyAndOrderFront(nil)

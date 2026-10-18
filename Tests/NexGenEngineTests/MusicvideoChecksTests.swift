@@ -100,6 +100,35 @@ struct MusicvideoChecksTests {
         ) == 2)
     }
 
+    @Test("source footage does not require text-to-video anchors", arguments: [SourceMode.imported, .aiEnhanced])
+    func keyframeAnchorAcceptsSourceFootage(sourceMode: SourceMode) throws {
+        let shot = try Shot(
+            id: "s001", section: "verse", timeStart: 0, timeEnd: 4, durationS: 4,
+            type: .performance, sourceMode: sourceMode, description: "Existing footage.",
+            visualPrompt: Self.goodPrompt, mood: "restrained", locationRef: "yard",
+            keyframeStrategy: .none, sourcePath: "footage/yard.mov"
+        )
+        let findings = try MusicvideoChecks.keyframeAnchorCheck(Self.ctx(Self.shotlist([shot])))
+
+        #expect(findings.isEmpty)
+    }
+
+    @Test("unanchored generated shots still block sanity")
+    func keyframeAnchorRejectsUnanchoredGeneration() throws {
+        let shot = try Shot(
+            id: "s001", section: "verse", timeStart: 0, timeEnd: 4, durationS: 4,
+            type: .performance, sourceMode: .generated, description: "Generate the yard.",
+            visualPrompt: Self.goodPrompt, mood: "restrained", locationRef: "yard",
+            keyframeStrategy: .none
+        )
+        let findings = try MusicvideoChecks.keyframeAnchorCheck(Self.ctx(Self.shotlist([shot])))
+
+        #expect(findings.count == 1)
+        #expect(findings.first?.code == "MISSING_BIBLE_ANCHOR_FOR_T2V")
+        #expect(findings.first?.level == .error)
+        #expect(findings.first?.shotId == "s001")
+    }
+
     @Test("a chained shot uses its predecessor frame as the bible anchor")
     func keyframeAnchorAcceptsChainedContinuity() throws {
         let first = try Shot(
