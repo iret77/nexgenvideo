@@ -33,6 +33,10 @@ struct PipelinePlanningWriteAccess {
     }
 
     func publish(_ files: [(path: String, bytes: Data)], validate: () throws -> Void) throws {
+        try publish(files, captureLineage: true, validate: validate)
+    }
+
+    func publish(_ files: [(path: String, bytes: Data)], captureLineage: Bool, validate: () throws -> Void) throws {
         let metadata = [PipelineLayout.gatesFile, PipelineLayout.lineageFile]
         let paths = files.map { dataRoot.appendingPathComponent($0.path) }
             + metadata.map { dataRoot.appendingPathComponent($0) }
@@ -45,7 +49,7 @@ struct PipelinePlanningWriteAccess {
             }
             try validate()
             try revalidate()
-            try PipelinePhaseMutationRecorder.record(phase: phase, dataRoot: dataRoot, captureLineage: true,
+            try PipelinePhaseMutationRecorder.record(phase: phase, dataRoot: dataRoot, captureLineage: captureLineage,
                 declaredPack: declaration.packName, declaredBinding: declaration.binding,
                 declaredProductionContract: declaration.productionContract)
         }

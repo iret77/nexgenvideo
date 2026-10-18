@@ -110,6 +110,15 @@ struct CompiledPrompt: Sendable {
     let token: String
     let notes: [String]
     let binding: PromptBinding
+    let sourceIRData: Data?
+
+    init(text: String, token: String, notes: [String], binding: PromptBinding, sourceIRData: Data? = nil) {
+        self.text = text
+        self.token = token
+        self.notes = notes
+        self.binding = binding
+        self.sourceIRData = sourceIRData
+    }
 }
 
 enum PromptCompiler {
@@ -166,6 +175,7 @@ enum PromptCompiler {
         preserveCompositionOverride: Bool? = nil,
         modelCatalog: ModelCatalog = .shared
     ) async throws -> CompiledPrompt {
+        let workflowBefore = try PipelineProductionPromptCompiler.workflow(editor: editor)
         guard shotId == "none" || shot != nil else {
             throw ToolError(
                 "Shot-bound compilation requires the current shot projection."
@@ -228,9 +238,11 @@ enum PromptCompiler {
             shot: shot,
             preserveComposition: preserveComposition,
             videoContext: videoContext,
-            imageContext: imageContext
+            imageContext: imageContext,
+            capturesImageIR: workflowBefore?.isProductionV2 == true
         )
-        guard try await currentBinding(
+        guard try PipelineProductionPromptCompiler.workflow(editor: editor) == workflowBefore,
+              try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modality,
@@ -252,7 +264,15 @@ enum PromptCompiler {
                 binding: compiledBinding
             ),
             notes: composed.notes,
-            binding: compiledBinding)
+            binding: compiledBinding, sourceIRData: composed.sourceIRData)
+        if let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+           workflowBefore?.isProductionV2 == true, modality.usesVisualStyle {
+            let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
+            let kind: String
+            switch modality { case .video: kind = "video"; case .image: kind = "image"; case .audio: kind = "audio"; case .music: kind = "music" }
+            _ = try ProductionCompiledPromptStore.record(compiled, modelID: modelId, modality: kind,
+                projectID: project.project, dataRoot: root)
+        }
         remember(
             compiled,
             recipe: CompileRecipe(
@@ -504,6 +524,11 @@ enum PromptCompiler {
                 promptDialectVersion: dialect?.version ?? 0
             )
         }
+        if let root, try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try PipelineProductionPromptCompiler.binding(shotID: shotId, modality: modality, modelID: modelId,
+                dataRoot: root, editor: editor, catalog: modelCatalog, projectKey: projectKey,
+                styleFingerprint: styleFingerprint, compilerInputsSHA256: compilerInputsSHA256)
+        }
         guard let root,
               let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
               let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
@@ -578,6 +603,10 @@ enum PromptCompiler {
               let projectHome = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: projectHome) else {
             return nil
+        }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try PipelineProductionPromptCompiler.framePlan(shotID: shotId, modelID: modelId,
+                dataRoot: dataRoot, catalog: modelCatalog)
         }
         let activePack: String?
         do {
@@ -657,6 +686,10 @@ enum PromptCompiler {
         guard let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
               let shot else {
             throw ToolError("Shot-bound video compilation requires the active project and shot projection.")
+        }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try PipelineProductionPromptCompiler.videoContext(shotID: shotId, modelID: modelId,
+                dataRoot: root, editor: editor, catalog: modelCatalog, binding: expectedBinding)
         }
         let routing = try currentVideoRouting(
             editor: editor,
@@ -846,6 +879,10 @@ enum PromptCompiler {
         shotId: String
     ) throws -> PromptComposer.ShotProjection? {
         guard shotId != "none" else { return nil }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true,
+           let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            return try PipelineProductionPromptCompiler.shotProjection(shotID: shotId, dataRoot: root)
+        }
         guard let root = editor?.workingRoot.flatMap({
             DataRootResolver.dataRoot(of: $0)
         }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {

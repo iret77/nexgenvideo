@@ -96,6 +96,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeStoryboardBundle = "write_storyboard_bundle"
     case writeShotPlanningDraft = "write_shot_planning_draft"
     case writeRenderReview = "write_render_review"
+    case getRenderReviewInputs = "get_render_review_inputs"
     case writeBible = "write_bible"
     case writeShotlist = "write_shotlist"
     case writePhaseExtension = "write_phase_extension"
@@ -1378,6 +1379,12 @@ enum ToolDefinitions {
         AgentTool(name: .writeShotPlanningDraft,
             description: "Write a technical draft for every approved planned-shot UUID. Preserve Storyboard framing/timing, declare source modes and explicit unresolved obligations; nonexistent files never count as source evidence.",
             inputSchema: PipelineArtifactWriteContract.shotPlanningDraftSchema),
+        AgentTool(name: .getRenderReviewInputs,
+            description: "Read and deliver the exact current Render Review inputs, final compiled prompts, live planned routes and actual inspection images. Deferred predecessor recipes are identified explicitly. Use the returned fingerprint unchanged in write_render_review; inspect the returned media before reporting findings.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty], required: [])),
+        AgentTool(name: .writeRenderReview,
+            description: "Record structured findings against the exact inputs delivered by get_render_review_inputs in this host turn. The host records the actual response model/message/tool arguments; reviewer identity and acceptances are never agent arguments. Existing findings on unchanged inputs are retained. Structural errors and unresolved findings cannot be waived; semantic concerns require an explicit native user acceptance.",
+            inputSchema: ProductionPlanningToolContract.renderReview),
         AgentTool(
             name: .writeBible,
             description: "Write bible/bible.yaml and its versioned identity-variant contract through the engine models. Use this instead of authoring YAML or JSON. The host owns schema/project/generated/generator and variant revision; validates globally unique ids, exact generated or explicitly user-confirmed Canon provenance, every Storyboard-requested entity/view, synchronized Production Design style/lighting, and variant inheritance. Represent a real outfit/state variant as its own Bible entity plus identity_variants entry; unchanged attributes must equal the base and inherited_identity_paths must name the base Canon inherited by the variant. The previous artifacts are preserved in history.",

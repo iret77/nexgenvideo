@@ -30,6 +30,31 @@ extension ToolExecutor {
             "path": ShotPlanningDraftV1.versionPath(draft.header.revision), "current": ShotPlanningDraftV1.currentPath])
     }
 
+    func renderReviewInputsTool(_ editor: EditorViewModel, _ args: [String: Any],
+                                origin: ToolCallOrigin, toolUseID: String?) async throws -> ToolResult {
+        guard let toolUseID else { throw ToolError("The review input request has no originating model tool identity.") }
+        let evidence = try editor.agentService.reviewModelEvidence(origin: origin, toolUseID: toolUseID, arguments: args)
+        let snapshot = try await PipelineRenderReviewWriter.capture(editor: editor)
+        return try await PipelineRenderReviewContextDelivery.deliver(snapshot: snapshot, evidence: evidence, editor: editor)
+    }
+
+    func writeRenderReviewTool(_ editor: EditorViewModel, _ args: [String: Any],
+                               origin: ToolCallOrigin, toolUseID: String?) async throws -> ToolResult {
+        guard let toolUseID else { throw ToolError("The review has no originating model tool identity.") }
+        let evidence = try editor.agentService.reviewModelEvidence(origin: origin, toolUseID: toolUseID, arguments: args)
+        let snapshot = try await PipelineRenderReviewWriter.capture(editor: editor)
+        guard snapshot.fingerprint == (try args.requireString("expected_fingerprint")) else {
+            throw ToolError("The render inputs changed. Read get_render_review_inputs and review them again.")
+        }
+        let findings = try JSONDecoder().decode([RenderReviewV1.Finding].self,
+            from: JSONSerialization.data(withJSONObject: args["findings"] as Any))
+        let review = try PipelineRenderReviewWriter.recordAgentReview(snapshot: snapshot, findings: findings,
+            evidence: evidence, editor: editor)
+        return try jsonResult(["written": true, "revision": review.header.revision,
+            "current": RenderReviewV1.currentPath, "path": RenderReviewV1.versionPath(review.header.revision),
+            "reviewer_model": review.reviewer.modelID ?? "", "findings": review.findings.count])
+    }
+
     private func planningAccess(_ editor: EditorViewModel, _ args: [String: Any], phase: String) throws -> PipelinePlanningWriteAccess {
         let root = try resolveDataRoot(args, editor: editor)
         return try PipelinePlanningWriteAccess(dataRoot: root,

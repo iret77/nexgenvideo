@@ -1,7 +1,7 @@
 import Foundation
 import NexGenEngine
 
-struct HostWorkflowKey: Equatable, Sendable {
+struct HostWorkflowKey: Codable, Equatable, Sendable {
     let packID: String?
     let packVersion: String?
     let projectSchema: String
@@ -153,6 +153,7 @@ extension PhaseContractRuntime {
         let phases = try order(workflow: workflow)
         let gates = Gates(project: existing.project, gates: Dictionary(uniqueKeysWithValues: phases.map { ($0, Gate()) }))
         try store.save(gates, to: PipelineLayout.gatesFile)
+        try ProductionWorkflowRecoveryMigration.initializeOutputNamespace(dataRoot: dataRoot, workflow: workflow)
     }
 
     private static func exactPackContract(binding: ProjectPackBinding) throws -> ResolvedPhaseContract {

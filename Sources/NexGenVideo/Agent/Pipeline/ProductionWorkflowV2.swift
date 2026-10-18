@@ -25,7 +25,7 @@ enum ProductionWorkflowV2 {
         switch phase {
         case "script", "shot_planning": return []
         case "storyboard": return ["compile_prompt", "generate_image", "prepare_generation_batch", "import_media"]
-        case "render_review": return ["compile_prompt"]
+        case "render_review": return ["compile_prompt", "get_render_review_inputs"]
         default: return Set((PipelineAgentContract.currentPhaseCapabilities[phase] ?? []).map(\.rawValue))
         }
     }

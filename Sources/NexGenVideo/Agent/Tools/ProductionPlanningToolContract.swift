@@ -22,6 +22,15 @@ enum ProductionPlanningToolContract {
         "scale": text, "composition": text, "cameraView": text,
     ], required: ["scale", "composition", "cameraView"]) }
 
+    static var renderReview: [String: Any] { object([
+        "project_dir": text, "expected_fingerprint": ["type": "string", "pattern": "^[a-f0-9]{64}$"],
+        "findings": array(object([
+            "id": text, "kind": enumeration(["structuralError", "unresolved", "semanticConcern", "creativeAdvice", "information"]),
+            "category": enumeration(SequenceReviewCategoryV1.allCases.map(\.rawValue)),
+            "shotIDs": array(text, minimum: 1), "message": text, "evidence": array(reference, minimum: 1),
+        ], required: ["id", "kind", "category", "shotIDs", "message", "evidence"])),
+    ], required: ["expected_fingerprint", "findings"]) }
+
     static var script: [String: Any] { object([
         "project_dir": text, "origin": origins, "summary": text,
         "scenes": array(object([
@@ -68,6 +77,9 @@ enum ProductionPlanningToolContract {
         "shots": array(object([
             "shotID": text, "narrativeBeat": enumeration(NarrativeBeat.allCases.map(\.rawValue)), "sourceMode": enumeration(SourceMode.allCases.map(\.rawValue)),
             "source": reference, "sourceObligationID": text,
+                "sourceInputRange": object(["source": reference, "timebase": timebase,
+                    "startTicks": integer, "durationTicks": integer],
+                    required: ["source", "timebase", "startTicks", "durationTicks"]),
             "camera": object([
                 "framing": framing, "movement": enumeration(CameraMovement.allCases.map(\.rawValue)),
                 "movementDetail": text, "blocking": array(text), "sceneReference": reference,

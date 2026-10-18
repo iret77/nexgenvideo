@@ -81,6 +81,14 @@ enum HostProductionPhaseGate {
                     || bible.look.style.trimmingCharacters(in: .whitespacesAndNewlines) == design.visualMediumNotes.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 throw GateBlocked("The Bible must preserve the approved Production Design style and lighting anchor.")
             }
+        case "shotlist":
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+            _ = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: dataRoot)
+        case "render_review":
+            guard let review = try PipelineRenderReviewWriter.loadIfPresent(dataRoot: dataRoot) else {
+                throw GateBlocked("Review the actual compiled production inputs before rendering.")
+            }
+            try PipelineRenderReviewWriter.requireCurrent(review, dataRoot)
         case "sanity":
             _ = try ProductionPlanAuditV1.requireCurrent(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
         case "frames":
@@ -89,7 +97,8 @@ enum HostProductionPhaseGate {
         case "storyboard": _ = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
         case "shot_planning":
             let storyboard = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
-            _ = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard)
+            let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard)
+            try ShotPlanningValidatorV1.validate(draft, timing: storyboard.timing, approval: true)
         case "treatment": _ = try TreatmentCausalityStoreV2.requireCurrent(dataRoot: dataRoot, approval: true)
         default:
             throw PhaseContractError.registryMismatch("\(phase) has no normalized production artifact validator")

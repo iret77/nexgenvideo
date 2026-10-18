@@ -1017,7 +1017,10 @@ final class ToolExecutor {
         case .writeScript: return try writeScriptTool(editor, args)
         case .writeStoryboardBundle: return try writeStoryboardBundleTool(editor, args)
         case .writeShotPlanningDraft: return try writeShotPlanningDraftTool(editor, args)
-        case .writeRenderReview: throw ToolError("The exact host review evidence is unavailable. Review the current production inputs first.")
+        case .getRenderReviewInputs:
+            return try await renderReviewInputsTool(editor, args, origin: origin, toolUseID: toolUseID)
+        case .writeRenderReview:
+            return try await writeRenderReviewTool(editor, args, origin: origin, toolUseID: toolUseID)
         case .writeBible:           return try writeBibleTool(editor, args)
         case .writeShotlist:        return try await writeShotlistTool(editor, args)
         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)

@@ -25,6 +25,7 @@ enum PipelineProductionPlanReadStore {
 
     static func inventory(dataRoot: URL) throws -> Inventory {
         let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+        let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: dataRoot)
         let shots = projection.shots.map { shot -> Shot in
             guard let requirement = shot.generationRequirement else {
                 return Shot(shotID: shot.id, route: nil, inputTemplate: nil, plannedInputs: [], problems: [])
@@ -32,7 +33,7 @@ enum PipelineProductionPlanReadStore {
             var problems: [String] = []
             let route: ProductionRouteV1?
             do {
-                let value = try read(ProductionRouteV1.self, path: PipelineLayout.productionRouteFile(shotID: shot.id), dataRoot: dataRoot)
+                let value = try PipelineShotPlanningPromotionStore.route(for: shot.id, promotion: promotion, dataRoot: dataRoot)
                 let candidate = ProductionRouteCandidateV1(capabilities: value.capabilitySnapshot.capabilities,
                     providerActivated: true, liveAvailable: true, qualityScore: value.qualityScore,
                     preferenceScore: value.preferenceScore, qualityTargetIDs: value.capabilitySnapshot.qualityTargetIDs,
@@ -54,8 +55,7 @@ enum PipelineProductionPlanReadStore {
             }
             let template: ProductionInputTemplateV1?
             do {
-                let value = try read(ProductionInputTemplateV1.self,
-                    path: PipelineLayout.productionInputTemplateFile(shotID: shot.id), dataRoot: dataRoot)
+                let value = try PipelineShotPlanningPromotionStore.inputTemplate(for: shot.id, promotion: promotion, dataRoot: dataRoot)
                 guard value.projectID == projection.header.projectID, value.shotID == shot.id else {
                     throw ProductionPlanningError.stale("production input template")
                 }

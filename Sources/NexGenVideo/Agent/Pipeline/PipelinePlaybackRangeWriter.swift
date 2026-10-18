@@ -80,7 +80,9 @@ enum PipelinePlaybackRangeWriter {
         let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
         var selected: Selection?
         var receipt: CanonicalArtifactReferenceV1?
-        if FileManager.default.fileExists(atPath: root.appendingPathComponent(currentSelection).path) {
+        let selectionCandidate = root.appendingPathComponent(currentSelection)
+        if FileManager.default.fileExists(atPath: selectionCandidate.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: selectionCandidate.path)) != nil {
             let bytes = try Data(contentsOf: ProjectLocalFile.resolve(currentSelection, dataRoot: root))
             let value = try JSONDecoder().decode(Selection.self, from: bytes)
             let archive = "brief/playback-range-selections/\(value.id).v1.json"
@@ -167,7 +169,8 @@ enum PipelinePlaybackRangeWriter {
             throw GateBlocked("The playback range does not bind this project's current track and analysis.")
         }
         let selectionURL = dataRoot.appendingPathComponent(currentSelection)
-        if FileManager.default.fileExists(atPath: selectionURL.path) {
+        if FileManager.default.fileExists(atPath: selectionURL.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: selectionURL.path)) != nil {
             let bytes = try Data(contentsOf: ProjectLocalFile.resolve(currentSelection, dataRoot: dataRoot))
             let value = try JSONDecoder().decode(Selection.self, from: bytes)
             guard let uuid = UUID(uuidString: value.id), uuid.uuidString.lowercased() == value.id,

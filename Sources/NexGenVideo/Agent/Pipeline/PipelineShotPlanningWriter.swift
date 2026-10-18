@@ -8,6 +8,17 @@ enum PipelineShotPlanningWriter {
         let root = access.dataRoot
         let storyboard = try PlanningWriterIO.storyboard(dataRoot: root)
         let revision = try PlanningWriterIO.nextRevision(directory: "shot-planning", suffix: ".v1.json", dataRoot: root)
+        if origin == .agentProposal || origin == .agentRevision {
+            let previous: ShotPlanningDraftV1?
+            if revision > 1 { previous = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: storyboard) }
+            else { previous = nil }
+            for shot in shots {
+                let selected = previous?.shots.first { $0.shotID == shot.shotID }?.sourceInputRange
+                guard shot.sourceInputRange == selected else {
+                    throw GateBlocked("Only the native source range controls can choose or change source footage timing. Preserve the current confirmed input range.")
+                }
+            }
+        }
         let draft = ShotPlanningDraftV1(header: .init(projectID: storyboard.storyboard.header.projectID,
             revision: revision, origin: origin, inputs: storyboard.references),
             storyboardRevision: storyboard.storyboard.header.revision, shots: shots)
