@@ -96,12 +96,16 @@ enum PipelineStorySourceWriter {
         files += [(archive, bytes), (selectionPath, bytes)]
         try ProjectWorkingCopy.markDirty(key: key)
         let paths = files.map { root.appendingPathComponent($0.path) }
+            + [PipelineLayout.gatesFile, PipelineLayout.lineageFile].map { root.appendingPathComponent($0) }
         try ArtifactTransaction.perform(paths: paths, dataRoot: root) {
             try access.revalidate()
             for file in files {
                 _ = try ProjectLocalFile.ensureDirectory((file.path as NSString).deletingLastPathComponent, dataRoot: root)
                 try file.bytes.write(to: root.appendingPathComponent(file.path), options: .atomic)
             }
+            try PipelinePhaseMutationRecorder.record(phase: "brief", dataRoot: root, captureLineage: false,
+                declaredPack: declaration.packName, declaredBinding: declaration.binding,
+                declaredProductionContract: declaration.productionContract)
         }
         editor.onPipelineChanged?()
     }
@@ -132,8 +136,12 @@ enum PipelineStorySourceWriter {
     static func bindCurrentSelection(access: PipelinePlanningWriteAccess) throws -> StorySourceV1 {
         let root = access.dataRoot
         guard access.phase == "brief" else { throw GateBlocked("Brief owns the selected story source.") }
+        guard try confirmedSelection(dataRoot: root, workflowID: access.workflow.contractID) != nil else {
+            throw GateBlocked("Confirm existing story material or Develop from scratch in the native card first.")
+        }
+        let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
         let selection = try PlanningWriterIO.read(Selection.self, at: selectionPath, dataRoot: root)
-        guard let id = UUID(uuidString: selection.id), id.uuidString.lowercased() == selection.id else {
+        guard selection.projectID == project.project, let id = UUID(uuidString: selection.id), id.uuidString.lowercased() == selection.id else {
             throw GateBlocked("The source selection receipt is invalid.")
         }
         let receipt = try PlanningWriterIO.reference("brief/source-selections/\(selection.id).v1.json",
@@ -144,7 +152,7 @@ enum PipelineStorySourceWriter {
             throw GateBlocked("Confirm the current story source in its native card first.")
         }
         let briefReference = try PlanningWriterIO.reference(PipelineLayout.briefFile, id: "brief", role: "core.brief", dataRoot: root)
-        let source = StorySourceV1(header: .init(projectID: selection.projectID, revision: 1, origin: .userRevision,
+        let source = StorySourceV1(header: .init(projectID: project.project, revision: 1, origin: .userRevision,
             inputs: [briefReference, receipt] + [selection.source, selection.originalSource].compactMap { $0 }), source: selection.source,
             declineReceipt: selection.source == nil ? receipt : nil)
         try source.requireCurrentBytes(dataRoot: root)
@@ -153,14 +161,22 @@ enum PipelineStorySourceWriter {
 
     static func requireConfirmed(_ source: StorySourceV1, workflowID: String, dataRoot: URL) throws {
         try source.requireCurrentBytes(dataRoot: dataRoot)
-        guard let receipt = source.header.inputs.first(where: { $0.role == "host.story-source-selection" }) else {
-            throw GateBlocked("The story source has no native selection receipt.")
+        guard let current = try confirmedSelection(dataRoot: dataRoot, workflowID: workflowID) else {
+            throw GateBlocked("The story source has no current native selection.")
         }
-        let selection = try PlanningWriterIO.read(Selection.self, at: receipt.path, dataRoot: dataRoot)
-        guard selection.schema == "story-source-selection/v1", selection.workflowID == workflowID,
-              selection.projectID == source.header.projectID, selection.source == source.source,
-              source.source != nil || source.declineReceipt == receipt else {
-            throw GateBlocked("The story source differs from its native selection.")
+        let project = try YAMLArtifactStore(dataRoot: dataRoot).load(ProjectMeta.self, at: PipelineLayout.projectFile)
+        let selection = try PlanningWriterIO.read(Selection.self, at: selectionPath, dataRoot: dataRoot)
+        let currentReceipt = try PlanningWriterIO.reference("brief/source-selections/\(selection.id).v1.json",
+            id: "story-source.selection", role: "host.story-source-selection", dataRoot: dataRoot)
+        guard source.header.projectID == project.project, selection.projectID == project.project,
+              source.header.inputs.contains(currentReceipt), source.source == current.source,
+              source.source != nil || source.declineReceipt == currentReceipt else {
+            throw GateBlocked("The selected story source changed. Update Brief before approving it.")
+        }
+        if let original = selection.originalSource {
+            guard source.header.inputs.contains(original) else {
+                throw GateBlocked("The story source is missing its original-byte binding.")
+            }
         }
     }
 }
