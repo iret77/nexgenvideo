@@ -507,6 +507,9 @@ final class ToolExecutor {
                 && result.turnDisposition == .continueTurn
             if tool != .runPhase,
                !ProductionWorkflowV2.newWriterNames.contains(tool.rawValue),
+               !([ToolName.writeBrief, .writeTreatment].contains(tool)
+                    && (guardedDeclaration?.productionContract != nil
+                        || guardedDeclaration?.binding?.projectSchema == HostWorkflowKey.musicvideoV2Schema)),
                tool != .writeShotlist,
                !result.isError,
                result.turnDisposition == .continueTurn,
@@ -526,17 +529,17 @@ final class ToolExecutor {
                     )
                 }
                 do {
-                    try await phaseMutationRecorder(
-                        editor,
-                        phase,
-                        root,
-                        tool.writesPhaseArtifact(
-                            args: resolved,
-                            dataRoot: root
-                        ),
-                        declaration.packName,
-                        declaration.binding
-                    )
+                    let captureLineage = tool.writesPhaseArtifact(args: resolved, dataRoot: root)
+                    let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                        expectedPack: declaration.binding, expectedProductionContract: declaration.productionContract)
+                    if workflow?.isProductionV2 == true {
+                        try await editor.pipelineAgentHarness.recordPhaseMutation(phase: phase, dataRoot: root,
+                            captureLineage: captureLineage, declaredPack: declaration.packName,
+                            declaredBinding: declaration.binding, declaredProductionContract: declaration.productionContract)
+                    } else {
+                        try await phaseMutationRecorder(editor, phase, root, captureLineage,
+                            declaration.packName, declaration.binding)
+                    }
                     await editor.refreshEngineState()
                 } catch {
                     phaseRecordFailed = true
@@ -853,6 +856,36 @@ final class ToolExecutor {
 
     private func currentArtifactURL(phase: String, dataRoot: URL, declaredPack: String?) -> URL? {
         let relative: String?
+        if let editor {
+            do {
+                let declaration = try mutationPackDeclaration(editor, dataRoot: dataRoot)
+                let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+                    expectedPack: declaration.binding, expectedProductionContract: declaration.productionContract)
+                if workflow?.isProductionV2 == true {
+                    let path: String
+                    switch phase {
+                    case "project_init": path = PipelineLayout.projectFile
+                    case "analysis": return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
+                    case "brief": path = PipelineLayout.briefFile
+                    case "production_design": path = PipelineLayout.productionDesignFile
+                    case "treatment": path = PipelineLayout.treatmentCurrentFile
+                    case "script": path = ScriptV1.currentPath
+                    case "storyboard": path = StoryboardV2.currentPath
+                    case "shot_planning": path = ShotPlanningDraftV1.currentPath
+                    case "bible": path = PipelineLayout.bibleFile
+                    case "shotlist":
+                        let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+                        path = ProductionPlanProjectionV1.versionPath(projection.header.revision)
+                    case "sanity": path = PipelineLayout.sanityReportFile
+                    case "frames": path = PipelineLayout.framesManifestFile
+                    case "render_review": path = RenderReviewV1.currentPath
+                    case "render": path = PipelineLayout.renderManifestFile(phase: "final")
+                    default: return nil
+                    }
+                    return try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+                }
+            } catch { return nil }
+        }
         switch phase {
         case "analysis":
             return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
@@ -977,7 +1010,7 @@ final class ToolExecutor {
         case .recordAffect:         return try recordAffectTool(editor, args)
         case .writeAnalysisInterpretation:
             return try writeAnalysisInterpretationTool(editor, args)
-        case .writeBrief:           return try writeBriefTool(editor, args)
+        case .writeBrief:           return try await writeProductionBriefTool(editor, args)
         case .writeProductionDesign: return try writeProductionDesignTool(editor, args)
         case .writeTreatment:       return try writeTreatmentTool(editor, args)
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)

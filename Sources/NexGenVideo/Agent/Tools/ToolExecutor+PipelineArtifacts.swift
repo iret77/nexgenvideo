@@ -308,8 +308,18 @@ extension ToolExecutor {
             guard let payload = args["causality_plan"] as? [String: Any] else {
                 throw ToolError("write_treatment requires causality_plan with exact treatment excerpts and a change review.")
             }
-            let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
-            url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
+            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+            if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+                expectedProductionContract: declaration.productionContract), workflow.isProductionV2 {
+                let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "treatment")
+                let draft = try JSONDecoder().decode(PipelineTreatmentWriterV2.CausalityProposal.self,
+                    from: JSONSerialization.data(withJSONObject: payload))
+                _ = try PipelineTreatmentWriterV2.write(treatment: treatment, proposal: draft, access: access)
+                url = root.appendingPathComponent(PipelineLayout.treatmentVersionFile(version))
+            } else {
+                let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
+                url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
+            }
         } catch {
             throw ToolError("Couldn't write treatment: \(error)")
         }

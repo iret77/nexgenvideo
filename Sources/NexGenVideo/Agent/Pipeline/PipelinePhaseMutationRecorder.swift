@@ -102,7 +102,7 @@ enum PipelinePhaseMutationRecorder {
                     dataRoot: dataRoot
                 )
             }
-            if captureLineage, phase == "shotlist" {
+            if captureLineage, phase == "shotlist", workflow?.isProductionV2 != true {
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: dataRoot),
                     declaredPack: declaredPack,

@@ -1909,6 +1909,7 @@ enum ToolDefinitions {
             properties[field.key] = field.schemaProperty
         }
         properties["project_dir"] = projectDirProperty
+        properties["project_mode"]?["enum"] = BriefWriteContract.briefProjectModes + [Mode.generic.rawValue]
         return objectSchema(properties: properties, required: BriefWriteContract.requiredKeys)
     }
 

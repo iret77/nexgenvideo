@@ -54,8 +54,21 @@ extension ToolExecutor {
     }
 
     /// The active pack contract's pipeline order for a project.
-    private func mergedPhaseOrder(dataRoot: URL) throws -> [String] {
-        try PhaseContractRuntime.order(activePack: activePluginFor(dataRoot: dataRoot))
+    private func resolvedWorkflow(dataRoot: URL, editor: EditorViewModel) throws -> HostWorkflowKey? {
+        let declaration = try mutationPackDeclaration(editor, dataRoot: dataRoot)
+        return try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)
+    }
+
+    private func phaseOrder(dataRoot: URL, declaration: ProjectPackGate.MutationDeclaration) throws -> [String] {
+        let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)
+        return try workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: declaration.packName)
+    }
+
+    private func mergedPhaseOrder(dataRoot: URL, editor: EditorViewModel) throws -> [String] {
+        try phaseOrder(dataRoot: dataRoot, declaration: mutationPackDeclaration(editor, dataRoot: dataRoot))
     }
 
     private func readGates(dataRoot: URL) throws -> Gates {
@@ -191,7 +204,8 @@ extension ToolExecutor {
 
     func getProjectState(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        let data = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePluginFor(dataRoot: root))
+        let data = try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePluginFor(dataRoot: root),
+            workflow: resolvedWorkflow(dataRoot: root, editor: editor))
         guard var state = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ToolError("Project state could not be read.")
         }
@@ -205,10 +219,10 @@ extension ToolExecutor {
         // truly projectless case (no arg, no open project) falls back to the bare core order.
         let order: [String]
         if args["project_dir"] != nil {
-            order = try mergedPhaseOrder(dataRoot: try resolveDataRoot(args, editor: editor))
+            order = try mergedPhaseOrder(dataRoot: try resolveDataRoot(args, editor: editor), editor: editor)
         } else {
             if let root = try? resolveDataRoot(args, editor: editor) {
-                order = try mergedPhaseOrder(dataRoot: root)
+                order = try mergedPhaseOrder(dataRoot: root, editor: editor)
             } else {
                 order = coreGatePhases
             }
@@ -224,17 +238,23 @@ extension ToolExecutor {
 
     func runSanityTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        guard let report = NativeCockpitReader.sanityReport(
-            dataRoot: root,
-            activePack: activePluginFor(dataRoot: root)
-        ) else {
-            throw ToolError("No shot list exists. Write and approve the shot list before running sanity.")
-        }
+        let report: SanityReport
         let artifact: SanityArtifact
-        do {
-            artifact = try SanityArtifactStore.save(report: report, dataRoot: root)
-        } catch {
-            throw ToolError("Couldn't persist the sanity report: \(error.localizedDescription)")
+        if let workflow = try resolvedWorkflow(dataRoot: root, editor: editor), workflow.isProductionV2 {
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            artifact = try ProductionPlanAuditV1.save(projection: projection, dataRoot: root)
+            report = SanityReport(project: artifact.project, findings: artifact.findings)
+        } else {
+            guard let existing = NativeCockpitReader.sanityReport(dataRoot: root,
+                activePack: activePluginFor(dataRoot: root)) else {
+                throw ToolError("No shot list exists. Write and approve the shot list before running sanity.")
+            }
+            report = existing
+            do {
+                artifact = try SanityArtifactStore.save(report: report, dataRoot: root)
+            } catch {
+                throw ToolError("Couldn't persist the sanity report: \(error.localizedDescription)")
+            }
         }
         let data = try NativeCockpitReader.sanityJSON(report)
         guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -372,16 +392,24 @@ extension ToolExecutor {
     /// YAML. The agent supplies the brief fields (validated against `BriefWriteContract`); the host
     /// injects the server-owned fields, decodes `Brief.self` (which enforces every enum + validation
     /// rule), and only then persists. On any violation nothing is written and the exact field is named.
-    func writeBriefTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func writeBriefTool(_ editor: EditorViewModel, _ args: [String: Any], allowsGenericMode: Bool = false) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         // `project_dir` is a control arg; every other key must be a known agent-facing brief field. The
         // server-owned fields are absent from allowedKeys, so passing one is rejected here.
         try validateUnknownKeys(args, allowed: BriefWriteContract.allowedKeys.union(["project_dir"]), path: "write_brief")
 
+        let acceptsGeneric: Bool
+        if allowsGenericMode {
+            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+            let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+                expectedProductionContract: declaration.productionContract)
+            acceptsGeneric = workflow?.contractID == "core.production.v2" && workflow?.packID == nil
+        } else { acceptsGeneric = false }
         var payload: [String: Any] = [:]
         let packContract = try residentPackEngineContract(editor, dataRoot: root)
         for field in BriefWriteContract.fields where args[field.key] != nil {
-            if let violation = briefEnumViolation(field, value: args[field.key]!) { throw ToolError(violation) }
+            if !(acceptsGeneric && field.key == "project_mode" && args[field.key] as? String == Mode.generic.rawValue),
+               let violation = briefEnumViolation(field, value: args[field.key]!) { throw ToolError(violation) }
             if let violation = Self.briefModelContractViolation(
                 key: field.key,
                 value: args[field.key]!,
@@ -1044,6 +1072,7 @@ extension ToolExecutor {
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
         let declaredPack = declaration.packName
         let declaredBinding = declaration.binding
+        let declaredProductionContract = declaration.productionContract
         try requirePhaseIdle(editor, dataRoot: root)
         // Hard preconditions FIRST — never ask the user to approve something that can't be approved.
         try await enforceGateRequirement(
@@ -1051,6 +1080,7 @@ extension ToolExecutor {
             dataRoot: root,
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract,
             editor: editor
         )
         let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root, declaredPack: declaredPack)
@@ -1062,6 +1092,7 @@ extension ToolExecutor {
                 action: .approve,
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract,
                 sourceToolUseID: toolUseID,
                 sourceHostStateID: hostStateID,
                 sourceHostTurnReference: hostTurnReference,
@@ -1090,6 +1121,7 @@ extension ToolExecutor {
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
         let declaredPack = declaration.packName
         let declaredBinding = declaration.binding
+        let declaredProductionContract = declaration.productionContract
         let isApproval = GateApproval.isApproval(state)
         let mutationID: UUID?
         if isApproval {
@@ -1114,12 +1146,12 @@ extension ToolExecutor {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             throw ToolError(error.localizedDescription, kind: .reopenProject)
         }
-        let resolvedPack = declaredPack
         // Approving states defer their write to the durable user card.
         if isApproval {
             try await enforceGateRequirement(
@@ -1127,6 +1159,7 @@ extension ToolExecutor {
                 dataRoot: root,
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract,
                 editor: editor
             )
             let fingerprint = try await gateArtifactFingerprint(phase: phase, root: root, declaredPack: declaredPack)
@@ -1138,6 +1171,7 @@ extension ToolExecutor {
                     action: .setState(state),
                     declaredPack: declaredPack,
                     declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract,
                     sourceToolName: ToolName.setGateState.rawValue,
                     sourceToolUseID: toolUseID,
                     sourceHostStateID: hostStateID,
@@ -1148,7 +1182,7 @@ extension ToolExecutor {
             )
             return try gateApprovalPendingResult(request, requestedPhase: phase)
         }
-        let order = try PhaseContractRuntime.order(activePack: resolvedPack)
+        let order = try phaseOrder(dataRoot: root, declaration: declaration)
         let existing = try readGates(dataRoot: root)
         let current = order.first {
             !existing.get($0).approved
@@ -1172,7 +1206,8 @@ extension ToolExecutor {
         let gates = try mutateGates(
             dataRoot: root,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         ) {
             try GatesOperations.setStateAndInvalidateDownstream(
                 &$0,
@@ -1198,10 +1233,13 @@ extension ToolExecutor {
         root: URL,
         declaredPack: String?
     ) async throws -> GateArtifactFingerprint? {
-        guard let snapshot = await hostArtifactSnapshot(phase: phase, dataRoot: root, declaredPack: declaredPack) else {
+        let workflow: HostWorkflowKey?
+        if let editor { workflow = try resolvedWorkflow(dataRoot: root, editor: editor) }
+        else { workflow = nil }
+        guard let snapshot = await hostArtifactSnapshot(phase: phase, dataRoot: root, declaredPack: declaredPack), snapshot.exists else {
+            if workflow?.isProductionV2 == true { throw ToolError("The current production artifact cannot be bound to this approval. Repair it before requesting approval.") }
             return nil
         }
-        guard snapshot.exists else { return nil }
         guard let bytes = snapshot.bytes else { throw ToolError("The artifact cannot be bound to this review. Repair it before requesting approval.") }
         return GateArtifactFingerprint(path: snapshot.path, sha256: FileDigest.sha256(of: bytes),
             lineageSHA256: try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.lineageFile, in: root)), phase: phase)
@@ -1267,7 +1305,8 @@ extension ToolExecutor {
             dataRoot: root
         )
         guard currentDeclaration.packName == approval.declaredPack,
-              currentDeclaration.binding == approval.declaredBinding else {
+              currentDeclaration.binding == approval.declaredBinding,
+              currentDeclaration.productionContract == approval.declaredProductionContract else {
             throw ToolError(
                 "The project format changed while this approval was open. Review it again.",
                 kind: .reviewChangedSource
@@ -1277,7 +1316,8 @@ extension ToolExecutor {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
                 declaredPack: approval.declaredPack,
-                declaredBinding: approval.declaredBinding
+                declaredBinding: approval.declaredBinding,
+                declaredProductionContract: approval.declaredProductionContract
             )
         } catch {
             throw ToolError(
@@ -1292,10 +1332,11 @@ extension ToolExecutor {
                 throw ToolError("The pipeline changed. Request a new revision decision.", kind: .reviewChangedSource)
             }
             if let key = editor.openWorkingCopyKey { try ProjectWorkingCopy.markDirty(key: key) }
-            let order = try PhaseContractRuntime.order(activePack: approval.declaredPack)
+            let order = try phaseOrder(dataRoot: root, declaration: currentDeclaration)
             var reset: [String] = []
             _ = try mutateGates(dataRoot: root, declaredPack: approval.declaredPack,
-                declaredBinding: approval.declaredBinding) {
+                declaredBinding: approval.declaredBinding,
+                declaredProductionContract: approval.declaredProductionContract) {
                 reset = try GatesOperations.rewindTo(&$0, target: approval.phase, order: order)
             }
             editor.onPipelineChanged?()
@@ -1311,6 +1352,7 @@ extension ToolExecutor {
             dataRoot: root,
             declaredPack: approval.declaredPack,
             declaredBinding: approval.declaredBinding,
+            declaredProductionContract: approval.declaredProductionContract,
             editor: editor,
             mutationID: mutationID,
             failureKind: .approvalStructure
@@ -1330,7 +1372,8 @@ extension ToolExecutor {
             gates = try mutateGates(
                 dataRoot: root,
                 declaredPack: approval.declaredPack,
-                declaredBinding: approval.declaredBinding
+                declaredBinding: approval.declaredBinding,
+                declaredProductionContract: approval.declaredProductionContract
             ) { gates in
                 switch approval.action {
                 case .rewind: break
@@ -1377,6 +1420,7 @@ extension ToolExecutor {
         dataRoot: URL,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding?,
         editor: EditorViewModel,
         mutationID: UUID? = nil,
         failureKind: ToolFailureKind = .agentCorrection
@@ -1387,6 +1431,7 @@ extension ToolExecutor {
                 phase: phase,
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract,
                 executionCoordinator: editor.pipelinePhaseRunCoordinator,
                 mutationID: mutationID
             )
@@ -1405,8 +1450,9 @@ extension ToolExecutor {
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
         try requirePhaseIdle(editor, dataRoot: root)
         _ = try ProjectPackGate.requireLiveMutation(projectURL: FrameInventory.projectHome(of: root),
-            declaredPack: declaration.packName, declaredBinding: declaration.binding)
-        let order = try PhaseContractRuntime.order(activePack: declaration.packName)
+            declaredPack: declaration.packName, declaredBinding: declaration.binding,
+            declaredProductionContract: declaration.productionContract)
+        let order = try phaseOrder(dataRoot: root, declaration: declaration)
         guard let index = order.firstIndex(of: target) else { throw ToolError("Unknown phase: \(target)") }
         let gates = try readGates(dataRoot: root)
         let affected = Array(order[index...]).filter { gates.get($0).approved }
@@ -1431,6 +1477,7 @@ extension ToolExecutor {
             phase: target, notes: args.string("reason"), dataRoot: root,
             action: .rewind(gatesSHA256: hash, phases: affected),
             declaredPack: declaration.packName, declaredBinding: declaration.binding,
+            declaredProductionContract: declaration.productionContract,
             sourceToolName: ToolName.rewind.rawValue, sourceToolUseID: toolUseID,
             sourceHostStateID: hostStateID, sourceHostTurnReference: hostTurnReference
         ), origin: origin)
@@ -1444,6 +1491,7 @@ extension ToolExecutor {
         dataRoot: URL,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding?,
         _ body: (inout Gates) throws -> Void
     ) throws -> Gates {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
@@ -1451,14 +1499,16 @@ extension ToolExecutor {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: dataRoot),
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
             try body(&gates)
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: dataRoot),
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             try store.save(gates, to: PipelineLayout.gatesFile)
             return gates
@@ -3364,7 +3414,7 @@ extension ToolExecutor {
         do {
             try GateGuard.requireChain(
                 gates,
-                order: try mergedPhaseOrder(dataRoot: root),
+                order: try mergedPhaseOrder(dataRoot: root, editor: editor),
                 through: "shotlist"
             )
         } catch let blocked as GateBlocked {
