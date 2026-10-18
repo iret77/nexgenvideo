@@ -134,11 +134,16 @@ private enum StoryboardAccessibilityProbe {
                 report["accessibilityEnabledEnvironment"] = enabled
                 let negative = try await measureRawTokens(destination: destination)
                 report["rawTokenControl"] = negative
+                try write(report, to: destination)
+                let native2x = try await measure(accessibilityEnabled: false, destination: destination, captureScale: 2)
+                report["native2xEnvironment"] = native2x
+                let negative2x = try await measureRawTokens(destination: destination, captureScale: 2)
+                report["rawTokenControl2x"] = negative2x
                 let axVerified = enabled["accessibilityTextVerified"] as? Bool == true
-                let pixelsVerified = baseline["pixelsVerified"] as? Bool == true
-                    && negative["allTokensDetected"] as? Bool == true
+                let pixelsVerified = native2x["pixelsVerified"] as? Bool == true
+                    && negative2x["allTokensDetected"] as? Bool == true
                 report["verifiedMechanisms"] = (axVerified ? ["accessibilityEnabledEnvironment"] : [])
-                    + (pixelsVerified ? ["pixelRecognitionWithRawTokenControl"] : [])
+                    + (pixelsVerified ? ["native2xPixelRecognitionWithRawTokenControl"] : [])
                 report["textVerified"] = axVerified || pixelsVerified
                 report["finished"] = true
                 try write(report, to: destination)
@@ -152,7 +157,7 @@ private enum StoryboardAccessibilityProbe {
         app.run()
     }
 
-    private static func measure(accessibilityEnabled: Bool, destination: URL) async throws -> [String: Any] {
+    private static func measure(accessibilityEnabled: Bool, destination: URL, captureScale: Int = 1) async throws -> [String: Any] {
         let shots = [Shot(id: "verse1.01", subject: "The singer stops at the platform edge.", purpose: "Story"),
             Shot(id: "verse1.02", subject: "A train passes the empty platform.", purpose: "Transition"),
             Shot(id: "chorus1.01", subject: "The singer turns toward the morning light.", purpose: "Performance")]
@@ -249,14 +254,17 @@ private enum StoryboardAccessibilityProbe {
                 throw Failure(message: "A rendered card lost its native probe.")
             }
             let frame = probe.convert(probe.bounds, to: artifact.view)
-            let image = try capture(artifact.view, frame: frame)
+            let image = try capture(artifact.view, frame: frame, scale: captureScale)
             let prefix = accessibilityEnabled ? "enabled" : "default"
-            let name = "storyboard-probe-\(prefix)-\(shot.id).png"
+            let suffix = captureScale == 1 ? "" : "-\(captureScale)x"
+            let name = "storyboard-probe-\(prefix)-\(shot.id)\(suffix).png"
             try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
             var read = try recognize(image)
             let text = read["text"] as? String ?? ""
-            let leaked = forbidden.filter { text.contains($0) }
+            let leakText = read["leakDetectionText"] as? String ?? ""
+            let leaked = forbidden.filter { leakText.contains($0) }
             read["shotID"] = shot.id
+            read["captureScale"] = captureScale
             read["screenshot"] = name
             read["missingSubject"] = !text.contains(expected[index])
             read["leakedTokens"] = leaked
@@ -269,7 +277,7 @@ private enum StoryboardAccessibilityProbe {
             "artifactClass": className(artifact.view), "artifactFrame": rect(artifact.view.frame)]
     }
 
-    private static func measureRawTokens(destination: URL) async throws -> [String: Any] {
+    private static func measureRawTokens(destination: URL, captureScale: Int = 1) async throws -> [String: Any] {
         let forbidden = ["basis: inferred", "angle:", "height:", "lens_hint:",
             "generated", "transition", "performance", "wide.noon"]
         var samples: [[String: Any]] = []
@@ -290,13 +298,17 @@ private enum StoryboardAccessibilityProbe {
             defer { window.orderOut(nil); window.contentView = nil; window.close() }
             host.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(100))
-            let image = try capture(host, frame: host.bounds)
-            let name = "storyboard-probe-raw-\(Int(scale * 100)).png"
+            let image = try capture(host, frame: host.bounds, scale: captureScale)
+            let suffix = captureScale == 1 ? "" : "-\(captureScale)x"
+            let name = "storyboard-probe-raw-\(Int(scale * 100))\(suffix).png"
             try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
             var read = try recognize(image)
-            let text = read["text"] as? String ?? ""
+            let text = read["leakDetectionText"] as? String ?? ""
             let missing = forbidden.filter { !text.contains($0) }
+            let rawText = read["text"] as? String ?? ""
+            read["rawUndetectedTokens"] = forbidden.filter { !rawText.contains($0) }
             read["scale"] = scale
+            read["captureScale"] = captureScale
             read["screenshot"] = name
             read["undetectedTokens"] = missing
             read["allTokensDetected"] = missing.isEmpty
@@ -306,10 +318,21 @@ private enum StoryboardAccessibilityProbe {
     }
 
     private static func recognize(_ image: CGImage) throws -> [String: Any] {
+        let raw = try recognize(image, correctingLanguage: false)
+        let corrected = try recognize(image, correctingLanguage: true)
+        var result = raw
+        result["rawRecognition"] = raw
+        result["languageCorrectedRecognition"] = corrected
+        result["leakDetectionText"] = [raw["text"] as? String ?? "", corrected["text"] as? String ?? ""]
+            .joined(separator: "\n")
+        return result
+    }
+
+    private static func recognize(_ image: CGImage, correctingLanguage: Bool) throws -> [String: Any] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["en-US"]
-        request.usesLanguageCorrection = false
+        request.usesLanguageCorrection = correctingLanguage
         request.minimumTextHeight = 0
         try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         let observations = (request.results ?? []).sorted { $0.boundingBox.midY > $1.boundingBox.midY }
@@ -320,12 +343,24 @@ private enum StoryboardAccessibilityProbe {
         let text = lines.compactMap { $0["text"] as? String }.joined(separator: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return ["text": text, "lines": lines, "pixelWidth": image.width, "pixelHeight": image.height,
-            "usesLanguageCorrection": false, "customWords": [String](), "minimumTextHeight": 0]
+            "usesLanguageCorrection": correctingLanguage, "customWords": [String](), "minimumTextHeight": 0]
     }
 
-    private static func capture(_ view: NSView, frame: NSRect) throws -> CGImage {
-        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: frame) else {
+    private static func capture(_ view: NSView, frame: NSRect, scale: Int) throws -> CGImage {
+        guard let native = view.bitmapImageRepForCachingDisplay(in: frame) else {
             throw Failure(message: "The native card could not allocate its pixel snapshot.")
+        }
+        let bitmap: NSBitmapImageRep
+        if scale == 1 { bitmap = native }
+        else {
+            guard let enlarged = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: native.pixelsWide * scale, pixelsHigh: native.pixelsHigh * scale,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+                throw Failure(message: "The native card could not allocate its higher-resolution snapshot.")
+            }
+            enlarged.size = frame.size
+            bitmap = enlarged
         }
         view.cacheDisplay(in: frame, to: bitmap)
         guard let image = bitmap.cgImage else { throw Failure(message: "The native card snapshot contains no image.") }

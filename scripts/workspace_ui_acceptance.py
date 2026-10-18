@@ -524,6 +524,12 @@ def run_scale(executable, output, scale):
         for row in analysis + provenance + musicvideo + host_states + storyboard + production + agent_activity + film_review
         for name in row.get("screenshots", [])
     ]
+    screenshots += [
+        card.get("screenshot")
+        for row in production
+        for card in row.get("storyboardCards", [])
+        if isinstance(card, dict)
+    ]
     native_images = [name for row in film_review for name in native_film_screenshots(row)]
     screenshots += native_images
     valid_images = all(
@@ -620,7 +626,7 @@ def run_scale(executable, output, scale):
         and invariants[0].get("undoUnchanged") is True
         and invariants[0].get("workingCopyUnchanged") is True
         and len(screenshots)
-        == 38 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES) + len(native_images)
+        == 41 + len(EXPECTED_INSPECTOR_CASES) + len(EXPECTED_KEYFRAME_LANES) + len(native_images)
         and valid_images
     )
     return {

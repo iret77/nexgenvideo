@@ -82,10 +82,12 @@ code or inputs. The earlier run and the unchanged replay scope belong in the PR'
 verification record.
 
 The manual Native Acceptance Probes workflow diagnoses audio duration and native
-Storyboard accessibility without compiling the app. It compiles the actual
+Storyboard text without compiling the app. It compiles the actual
 decoder with the engine PCM contract on `macrunner`, then measures it alongside
 a standalone hosting/accessibility probe on macOS 26. Bounded JSON and logs retain
-conversion status, real final audio and observed accessibility text. These probes
+conversion status, WAV payloads, EOF reads, real final audio and observed text.
+Pixel recognition retains its raw results and visible forbidden-token controls
+at all three supported text scales. These probes
 do not replace the full workspace or private-file acceptance.
 
 ## Release metadata
