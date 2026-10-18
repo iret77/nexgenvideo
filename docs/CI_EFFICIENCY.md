@@ -62,7 +62,11 @@ An optional `unit_test_filter` on the standalone or reusable workspace workflow
 adds the affected unit suite, such as `MusicvideoChecksTests`. The existing
 `macrunner` build directory is extended with test targets, their runtime inputs
 are staged, and `swift test --skip-build --filter` runs only the selected tests
-before the app artifact is uploaded. An empty filter skips this step.
+after the app artifact is uploaded. An empty filter skips this step. The build job
+exports `app_ready` only after a successful upload with an artifact ID. Native
+acceptance downloads that exact artifact from the same run even if the later unit
+step fails; the unit failure still fails the workflow. A failed or missing upload
+cannot start native acceptance.
 
 The optional `acceptance_scope=filmreview` repeats only the mixed Musicvideo film
 case at 100%, 125% and 150%, plus the separate generation pointer/keyboard review.

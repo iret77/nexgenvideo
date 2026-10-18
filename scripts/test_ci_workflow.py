@@ -102,7 +102,7 @@ class CIWorkflowTests(unittest.TestCase):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
         acceptance = workspace.split("  acceptance:\n", 1)[1]
         self.assertIn("runs-on: macos-26", acceptance)
-        self.assertIn("name: workspace-ui-app", acceptance)
+        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", acceptance)
         self.assertLess(acceptance.index("tar -xzf"), acceptance.index("scripts/workspace_ui_acceptance.py"))
         self.assertLess(acceptance.index("scripts/workspace_ui_acceptance.py"), acceptance.index(step))
         review, upload = acceptance.split(step, 1)[1].split("      - uses: actions/upload-artifact@v4", 1)
@@ -128,7 +128,7 @@ class CIWorkflowTests(unittest.TestCase):
             self.assertIn("default: ''", inputs)
         build = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)[0]
         self.assertLess(build.index("name: Build acceptance app"), build.index("name: Run selected unit regressions"))
-        selected = build.split("      - name: Run selected unit regressions\n", 1)[1].split("      - uses: actions/upload-artifact", 1)[0]
+        selected = build.split("      - name: Run selected unit regressions\n", 1)[1]
         self.assertIn("if: inputs.unit_test_filter != ''", selected)
         self.assertIn("NGV_UNIT_TEST_FILTER: ${{ inputs.unit_test_filter }}", selected)
         run = selected.split("        run: |\n", 1)[1]
@@ -137,6 +137,29 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertLess(run.index("scripts/stage_test_runtime.sh debug"), run.index("swift test"))
         self.assertIn('swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"', run)
         self.assertNotIn("scripts/bundle.sh", run)
+
+    def test_workspace_native_acceptance_keeps_the_uploaded_app_after_unit_failure(self):
+        workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
+        build, acceptance = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)
+        self.assertLess(build.index("name: Build acceptance app"), build.index("name: Upload acceptance app"))
+        self.assertLess(build.index("name: Upload acceptance app"), build.index("name: Run selected unit regressions"))
+        upload = build.split("      - name: Upload acceptance app\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("id: upload_app", upload)
+        self.assertIn("uses: actions/upload-artifact@v4", upload)
+        self.assertIn("name: workspace-ui-app", upload)
+        self.assertIn("path: ${{ runner.temp }}/workspace-ui.tar.gz", upload)
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertIn("app_ready: ${{ steps.upload_app.outcome == 'success' && steps.upload_app.outputs.artifact-id != '' }}", build)
+        self.assertIn("app_artifact_id: ${{ steps.upload_app.outputs.artifact-id }}", build)
+        self.assertIn("needs: build", acceptance)
+        self.assertIn("if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}", acceptance)
+        download = acceptance.split("      - uses: actions/download-artifact@v4\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", download)
+        self.assertIn("merge-multiple: true", download)
+        self.assertNotIn("name:", download)
+        self.assertNotIn("run-id:", download)
+        self.assertNotIn("repository:", download)
+        self.assertNotIn("continue-on-error", build)
 
     def test_workspace_scope_is_validated_before_build_and_passed_as_quoted_argument(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
