@@ -255,7 +255,8 @@ private enum StoryboardAccessibilityProbe {
             try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
             var read = try recognize(image)
             let text = read["text"] as? String ?? ""
-            let leaked = forbidden.filter { text.contains($0) }
+            let leakText = read["leakDetectionText"] as? String ?? ""
+            let leaked = forbidden.filter { leakText.contains($0) }
             read["shotID"] = shot.id
             read["screenshot"] = name
             read["missingSubject"] = !text.contains(expected[index])
@@ -294,8 +295,10 @@ private enum StoryboardAccessibilityProbe {
             let name = "storyboard-probe-raw-\(Int(scale * 100)).png"
             try save(image, to: destination.deletingLastPathComponent().appendingPathComponent(name))
             var read = try recognize(image)
-            let text = read["text"] as? String ?? ""
+            let text = read["leakDetectionText"] as? String ?? ""
             let missing = forbidden.filter { !text.contains($0) }
+            let rawText = read["text"] as? String ?? ""
+            read["rawUndetectedTokens"] = forbidden.filter { !rawText.contains($0) }
             read["scale"] = scale
             read["screenshot"] = name
             read["undetectedTokens"] = missing
@@ -306,10 +309,21 @@ private enum StoryboardAccessibilityProbe {
     }
 
     private static func recognize(_ image: CGImage) throws -> [String: Any] {
+        let raw = try recognize(image, correctingLanguage: false)
+        let corrected = try recognize(image, correctingLanguage: true)
+        var result = raw
+        result["rawRecognition"] = raw
+        result["languageCorrectedRecognition"] = corrected
+        result["leakDetectionText"] = [raw["text"] as? String ?? "", corrected["text"] as? String ?? ""]
+            .joined(separator: "\n")
+        return result
+    }
+
+    private static func recognize(_ image: CGImage, correctingLanguage: Bool) throws -> [String: Any] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["en-US"]
-        request.usesLanguageCorrection = false
+        request.usesLanguageCorrection = correctingLanguage
         request.minimumTextHeight = 0
         try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         let observations = (request.results ?? []).sorted { $0.boundingBox.midY > $1.boundingBox.midY }
@@ -320,7 +334,7 @@ private enum StoryboardAccessibilityProbe {
         let text = lines.compactMap { $0["text"] as? String }.joined(separator: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return ["text": text, "lines": lines, "pixelWidth": image.width, "pixelHeight": image.height,
-            "usesLanguageCorrection": false, "customWords": [String](), "minimumTextHeight": 0]
+            "usesLanguageCorrection": correctingLanguage, "customWords": [String](), "minimumTextHeight": 0]
     }
 
     private static func capture(_ view: NSView, frame: NSRect) throws -> CGImage {
