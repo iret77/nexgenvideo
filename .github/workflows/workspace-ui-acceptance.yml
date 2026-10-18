@@ -1,7 +1,19 @@
 name: Workspace UI Acceptance
 on:
   workflow_dispatch:
+    inputs:
+      unit_test_filter:
+        description: Optional Swift test filter for the affected regression suite
+        required: false
+        type: string
+        default: ''
   workflow_call:
+    inputs:
+      unit_test_filter:
+        description: Optional Swift test filter for the affected regression suite
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}
@@ -28,6 +40,15 @@ jobs:
           scripts/bundle.sh debug
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
           tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+      - name: Run selected unit regressions
+        if: inputs.unit_test_filter != ''
+        env:
+          NGV_UNIT_TEST_FILTER: ${{ inputs.unit_test_filter }}
+        run: |
+          set -euo pipefail
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
+          scripts/stage_test_runtime.sh debug
+          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"
       - uses: actions/upload-artifact@v4
         with:
           name: workspace-ui-app
@@ -69,6 +90,7 @@ jobs:
           NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence" \
           NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
             "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
+            -ApplePersistenceIgnoreState YES \
             > "$RUNNER_TEMP/evidence/generation-batch-review.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/evidence/generation-batch-review.log"
           test "$status" -eq 0
@@ -84,6 +106,7 @@ jobs:
             ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
             ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
             ${{ runner.temp }}/evidence/scale-*-fullflow-analysis.json
+            ${{ runner.temp }}/evidence/scale-*-fullflow-sanity.json
             ${{ runner.temp }}/evidence/generation-*.json
             ${{ runner.temp }}/evidence/generation-*.log
             ${{ runner.temp }}/evidence/generation-*.png

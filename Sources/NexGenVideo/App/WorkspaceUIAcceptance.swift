@@ -38,7 +38,10 @@ enum WorkspaceUIAcceptance {
         app.mainMenu = menu
         BundledFonts.register()
         let evidenceURL = URL(fileURLWithPath: evidencePath, isDirectory: true)
-        emit("started", scale: scale)
+        emit("started", scale: scale, fields: [
+            "case": ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace",
+            "restorationIgnored": UserDefaults.standard.bool(forKey: "ApplePersistenceIgnoreState"),
+        ])
         Task { @MainActor in
             let scenario = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace"
             if scenario != "workspace" {
@@ -1154,6 +1157,7 @@ enum WorkspaceUIAcceptance {
                 "activeApp": NSApp.isActive, "screenshot": name,
                 "firstFound": findProbe(in: host, identifier: firstID) != nil,
                 "secondFound": findProbe(in: host, identifier: secondID) != nil,
+                "windowContext": failureWindowContext(evidenceURL: evidenceURL, scale: scale, context: "project-cards"),
             ])
             fail("native project cards did not appear", scale: scale)
         }
@@ -1165,6 +1169,7 @@ enum WorkspaceUIAcceptance {
                 "opened": opened.map(\.lastPathComponent), "keyWindow": window.isKeyWindow,
                 "available": probeState(identifier: firstID, in: window) == true,
                 "unavailable": probeState(identifier: secondID, in: window) == false, "screenshot": name,
+                "windowContext": failureWindowContext(evidenceURL: evidenceURL, scale: scale, context: "project-cards"),
             ])
             fail(reason, scale: scale)
         }
@@ -2160,6 +2165,39 @@ enum WorkspaceUIAcceptance {
         ]
     }
 
+    private static func failureWindowContext(evidenceURL: URL, scale: Double, context: String) -> [String: Any] {
+        func nativeText(in view: NSView) -> [String] {
+            var values: [String] = []
+            if let field = view as? NSTextField, !field.stringValue.isEmpty { values.append(field.stringValue) }
+            if let button = view as? NSButton, !button.title.isEmpty { values.append(button.title) }
+            for child in view.subviews where !child.isHiddenOrHasHiddenAncestor {
+                values.append(contentsOf: nativeText(in: child))
+            }
+            return values
+        }
+        let windows: [[String: Any]] = NSApp.windows.filter(\.isVisible).enumerated().map { index, window in
+            var fields: [String: Any] = [
+                "class": String(describing: type(of: window)), "title": window.title,
+                "number": window.windowNumber, "key": window.isKeyWindow,
+                "modal": window.isModalPanel, "sheet": window.isSheet,
+                "sheetParentNumber": window.sheetParent?.windowNumber ?? -1,
+                "frame": frameDescription(window.frame),
+                "document": (window.windowController?.document as? NSDocument)?.fileURL?.lastPathComponent ?? "",
+            ]
+            if let content = window.contentView {
+                let name = "scale-\(scaleLabel(scale))-\(context)-window-\(index).png"
+                fields["nativeText"] = nativeText(in: content)
+                fields["screenshot"] = snapshot(content, at: evidenceURL.appendingPathComponent(name)) ? name : ""
+            }
+            return fields
+        }
+        return [
+            "activeApp": NSApp.isActive, "keyWindowNumber": NSApp.keyWindow?.windowNumber ?? -1,
+            "modalWindowNumber": NSApp.modalWindow?.windowNumber ?? -1, "windows": windows,
+            "documents": NSDocumentController.shared.documents.map { $0.fileURL?.lastPathComponent ?? "untitled" },
+        ]
+    }
+
     private static func geometryDiagnostics(in root: NSView) -> [String: Any] {
         guard let probe = findProbe(in: root, identifier: "editor.geometry") else {
             return ["available": false]
@@ -2546,6 +2584,7 @@ extension WorkspaceUIAcceptance {
                 "open": text("agent.gate.open") ?? "missing", "approve": text("agent.gate.approve") ?? "missing",
                 "review": text("storyboard.review") ?? "missing", "document": text("storyboard.document") ?? "missing",
                 "row": text("pipeline.overview.surface.storyboard") ?? "missing", "modal": modalSurfaces(),
+                "windowContext": failureWindowContext(evidenceURL: evidenceURL, scale: scale, context: "storyboard"),
             ])
             fail(reason, scale: scale)
         }

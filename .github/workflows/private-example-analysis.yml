@@ -233,7 +233,7 @@ jobs:
           NGV_EXAMPLE_DATASET: ${{ inputs.dataset }}
           NGV_EXAMPLE_REPORT_DIR: ${{ runner.temp }}/analysis-report
           NGV_GIT_COMMIT: ${{ github.sha }}
-        run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
+        run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
 
       - name: Publish private analysis report
         if: ${{ always() }}

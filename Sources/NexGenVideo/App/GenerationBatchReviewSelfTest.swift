@@ -85,14 +85,19 @@ enum GenerationBatchReviewSelfTest {
                 window.makeKeyAndOrderFront(nil)
                 app.activate(ignoringOtherApps: true)
 
-                try await verify(
-                    window: window,
-                    editor: editor,
-                    original: manifest,
-                    pricedPackage: priced,
-                    runtimeEvidence: runtimeEvidence,
-                    followUps: followUps
-                )
+                do {
+                    try await verify(
+                        window: window,
+                        editor: editor,
+                        original: manifest,
+                        pricedPackage: priced,
+                        runtimeEvidence: runtimeEvidence,
+                        followUps: followUps
+                    )
+                } catch {
+                    captureFailureEvidence(in: window)
+                    throw error
+                }
                 FileHandle.standardOutput.write(Data("SELFTEST_GENERATION_BATCH_REVIEW_OK\n".utf8))
                 window.orderOut(nil)
                 exit(0)
@@ -153,10 +158,10 @@ enum GenerationBatchReviewSelfTest {
         ], in: window, context: "13-item narrow large-text review")
         try writeListViewportEvidence(identifier: "generation-batch.details.\(firstID)", in: window,
                                       context: "13-item narrow large-text review")
+        try captureWindow(window, name: "generation-batch-narrow-large.png")
         try await verifyLastRequest(original, in: window, context: "13-item narrow large-text review")
         try await reveal(identifier: "generation-batch.details.\(firstID)", in: window,
                          context: "13-item review returned to its first request")
-        try captureWindow(window, name: "generation-batch-narrow-large.png")
         try await verifyDetailsToggle(
             identifier: "generation-batch.details.\(firstID)",
             itemID: firstID,
@@ -763,11 +768,12 @@ enum GenerationBatchReviewSelfTest {
     }
 
     private static func verifyLastRequest(_ batch: GenerationBatch, in window: NSWindow, context: String) async throws {
-        guard let lastID = batch.payload.items.last?.id else {
+        let projection = GenerationBatchReviewProjection(batch: batch)
+        guard let lastID = projection.sections.last?.items.last?.id else {
             throw Failure(message: "\(context) has no last request")
         }
         let identifier = "generation-batch.details.\(lastID)"
-        try await reveal(identifier: identifier, in: window, context: context, searchFromEnd: true)
+        try await reveal(identifier: identifier, in: window, context: context)
         try await requireVisible([
             identifier,
             "generation-batch.remove.\(lastID)",
@@ -789,13 +795,12 @@ enum GenerationBatchReviewSelfTest {
     private static func reveal(
         identifier: String,
         in window: NSWindow,
-        context: String,
-        searchFromEnd: Bool = false
+        context: String
     ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
         var lastBoundary = "native probe absent"
-        var searchedFromTop = false
+        var searchIncreasingY: Bool?
         while clock.now < deadline {
             guard let root = window.contentView else {
                 throw Failure(message: "\(context) has no window content view while revealing \(identifier)")
@@ -803,18 +808,30 @@ enum GenerationBatchReviewSelfTest {
             guard let probe = findClickProbes(in: root, identifier: identifier).first else {
                 lastBoundary = "native probe absent"
                 if let list = findClickProbes(in: root, identifier: "generation-batch.list").first,
-                   let scrollView = list.enclosingScrollView, let document = scrollView.documentView {
+                   let scrollView = list.enclosingScrollView {
                     root.layoutSubtreeIfNeeded()
-                    let before = scrollView.contentView.bounds.origin
-                    let viewportHeight = scrollView.contentView.bounds.height
-                    let bottom = max(0, document.frame.height - viewportHeight)
-                    let next = searchFromEnd ? bottom
-                        : (searchedFromTop ? min(bottom, before.y + viewportHeight / 2) : 0)
-                    searchedFromTop = true
-                    scrollView.contentView.scroll(to: NSPoint(x: before.x, y: next))
-                    scrollView.reflectScrolledClipView(scrollView.contentView)
-                    lastBoundary = "searching native list before=\(pointDescription(before)) "
-                        + "after=\(pointDescription(scrollView.contentView.bounds.origin))"
+                    let clip = scrollView.contentView
+                    let before = clip.bounds
+                    let document = clip.documentRect
+                    guard before.minY.isFinite, before.height.isFinite, before.height > 0,
+                          document.minY.isFinite, document.maxY.isFinite else {
+                        throw Failure(message: "\(context) has invalid native list geometry")
+                    }
+                    let maximumY = max(document.minY, document.maxY - before.height)
+                    var increasing = searchIncreasingY ?? !clip.isFlipped
+                    if before.minY <= document.minY { increasing = true }
+                    else if before.minY >= maximumY { increasing = false }
+                    searchIncreasingY = increasing
+                    let distance = Int32(min(CGFloat(Int32.max), max(1, floor(before.height * 0.75))))
+                    let delta = increasing == clip.isFlipped ? -distance : distance
+                    try await scrollList(scrollView, delta: delta, in: window)
+                    root.layoutSubtreeIfNeeded()
+                    lastBoundary = "searching native list delta=\(delta) before=\(rectDescription(before)) "
+                        + "after=\(rectDescription(clip.bounds)) document=\(rectDescription(clip.documentRect)) "
+                        + "clipFlipped=\(clip.isFlipped)"
+                    writeEvidence("scroll-search identifier=\(identifier) \(lastBoundary)")
+                    try await Task.sleep(for: .milliseconds(20))
+                    continue
                 }
                 try? await Task.sleep(for: .milliseconds(100))
                 continue
@@ -855,6 +872,38 @@ enum GenerationBatchReviewSelfTest {
             message: "\(context) could not establish concrete control readiness for \(identifier); "
                 + "last boundary: \(lastBoundary)"
         )
+    }
+
+    private static func scrollList(_ scroll: NSScrollView, delta: Int32, in window: NSWindow) async throws {
+        guard scroll.window === window, let screen = NSScreen.screens.first else {
+            throw Failure(message: "native list scrolling has no matching window or screen")
+        }
+        let center = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
+        let point = window.convertPoint(toScreen: center)
+        let location = CGPoint(x: point.x, y: screen.frame.height - point.y)
+        let events = try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: location)
+        for (index, event) in events.enumerated() {
+            if index > 0 { try await Task.sleep(for: .milliseconds(20)) }
+            scroll.scrollWheel(with: event)
+        }
+    }
+
+    private static func captureFailureEvidence(in window: NSWindow) {
+        guard let root = window.contentView else { return }
+        root.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        writeEvidence("failure-window frame=\(rectDescription(window.frame)) root=\(rectDescription(root.bounds)) "
+            + "visible=\(window.isVisible) key=\(window.isKeyWindow)")
+        if let list = findClickProbes(in: root, identifier: "generation-batch.list").first,
+           let scroll = list.enclosingScrollView {
+            let frame = scroll.documentView.map { rectDescription($0.frame) } ?? "absent"
+            let flipped = scroll.documentView.map { String($0.isFlipped) } ?? "absent"
+            writeEvidence("failure-list " + scrollGeometry(probe: list, scrollView: scroll)
+                + " documentFrame=\(frame) clipFlipped=\(scroll.contentView.isFlipped) "
+                + "documentFlipped=\(flipped)")
+        }
+        do { try captureWindow(window, name: "generation-batch-failure.png") }
+        catch { writeEvidence("failure-screenshot error=\(error.localizedDescription)") }
     }
 
     private static func requireVisible(

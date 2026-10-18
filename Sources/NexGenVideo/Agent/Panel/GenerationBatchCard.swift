@@ -161,7 +161,7 @@ struct GenerationBatchCard: View {
                                     routeOptions: editor.generationBatchCoordinator.routeOptions(itemID: item.id),
                                     canEdit: controls.canEdit,
                                     runtimeEvidenceEnabled: runtimeEvidenceEnabled && (
-                                        item.manifestIndex == 0 || item.manifestIndex == projection.itemCount - 1
+                                        item.manifestIndex == 0 || item.id == projection.sections.last?.items.last?.id
                                     ),
                                     focusedRemoveItemID: $focusedRemoveItemID,
                                     focusedDetailsItemID: $focusedDetailsItemID,
