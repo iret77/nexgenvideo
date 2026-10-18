@@ -20,7 +20,7 @@ enum CoreProductionPhaseContract {
                     try HostProductionPhaseLineage.snapshot(phase: id, dataRoot: root)
                 }, nativeArtifactProvider: { root in
                     try HostProductionPhaseLineage.artifactPaths(phase: id, dataRoot: root)
-                }, nativeLineageRequiresRecord: true)
+                }, nativeLineageRequiresRecord: id != "project_init")
         }
         let manifest = PackPipelineManifest(contractID: "core.production.v2", packID: "core",
             resourceRoot: "ProductionWorkflow", hardStepsManifestID: HardStepManifest.empty.schema,
@@ -45,8 +45,46 @@ enum CoreProductionPhaseContract {
 }
 
 enum HostProductionPhaseGate {
-    static func requireCurrent(phase: String, dataRoot: URL) throws {
+    static func requireCurrent(phase: String, dataRoot: URL, workflow: HostWorkflowKey) throws {
+        let project = try YAMLArtifactStore(dataRoot: dataRoot).load(ProjectMeta.self, at: PipelineLayout.projectFile)
+        try project.validate()
+        guard !project.project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GateBlocked("The production project has no identity.")
+        }
+        if !["project_init", "analysis"].contains(phase) {
+            let source = try PlanningWriterIO.read(StorySourceV1.self, at: StorySourceV1.currentPath, dataRoot: dataRoot)
+            try PipelineStorySourceWriter.requireConfirmed(source, workflowID: workflow.contractID, dataRoot: dataRoot)
+        }
         switch phase {
+        case "project_init": break
+        case "analysis":
+            guard workflow.packID == "musicvideo" else { throw GateBlocked("This workflow has no audio analysis phase.") }
+        case "brief":
+            let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+            try brief.validate()
+            guard brief.project == project.project, brief.projectMode == project.mode.rawValue else {
+                throw GateBlocked("The Brief belongs to another project or workflow mode.")
+            }
+            if workflow.packID == "musicvideo" {
+                let range = try PlanningWriterIO.read(PlaybackRangeV1.self, at: PlaybackRangeV1.currentPath, dataRoot: dataRoot)
+                try PipelinePlaybackRangeWriter.requireCanonicalCurrent(range, dataRoot: dataRoot, workflowID: workflow.contractID)
+            }
+        case "production_design": try PipelineProductionAssetEvidence.requireDesign(dataRoot: dataRoot)
+        case "bible":
+            guard let bible = try loadBible(dataRoot: dataRoot) else { throw GateBlocked("Create the canonical Bible before approving it.") }
+            try bible.validate()
+            try PipelineProductionAssetEvidence.requireBible(bible, dataRoot: dataRoot)
+            let design = try YAMLArtifactStore(dataRoot: dataRoot).load(ProductionDesign.self, at: PipelineLayout.productionDesignFile)
+            let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+            guard bible.look.lightingAnchor == design.lightingAnchor,
+                  brief.visualMedium == .liveActionRealistic
+                    || bible.look.style.trimmingCharacters(in: .whitespacesAndNewlines) == design.visualMediumNotes.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                throw GateBlocked("The Bible must preserve the approved Production Design style and lighting anchor.")
+            }
+        case "sanity":
+            _ = try ProductionPlanAuditV1.requireCurrent(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
+        case "frames":
+            _ = try ProductionPlanFramesV1.requireCurrent(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
         case "script": _ = try PlanningWriterIO.script(dataRoot: dataRoot)
         case "storyboard": _ = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
         case "shot_planning":

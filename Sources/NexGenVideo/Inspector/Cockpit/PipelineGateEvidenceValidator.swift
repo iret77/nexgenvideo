@@ -14,6 +14,7 @@ enum PipelineGateEvidenceValidator {
             requirement: requirement
         )
         if let workflow, workflow.isProductionV2 {
+            if phase == "project_init" { return }
             guard let provider = try PhaseContractRuntime.lineageProvider(workflow: workflow, phase: phase,
                 registry: PackCatalog.registry(activePack: workflow.packID)) else {
                 if phase == "project_init" { return }

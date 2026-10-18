@@ -112,7 +112,7 @@ extension PhaseContractRuntime {
         guard resolved.phase(phase) != nil else { throw PhaseContractError.unknownPhase(phase) }
         if workflow.isProductionV2 {
             return { root in
-                try HostProductionPhaseGate.requireCurrent(phase: phase, dataRoot: root)
+                try HostProductionPhaseGate.requireCurrent(phase: phase, dataRoot: root, workflow: workflow)
                 if workflow.packID != nil { try registry.gateRequirements[phase]?(root) }
             }
         }

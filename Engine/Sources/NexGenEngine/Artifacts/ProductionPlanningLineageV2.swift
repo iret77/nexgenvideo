@@ -42,7 +42,7 @@ public enum ProductionPlanningLineageV2 {
             let value = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard(dataRoot: dataRoot))
             paths = [ShotPlanningDraftV1.currentPath, ShotPlanningDraftV1.versionPath(value.header.revision)] + value.header.inputs.map(\.path)
         case "bible":
-            let bible = try loadBible(dataRoot: dataRoot)
+            guard let bible = try loadBible(dataRoot: dataRoot) else { throw ProductionPlanningError.invalid("lineage.bibleMissing") }
             try bible.validate()
             paths = [PipelineLayout.bibleFile] + BibleViewProvenanceRequirementsV1.make(bible: bible).map(\.path)
                 + optional([PipelineLayout.assetProofFile(scope: "bible"), PipelineLayout.bibleIdentityVariantsFile,
