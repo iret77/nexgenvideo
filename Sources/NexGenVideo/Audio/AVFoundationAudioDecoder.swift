@@ -76,17 +76,19 @@ struct AVFoundationAudioDecoder: AudioPCMDecoding {
                     outStatus.pointee = .endOfStream
                     return nil
                 }
+                let remaining = frameCount - file.framePosition
+                guard remaining > 0 else {
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
                 do {
-                    guard requestedFrames > 0, let buffer = AVAudioPCMBuffer(
-                        pcmFormat: sourceFormat, frameCapacity: requestedFrames
+                    let readCount = AVAudioFrameCount(min(AVAudioFramePosition(requestedFrames), remaining))
+                    guard readCount > 0, let buffer = AVAudioPCMBuffer(
+                        pcmFormat: sourceFormat, frameCapacity: readCount
                     ) else { throw DecodeError.conversionFailed("could not allocate requested input frames") }
-                    try file.read(into: buffer, frameCount: requestedFrames)
+                    try file.read(into: buffer, frameCount: readCount)
                     guard buffer.frameLength > 0 else {
-                        guard file.framePosition >= frameCount else {
-                            throw DecodeError.unreadable("\(name) (stopped at frame \(file.framePosition) of \(frameCount))")
-                        }
-                        outStatus.pointee = .endOfStream
-                        return nil
+                        throw DecodeError.unreadable("\(name) (stopped at frame \(file.framePosition) of \(frameCount))")
                     }
                     outStatus.pointee = .haveData
                     return buffer
@@ -128,14 +130,19 @@ struct AVFoundationAudioDecoder: AudioPCMDecoding {
         var samples: [Float] = []
         samples.reserveCapacity(Int(frameCount))
         do {
-            while true {
-                try file.read(into: buffer, frameCount: buffer.frameCapacity)
-                guard buffer.frameLength > 0 else { break }
+            while file.framePosition < frameCount {
+                let readCount = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity), frameCount - file.framePosition))
+                try file.read(into: buffer, frameCount: readCount)
+                guard buffer.frameLength > 0 else {
+                    throw DecodeError.unreadable("\(name) (stopped at frame \(file.framePosition) of \(frameCount))")
+                }
                 guard let channel = buffer.floatChannelData?[0] else {
                     throw DecodeError.conversionFailed("decoded buffer has no Float32 channel")
                 }
                 samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             }
+        } catch let error as DecodeError {
+            throw error
         } catch {
             throw DecodeError.unreadable("\(name) (\(error.localizedDescription))")
         }

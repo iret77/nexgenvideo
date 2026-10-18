@@ -127,7 +127,7 @@ struct AudioDecoderProbe {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         var cases: [Case] = []
-        for rate in [22_050.0, 48_000.0] {
+        for rate in [22_050.0, 44_100.0, 48_000.0] {
           for writer in ["original", "explicitClose", "independentPCM"] {
             var legacy: LegacyTrace?
             var disk: DiskTrace?
@@ -167,7 +167,7 @@ struct AudioDecoderProbe {
             }
           }
         }
-        let passed = cases.count == 6 && cases.allSatisfy {
+        let passed = cases.count == 9 && cases.allSatisfy {
             $0.actualDecoder?.exactDuration == true && $0.actualDecoder?.finalMarkerPreserved == true && $0.error == nil
         }
         let report = Report(os: ProcessInfo.processInfo.operatingSystemVersionString, cases: cases, actualDecoderPassed: passed)

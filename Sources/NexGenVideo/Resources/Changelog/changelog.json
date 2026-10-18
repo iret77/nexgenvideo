@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.7.2",
-      "date": "2026-10-17",
+      "date": "2026-10-18",
       "sections": [
         {
           "heading": "Production",
@@ -34,6 +34,7 @@
           "items": [
             "Music Video 0.5.16 requires NexGenVideo 1.7.2 and provides typed Bible readiness diagnostics. Existing projects retain their pinned pack until an explicit upgrade.",
             "Assembly preserves the complete song when its ending falls between downbeats and accepts the library's verified copy of the assigned original track.",
+            "Audio analysis reads the complete track through its final samples, including when resampling is required.",
             "Film review includes the original soundtrack and binds its source, timing and mix settings to the approved cut. Changing them requires reviewing the current film again."
           ]
         }
