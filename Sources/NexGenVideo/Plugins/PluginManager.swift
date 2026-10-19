@@ -95,14 +95,15 @@ struct InstalledPluginVersion: Identifiable, Equatable, Sendable {
 @MainActor
 @Observable
 final class PluginManager {
+    @MainActor
     struct Services {
-        let installed: () -> [InstalledPluginRecord]
-        let reload: () -> [InstalledPluginRecord]
-        let versions: () -> [InstalledPluginVersion]
+        let installed: @MainActor () -> [InstalledPluginRecord]
+        let reload: @MainActor () -> [InstalledPluginRecord]
+        let versions: @MainActor () -> [InstalledPluginVersion]
         let fetch: () async -> Result<PluginCatalog, Error>
         let install: (PluginCatalog.Entry) async throws -> Void
-        let uninstall: (InstalledPluginVersion) throws -> Void
-        let refreshAttention: () -> Void
+        let uninstall: @MainActor (InstalledPluginVersion) throws -> Void
+        let refreshAttention: @MainActor () -> Void
         let badge: (String) -> URL?
 
         static var live: Self {
