@@ -115,7 +115,7 @@ final class AgentReviewChildRegistry {
         let job = Active(request: request, runtime: try runtimeFactory(request), revalidate: revalidate)
         let admission = job.admission
         active = job
-        @MainActor @Sendable func report(_ stage: AgentReviewChildProgress.Stage) {
+        let report: @MainActor @Sendable (AgentReviewChildProgress.Stage) -> Void = { stage in
             progress(.init(runID: request.runID, pageID: request.pageID, kind: request.kind,
                            stage: stage, modelID: job.modelID))
         }
