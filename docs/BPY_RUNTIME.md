@@ -178,18 +178,22 @@ paths observed in the pinned wheel. Staging requires those exact paths and verif
 and native library against its wheel `RECORD` hash and size. CI extracts wheels directly; `pip` is
 absent from assembly and from the installed app.
 
-Public distribution remains fail-closed while `distributionStatus` is
-`blocked-pending-corresponding-source-evidence`. The lock maps all 43 paths exactly once to candidate
+The lock is `ready` with an exact qualified source archive and original Actions producer pin.
+Every binary transfer still requires the current independent distribution validator. The lock maps
+all 43 paths exactly once to candidate
 source families, versions, URLs, SPDX licenses, and archive checksums from Blender v5.2.2's official
 dependency manifest. Those MD5 or SHA-256 values identify Blender's candidates but are not accepted
 as the final SHA-256 distribution closure. The official wheel METADATA links Blender's source, the
 v5.2.2 tag resolves to commit `d13f752e3b9c4f8c261cda552b1021f8bcc0382c`, and the lock pins the
 release tar, `versions.cmake`, recipes, and patches. That linkage does not prove every actual wheel
-build input. The remaining work is to bind the pinned wheel to the actual source archives,
-recipes/patches, and configuration, then hash-pin and ship the matching Corresponding Source plus
-required notices. Filename or version matching alone is insufficient.
+build input. The committed correspondence binds measured binary facts and official library evidence
+to 20 supported build-input components, explicitly a subset of the 144 conservatively retained source
+components. It does not claim exhaustive static linkage or compiler flags. The qualified archive
+contains 965 notice entries; its exact bytes and manifest are pinned for reuse and must accompany
+the binary release. Qualification does not authorize a release. Filename or version matching alone
+is insufficient.
 
-Changing `distributionStatus` to `ready` also requires a complete `distributionClosure`: one
+A `ready` lock requires a complete `distributionClosure`: one
 SHA-256- and size-pinned archive mapping every Python-build-standalone source, wheel source, CPython
 build input, and bpy native candidate exactly once (shared archives may name multiple components),
 repository-hashed binary/source-correspondence and notice/coverage evidence, plus the exact public

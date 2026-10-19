@@ -55,7 +55,7 @@ class CIWorkflowTests(unittest.TestCase):
                     key: str(required).lower() for key in ("build_required", "bundle_required", "ui_required")
                 }},
                 **{job: {"result": "success" if required else "skipped"}
-                   for job in ("build_test", "ui_render", "diagnostic-startup")},
+                   for job in ("build_test", "ui_render", "diagnostic-startup", "bpy-source", "bpy-runtime")},
             }
             def check():
                 return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": json.dumps(needs)}, capture_output=True)
@@ -232,13 +232,13 @@ class CIWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))
         analysis = text.split("  musicvideo-analysis-acceptance:\n", 1)[1]
-        self.assertIn("needs: [validate, workspace-ui-acceptance]", analysis)
+        self.assertIn("needs: [validate, ci]", analysis)
         self.assertIn(
-            "if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}",
+            "if: ${{ !cancelled() && needs.validate.result == 'success' && needs.ci.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}",
             analysis,
         )
         self.assertIn(
-            "runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}",
+            "runtime_artifact: workspace-ui-app",
             analysis,
         )
         self.assertIn("NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}", analysis)

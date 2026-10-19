@@ -160,11 +160,11 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   chat-hang-replay:
-    needs: [validate, workspace-ui-acceptance]
-    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.hang_replays }}
+    needs: [validate, ci]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.ci.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.hang_replays }}
     uses: ./.github/workflows/chat-hang-replay.yml
     with:
-      runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
+      runtime_artifact: workspace-ui-app
 
   recorded-hang-replay:
     needs: validate
@@ -209,11 +209,11 @@ jobs:
       acceptance_scope: ${{ inputs.settings_scope }}
 
   musicvideo-analysis-acceptance:
-    needs: [validate, workspace-ui-acceptance]
-    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}
+    needs: [validate, ci]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.ci.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}
     uses: ./.github/workflows/private-example-analysis.yml
     with:
-      runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
+      runtime_artifact: workspace-ui-app
     secrets:
       NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
 

@@ -332,7 +332,7 @@
       }
     }
   },
-  "distributionStatus": "blocked-pending-corresponding-source-evidence",
+  "distributionStatus": "ready",
   "verifiedAt": "2026-09-24",
   "runtime": {
     "name": "python-build-standalone",
@@ -673,10 +673,7 @@
     ],
     "publication": "Publish the validated source archive and manifest beside every public binary artifact and retain matching version/hash instructions. Bit-identical rebuild output is not required."
   },
-  "distributionBlockers": [
-    "Qualify the enriched archive with the committed exact binary/source correspondence and complete original notice mapping. Distribution remains blocked until its actual tar/manifest hashes, size and successful original producer identity are pinned and independently validated.",
-    "Publish the exact qualified Corresponding Source archive and manifest beside the binary release. No release authorization is inferred from source qualification."
-  ],
+  "distributionBlockers": [],
   "sourceCompanions": {
     "path": "Runtime/bpy/compliance/source-companions.json",
     "sha256": "1f150fde8c448f38600807fd4443eef221c461cdd23e6a4415392036a766774e"
@@ -2601,6 +2598,26 @@
     "wheelBinaryCorrespondence": {
       "path": "Runtime/bpy/compliance/wheel-binary-correspondence.json",
       "sha256": "28499c9297bab98f4b60c00723e715a1bf187ed23784c2a88b634f8d6bf9b936"
+    },
+    "publicSourceAsset": {
+      "filename": "NexGenVideo-bpy-5.2.2-corresponding-source.tar",
+      "manifestFilename": "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json",
+      "sha256": "e5133501ee8d7b08ab67aa57e3948c12843ce2c68745adb2f5657604b42e2c63",
+      "size": 1940725760,
+      "manifestSHA256": "654c0a863598303a35fc21efba3111a1c82007808afd728e4d9731d27c2d5cc7",
+      "releaseTag": "v1.8.0",
+      "producer": {
+        "repository": "iret77/nexgenvideo",
+        "workflowPath": ".github/workflows/ci-batch.yml",
+        "runID": 39295082436,
+        "sourceSHA": "26ad91ad98eb8d38f4e92d8f5670ff7bcc639552",
+        "jobID": 118205421335,
+        "jobAttempt": 1,
+        "artifactID": 12209205072,
+        "artifactName": "managed-bpy-source-26ad91ad98eb8d38f4e92d8f5670ff7bcc639552",
+        "artifactDigest": "sha256:8fd90c6cdcd274d4c28d8b1c389eaa3f067a0b8983e21c0b0ee11aee7e516a81",
+        "artifactSize": 1941299819
+      }
     }
   }
 }
