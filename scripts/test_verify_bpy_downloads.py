@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 
-from assemble_bpy_source_closure import AssemblyProgress, fetch
+from assemble_bpy_source_closure import AssemblyProgress, blender_dependencies, fetch
 
 
 class Response(io.BytesIO):
@@ -17,6 +17,39 @@ class Response(io.BytesIO):
 
 
 class SourceDownloadTests(unittest.TestCase):
+    def test_official_sqlite_sha1_declaration_is_preserved(self):
+        manifest = """
+set(SQLITE_VERSION 3.51.3)
+set(SQLLITE_LONG_VERSION 3510300)
+set(SQLITE_URI https://www.sqlite.org/2026/sqlite-autoconf-${SQLLITE_LONG_VERSION}.tar.gz)
+set(SQLITE_HASH d917ad1cde07987643571f0f5b55dd954fa8dee3)
+set(SQLITE_HASH_TYPE SHA1)
+set(SQLITE_FILE sqlite-autoconf-${SQLLITE_LONG_VERSION}.tar.gz)
+"""
+        dependency, = blender_dependencies(manifest)
+        self.assertEqual(dependency["key"], "SQLITE")
+        self.assertEqual(dependency["upstreamHashType"], "SHA1")
+        self.assertEqual(dependency["upstreamHash"], "d917ad1cde07987643571f0f5b55dd954fa8dee3")
+        self.assertEqual(dependency["url"], "https://www.sqlite.org/2026/sqlite-autoconf-3510300.tar.gz")
+        with self.assertRaisesRegex(ValueError, "unsupported Blender dependency hash: SQLITE=UNKNOWN"):
+            blender_dependencies(manifest.replace("SHA1", "UNKNOWN"))
+
+    def test_legacy_upstream_hash_is_checked_and_source_receipt_uses_sha256(self):
+        data = b"pinned upstream source"
+        for algorithm in ("SHA1", "MD5", "SHA256"):
+            with self.subTest(algorithm=algorithm), tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "source.tar"
+                expected = hashlib.new(algorithm.lower(), data).hexdigest()
+                with patch("assemble_bpy_source_closure.urllib.request.urlopen", return_value=Response(data)):
+                    result = fetch("https://example.test/source", destination, expected, algorithm)
+                self.assertEqual(result, {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)})
+                with patch("assemble_bpy_source_closure.urllib.request.urlopen", return_value=Response(b"changed")), \
+                        patch("assemble_bpy_source_closure.time.sleep") as sleep:
+                    with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                        fetch("https://example.test/source", destination, expected, algorithm)
+                sleep.assert_not_called()
+                self.assertEqual(destination.read_bytes(), data)
+
     def test_public_source_request_identifies_client_without_changing_url(self):
         url = "https://download.blender.org/source/blender-5.2.2.tar.xz"
         data = b"pinned source bytes"

@@ -170,7 +170,7 @@ def blender_dependencies(text):
         if "${" in url:
             raise ValueError(f"unresolved Blender dependency URL: {key}={url}")
         hash_type = values[f"{key}_HASH_TYPE"].upper()
-        if hash_type not in {"MD5", "SHA256"}:
+        if hash_type not in {"MD5", "SHA1", "SHA256"}:
             raise ValueError(f"unsupported Blender dependency hash: {key}={hash_type}")
         dependencies.append({
             "key": key,
