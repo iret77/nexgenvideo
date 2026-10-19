@@ -3249,6 +3249,6 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 }
 
 let listener = NSXPCListener.service()
-let listenerDelegate = ListenerDelegate()
+private let listenerDelegate = ListenerDelegate()
 listener.delegate = listenerDelegate
 listener.resume()
