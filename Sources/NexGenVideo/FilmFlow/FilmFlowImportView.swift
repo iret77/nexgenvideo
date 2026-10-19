@@ -66,7 +66,7 @@ struct FilmFlowImportView: View {
                     if !message.isEmpty { Text(message).textSelection(.enabled).reviewAcceptanceProbe("filmflow.message", text: message) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            Divider()
+            AppDivider()
             HStack(spacing: AppTheme.Spacing.md) {
                 if busy {
                     ProgressView().controlSize(.small)

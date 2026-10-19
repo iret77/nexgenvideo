@@ -18,7 +18,8 @@ enum ProductionCoverOwnerEvidence {
         if let artist, let title {
             NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context
             defer { NSGraphicsContext.restoreGraphicsState() }
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 32, weight: .bold), .foregroundColor: NSColor.black]
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: AppTheme.FontSize.display,
+                weight: AppTheme.AppKitFontWeight.bold), .foregroundColor: AppTheme.Background.overlay]
             NSAttributedString(string: artist, attributes: attributes).draw(at: CGPoint(x: 24, y: CGFloat(format.height - 65)))
             NSAttributedString(string: title, attributes: attributes).draw(at: CGPoint(x: 24, y: 30))
         }

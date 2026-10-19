@@ -36,7 +36,7 @@ extension MediaTab {
                     }
                         .help(search.failures[asset.id] ?? "Indexing failed.")
                 }
-                Divider()
+                Divider() // app-theme: native-menu-divider
                 Button("Retry Failed Items") { search.retryFailed() }
                     .disabled(!search.canRetryFailed)
             } label: {

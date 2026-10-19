@@ -146,7 +146,7 @@ struct ExportWorkspaceView: View {
                 .disabled(loadingEvidence)
                 .reviewAcceptanceProbe("export.qc.recheck", state: !loadingEvidence)
                 .background {
-                    Color.clear.reviewAcceptanceProbe("export.qc.verification", state: completedVerificationKey == evidenceKey,
+                    AppTheme.Background.clearColor.reviewAcceptanceProbe("export.qc.verification", state: completedVerificationKey == evidenceKey,
                         text: "\(verificationRevision):" + (completedVerificationKey == evidenceKey ? (evidenceError == nil ? "passed" : "failed") : "pending"))
                 }
         }

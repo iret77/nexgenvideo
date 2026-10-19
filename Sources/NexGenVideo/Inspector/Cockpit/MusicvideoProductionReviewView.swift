@@ -163,7 +163,7 @@ struct MusicvideoProductionReviewView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
             Text(title).foregroundStyle(AppTheme.Text.secondaryColor)
             Text(value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                .background { if let probe { Color.clear.reviewAcceptanceProbe(probe, state: true, text: value) } }
+                .background { if let probe { AppTheme.Background.clearColor.reviewAcceptanceProbe(probe, state: true, text: value) } }
         }
     }
 

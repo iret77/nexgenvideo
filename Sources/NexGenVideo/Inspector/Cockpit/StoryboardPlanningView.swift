@@ -208,7 +208,7 @@ struct StoryboardPlanningView: View {
                                 Button("Timing…") { edit(.timing, shot: shot, snapshot: snapshot) }
                                 Button("Framing…") { edit(.framing, shot: shot, snapshot: snapshot) }
                                 Button("Story steps…") { edit(.steps, shot: shot, snapshot: snapshot) }
-                                Divider()
+                                Divider() // app-theme: native-menu-divider
                                 Button("Move earlier") { moveShot(index, offset: -1, snapshot: snapshot) }.disabled(index == 0)
                                 Button("Move later") { moveShot(index, offset: 1, snapshot: snapshot) }.disabled(index + 1 == snapshot.timing.shots.count)
                                 Button("Split…") { edit(.split, shot: shot, snapshot: snapshot) }.disabled(snapshot.timing.mode == .multicam)

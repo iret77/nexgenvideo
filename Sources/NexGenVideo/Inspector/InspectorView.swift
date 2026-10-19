@@ -361,7 +361,7 @@ struct InspectorView: View {
                 .buttonStyle(.capsule(.secondary))
                 .background {
                     if usage, case .shot(let id) = item.1 {
-                        Color.clear.reviewAcceptanceProbe("inspector.usage.shot." + id, text: item.0)
+                        AppTheme.Background.clearColor.reviewAcceptanceProbe("inspector.usage.shot." + id, text: item.0)
                     }
                 }
             }

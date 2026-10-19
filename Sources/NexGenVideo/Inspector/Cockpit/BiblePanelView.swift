@@ -345,7 +345,7 @@ struct BibleEntityCard: View {
                 .lineLimit(1)
                 .background {
                     if presentation == .board, let reference {
-                        Color.clear.reviewAcceptanceProbe("bible.entity.select." + reference.kind.rawValue + "." + reference.id)
+                        AppTheme.Background.clearColor.reviewAcceptanceProbe("bible.entity.select." + reference.kind.rawValue + "." + reference.id)
                     }
                 }
         }

@@ -336,9 +336,9 @@ struct AgentDialogCard: View {
             .background {
                 switch focus {
                 case .direction:
-                    Color.clear.reviewAcceptanceProbe("agent.dialog.direction", text: text.wrappedValue)
+                    AppTheme.Background.clearColor.reviewAcceptanceProbe("agent.dialog.direction", text: text.wrappedValue)
                 case .custom(let sectionID):
-                    Color.clear.reviewAcceptanceProbe("agent.dialog.custom." + sectionID, text: text.wrappedValue)
+                    AppTheme.Background.clearColor.reviewAcceptanceProbe("agent.dialog.custom." + sectionID, text: text.wrappedValue)
                 default: EmptyView()
                 }
             }

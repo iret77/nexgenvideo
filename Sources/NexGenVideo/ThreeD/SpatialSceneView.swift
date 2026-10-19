@@ -44,7 +44,7 @@ struct SpatialSceneView: View {
                         .disabled(!canCreate)
                         .accessibilityIdentifier("spatial.location.create")
                         .reviewAcceptanceProbe("spatial.location.create", state: canCreate)
-                    Divider()
+                    AppDivider()
                     if session.current != nil {
                         Menu("Add object") {
                             ForEach(["cube", "sphere", "cylinder", "plane"], id: \.self) { kind in
@@ -65,7 +65,7 @@ struct SpatialSceneView: View {
                         .reviewAcceptanceProbe("spatial.object.\(object.id)", state: !session.busy)
                         }
                         if session.selectedObject != nil { transformInspector.disabled(!editingEnabled) }
-                        Divider()
+                        AppDivider()
                         cameraInspector
                     }
                 }

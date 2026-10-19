@@ -76,7 +76,7 @@ struct ShotBlockoutView: View {
                         .reviewAcceptanceProbe("shot.blockout.plan", state: active && shot?.camera.spatialState != nil)
                     Text("The diagram shows bounding boxes and camera directions in plan and elevation. It does not render perspective or appearance and is not sent to a model.")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
-                    Divider()
+                    AppDivider()
                     Button("Choose blockout MOV…") { importing = true }.buttonStyle(InlineActionButtonStyle()).disabled(!active || timing == nil)
                         .reviewAcceptanceProbe("shot.blockout.choose", state: active && timing != nil)
                     if let source {

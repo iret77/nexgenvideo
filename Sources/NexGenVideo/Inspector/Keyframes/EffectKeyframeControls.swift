@@ -33,7 +33,7 @@ extension InspectorView {
                     }
                     .disabled(!stamped)
                 }
-                Divider()
+                Divider() // app-theme: native-menu-divider
                 Button("Clear Animation", role: .destructive) { target.clear(clipID: clip.id, editor: editor) }
                     .disabled(frames.isEmpty || !inRange)
             }
