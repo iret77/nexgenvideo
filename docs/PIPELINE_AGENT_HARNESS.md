@@ -2,15 +2,35 @@
 
 Status: locked release contract.
 
-This document defines the executable contract for every musicvideo pipeline phase. The agent explains
-and proposes; deterministic host code owns ordering, persistence, invalidation, and approval eligibility.
-Packaged phase prose is guidance inside this state machine, never the state machine itself.
+This document distinguishes the legacy `musicvideo.pipeline.v1` workflow from production V2.
+Legacy project bindings retain their existing order and artifacts. Music Video V2 resolves the exact
+`(musicvideo, 0.6.0, musicvideo/3.0.0, pipeline-contract/v1, musicvideo.pipeline.v2, 12)` tuple;
+native Core production uses the explicit `core.production.v2` / `2.0.0` project declaration without
+a pack. These are source contracts, not completed runtime or release acceptance.
+
+The agent explains and proposes; deterministic host code owns ordering, persistence, invalidation,
+and approval eligibility. Packaged phase prose is guidance inside this state machine, never the
+state machine itself. Common current-phase, exact-byte lineage, consent and source-ownership
+invariants apply to both versions. Existing projects change contracts only through explicit
+Recovery-copy migration.
 
 ## Canonical phase order
 
+Legacy `musicvideo.pipeline.v1`:
+
 `project_init → analysis → brief → production_design → treatment → storyboard → bible → shotlist → sanity → frames → render`
 
-`project_init` follows the separate observable intake contract in
+Music Video `musicvideo.pipeline.v2`:
+
+`project_init → analysis → brief → production_design → treatment → script → storyboard → shot_planning → bible → shotlist → sanity → frames → render_review → render`
+
+Core V2 retains `project_init` and the same later production phases, but omits Music Video
+`analysis` and Track/Lyrics intake. Workflow identity, rather than file presence or pack ID alone,
+selects the order. The visual workbench needs real Script and Shot Planning artifacts; its
+pre-render review needs Frames that already exist. V2 models those stages explicitly while keeping
+the legacy sequence unchanged.
+
+Music Video `project_init` follows the separate observable intake contract in
 `docs/MUSICVIDEO_START_CONTRACT.md`. Every later phase follows the same four-part contract:
 
 1. a schema-validated writer or deterministic runner;
@@ -18,7 +38,7 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 3. a cumulative input/output lineage fingerprint;
 4. the packaged instructions for that exact phase.
 
-## Phase artifacts
+## Legacy phase artifacts
 
 | Phase | Canonical writer | Canonical artifact |
 |---|---|---|
@@ -34,12 +54,30 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 | Frames | `run_phase`, `record_render`, `save_frame_audit` | role-aware Frames manifest, exact images, exact audits |
 | Render | `run_phase`, `record_render`, `assemble_timeline` | final render manifest, render-proof sidecar, exact provider videos or accepted animated stills, and exact timeline assembly proof |
 
-Only these canonical artifact writers may capture fresh phase lineage. Agent and native Shot List
+## V2 planning artifacts
+
+Paths are relative to the pipeline data root; `N` identifies the immutable revision. Unchanged
+phases retain their canonical artifacts. V2 adds or replaces these planning writers:
+
+| Phase | Canonical writer | Canonical artifact |
+|---|---|---|
+| Script | `PipelineScriptWriter` / `write_script` | `script/vN.v1.json`, `script/current.v1.json` |
+| Visual Storyboard | `PipelineStoryboardBundleWriter` / `write_storyboard_bundle`, `assign_storyboard_sketch` | `storyboard/vN.v2.yaml` and `current.v2.yaml`; versioned/current causality, timing and identity JSON alongside it |
+| Shot Planning | `PipelineShotPlanningWriter` / `write_shot_planning_draft` | `shot-planning/vN.v1.json`, `shot-planning/current.v1.json` |
+| Shot List promotion | `PipelineProductionPlanWriter` | `shotlist/vN.v5.yaml`, `shot-planning/promotion-vN.v1.json`, `shot-planning/promotion-current.v1.json` |
+| Render Review | `PipelineRenderReviewWriter` / `write_render_review` | `render-review/vN.v1.json`, `render-review/current.v1.json`, exact bound receipts under `render-review/receipts/` |
+
+Storyboard timing owns V2 editorial duration. Shot Planning and promotion bind that timing,
+stable shot identities, sources and execution choices; they cannot silently change the approved edit.
+
+Only these canonical artifact writers may capture fresh phase lineage. Legacy agent and native Shot List
 edits converge on `PipelineShotlistWriter`; neither entry surface may persist or validate a Shot List
 independently. Adjacent actions such as preview
 assembly, media inspection, generation, copying, or cropping may support a phase but cannot legitimize
 an artifact written outside its validated writer. File staging is restricted to image-asset paths in
-Production Design and Bible; it cannot read from or overwrite canonical pipeline artifacts. Scene3D
+Production Design and Bible; it cannot read from or overwrite canonical pipeline artifacts. V2
+native sketch import separately validates real images and binds host-owned `storyboard/sketches/`
+bytes through its canonical sketch writer; it does not widen generic file staging. Scene3D
 extraction accepts only pipeline-local panoramas and writes only beneath the matching Bible location.
 
 The Intent Ledger is evolving creative memory, not a planning artifact. Bible and Frames may update it;
@@ -47,9 +85,14 @@ those updates apply to subsequent compiled prompts and do not retroactively inva
 media. Exact generated-media proofs retain the provider prompt that was actually used.
 
 The harness also exposes an explicit capability set per phase for both phase-bound writers/runners and
-current-phase support tools. Planning phases cannot invoke rendering tools; Production Design and Bible
+current-phase support tools. In V1, planning phases cannot invoke rendering tools; Production Design and Bible
 may generate stills; Frames may generate/crop stills; Render may generate final media. A tool outside
 the current phase's capability set is rejected before it can spend money or mutate the project.
+
+V2 Storyboard adds only `compile_storyboard_sketch`, `compile_prompt`, `generate_image`,
+`prepare_generation_batch` and `import_media` as supporting capabilities for actual sketches.
+Final shot generation remains outside Storyboard. The canonical sketch assignment owns its lineage;
+compilation, generation or import alone does not approve a visual Storyboard.
 
 ## Runtime invariants
 
@@ -122,14 +165,17 @@ the current phase's capability set is rejected before it can spend money or muta
 - `reference_anchor`, `two_state_interpolation`, and explicitly selected `first_frame` are distinct
   conditioning strategies, not substitutes for chaining. A reference anchor occupies a genuine
   reference slot; interpolation uses the same shot's approved start/end states in their actual input
-  slots. Frames owns the required still approvals; no new phase is introduced. Missing capability,
+  slots. Frames owns the required still approvals. V1 introduces no extra phase for these strategies;
+  V2 Render Review subsequently checks current render inputs without replacing Frames approval. Missing capability,
   changed input bytes, substituted slots, or unapproved states block before spend and at Render
   approval. Imported and AI-enhanced source ownership remains unchanged.
-- Every Bible sheet and Scene3D panorama binds exact current bytes to one of two host-recorded
+- Every Bible sheet and Scene3D panorama in V1 binds exact current bytes to one of two host-recorded
   provenance classes: a completed generation with compiled prompt/model, or an identity image the
   user explicitly confirmed in the host-owned prepared-character/location intake. A confirmed image
   may be adopted as the demanded canonical view without generation; an arbitrary library import may
-  not. Only a demanded view lacking either proof is generated.
+  not. Only a demanded view lacking either proof is generated. V2 keeps these requirements for
+  identity/appearance sheets and panoramas. Its spatially derived geometry has separate typed
+  exact-byte provenance; neutral Clay is never identity or appearance evidence.
 - A real outfit or persistent identity-state change is a distinct Bible entity plus the versioned
   `bible/identity-variants.v1.json` inheritance artifact. Its changed attributes are exhaustive;
   every undeclared attribute remains byte-identical to the base entity, inherited paths must be
@@ -162,7 +208,7 @@ the current phase's capability set is rejected before it can spend money or muta
 
 The release suite must fail if:
 
-- the phase order or phase coverage changes;
+- the phase order or coverage differs from the exact supported workflow bound to the project;
 - a phase lacks a gate, lineage provider, packaged instruction document, or executable writer path;
 - a non-writer can capture lineage;
 - a changed upstream input permits later phase work;
@@ -178,5 +224,6 @@ The release suite must fail if:
   planned shot omits its narrative beat, or a generated long take reaches Sanity without a declared
   risk and rescue cut.
 
-macOS execution evidence comes only from the GitHub Actions release workflow. Local Swift builds and
-tests are prohibited.
+macOS execution evidence comes from the GitHub Actions build, native acceptance and release
+workflows. Local Swift builds and tests are prohibited. Source validation and contract review alone
+do not establish runtime or visual acceptance.

@@ -327,5 +327,127 @@ class PipelineContractValidatorTests(unittest.TestCase):
         self.write_fixture()
         self.assert_invalid("extension artifact paths must be unique")
 
+class MusicvideoPipelineContractValidatorTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.repository = Path(self.temporary.name)
+        self.source_repository = Path(__file__).resolve().parent.parent
+        source_root = self.source_repository / "Sources/MusicvideoPlugin/Resources/MusicvideoPack"
+        self.pack = json.loads((self.source_repository / "plugins/musicvideo.json").read_text())
+        self.contract = json.loads((source_root / "pipeline-contract.json").read_text())
+        self.pack_manifest = self.repository / "plugins/musicvideo.json"
+        self.pack_manifest.parent.mkdir(parents=True)
+        self.resource_root = self.repository / "Sources/MusicvideoPlugin/Resources/MusicvideoPack"
+        self.resource_root.mkdir(parents=True)
+        for relative in ["hardsteps.json"] + [phase["instructions"] for phase in self.contract["phases"]]:
+            path = self.resource_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((source_root / relative).read_bytes())
+        self.write_fixture()
+
+    def write_fixture(self):
+        self.pack_manifest.write_text(json.dumps(self.pack))
+        (self.resource_root / "pipeline-contract.json").write_text(json.dumps(self.contract))
+
+    def reindex(self):
+        for index, phase in enumerate(self.contract["phases"]):
+            phase["executionIndex"] = index
+            phase["dependencies"] = [] if index == 0 else [self.contract["phases"][index - 1]["id"]]
+
+    def legacy_fixture(self):
+        self.pack.update(version="0.5.0", projectSchema="musicvideo/2.0.0")
+        self.contract["contractID"] = "musicvideo.pipeline.v1"
+        self.contract["phases"] = [phase for phase in self.contract["phases"]
+                                   if phase["id"] not in {"script", "shot_planning", "render_review"}]
+        self.reindex()
+
+    def assert_valid(self):
+        self.write_fixture()
+        validate_pipeline_contract.validate_pack_manifest(self.pack_manifest, self.repository)
+
+    def assert_invalid(self, message):
+        self.write_fixture()
+        with self.assertRaisesRegex(validate_pipeline_contract.PipelineContractValidationError, message):
+            validate_pipeline_contract.validate_pack_manifest(self.pack_manifest, self.repository)
+
+    def test_actual_musicvideo_v2_pack_uses_the_approved_phase_order(self):
+        self.assertEqual(self.pack["version"], "0.6.0")
+        self.assertEqual(self.pack["projectSchema"], "musicvideo/3.0.0")
+        self.assertEqual(self.contract["contractID"], "musicvideo.pipeline.v2")
+        self.assertEqual([phase["id"] for phase in self.contract["phases"]], [
+            "project_init", "analysis", "brief", "production_design", "treatment", "script",
+            "storyboard", "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render",
+        ])
+        validate_pipeline_contract.validate_pack_manifest(
+            self.source_repository / "plugins/musicvideo.json", self.source_repository)
+        self.assert_valid()
+
+    def test_legacy_eleven_phase_contract_remains_structurally_supported(self):
+        self.legacy_fixture()
+        self.assertEqual([phase["id"] for phase in self.contract["phases"]], [
+            "project_init", "analysis", "brief", "production_design", "treatment", "storyboard",
+            "bible", "shotlist", "sanity", "frames", "render",
+        ])
+        self.assert_valid()
+
+    def test_v1_identity_cannot_accept_v2_phases(self):
+        self.contract["contractID"] = "musicvideo.pipeline.v1"
+        self.assert_invalid(r"musicvideo\.pipeline\.v1 phases must remain exactly")
+
+    def test_v2_identity_cannot_accept_v1_phases(self):
+        self.legacy_fixture()
+        self.contract["contractID"] = "musicvideo.pipeline.v2"
+        self.assert_invalid(r"musicvideo\.pipeline\.v2 phases must remain exactly")
+
+    def test_unknown_musicvideo_contract_is_refused(self):
+        self.contract["contractID"] = "musicvideo.pipeline.v3"
+        self.assert_invalid("unsupported musicvideo contractID")
+
+    def test_each_new_required_phase_cannot_be_omitted_even_with_valid_dependencies(self):
+        original = copy.deepcopy(self.contract)
+        for phase_id in ("script", "shot_planning", "render_review"):
+            with self.subTest(phase=phase_id):
+                self.contract = copy.deepcopy(original)
+                self.contract["phases"] = [phase for phase in self.contract["phases"] if phase["id"] != phase_id]
+                self.reindex()
+                self.assert_invalid(r"musicvideo\.pipeline\.v2 phases must remain exactly")
+
+    def test_brief_cannot_precede_analysis_even_with_valid_dependencies(self):
+        self.contract["phases"][1], self.contract["phases"][2] = self.contract["phases"][2], self.contract["phases"][1]
+        self.reindex()
+        self.assert_invalid(r"musicvideo\.pipeline\.v2 phases must remain exactly")
+
+    def test_version_specific_instructions_cannot_be_substituted(self):
+        original = copy.deepcopy(self.contract)
+        for legacy, phase_id in ((False, "script"), (True, "storyboard")):
+            with self.subTest(legacy=legacy):
+                self.contract = copy.deepcopy(original)
+                if legacy:
+                    self.legacy_fixture()
+                phase = next(phase for phase in self.contract["phases"] if phase["id"] == phase_id)
+                phase["instructions"] = "phases/treatment.md"
+                self.assert_invalid("phase instruction mapping changed")
+
+    def test_new_phases_keep_writer_gate_lineage_and_capability_constraints(self):
+        original = copy.deepcopy(self.contract)
+        mutations = (
+            (lambda phase: phase["roles"].remove("canonical_writer"), "requires canonical_writer and review_gate roles"),
+            (lambda phase: phase["selectors"].pop("gate"), "missing required field"),
+            (lambda phase: phase["selectors"].pop("lineage"), "requires a lineage selector"),
+            (lambda phase: phase["capabilities"]["phaseBound"].append("compile_prompt"), "both phase-bound and supporting"),
+        )
+        for mutate, message in mutations:
+            with self.subTest(message=message):
+                self.contract = copy.deepcopy(original)
+                phase = next(phase for phase in self.contract["phases"] if phase["id"] == "render_review")
+                mutate(phase)
+                self.assert_invalid(message)
+
+    def test_render_cannot_bypass_render_review(self):
+        self.contract["phases"][-1]["dependencies"] = ["frames"]
+        self.assert_invalid("dependencies must be exactly")
+
+
 if __name__ == "__main__":
     unittest.main()

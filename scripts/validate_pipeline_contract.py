@@ -56,7 +56,7 @@ HARD_STEP_STRING_FIELDS = {
     "symbol",
     "confirmLabel",
 }
-MUSICVIDEO_PHASES = [
+MUSICVIDEO_V1_PHASES = [
     "project_init",
     "analysis",
     "brief",
@@ -69,17 +69,40 @@ MUSICVIDEO_PHASES = [
     "frames",
     "render",
 ]
+MUSICVIDEO_V2_PHASES = [
+    "project_init",
+    "analysis",
+    "brief",
+    "production_design",
+    "treatment",
+    "script",
+    "storyboard",
+    "shot_planning",
+    "bible",
+    "shotlist",
+    "sanity",
+    "frames",
+    "render_review",
+    "render",
+]
+MUSICVIDEO_CONTRACT_PHASES = {
+    "musicvideo.pipeline.v1": MUSICVIDEO_V1_PHASES,
+    "musicvideo.pipeline.v2": MUSICVIDEO_V2_PHASES,
+}
 MUSICVIDEO_INSTRUCTIONS = {
     "project_init": "phases/project-init.md",
     "analysis": "phases/analysis.md",
     "brief": "phases/brief.md",
     "production_design": "phases/production-design.md",
     "treatment": "phases/treatment.md",
+    "script": "phases/script.md",
     "storyboard": "phases/storyboard.md",
+    "shot_planning": "phases/shot-planning.md",
     "bible": "phases/bible.md",
     "shotlist": "phases/shotlist.md",
     "sanity": "phases/sanity.md",
     "frames": "phases/frame.md",
+    "render_review": "phases/render-review.md",
     "render": "phases/render.md",
 }
 
@@ -436,14 +459,19 @@ def validate_hard_steps(resource_root: Path, expected_schema: str) -> set[str]:
 
 
 def validate_musicvideo_contract(contract: dict[str, Any]) -> None:
+    contract_id = contract["contractID"]
+    expected_phases = MUSICVIDEO_CONTRACT_PHASES.get(contract_id)
+    if expected_phases is None:
+        raise PipelineContractValidationError(f"unsupported musicvideo contractID {contract_id!r}")
     phase_ids = [phase["id"] for phase in contract["phases"]]
-    if phase_ids != MUSICVIDEO_PHASES:
+    if phase_ids != expected_phases:
         raise PipelineContractValidationError(
-            "musicvideo phases must remain exactly: " + ", ".join(MUSICVIDEO_PHASES)
+            f"{contract_id} phases must remain exactly: " + ", ".join(expected_phases)
         )
     instructions = {phase["id"]: phase["instructions"] for phase in contract["phases"]}
-    if instructions != MUSICVIDEO_INSTRUCTIONS:
-        raise PipelineContractValidationError("musicvideo phase instruction mapping changed")
+    expected_instructions = {phase: MUSICVIDEO_INSTRUCTIONS[phase] for phase in expected_phases}
+    if instructions != expected_instructions:
+        raise PipelineContractValidationError(f"{contract_id} phase instruction mapping changed")
 
 
 def validate_contract(contract: Any, *, pack_id: str, resource_root_name: str, resource_root: Path) -> None:
