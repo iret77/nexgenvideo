@@ -16,6 +16,12 @@ on:
       distribution:
         type: boolean
         default: false
+      source_only:
+        type: boolean
+        default: false
+      binary_evidence_run_id:
+        type: string
+        default: ''
 
 permissions:
   contents: read

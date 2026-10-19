@@ -94,6 +94,22 @@ class BinaryReuseTests(unittest.TestCase):
         self.run["conclusion"] = "failure"
         self.assertEqual(self.producer(), (self.artifact, self.job))
 
+    def test_named_nested_batch_binary_measurement_is_accepted(self):
+        self.run.update(path=reuse.BATCH_WORKFLOW, conclusion="failure")
+        self.job["name"] = reuse.BATCH_BINARY_JOB
+        self.assertEqual(self.producer(), (self.artifact, self.job))
+
+    def test_binary_job_name_must_match_its_exact_workflow(self):
+        for workflow, name in ((reuse.WORKFLOW, reuse.BATCH_BINARY_JOB),
+                               (reuse.BATCH_WORKFLOW, "binary-evidence"),
+                               (reuse.BATCH_WORKFLOW, "other / binary-evidence"),
+                               (".github/workflows/other.yml", reuse.BATCH_BINARY_JOB)):
+            with self.subTest(workflow=workflow, job=name):
+                self.run["path"] = workflow
+                self.job["name"] = name
+                with self.assertRaises(ValueError):
+                    self.producer()
+
     def test_foreign_source_repository_or_workflow_is_rejected(self):
         original = copy.deepcopy(self.run)
         for key, value in (("path", ".github/workflows/other.yml"),
@@ -106,9 +122,14 @@ class BinaryReuseTests(unittest.TestCase):
                     self.producer()
 
     def test_failed_later_attempt_cannot_fall_back_to_an_old_pass(self):
-        failed = {**self.job, "id": 8, "run_attempt": 2, "conclusion": "failure"}
-        with self.assertRaisesRegex(ValueError, "latest binary"):
-            reuse.require_producer(42, self.run, [self.artifact], [self.job, failed])
+        for workflow, name in ((reuse.WORKFLOW, "binary-evidence"),
+                               (reuse.BATCH_WORKFLOW, reuse.BATCH_BINARY_JOB)):
+            with self.subTest(workflow=workflow):
+                self.run["path"] = workflow
+                self.job["name"] = name
+                failed = {**self.job, "id": 8, "run_attempt": 2, "conclusion": "failure"}
+                with self.assertRaisesRegex(ValueError, "latest binary"):
+                    reuse.require_producer(42, self.run, [self.artifact], [self.job, failed])
 
     def test_old_artifact_cannot_be_attributed_to_a_new_passing_attempt(self):
         self.job.update(run_attempt=2, started_at="2026-10-19T11:00:00Z", completed_at="2026-10-19T11:01:00Z")

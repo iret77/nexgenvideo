@@ -41,6 +41,25 @@ it rejects supplied followup selectors or a producer run ID. Workspace cases ret
 their separate registered `Workspace UI Acceptance` entrypoint and artifact-reuse
 inputs. Followup success proves only the selected surface and cases.
 
+### Managed bpy qualification before app builds
+
+`CI Batch` with `mode=qualification` runs only the existing bpy source-closure
+workflow with `distribution: false`. Its first run assembles and independently
+validates the source candidate on Linux and records the pinned binary on macOS 26;
+it does not compile the app or run the normal batch jobs. App followup selectors
+must remain unset/default. A later qualification can name that producer through
+`qualification_binary_run_id`: only sources run, and the original passing binary
+measurement is reused after the existing repository, workflow/job, attempt, time,
+artifact-digest and runtime-input checks. The registered batch calls the reusable
+workflow without requiring its standalone dispatch to be registered on main.
+
+Use the actual candidate artifacts to complete binary/source correspondence,
+source-archive pins and notice text/coverage. A source-only qualification then
+produces the complete archive and manifest; pin their exact hashes and archive
+size before setting the lock to `ready`. Normal CI retains `--distribution` and
+the distributable-source checks before any app build. Candidate success alone
+does not authorize distribution or supply missing evidence.
+
 `external-gui-acceptance.yml` reuses the same-source `workspace-ui-app` artifact
 and builds only its external XCTest driver. Separate macrunner jobs exercise the
 normal installed app at 100/125/150%; a failed size can be selected independently.

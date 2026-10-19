@@ -30,11 +30,15 @@ Transient download errors retry only the failed download, at most twice, while v
 in the current job. Missing sources, certificate errors, and checksum drift fail immediately. A separate
 progress artifact preserves the failed stage and all completed source hashes even when assembly fails.
 
-The first manual run measures the binary and assembles sources independently. After committing
-resolved notice and correspondence evidence, dispatch with `source_only: true` and the explicit
-`binary_evidence_run_id` of that measurement. This omits the macOS job only after checking the
-original repository, workflow, commit, latest passing binary job, exact artifact digest and unchanged
-runtime inputs. The fingerprint includes the Python/wheel pins, native-library evidence and complete
+The registered `CI Batch` entrypoint with `mode=qualification` measures the binary and assembles
+sources independently through this reusable workflow with `distribution: false`; no app is built.
+After committing resolved notice and correspondence evidence, repeat qualification with the explicit
+`qualification_binary_run_id` of that measurement. This forwards `source_only: true` and
+`binary_evidence_run_id`. The standalone source workflow supports the same two inputs once its
+dispatch is registered. Reuse accepts only the standalone binary job or the named
+`bpy-qualification / binary-evidence` job in CI Batch, and checks the original repository, workflow,
+commit, latest passing binary job, exact artifact digest, timestamps and unchanged runtime inputs.
+The fingerprint includes the Python/wheel pins, native-library evidence and complete
 producer/validator sources; notice-closure and publication pins are excluded. The source artifact
 preserves the original measurement unchanged and records both commits and the exact reused job.
 Missing, expired, failed, changed or pre-fingerprint evidence is refused; it is never relabeled as a

@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Initial verification or one acceptance followup using an existing exact app
+        description: Initial verification, exact-app followup, or managed bpy qualification
         type: choice
-        options: [initial, followup]
+        options: [initial, followup, qualification]
         default: initial
       followup_workflow:
         description: Only this acceptance runs in followup mode; initial mode requires none
@@ -16,6 +16,10 @@ on:
         default: none
       runtime_run_id:
         description: Same-source producer run required in followup mode
+        type: string
+        default: ''
+      qualification_binary_run_id:
+        description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
         default: ''
       settings_scope:
@@ -67,7 +71,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate initial or exact-artifact followup
+    name: Validate verification mode and inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -79,6 +83,7 @@ jobs:
           NGV_MODE: ${{ inputs.mode }}
           NGV_FOLLOWUP: ${{ inputs.followup_workflow }}
           NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
+          NGV_QUALIFICATION_RUN: ${{ inputs.qualification_binary_run_id }}
           NGV_SETTINGS_SCOPE: ${{ inputs.settings_scope }}
           NGV_INTERFACE_SCALE: ${{ inputs.interface_scale }}
         run: |
@@ -87,15 +92,23 @@ jobs:
           mode = os.environ['NGV_MODE']
           followup = os.environ['NGV_FOLLOWUP']
           run_id = os.environ['NGV_RUNTIME_RUN']
+          binary_run_id = os.environ['NGV_QUALIFICATION_RUN']
           settings = os.environ['NGV_SETTINGS_SCOPE']
           scale = os.environ['NGV_INTERFACE_SCALE']
           scopes = {'all', 'settings', 'settings100', 'settings125', 'settings150',
                     'packrecovery', 'packrecovery100', 'packrecovery125', 'packrecovery150'}
-          if mode not in {'initial', 'followup'}:
-              raise SystemExit('Select initial or followup mode.')
+          if mode not in {'initial', 'followup', 'qualification'}:
+              raise SystemExit('Select initial, followup or qualification mode.')
           if settings not in scopes or scale not in {'all', '1', '1.25', '1.5'}:
               raise SystemExit('Select a supported Settings case and interface scale.')
-          if mode == 'initial':
+          if mode != 'qualification' and binary_run_id:
+              raise SystemExit('qualification_binary_run_id applies only to qualification mode.')
+          if mode == 'qualification':
+              if followup != 'none' or run_id or settings != 'all' or scale != 'all':
+                  raise SystemExit('Qualification requires no app followup/run ID and default acceptance selectors.')
+              if binary_run_id and not re.fullmatch(r'[1-9][0-9]*', binary_run_id):
+                  raise SystemExit('qualification_binary_run_id must identify a positive prior producer run.')
+          elif mode == 'initial':
               if followup != 'none' or run_id or settings != 'all' or scale != 'all':
                   raise SystemExit('Initial mode requires no followup/run ID and default acceptance selectors.')
           else:
@@ -120,6 +133,16 @@ jobs:
         run: |
           python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
             --artifact workspace-ui-app --identity "$RUNNER_TEMP/followup-runtime-identity.json"
+
+  bpy-qualification:
+    needs: validate
+    if: needs.validate.outputs.mode == 'qualification'
+    name: bpy-qualification
+    uses: ./.github/workflows/bpy-source-closure.yml
+    with:
+      distribution: false
+      source_only: ${{ inputs.qualification_binary_run_id != '' }}
+      binary_evidence_run_id: ${{ inputs.qualification_binary_run_id }}
 
   ci:
     needs: validate

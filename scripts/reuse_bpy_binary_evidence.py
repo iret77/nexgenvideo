@@ -17,6 +17,8 @@ from verify_bpy_binary_evidence import validate
 
 REPOSITORY = "iret77/nexgenvideo"
 WORKFLOW = ".github/workflows/bpy-source-closure.yml"
+BATCH_WORKFLOW = ".github/workflows/ci-batch.yml"
+BATCH_BINARY_JOB = "bpy-qualification / binary-evidence"
 COMMIT = re.compile(r"[0-9a-f]{40}")
 LIMIT = 2 * 1024 * 1024
 
@@ -66,10 +68,11 @@ def require_producer(run_id, run, artifacts, jobs):
     if (run.get("id") != run_id or not COMMIT.fullmatch(original_sha)
         or run.get("repository", {}).get("full_name") != REPOSITORY
         or run.get("head_repository", {}).get("full_name") != REPOSITORY
-        or run.get("path") != WORKFLOW or run.get("event") != "workflow_dispatch"
+        or run.get("path") not in (WORKFLOW, BATCH_WORKFLOW) or run.get("event") != "workflow_dispatch"
         or run.get("status") != "completed"):
         raise ValueError("Binary evidence requires the exact completed source-closure run")
-    candidates = [item for item in jobs if item.get("name") == "binary-evidence"]
+    job_name = "binary-evidence" if run["path"] == WORKFLOW else BATCH_BINARY_JOB
+    candidates = [item for item in jobs if item.get("name") == job_name]
     if not candidates:
         raise ValueError("The requested run has no binary measurement")
     latest = max(candidates, key=lambda item: (item["run_attempt"], item["id"]))
