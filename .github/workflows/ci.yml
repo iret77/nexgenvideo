@@ -386,7 +386,9 @@ jobs:
       - name: Exercise native Export Cancel, Retry and Reveal actions
         run: python3 scripts/export_actions_acceptance.py candidate/NexGenVideo.app --output evidence/export-actions.json
       - name: Verify generation batch pricing recovery on macOS 26
+        shell: bash
         run: |
+          set -euo pipefail
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'

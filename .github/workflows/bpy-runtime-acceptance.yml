@@ -90,7 +90,10 @@ jobs:
               fi
               sleep 0.05
             done
-            ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null
+            if pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null; then
+              echo "orphan bpy process after $mode" >&2
+              exit 1
+            fi
           done
       - name: Prepare the independent retained Bible YAML parser
         run: |

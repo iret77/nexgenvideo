@@ -16,7 +16,7 @@ enum GenerationClipReplacement {
         let fps: Int
         let targets: [Target]
 
-        init(clipID: String, resetTrim: Bool, editor: EditorViewModel) {
+        @MainActor init(clipID: String, resetTrim: Bool, editor: EditorViewModel) {
             self.clipID = clipID
             self.resetTrim = resetTrim
             home = editor.workingRoot?.standardizedFileURL
@@ -28,20 +28,20 @@ enum GenerationClipReplacement {
             targets = Self.targets(clipID: clipID, timeline: editor.timeline)
         }
 
-        func matchesProject(editor: EditorViewModel) -> Bool {
+        @MainActor func matchesProject(editor: EditorViewModel) -> Bool {
             home == editor.workingRoot?.standardizedFileURL && workingCopyKey == editor.openWorkingCopyKey
                 && workingCopyGeneration == editor.openWorkingCopyGeneration
                 && declaration == .init(packName: editor.declaredPluginName, binding: editor.declaredPluginBinding,
                     productionContract: editor.declaredProductionContract)
         }
 
-        func clearPending(editor: EditorViewModel) {
+        @MainActor func clearPending(editor: EditorViewModel) {
             guard matchesProject(editor: editor) else { return }
             editor.pendingReplacements.subtract(targets.map(\.clip.id))
             editor.pendingReplacements.remove(clipID)
         }
 
-        func requireCurrent(editor: EditorViewModel, modality: GenerationRequest.Modality? = nil, resultType: ClipType? = nil) throws {
+        @MainActor func requireCurrent(editor: EditorViewModel, modality: GenerationRequest.Modality? = nil, resultType: ClipType? = nil) throws {
             guard matchesProject(editor: editor), fps == editor.timeline.fps, !targets.isEmpty,
                   targets == Self.targets(clipID: clipID, timeline: editor.timeline) else {
                 throw GenerationRequestError.gate("The generated media is saved in Media. The destination clip or linked sources changed during generation and were not replaced.")

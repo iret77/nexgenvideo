@@ -90,6 +90,41 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                         "enable=yes,interactive=no,demangle=yes,cache=no\n",
                     )
 
+    def test_pricing_selftest_requires_marker_and_successful_app_exit_once(self):
+        run = workflow_test_run(
+            ROOT / ".github/workflows/ci.yml",
+            "Verify generation batch pricing recovery on macOS 26",
+        )
+        for code, marker, expected in ((0, True, 0), (1, True, 1), (139, True, 139), (0, False, 1)):
+            with self.subTest(code=code, marker=marker), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo"
+                app.parent.mkdir(parents=True)
+                app.write_text(textwrap.dedent("""\
+                    #!/bin/bash
+                    set -euo pipefail
+                    count=0
+                    if [ -f "$FAKE_APP_CALLS" ]; then count=$(cat "$FAKE_APP_CALLS"); fi
+                    count=$((count + 1))
+                    printf '%s\\n' "$count" > "$FAKE_APP_CALLS"
+                    printf '%s\\n' "${NGV_SELFTEST_GENERATION_BATCH_RECOVERY:-}" > "$FAKE_APP_GATE"
+                    if [ "$FAKE_APP_MARKER" = 1 ]; then
+                      printf '%s\\n' SELFTEST_GENERATION_BATCH_RECOVERY_OK
+                    fi
+                    exit "$FAKE_APP_EXIT"
+                    """))
+                app.chmod(0o755)
+                env = dict(os.environ, FAKE_APP_CALLS=str(root / "calls"),
+                           FAKE_APP_GATE=str(root / "gate"), FAKE_APP_MARKER="1" if marker else "0",
+                           FAKE_APP_EXIT=str(code))
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, expected, result.stdout)
+                self.assertEqual((root / "calls").read_text(), "1\n")
+                self.assertEqual((root / "gate").read_text(), "1\n")
+
 
 if __name__ == "__main__":
     unittest.main()

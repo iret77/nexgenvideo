@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -45,6 +46,52 @@ def run_commands(text):
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_bpy_host_crash_cleanup_rejects_an_orphan_in_the_first_mode(self):
+        workflow = (WORKFLOWS / "bpy-runtime-acceptance.yml").read_text()
+        step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]
+        step = step.split("      - name:", 1)[0]
+        run = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        for orphan in (True, False):
+            with self.subTest(first_mode_orphan=orphan), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "relocated/NexGenVideo.app/Contents/MacOS/NexGenVideo"
+                app.parent.mkdir(parents=True)
+                app.write_text(textwrap.dedent("""\
+                    #!/bin/bash
+                    set -euo pipefail
+                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" >> "$FAKE_APP_CALLS"
+                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" > "$FAKE_MODE"
+                    exit 1
+                    """))
+                app.chmod(0o755)
+                binary = root / "bin"
+                binary.mkdir()
+                pgrep = binary / "pgrep"
+                pgrep.write_text(textwrap.dedent("""\
+                    #!/bin/bash
+                    set -euo pipefail
+                    if [ "$FAKE_FIRST_ORPHAN" = 1 ] && [ "$(cat "$FAKE_MODE")" = before-authorization ]; then
+                      exit 0
+                    fi
+                    exit 1
+                    """))
+                pgrep.chmod(0o755)
+                sleep = binary / "sleep"
+                sleep.write_text("#!/bin/sh\nexit 0\n")
+                sleep.chmod(0o755)
+                env = dict(os.environ, RUNNER_TEMP=str(root), PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                           FAKE_APP_CALLS=str(root / "calls"), FAKE_MODE=str(root / "mode"),
+                           FAKE_FIRST_ORPHAN="1" if orphan else "0")
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 1 if orphan else 0, result.stdout)
+                expected = ["before-authorization"] if orphan else ["before-authorization", "after-authorization"]
+                self.assertEqual((root / "calls").read_text().splitlines(), expected)
+                if orphan:
+                    self.assertIn("orphan bpy process after before-authorization", result.stdout)
+
     def test_merge_gate_requires_every_selected_job(self):
         text = CI.read_text().split("  merge_gate:\n", 1)[1]
         code = text.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0]
