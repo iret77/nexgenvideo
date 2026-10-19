@@ -7,95 +7,9 @@ enum ProductionV2PlanningAcceptance {
                     driver: ProductionVisualSourcesDriver, generatedFirstShot: Bool,
                     sketchGeneration: ProductionV2GenerationAcceptance? = nil,
                     beforeShotPlanningApproval: (@MainActor (ProductionPlanningAcceptanceFixture.Context, ProductionVisualSourcesDriver) async throws -> Void)? = nil) async throws -> ShotPlanningDraftV1 {
+        let visual = try await runStoryboard(context: context, sourceVideo: sourceVideo, driver: driver,
+            sketchGeneration: sketchGeneration)
         let editor = context.editor, window = driver.window, root = context.dataRoot
-        try await selectPhase("script", context: context, driver: driver)
-        let scriptBefore = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
-        guard let scene = scriptBefore.scenes.first else { throw failed("Script has no scene.") }
-        try await driver.click("script.scene.edit." + scene.id, in: window)
-        let sheet = try await driver.sheet("script.scene.title")
-        let title = scene.title + " — native revision"
-        try await driver.fill("script.scene.title", value: title, in: sheet)
-        try driver.visible(["script.scene.cancel", "script.scene.apply"], in: sheet)
-        try driver.capture("script-edit", target: sheet)
-        try await driver.click("script.scene.apply", in: sheet)
-        try await driver.wait("Script edit committed") { window.attachedSheet == nil }
-        let scriptAfter = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
-        guard scriptAfter.header.revision > scriptBefore.header.revision,
-              scriptAfter.scenes.first?.title == title, scriptAfter.events == scriptBefore.events else {
-            throw failed("Native Script edit did not preserve its events and publish the typed title.")
-        }
-        try driver.record("native Script revision", fields: ["before": scriptBefore.header.revision,
-            "after": scriptAfter.header.revision, "title": title])
-        try await approve("script", artifact: ScriptV1.currentPath, next: "storyboard", context: context, driver: driver)
-
-        let initial = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
-        try await selectPhase("storyboard", context: context, driver: driver)
-        guard let first = initial.timing.shots.first, first.durationTicks > 1 else { throw failed("Storyboard has no usable shot.") }
-        let clock = initial.timing.timebase
-        try clock.validate()
-        let frameTicks = clock.ticksPerSecond * clock.fpsDenominator / clock.fpsNumerator
-        let offset = first.durationTicks / 2 / frameTicks * frameTicks
-        guard offset > 0, offset < first.durationTicks else { throw failed("The planned shot has no distinct interior source frame.") }
-        let seconds = ProductionTimeEntry.seconds(offset, timebase: initial.timing.timebase)
-        try await driver.click("storyboard.moment.add." + first.id, in: window)
-        let momentSheet = try await driver.sheet("storyboard.edit.sheet")
-        try await driver.fill("storyboard.edit.first", value: seconds, in: momentSheet)
-        let intent = "The same action reaches its second visible position."
-        try await driver.fill("storyboard.edit.second", value: intent, in: momentSheet)
-        try driver.visible(["storyboard.edit.cancel", "storyboard.edit.apply"], in: momentSheet)
-        try driver.capture("add-moment", target: momentSheet)
-        try await driver.click("storyboard.edit.apply", in: momentSheet)
-        try await driver.wait("second moment committed") { window.attachedSheet == nil }
-        let added = try await board(context, requireVisuals: false)
-        guard added.timing.shots.map(\.id) == initial.timing.shots.map(\.id),
-              added.timing.shots.map(\.startTicks) == initial.timing.shots.map(\.startTicks),
-              added.timing.shots.map(\.durationTicks) == initial.timing.shots.map(\.durationTicks),
-              let changed = added.timing.shots.first, changed.moments.count == first.moments.count + 1,
-              changed.moments.contains(where: { $0.offsetTicks == offset && $0.intent == intent }) else {
-            throw failed("Adding a sketch moment changed shot identity/timing or failed to preserve the typed moment.")
-        }
-        let beforeUndo = editor.engineStateRevision
-        try await driver.click("storyboard.undo", in: window)
-        try await driver.wait("Storyboard Undo committed", seconds: 30) { editor.engineStateRevision > beforeUndo && !busy(editor) }
-        let undone = try await board(context, requireVisuals: false)
-        guard sameBoardContents(undone, initial), undone.storyboard.header.revision > added.storyboard.header.revision else {
-            throw failed("Native Storyboard Undo did not restore the preceding moments and timing.")
-        }
-        let beforeRedo = editor.engineStateRevision
-        try await driver.click("storyboard.redo", in: window)
-        try await driver.wait("Storyboard Redo committed", seconds: 30) { editor.engineStateRevision > beforeRedo && !busy(editor) }
-        let restored = try await board(context, requireVisuals: false)
-        guard sameBoardContents(restored, added), restored.storyboard.header.revision > undone.storyboard.header.revision else {
-            throw failed("Native Storyboard Redo did not restore the additional moment.")
-        }
-        try driver.record("multiple moments with native Undo and Redo", fields: ["shotID": first.id,
-            "momentIDs": restored.timing.shots.first!.moments.map(\.id), "offsetTicks": offset,
-            "shotCount": restored.timing.shots.count, "durationTicks": first.durationTicks])
-        try await requestApproval("storyboard", artifact: StoryboardV2.currentPath, context: context)
-        try await driver.wait("missing sketches block approval") {
-            driver.state("agent.gate.approve", in: window) == false
-                && driver.text("agent.gate.approve", in: window) != "Checking the current phase…"
-        }
-        try driver.capture("missing-sketches-block-approval", target: window)
-        let beforeDecline = Set(editor.agentService.messages.map(\.id))
-        try await driver.click("agent.gate.decline", in: window)
-        try await driver.wait("missing-sketch decision and actual follow-up settled") {
-            editor.agentService.pendingGateApproval == nil && !editor.agentService.isStreaming
-                && editor.agentService.messages.contains { message in
-                    !beforeDecline.contains(message.id) && message.role == .assistant && message.blocks.contains {
-                        if case .text(let value) = $0 { return value == "Acceptance transport received storyboard." }
-                        return false
-                    }
-                }
-        }
-        try await assignSketches(context: context, sourceVideo: sourceVideo, driver: driver)
-        if let sketchGeneration {
-            try await ProductionStoryboardGenerationAcceptance.run(context: context, generation: sketchGeneration, driver: driver)
-        }
-        let visual = try await board(context)
-        try await playMoments(visual, editor: editor, driver: driver)
-        try await approve("storyboard", artifact: StoryboardV2.currentPath, next: "shot_planning", context: context, driver: driver)
-
         let draft = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
         if generatedFirstShot {
             let proposal = draft.shots.enumerated().map { index, shot in
@@ -196,6 +110,101 @@ enum ProductionV2PlanningAcceptance {
         guard before != after else { throw failed("Native approval left the persisted gates unchanged.") }
         try driver.record("native approval " + phase, fields: ["phase": phase, "nextPhase": next ?? "complete",
             "approvedPersisted": gate.approved, "handoffHidden": true, "gatesBeforeSHA256": before, "gatesAfterSHA256": after])
+    }
+
+    static func runStoryboard(context: ProductionPlanningAcceptanceFixture.Context, sourceVideo: URL,
+                              driver: ProductionVisualSourcesDriver,
+                              sketchGeneration: ProductionV2GenerationAcceptance? = nil) async throws -> StoryboardBundleSnapshot {
+        let editor = context.editor, window = driver.window, root = context.dataRoot
+        try await selectPhase("script", context: context, driver: driver)
+        let scriptBefore = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
+        guard let scene = scriptBefore.scenes.first else { throw failed("Script has no scene.") }
+        try await driver.click("script.scene.edit." + scene.id, in: window)
+        let sheet = try await driver.sheet("script.scene.title")
+        let title = scene.title + " — native revision"
+        try await driver.fill("script.scene.title", value: title, in: sheet)
+        try driver.visible(["script.scene.cancel", "script.scene.apply"], in: sheet)
+        try driver.capture("script-edit", target: sheet)
+        try await driver.click("script.scene.apply", in: sheet)
+        try await driver.wait("Script edit committed") { window.attachedSheet == nil }
+        let scriptAfter = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
+        guard scriptAfter.header.revision > scriptBefore.header.revision,
+              scriptAfter.scenes.first?.title == title, scriptAfter.events == scriptBefore.events else {
+            throw failed("Native Script edit did not preserve its events and publish the typed title.")
+        }
+        try driver.record("native Script revision", fields: ["before": scriptBefore.header.revision,
+            "after": scriptAfter.header.revision, "title": title])
+        try await approve("script", artifact: ScriptV1.currentPath, next: "storyboard", context: context, driver: driver)
+
+        let initial = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        try await selectPhase("storyboard", context: context, driver: driver)
+        guard let first = initial.timing.shots.first, first.durationTicks > 1 else { throw failed("Storyboard has no usable shot.") }
+        let clock = initial.timing.timebase
+        try clock.validate()
+        let frameTicks = clock.ticksPerSecond * clock.fpsDenominator / clock.fpsNumerator
+        let offset = first.durationTicks / 2 / frameTicks * frameTicks
+        guard offset > 0, offset < first.durationTicks else { throw failed("The planned shot has no distinct interior source frame.") }
+        let seconds = ProductionTimeEntry.seconds(offset, timebase: initial.timing.timebase)
+        try await driver.click("storyboard.moment.add." + first.id, in: window)
+        let momentSheet = try await driver.sheet("storyboard.edit.sheet")
+        try await driver.fill("storyboard.edit.first", value: seconds, in: momentSheet)
+        let intent = "The same action reaches its second visible position."
+        try await driver.fill("storyboard.edit.second", value: intent, in: momentSheet)
+        try driver.visible(["storyboard.edit.cancel", "storyboard.edit.apply"], in: momentSheet)
+        try driver.capture("add-moment", target: momentSheet)
+        try await driver.click("storyboard.edit.apply", in: momentSheet)
+        try await driver.wait("second moment committed") { window.attachedSheet == nil }
+        let added = try await board(context, requireVisuals: false)
+        guard added.timing.shots.map(\.id) == initial.timing.shots.map(\.id),
+              added.timing.shots.map(\.startTicks) == initial.timing.shots.map(\.startTicks),
+              added.timing.shots.map(\.durationTicks) == initial.timing.shots.map(\.durationTicks),
+              let changed = added.timing.shots.first, changed.moments.count == first.moments.count + 1,
+              changed.moments.contains(where: { $0.offsetTicks == offset && $0.intent == intent }) else {
+            throw failed("Adding a sketch moment changed shot identity/timing or failed to preserve the typed moment.")
+        }
+        let beforeUndo = editor.engineStateRevision
+        try await driver.click("storyboard.undo", in: window)
+        try await driver.wait("Storyboard Undo committed", seconds: 30) { editor.engineStateRevision > beforeUndo && !busy(editor) }
+        let undone = try await board(context, requireVisuals: false)
+        guard sameBoardContents(undone, initial), undone.storyboard.header.revision > added.storyboard.header.revision else {
+            throw failed("Native Storyboard Undo did not restore the preceding moments and timing.")
+        }
+        let beforeRedo = editor.engineStateRevision
+        try await driver.click("storyboard.redo", in: window)
+        try await driver.wait("Storyboard Redo committed", seconds: 30) { editor.engineStateRevision > beforeRedo && !busy(editor) }
+        let restored = try await board(context, requireVisuals: false)
+        guard sameBoardContents(restored, added), restored.storyboard.header.revision > undone.storyboard.header.revision else {
+            throw failed("Native Storyboard Redo did not restore the additional moment.")
+        }
+        try driver.record("multiple moments with native Undo and Redo", fields: ["shotID": first.id,
+            "momentIDs": restored.timing.shots.first!.moments.map(\.id), "offsetTicks": offset,
+            "shotCount": restored.timing.shots.count, "durationTicks": first.durationTicks])
+        try await requestApproval("storyboard", artifact: StoryboardV2.currentPath, context: context)
+        try await driver.wait("missing sketches block approval") {
+            driver.state("agent.gate.approve", in: window) == false
+                && driver.text("agent.gate.approve", in: window) != "Checking the current phase…"
+        }
+        try driver.capture("missing-sketches-block-approval", target: window)
+        let beforeDecline = Set(editor.agentService.messages.map(\.id))
+        try await driver.click("agent.gate.decline", in: window)
+        try await driver.wait("missing-sketch decision and actual follow-up settled") {
+            editor.agentService.pendingGateApproval == nil && !editor.agentService.isStreaming
+                && editor.agentService.messages.contains { message in
+                    !beforeDecline.contains(message.id) && message.role == .assistant && message.blocks.contains {
+                        if case .text(let value) = $0 { return value == "Acceptance transport received storyboard." }
+                        return false
+                    }
+                }
+        }
+        try await assignSketches(context: context, sourceVideo: sourceVideo, driver: driver)
+        if let sketchGeneration {
+            try await ProductionStoryboardGenerationAcceptance.run(context: context, generation: sketchGeneration, driver: driver)
+        }
+        let visual = try await board(context)
+        try await playMoments(visual, editor: editor, driver: driver)
+        try await approve("storyboard", artifact: StoryboardV2.currentPath, next: "shot_planning", context: context, driver: driver)
+
+        return visual
     }
 
     private static func requestApproval(_ phase: String, artifact: String, context: ProductionPlanningAcceptanceFixture.Context) async throws {

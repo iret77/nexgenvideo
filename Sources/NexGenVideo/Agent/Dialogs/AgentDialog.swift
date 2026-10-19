@@ -8,6 +8,7 @@ struct AgentDialogDraft: Codable, Equatable {
     var direction = ""
     var customValues: [String: String] = [:]
     var fileURLs: [URL] = []
+    var previousWorkflowSelection: PreviousWorkflowMaterialSelection?
 }
 
 /// The user's structured answer to a presented dialog.
@@ -25,6 +26,7 @@ struct AgentDialogResult: Sendable, Equatable {
     var selectedOptionIDs: [String: Set<String>] = [:]
     /// Host-resolved filenames for selected media options, keyed by section then option id.
     var selectedMediaFilenames: [String: [String: String]] = [:]
+    var previousWorkflowSelection: PreviousWorkflowMaterialSelection?
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }

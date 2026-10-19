@@ -14,7 +14,7 @@ on:
       acceptance_scope:
         description: Native cases to verify or resume independently
         type: choice
-        options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150]
+        options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150, packresume172, packresume172100, packresume172125, packresume172150]
         default: all
   workflow_call:
     inputs:
@@ -50,15 +50,24 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os
-          cases = [dict(id="settings100", scale=1), dict(id="settings125", scale=1.25),
-                   dict(id="settings150", scale=1.5), dict(id="packrecovery100", scale=1),
-                   dict(id="packrecovery125", scale=1.25), dict(id="packrecovery150", scale=1.5)]
+          cases = [dict(id="settings100", scale=1, family="settings"),
+                   dict(id="settings125", scale=1.25, family="settings"),
+                   dict(id="settings150", scale=1.5, family="settings"),
+                   dict(id="packrecovery100", scale=1, family="packrecovery"),
+                   dict(id="packrecovery125", scale=1.25, family="packrecovery"),
+                   dict(id="packrecovery150", scale=1.5, family="packrecovery"),
+                   dict(id="packresume172100", scale=1, family="packresume172"),
+                   dict(id="packresume172125", scale=1.25, family="packresume172"),
+                   dict(id="packresume172150", scale=1.5, family="packresume172")]
+          for case in cases:
+              resume = case["family"] == "packresume172"
+              case["baseline_profile"] = "known-preview172-approved-resume" if resume else "stable-compatible"
+              case["baseline_version"] = "0.5.16" if resume else "0.5.8"
           scope = os.environ["NGV_ACCEPTANCE_SCOPE"]
-          if scope not in {"all", "settings", "packrecovery", *(case["id"] for case in cases)}:
+          if scope not in {"all", "settings", "packrecovery", "packresume172", *(case["id"] for case in cases)}:
               raise SystemExit("Unknown native Settings/Recovery acceptance scope")
           selected = [case for case in cases if scope == "all" or case["id"] == scope
-                      or (scope == "settings" and case["id"].startswith("settings"))
-                      or (scope == "packrecovery" and case["id"].startswith("packrecovery"))]
+                      or scope == case["family"]]
           with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
               stream.write("matrix=" + json.dumps(dict(include=selected)) + "\n")
           PY
@@ -97,12 +106,15 @@ jobs:
         id: packs
         env:
           GH_TOKEN: ${{ github.token }}
+          NGV_BASELINE_PROFILE: ${{ matrix.baseline_profile }}
+          NGV_BASELINE_VERSION: ${{ matrix.baseline_version }}
         run: |
           python3 scripts/prepare_settings_pack_artifacts.py \
             --current-pack "$RUNNER_TEMP/settings-runtime/plugins/musicvideo.ngvpack" \
+            --baseline-profile "$NGV_BASELINE_PROFILE" --baseline-version "$NGV_BASELINE_VERSION" \
             --output "$RUNNER_TEMP/settings-packs" --github-output "$GITHUB_OUTPUT"
       - name: Exercise Settings controls and exact pack update/removal
-        if: startsWith(matrix.id, 'settings')
+        if: matrix.family == 'settings'
         env:
           NGV_BASELINE_PACK: ${{ steps.packs.outputs.baseline }}
           NGV_TARGET_PACK: ${{ steps.packs.outputs.target }}
@@ -113,16 +125,18 @@ jobs:
             --output "$RUNNER_TEMP/settings-evidence" --baseline-pack-zip "$NGV_BASELINE_PACK" \
             --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE"
       - name: Exercise genuine native upgrade and Recovery restart
-        if: startsWith(matrix.id, 'packrecovery')
+        if: matrix.family == 'packrecovery' || matrix.family == 'packresume172'
         env:
           NGV_SCALE: ${{ matrix.scale }}
           NGV_BASELINE_PACK: ${{ steps.packs.outputs.baseline }}
           NGV_TARGET_PACK: ${{ steps.packs.outputs.target }}
+          NGV_RECOVERY_SCENARIO: ${{ matrix.baseline_profile }}
         run: |
           python3 scripts/pack_recovery_owner_acceptance.py \
             --executable "$RUNNER_TEMP/settings-runtime/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             --output "$RUNNER_TEMP/settings-evidence" --baseline-pack-zip "$NGV_BASELINE_PACK" \
-            --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE"
+            --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE" \
+            --scenario "$NGV_RECOVERY_SCENARIO" --pack-pair "$RUNNER_TEMP/settings-packs/pack-pair.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

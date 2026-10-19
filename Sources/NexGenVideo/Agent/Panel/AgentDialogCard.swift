@@ -21,6 +21,9 @@ struct AgentDialogCard: View {
     /// own selection (Music-tab and any non-projected use — unchanged behavior).
     var externalSelections: Binding<[String: Set<String>]>? = nil
     var externalDraft: Binding<AgentDialogDraft>? = nil
+    var previousWorkflowScope: PreviousWorkflowMaterialScope? = nil
+    var loadPreviousWorkflowMaterials: (@MainActor (PreviousWorkflowMaterialScope) async throws -> PreviousWorkflowMaterialCatalog)? = nil
+    var isPreviousWorkflowScopeCurrent: (@MainActor (PreviousWorkflowMaterialScope) -> Bool)? = nil
     /// The active pack's brand accent, used to make a `fileIntake` well recognizably the pack's own
     /// (the upload step everything downstream depends on). Defaults to the host accent.
     var accent: Color = AppTheme.Accent.primary
@@ -41,6 +44,7 @@ struct AgentDialogCard: View {
     @State private var localChoiceSelections: [String: Set<String>] = [:]
     @State private var localDraft = AgentDialogDraft()
     @State private var isDropTargeted = false
+    @State private var sourceOperationID = UUID()
     @FocusState private var focusedControl: AgentDialogFocusTarget?
 
     private var choiceSelections: [String: Set<String>] {
@@ -71,6 +75,34 @@ struct AgentDialogCard: View {
     private var pickedFiles: [URL] {
         get { draftBinding.wrappedValue.fileURLs }
         nonmutating set { draftBinding.wrappedValue.fileURLs = newValue }
+    }
+
+    private var previousSelection: PreviousWorkflowMaterialSelection? {
+        guard let selection = draftBinding.wrappedValue.previousWorkflowSelection,
+              selection.scope == previousWorkflowScope,
+              isPreviousWorkflowScopeCurrent?(selection.scope) == true else { return nil }
+        return selection
+    }
+
+    private var hasStalePreviousSelection: Bool {
+        draftBinding.wrappedValue.previousWorkflowSelection != nil && previousSelection == nil
+    }
+
+    private var hasMaterial: Bool { !pickedFiles.isEmpty || previousSelection != nil }
+
+    private var directionInput: Binding<String> {
+        Binding(get: { direction }, set: { value in
+            guard !isSubmitting else { return }
+            var draft = draftBinding.wrappedValue
+            guard value != draft.direction else { return }
+            if dialog.purpose == .workflowIntake, dialog.fileIntake?.attachAs == "script" {
+                sourceOperationID = UUID()
+                draft.previousWorkflowSelection = nil
+                draft.fileURLs = []
+            }
+            draft.direction = value
+            draftBinding.wrappedValue = draft
+        })
     }
 
     var body: some View {
@@ -104,6 +136,12 @@ struct AgentDialogCard: View {
             seedDefaults()
             requestInitialFocus()
         }
+        .onChange(of: previousWorkflowScope, initial: true) { _, scope in
+            if let selection = draftBinding.wrappedValue.previousWorkflowSelection, selection.scope != scope {
+                resetSourceDraft()
+            }
+        }
+        .onDisappear { sourceOperationID = UUID() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(dialog.title)
     }
@@ -129,10 +167,11 @@ struct AgentDialogCard: View {
             if let tf = dialog.textField {
                 dialogField(
                     tf.placeholder,
-                    text: draftBinding.direction,
+                    text: directionInput,
                     focus: .direction,
                     lineLimit: tf.multiline ? 3...12 : 1...3
                 )
+                .disabled(isSubmitting)
             }
             if let intake = dialog.fileIntake {
                 fileWell(intake)
@@ -141,15 +180,19 @@ struct AgentDialogCard: View {
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let intake = dialog.fileIntake else { return false }
+        guard !isSubmitting, let intake = dialog.fileIntake else { return false }
         let loaders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
         guard !loaders.isEmpty else { return false }
+        let scope = previousWorkflowScope
+        let operationID = UUID()
+        sourceOperationID = operationID
         for provider in loaders {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url, url.isFileURL else { return }
                 Task { @MainActor in
-                    guard intake.accepts(url) else { return }
-                    addPicked(url, intake)
+                    guard mayEditSources(scope: scope), sourceOperationID == operationID,
+                          intake.accepts(url) else { return }
+                    addPicked(url, intake, operationID: operationID)
                 }
             }
         }
@@ -352,7 +395,16 @@ struct AgentDialogCard: View {
             if let namePrompt = intake.namePrompt {
                 dialogField(namePrompt, text: draftBinding.direction, focus: .direction)
             }
-            if pickedFiles.isEmpty {
+            if let scope = previousWorkflowScope, let load = loadPreviousWorkflowMaterials {
+                AgentPreviousWorkflowPicker(scope: scope, selection: previousSelection,
+                    isSubmitting: isSubmitting, load: load,
+                    isCurrent: { isPreviousWorkflowScopeCurrent?($0) == true },
+                    onSelect: selectPreviousMaterial, onRemove: clearRepeatableDraft)
+            }
+            if previousSelection != nil {
+                chooseButton(intake, label: intake.allowsMultiple ? "Choose other files…" : "Choose another file…")
+                libraryPicker(intake)
+            } else if pickedFiles.isEmpty {
                 libraryPicker(intake)
                 emptyFileWell(intake)
             } else {
@@ -363,6 +415,7 @@ struct AgentDialogCard: View {
                 }
             }
         }
+        .disabled(isSubmitting)
     }
 
     /// Library assets that fit this intake, offered for one-click picking before the drop well (#254
@@ -452,6 +505,7 @@ struct AgentDialogCard: View {
                 .truncationMode(.middle)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button {
+                sourceOperationID = UUID()
                 pickedFiles.removeAll { $0 == url }
             } label: {
                 Image(systemName: "xmark.circle.fill")
@@ -480,6 +534,10 @@ struct AgentDialogCard: View {
     }
 
     private func presentFilePanel(_ intake: AgentDialog.FileIntake) {
+        guard !isSubmitting else { return }
+        let scope = previousWorkflowScope
+        let operationID = UUID()
+        sourceOperationID = operationID
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = intake.allowsMultiple
         panel.canChooseDirectories = false
@@ -488,18 +546,43 @@ struct AgentDialogCard: View {
         if !types.isEmpty { panel.allowedContentTypes = types }
         panel.prompt = "Choose"
         if let prompt = intake.prompt { panel.message = prompt }
-        guard panel.runModal() == .OK else { return }
+        guard panel.runModal() == .OK, mayEditSources(scope: scope), sourceOperationID == operationID else { return }
         for url in panel.urls where intake.accepts(url) {
-            addPicked(url, intake)
+            addPicked(url, intake, operationID: operationID)
         }
     }
 
-    private func addPicked(_ url: URL, _ intake: AgentDialog.FileIntake) {
+    private func mayEditSources(scope: PreviousWorkflowMaterialScope?) -> Bool {
+        guard !isSubmitting else { return false }
+        if let scope { return isPreviousWorkflowScopeCurrent?(scope) == true }
+        return previousWorkflowScope == nil
+    }
+
+    private func addPicked(_ url: URL, _ intake: AgentDialog.FileIntake, operationID: UUID? = nil) {
+        guard mayEditSources(scope: previousWorkflowScope) else { return }
+        if let operationID {
+            guard sourceOperationID == operationID else { return }
+        } else { sourceOperationID = UUID() }
+        var draft = draftBinding.wrappedValue
+        draft.previousWorkflowSelection = nil
+        if dialog.purpose == .workflowIntake, intake.attachAs == "script" { draft.direction = "" }
         if intake.allowsMultiple {
-            if !pickedFiles.contains(url) { pickedFiles.append(url) }
+            if !draft.fileURLs.contains(url) { draft.fileURLs.append(url) }
         } else {
-            pickedFiles = [url]
+            draft.fileURLs = [url]
         }
+        draftBinding.wrappedValue = draft
+    }
+
+    private func selectPreviousMaterial(_ material: PreviousWorkflowMaterial) {
+        guard mayEditSources(scope: material.selection.scope),
+              material.selection.scope == previousWorkflowScope else { return }
+        sourceOperationID = UUID()
+        var draft = draftBinding.wrappedValue
+        draft.fileURLs = []
+        draft.direction = material.role == .script ? "" : (material.identityName ?? "")
+        draft.previousWorkflowSelection = material.selection
+        draftBinding.wrappedValue = draft
     }
 
     @MainActor
@@ -537,18 +620,14 @@ struct AgentDialogCard: View {
             if let completionLabel = dialog.fileIntake?.completionLabel {
                 if hasRepeatableDraft {
                     Button("Clear item", action: clearRepeatableDraft)
+                        .disabled(isSubmitting)
                         .buttonStyle(.capsule(.secondary, size: .regular))
                         .reviewAcceptanceProbe("agent.dialog.clear-item")
                 }
                 Button(completionLabel, action: onComplete)
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .disabled(!dialog.permitsCompletion(
-                        hasFiles: !pickedFiles.isEmpty,
-                        direction: direction,
-                        isSubmitting: isSubmitting
-                    ))
-                    .background { acceptanceAction("complete", enabled: dialog.permitsCompletion(
-                        hasFiles: !pickedFiles.isEmpty, direction: direction, isSubmitting: isSubmitting)) }
+                    .disabled(!canComplete)
+                    .background { acceptanceAction("complete", enabled: canComplete) }
             }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
@@ -583,12 +662,13 @@ struct AgentDialogCard: View {
     /// if it also has a textField (paste-OR-upload, e.g. lyrics) a file OR non-empty text suffices;
     /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
+        guard !hasStalePreviousSelection else { return false }
         if dialog.purpose == .mediaOrganization,
            choiceSelections["organization"]?.isEmpty != false { return false }
         if dialog.purpose == .captionRevision,
            choiceSelections["caption-revision"]?.isEmpty != false { return false }
         return dialog.permitsSubmission(
-            hasFiles: !pickedFiles.isEmpty,
+            hasFiles: hasMaterial,
             direction: direction,
             isSubmitting: isSubmitting
         )
@@ -602,14 +682,28 @@ struct AgentDialogCard: View {
 
     private var hasRepeatableDraft: Bool {
         dialog.hasRepeatableIntakeDraft(
-            hasFiles: !pickedFiles.isEmpty,
+            hasFiles: hasMaterial,
             direction: direction
         )
     }
 
     private func clearRepeatableDraft() {
-        direction = ""
-        pickedFiles = []
+        guard !isSubmitting else { return }
+        resetSourceDraft()
+    }
+
+    private func resetSourceDraft() {
+        sourceOperationID = UUID()
+        var draft = draftBinding.wrappedValue
+        draft.direction = ""
+        draft.fileURLs = []
+        draft.previousWorkflowSelection = nil
+        draftBinding.wrappedValue = draft
+    }
+
+    private var canComplete: Bool {
+        !hasStalePreviousSelection && dialog.permitsCompletion(
+            hasFiles: hasMaterial, direction: direction, isSubmitting: isSubmitting)
     }
 
     // MARK: - State
@@ -661,6 +755,8 @@ struct AgentDialogCard: View {
     }
 
     private func submit() {
+        guard canSubmit else { return }
+        sourceOperationID = UUID()
         var selectedLabels: [String: [String]] = [:]
         var selectedMediaFilenames: [String: [String: String]] = [:]
         for section in dialog.sections {
@@ -685,7 +781,8 @@ struct AgentDialogCard: View {
             customValues: customs,
             fileURLs: pickedFiles,
             selectedOptionIDs: choiceSelections,
-            selectedMediaFilenames: selectedMediaFilenames
+            selectedMediaFilenames: selectedMediaFilenames,
+            previousWorkflowSelection: previousSelection
         ))
     }
 }

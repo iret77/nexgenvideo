@@ -308,6 +308,9 @@ class CIWorkflowTests(unittest.TestCase):
                  ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456",
                    "NGV_QUALIFICATION_RUN": "123"}, "qualification")]
         followup = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui", "NGV_RUNTIME_RUN": "123"}
+        valid += [({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings", "NGV_RUNTIME_RUN": "123",
+                    "NGV_SETTINGS_SCOPE": scope}, "followup")
+                  for scope in ("packresume172", "packresume172100", "packresume172125", "packresume172150")]
         invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
                    {"NGV_RUNTIME_RUN": "123"}, {"NGV_FOLLOWUP": "settings"},
                    {"NGV_SETTINGS_SCOPE": "settings125"}, {"NGV_INTERFACE_SCALE": "1"},
@@ -318,6 +321,7 @@ class CIWorkflowTests(unittest.TestCase):
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_INTERFACE_SCALE": "1"},
                    {**followup, "NGV_FOLLOWUP": "smartsearch", "NGV_SETTINGS_SCOPE": "settings"},
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "unknown"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "packrecovery172100"},
                    {"NGV_QUALIFICATION_RUN": "123"}, {**followup, "NGV_QUALIFICATION_RUN": "123"},
                    {"NGV_SOURCE_RUN": "456"}, {**followup, "NGV_SOURCE_RUN": "456"},
                    *[{"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": value}
@@ -344,6 +348,43 @@ class CIWorkflowTests(unittest.TestCase):
                         env={**os.environ, **defaults, **values, "GITHUB_OUTPUT": str(output)})
                     self.assertNotEqual(result.returncode, 0)
                     self.assertTrue(result.stderr.strip())
+                    self.assertEqual(output.read_text(), "")
+
+    def test_settings_recovery_families_keep_stable_cases_and_add_exact_preview_resume_cases(self):
+        text = (WORKFLOWS / "settings-owner-acceptance.yml").read_text()
+        code = text.split("          python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0]
+        code = "\n".join(line[10:] for line in code.splitlines())
+        groups = {
+            "settings": {"settings100", "settings125", "settings150"},
+            "packrecovery": {"packrecovery100", "packrecovery125", "packrecovery150"},
+            "packresume172": {"packresume172100", "packresume172125", "packresume172150"},
+        }
+        selections = {**groups, "all": set().union(*groups.values()),
+                      **{case: {case} for cases in groups.values() for case in cases}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            for scope, expected in selections.items():
+                with self.subTest(scope=scope):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, "NGV_ACCEPTANCE_SCOPE": scope, "GITHUB_OUTPUT": str(output)})
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    selected = json.loads(output.read_text().removeprefix("matrix="))["include"]
+                    self.assertEqual({case["id"] for case in selected}, expected)
+                    self.assertEqual(len(selected), len(expected))
+                    for case in selected:
+                        family = next(name for name, cases in groups.items() if case["id"] in cases)
+                        self.assertEqual(case["family"], family)
+                        self.assertEqual(case["scale"], {"100": 1, "125": 1.25, "150": 1.5}[case["id"][-3:]])
+                        self.assertEqual(case["baseline_version"], "0.5.16" if family == "packresume172" else "0.5.8")
+                        self.assertEqual(case["baseline_profile"], "known-preview172-approved-resume"
+                                         if family == "packresume172" else "stable-compatible")
+            for scope in ("packresume", "packrecovery172100", "packresume172200", "unknown"):
+                output.write_text("")
+                result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                    env={**os.environ, "NGV_ACCEPTANCE_SCOPE": scope, "GITHUB_OUTPUT": str(output)})
+                with self.subTest(invalid=scope):
+                    self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(output.read_text(), "")
 
 

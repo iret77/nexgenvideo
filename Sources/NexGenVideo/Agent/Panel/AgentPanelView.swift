@@ -1034,13 +1034,25 @@ struct AgentPanelView: View {
         case .dialog:
             if let dialog = service.pendingDialog {
                 @Bindable var service = service
+                let previousScope = service.previousWorkflowMaterialScope(for: dialog)
                 AgentDialogCard(
                     dialog: dialog,
                     externalSelections: $service.dialogChoiceSelections,
                     externalDraft: Binding(
-                        get: { service.pendingDialog?.id == dialog.id ? service.dialogDraft : AgentDialogDraft() },
-                        set: { if service.pendingDialog?.id == dialog.id { service.dialogDraft = $0 } }
+                        get: {
+                            service.pendingDialog?.id == dialog.id && service.previousWorkflowMaterialScope(for: dialog) == previousScope
+                                ? service.dialogDraft : AgentDialogDraft()
+                        },
+                        set: {
+                            if service.pendingDialog?.id == dialog.id,
+                               service.previousWorkflowMaterialScope(for: dialog) == previousScope { service.dialogDraft = $0 }
+                        }
                     ),
+                    previousWorkflowScope: previousScope,
+                    loadPreviousWorkflowMaterials: { try await service.previousWorkflowMaterials(scope: $0) },
+                    isPreviousWorkflowScopeCurrent: {
+                        service.pendingDialog?.id == dialog.id && service.previousWorkflowMaterialScope(for: dialog) == $0
+                    },
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
                     libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,

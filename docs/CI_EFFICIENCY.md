@@ -34,7 +34,14 @@ consumer archive, source and app checks remain in force.
 
 For `externalgui`, `interface_scale` selects `all`, `1`, `1.25`, or `1.5`. For
 `settings`, `settings_scope` selects all cases, the Settings or Recovery family,
-or one existing case such as `settings125` or `packrecovery100`. Smart Search keeps
+or one existing case such as `settings125` or `packrecovery100`. The separate
+`packresume172` family selects `packresume172100`, `packresume172125`, and
+`packresume172150`: the known released 1.7.2 preview pack, not an inferred user-project
+pin. Existing Settings and `packrecovery` cases retain their original 0.5.8 baseline;
+the additional family binds the unchanged 0.5.16 ZIP from `preview-39124049687`.
+Both use the same exact app artifact. The preparer's unqualified default still
+selects the newest compatible baseline; these RC matrix cases explicitly pin their
+baseline versions and verify original archive hashes. Smart Search keeps
 its existing cold-download and warm-layout sequence. Unrelated selectors must stay
 at `all`. Initial mode remains the default and keeps the existing checkbox behavior;
 it rejects supplied followup selectors or a producer run ID. Workspace cases retain

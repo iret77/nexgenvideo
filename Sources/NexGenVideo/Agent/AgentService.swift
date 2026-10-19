@@ -548,6 +548,67 @@ final class AgentService {
     private(set) var dialogSubmissionError: String?
     private(set) var submittingDialogID: String?
 
+    func previousWorkflowMaterialScope(for dialog: AgentDialog) -> PreviousWorkflowMaterialScope? {
+        guard let editor, editor.usesProductionPlanningV2, pendingDialog?.id == dialog.id,
+              dialog.purpose == .workflowIntake,
+              let rawRole = dialog.fileIntake?.attachAs, let role = PreviousWorkflowMaterialRole(rawValue: rawRole),
+              let projectID = editor.projectId, let root = editor.workingRoot,
+              let key = editor.openWorkingCopyKey, let generation = editor.openWorkingCopyGeneration else { return nil }
+        return .init(projectID: projectID, workingRoot: root, workingCopyKey: key,
+            workingCopyGeneration: generation, dialogID: dialog.id, role: role)
+    }
+
+    func previousWorkflowMaterials(scope: PreviousWorkflowMaterialScope) async throws -> PreviousWorkflowMaterialCatalog {
+        guard let dialog = pendingDialog, previousWorkflowMaterialScope(for: dialog) == scope else {
+            throw PipelinePreviousWorkflowMaterial.changed()
+        }
+        let catalog = try await Task.detached(priority: .userInitiated) {
+            try PipelinePreviousWorkflowMaterial.load(scope: scope)
+        }.value
+        try Task.checkCancellation()
+        guard previousWorkflowMaterialScope(for: dialog) == scope else { throw PipelinePreviousWorkflowMaterial.changed() }
+        return catalog
+    }
+
+    private func resolvePreviousWorkflowInput(_ dialog: AgentDialog, result: AgentDialogResult) throws -> AgentDialogResult {
+        let scope = previousWorkflowMaterialScope(for: dialog)
+        let hasText = !result.direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if scope?.role == .script,
+           [!result.fileURLs.isEmpty, result.previousWorkflowSelection != nil, hasText].filter({ $0 }).count > 1 {
+            throw ToolError("Choose one story source: a file, previous workflow material, or pasted text.")
+        }
+        guard let selection = result.previousWorkflowSelection else { return result }
+        guard let scope, result.fileURLs.isEmpty else { throw PipelinePreviousWorkflowMaterial.changed() }
+        let material = try PipelinePreviousWorkflowMaterial.resolve(selection, scope: scope)
+        var resolved = result
+        resolved.previousWorkflowSelection = material.selection
+        resolved.fileURLs = try PipelinePreviousWorkflowMaterial.verifiedURLs(material.selection)
+        return resolved
+    }
+
+    @MainActor
+    struct IdentityIntakeContext {
+        private let editor: EditorViewModel
+        private let root: URL?
+        private let key: String?
+        private let generation: UUID?
+        private let session: UUID?
+        private let pendingID: String?
+        private let submissionID: String?
+
+        init(editor: EditorViewModel, service: AgentService) {
+            self.editor = editor
+            root = editor.workingRoot; key = editor.openWorkingCopyKey; generation = editor.openWorkingCopyGeneration
+            session = service.currentSessionId; pendingID = service.pendingDialog?.id; submissionID = service.submittingDialogID
+        }
+
+        func matches(_ service: AgentService) -> Bool {
+            service.editor === editor && editor.workingRoot == root && editor.openWorkingCopyKey == key
+                && editor.openWorkingCopyGeneration == generation && service.currentSessionId == session
+                && service.pendingDialog?.id == pendingID && service.submittingDialogID == submissionID
+        }
+    }
+
     /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
     /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
     /// range selects its choice here, and the card's chip reflects it. Keyed by sectionId → option ids.
@@ -592,12 +653,18 @@ final class AgentService {
     /// existing path); `.generationIntent` composes the result into an intent line and hands it to the
     /// generation handler (the music-shaping dialog is this purpose — its bespoke path collapses into
     /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
-    func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
+    func submitDialog(_ dialog: AgentDialog, result submittedResult: AgentDialogResult) {
         if dialog.purpose == .generationIntent {
-            submitGenerationIntent(dialog, result: result)
+            submitGenerationIntent(dialog, result: submittedResult)
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        let result: AgentDialogResult
+        do { result = try resolvePreviousWorkflowInput(dialog, result: submittedResult) }
+        catch {
+            dialogSubmissionError = error.localizedDescription
+            return
+        }
         if dialog.purpose == .captionRevision {
             guard let plan = dialog.captionRevision, let editor else { return }
             let session = currentSessionId
@@ -739,7 +806,7 @@ final class AgentService {
               dialog.purpose == .workflowIntake,
               dialog.fileIntake?.required != true,
               dialog.fileIntake?.completionLabel != nil else { return }
-        guard dialog.permitsCompletion(hasFiles: !dialogDraft.fileURLs.isEmpty,
+        guard dialog.permitsCompletion(hasFiles: !dialogDraft.fileURLs.isEmpty || dialogDraft.previousWorkflowSelection != nil,
                                        direction: dialogDraft.direction, isSubmitting: false) else {
             dialogSubmissionError = "Attach or clear the current item before continuing."
             return
@@ -750,6 +817,28 @@ final class AgentService {
 
     /// Write a copied text-sidecar intake into its deterministic project location.
     private func attachTextSidecar(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
+        var snapshotDirectory: URL?
+        defer { if let snapshotDirectory { try? FileManager.default.removeItem(at: snapshotDirectory) } }
+        let sourceURL: URL?
+        do {
+            if let selection = result.previousWorkflowSelection {
+                guard selection.role == .script, let file = selection.expectedFiles.first,
+                      selection.expectedFiles.count == 1,
+                      previousWorkflowMaterialScope(for: dialog) == selection.scope else { throw PipelinePreviousWorkflowMaterial.changed() }
+                let bytes = try PipelinePreviousWorkflowMaterial.verifiedBytes(file, scope: selection.scope)
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                    attributes: [.posixPermissions: 0o700])
+                snapshotDirectory = directory
+                let snapshot = directory.appendingPathComponent((file.relativePath as NSString).lastPathComponent)
+                try bytes.write(to: snapshot, options: .atomic)
+                guard try FileDigest.sha256(of: snapshot) == file.sha256 else { throw PipelinePreviousWorkflowMaterial.changed() }
+                sourceURL = snapshot
+            } else { sourceURL = result.fileURLs.first }
+        } catch {
+            sendDialogFailure(dialog, result: result, notice: error.localizedDescription)
+            return
+        }
         // Resolve the pipeline DATA ROOT the same way the workflow tools do (workingRoot may be the
         // package home; the sidecar dirs live under <home>/pipeline). No project ⇒ don't drop the answer.
         guard let editor, let workingRoot = editor.workingRoot,
@@ -764,7 +853,7 @@ final class AgentService {
         }
         // Accept either an uploaded file or pasted text; neither means the optional step was skipped.
         let content: String
-        if let src = result.fileURLs.first {
+        if let src = sourceURL {
             guard let text = try? String(contentsOf: src, encoding: .utf8) else {
                 sendDialogFailure(
                     dialog,
@@ -795,7 +884,7 @@ final class AgentService {
         let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
             if kind == "script", editor.usesProductionPlanningV2, dialog.purpose == .workflowIntake {
-                if let source = result.fileURLs.first {
+                if let source = sourceURL {
                     try PipelineStorySourceWriter.confirmImportedSource(from: source, editor: editor)
                 } else {
                     try PipelineStorySourceWriter.confirmPastedSource(text: content, editor: editor)
@@ -821,7 +910,8 @@ final class AgentService {
         sendDialogResponse(
             dialog,
             result: result,
-            presentedAttachmentNames: result.fileURLs.map { userFacingFilename(for: $0) }
+            presentedAttachmentNames: result.previousWorkflowSelection.map { [$0.displayName] }
+                ?? result.fileURLs.map { userFacingFilename(for: $0) }
         )
     }
 
@@ -875,16 +965,34 @@ final class AgentService {
         }
         let urls = result.fileURLs
         let preferred = preferredFilenames(for: urls)
+        let context = IdentityIntakeContext(editor: editor, service: self)
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let copied = try await Task.detached(priority: .userInitiated) {
-                    try Self.copyFilesUniquely(
+                let receipt = try await Task.detached(priority: .userInitiated) {
+                    try Self.copyFilesWithReceipt(
                         urls,
                         into: dir,
                         preferredFilenames: preferred
                     )
                 }.value
+                do {
+                    try Task.checkCancellation()
+                    guard context.matches(self) else { throw PipelinePreviousWorkflowMaterial.changed() }
+                    if dialog.purpose == .workflowIntake {
+                        try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
+                        guard self.intakeRoleConflict(kind, urls: urls) == nil else { throw PipelinePreviousWorkflowMaterial.changed() }
+                    }
+                    if let selection = result.previousWorkflowSelection {
+                        guard self.previousWorkflowMaterialScope(for: dialog) == selection.scope else { throw PipelinePreviousWorkflowMaterial.changed() }
+                        _ = try PipelinePreviousWorkflowMaterial.resolve(selection, scope: selection.scope)
+                        try Self.verifyPreviousWorkflowCopy(selection, receipt: receipt, directory: dir)
+                    }
+                } catch {
+                    try receipt.removeCreatedFiles()
+                    throw error
+                }
+                let copied = receipt.names
                 try ConfirmedIdentityAssetStoreV1.recordIntake(
                     role: kind == "location" ? .location : .character,
                     identityName: name,
@@ -906,6 +1014,7 @@ final class AgentService {
                         + "keep this identity consistent across the pipeline and don't invent a different one."
                 )
             } catch {
+                guard context.matches(self) else { return }
                 self.sendDialogFailure(
                     dialog,
                     result: result,
@@ -1125,6 +1234,40 @@ final class AgentService {
         into dir: URL,
         preferredFilenames: [URL: String] = [:]
     ) throws -> [String] {
+        try copyFilesWithReceipt(urls, into: dir, preferredFilenames: preferredFilenames).names
+    }
+
+    struct CopyReceipt: Sendable {
+        let names: [String]
+        let createdURLs: [URL]
+
+        nonisolated func removeCreatedFiles() throws {
+            var failure: (any Error)?
+            for url in createdURLs.reversed() {
+                do { try FileManager.default.removeItem(at: url) }
+                catch { if failure == nil { failure = error } }
+            }
+            if let failure { throw failure }
+        }
+    }
+
+    nonisolated static func verifyPreviousWorkflowCopy(_ selection: PreviousWorkflowMaterialSelection,
+                                                      receipt: CopyReceipt, directory: URL) throws {
+        _ = try PipelinePreviousWorkflowMaterial.verifiedURLs(selection)
+        let home = selection.scope.workingRoot.standardizedFileURL
+        let destination = directory.standardizedFileURL
+        guard destination.path.hasPrefix(home.appendingPathComponent("pipeline").path + "/"),
+              receipt.names.count == selection.expectedFiles.count else { throw PipelinePreviousWorkflowMaterial.changed() }
+        let relativeDirectory = String(destination.path.dropFirst(home.path.count + 1))
+        for (name, file) in zip(receipt.names, selection.expectedFiles) {
+            let url = try ProjectLocalFile.requireHash(file.sha256, at: relativeDirectory + "/" + name, dataRoot: home)
+            guard url.standardizedFileURL == directory.appendingPathComponent(name).standardizedFileURL else { throw PipelinePreviousWorkflowMaterial.changed() }
+        }
+    }
+
+    nonisolated static func copyFilesWithReceipt(
+        _ urls: [URL], into dir: URL, preferredFilenames: [URL: String] = [:]
+    ) throws -> CopyReceipt {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var used = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
@@ -1158,10 +1301,10 @@ final class AgentService {
                 created.append(destination)
             }
         } catch {
-            for url in created.reversed() { try? fm.removeItem(at: url) }
+            try CopyReceipt(names: copied, createdURLs: created).removeCreatedFiles()
             throw error
         }
-        return copied
+        return CopyReceipt(names: copied, createdURLs: created)
     }
 
     /// Extract `[Section]` markers (one per line, e.g. `[Chorus]`) from lyrics text, in order.

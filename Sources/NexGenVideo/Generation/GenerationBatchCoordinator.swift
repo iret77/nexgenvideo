@@ -317,7 +317,7 @@ final class GenerationBatchCoordinator {
 
     func retryPricing(
         editor: EditorViewModel,
-        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
+        quoteLoader: @escaping GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
     ) async {
         await prepareOwned(editor: editor) { await self.performRetryPricing(editor: editor, quoteLoader: quoteLoader) }
     }

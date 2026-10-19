@@ -217,7 +217,9 @@ enum ProductionWorkflowRecoveryMigration {
             .write(to: archiveRoot.appendingPathComponent("manifest.v1.json"), options: .atomic)
     }
 
-    static func finish(_ intent: Intent, staging: URL) throws {
+    static func finish(_ intent: Intent, staging: URL, saveGates: (Gates, URL) throws -> Void = { gates, root in
+        try YAMLArtifactStore(dataRoot: root).save(gates, to: PipelineLayout.gatesFile)
+    }) throws {
         let root = try dataRoot(staging)
         let workflow: HostWorkflowKey
         switch intent.target {
@@ -250,15 +252,17 @@ enum ProductionWorkflowRecoveryMigration {
                     throw MigrationError.invalidArchive
                 }
                 try requirement(root)
-                gates.set(phase, original.gate)
-                try YAMLArtifactStore(dataRoot: root).save(gates, to: PipelineLayout.gatesFile)
+                var candidate = gates
+                candidate.set(phase, original.gate)
+                try saveGates(candidate, root)
+                gates = candidate
                 retained.append(phase)
             } catch {
                 try previousLineage.write(to: root.appendingPathComponent(PipelineLayout.lineageFile), options: .atomic)
                 break
             }
         }
-        try YAMLArtifactStore(dataRoot: root).save(gates, to: PipelineLayout.gatesFile)
+        try saveGates(gates, root)
         let archive = root.appendingPathComponent("migration-history/" + intent.fingerprint)
         try encode(History(schema: "production-workflow-migration/v1", intent: intent, retainedStartupPhases: retained, completed: true))
             .write(to: archive.appendingPathComponent("manifest.v1.json"), options: .atomic)

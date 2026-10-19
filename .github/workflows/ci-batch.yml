@@ -29,7 +29,7 @@ on:
       settings_scope:
         description: Settings or Recovery cases for a settings followup
         type: choice
-        options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150]
+        options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150, packresume172, packresume172100, packresume172125, packresume172150]
         default: all
       interface_scale:
         description: Text size for an externalgui followup
@@ -102,7 +102,8 @@ jobs:
           settings = os.environ['NGV_SETTINGS_SCOPE']
           scale = os.environ['NGV_INTERFACE_SCALE']
           scopes = {'all', 'settings', 'settings100', 'settings125', 'settings150',
-                    'packrecovery', 'packrecovery100', 'packrecovery125', 'packrecovery150'}
+                    'packrecovery', 'packrecovery100', 'packrecovery125', 'packrecovery150',
+                    'packresume172', 'packresume172100', 'packresume172125', 'packresume172150'}
           if mode not in {'initial', 'followup', 'qualification'}:
               raise SystemExit('Select initial, followup or qualification mode.')
           if settings not in scopes or scale not in {'all', '1', '1.25', '1.5'}:

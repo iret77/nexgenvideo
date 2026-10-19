@@ -4,6 +4,14 @@ Status: implementation in progress; no RC acceptance or new DMG.
 
 The source candidate is version 1.8.0 with Music Video 0.6.0. This is a version
 alignment for the pending batch, not a published release or acceptance result.
+The planned matrix retains all existing 0.5.8 Recovery cases and adds a separate
+known-1.7.2-preview approved-project continuation at 100/125/150%, using the same
+app artifact. This makes 124 execution combinations, separate from the unchanged
+121 functional groups, all Pending. The new continuation must explicitly select
+verified previous-workflow story and identity material through the real intake UI,
+then prove Sketch/Animatic and Save/Close/Reopen on the same migrated project.
+Internal archive-path injection, a new fixture project, or passing separate cases
+cannot establish this continuation. The actual user's project pin remains unknown.
 The native review-child owner fixture is prepared to produce, once executed,
 separate API and CLI-protocol evidence for prepare, cancellation, explicit resume
 and completion across 34 shots, including responsiveness during preparation and

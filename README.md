@@ -45,8 +45,9 @@ postproduction and export workspaces remain available throughout.
 Packs ship as signed `.ngvpack`
 bundles outside the app. Activating a catalog pack downloads it on demand and binds
 its exact version to that project. Existing projects keep their pinned pack;
-upgrading uses an explicit Recovery copy. Generic editing and export also work
-without a format pack or generation.
+upgrading uses an explicit Recovery copy. After an upgrade, story and identity
+intake offers verified material from the previous workflow for explicit reuse.
+Generic editing and export also work without a format pack or generation.
 
 Learn how packs plug in — and how to add your own — in the
 **[format pack standard](docs/PLUGIN_STANDARD.md)**.

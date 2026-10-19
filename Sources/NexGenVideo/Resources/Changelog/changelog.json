@@ -25,6 +25,7 @@
           "heading": "Music Video",
           "items": [
             "Music Video 0.6.0 requires NexGenVideo 1.8.0. Existing projects retain their exact pinned pack; adopting the new production contract uses an explicit Recovery-copy upgrade.",
+            "After an upgrade, existing story and identity intake offers verified material from the previous workflow for explicit reuse, with readable previews and editable identity names.",
             "Track, optional lyrics, setup and approved audio analysis precede optional existing story and identity material. Imported footage and generated shots share the production and editing workspaces."
           ]
         }

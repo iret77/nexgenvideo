@@ -172,6 +172,63 @@ struct ProductionWorkflowRecoveryMigrationTests {
         #expect(throws: (any Error).self) { try ProductionWorkflowRecoveryMigration.readCommittedHistories(staging: root) }
     }
 
+    @Test(arguments: [false, true])
+    func startupGatePublishesOnlyAfterSuccessfulSave(failFirstSave: Bool) throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: root))
+        let contract = try CoreProductionPhaseContract.resolve()
+        let provider = try #require(contract.phase("project_init")?.nativeLineageProvider)
+        let snapshot = try provider(dataRoot)
+        var sourceGates = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
+        let approved = Gate(approved: true, approvedAt: "fixture", approvedBy: "owner")
+        sourceGates.set("project_init", approved)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(sourceGates, to: PipelineLayout.gatesFile)
+        let originalGates = try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile))
+        let preview = try ProductionWorkflowRecoveryMigration.preview(projectURL: root, source: .core, target: .core)
+        let proofs = [ProductionWorkflowRecoveryMigration.StartupProof(phase: "project_init", gate: approved,
+            inputFingerprint: snapshot.inputFingerprint, artifactFingerprint: snapshot.artifactFingerprint)]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        var identity = try #require(JSONSerialization.jsonObject(with: encoder.encode(preview)) as? [String: Any])
+        identity.removeValue(forKey: "fingerprint")
+        identity["startupProofs"] = try JSONSerialization.jsonObject(with: encoder.encode(proofs))
+        let fingerprint = FileDigest.sha256(of: try JSONSerialization.data(withJSONObject: identity,
+            options: [.sortedKeys, .withoutEscapingSlashes]))
+        let intent = ProductionWorkflowRecoveryMigration.Intent(projectName: preview.projectName, source: preview.source,
+            target: preview.target, files: preview.files, savedFiles: preview.savedFiles, archivePaths: preview.archivePaths,
+            startupProofs: proofs, namespaceID: preview.namespaceID, fingerprint: fingerprint)
+        try ProductionWorkflowRecoveryMigration.archiveAndReset(intent, staging: root)
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: root)
+        let resetLineage = try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.lineageFile))
+        var writes: [Gates] = []
+        try ProductionWorkflowRecoveryMigration.finish(intent, staging: root) { candidate, destination in
+            writes.append(candidate)
+            #expect(destination == dataRoot)
+            if writes.count == 1 {
+                #expect(candidate.get("project_init") == approved)
+                #expect(try PipelineLineageStore.loadIfPresent(dataRoot: dataRoot)?.phases["project_init"]?.snapshot == snapshot)
+                if failFirstSave { throw CocoaError(.fileWriteUnknown) }
+            }
+            try YAMLArtifactStore(dataRoot: destination).save(candidate, to: PipelineLayout.gatesFile)
+        }
+        #expect(writes.count == 2)
+        let persisted = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
+        #expect(persisted.get("project_init") == (failFirstSave ? Gate() : approved))
+        #expect(persisted.gates.filter { $0.value.approved }.keys.sorted() == (failFirstSave ? [] : ["project_init"]))
+        let lineage = try #require(PipelineLineageStore.loadIfPresent(dataRoot: dataRoot))
+        #expect(lineage.phases.keys.sorted() == (failFirstSave ? [] : ["project_init"]))
+        if failFirstSave {
+            #expect(try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.lineageFile)) == resetLineage)
+        }
+        let history = try #require(ProductionWorkflowRecoveryMigration.readCommittedHistories(staging: root).first)
+        #expect(history.completed)
+        #expect(history.retainedStartupPhases == (failFirstSave ? [] : ["project_init"]))
+        let archivedGates = dataRoot.appendingPathComponent("migration-history/" + intent.fingerprint + "/pipeline/" + PipelineLayout.gatesFile)
+        #expect(try Data(contentsOf: archivedGates) == originalGates)
+        try ProductionWorkflowRecoveryMigration.requireCompleted(intent, staging: root)
+    }
+
     private func fixture() throws -> URL {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString + ".ngv")
         let dataRoot = try ProjectScaffold.initProject(home: root, name: "Fixture", mode: .generic)

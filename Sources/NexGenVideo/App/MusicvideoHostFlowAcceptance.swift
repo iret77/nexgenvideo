@@ -82,37 +82,56 @@ final class MusicvideoHostFlowAcceptance {
             flow.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             await flow.editor.refreshEngineState()
-            try await flow.waitForDialog("Track", attachAs: "song")
-            try flow.require(flow.editor.projectState?.nextPhaseName == "project_init", "Track did not precede Project Init")
-            try flow.require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: flow.window) == false,
-                "Empty Track intake was actionable")
-            let intakeDriver = ProductionVisualSourcesDriver(window: flow.window, output: evidenceURL, name: "hostflow-track-lyrics")
-            try await intakeDriver.chooseFile(track, in: flow.window, trigger: "agent.dialog.choose-file")
-            try await intakeDriver.click("agent.dialog.confirm", in: flow.window)
-            try await flow.waitForDialog("Lyrics", attachAs: "lyrics")
-            let song = AudioProjectLayout.songFiles(dataRoot: flow.dataRoot)
-            try flow.require(song.count == 1 && song[0].lastPathComponent == track.lastPathComponent
-                && (try FileDigest.sha256(of: song[0])) == (try FileDigest.sha256(of: track)),
-                "Track intake changed the source identity or its readable filename")
-            if let lyrics { try await intakeDriver.chooseFile(lyrics, in: flow.window, trigger: "agent.dialog.choose-file") }
-            try await intakeDriver.click("agent.dialog.confirm", in: flow.window)
-            try await flow.waitForHandoff("project_init")
-            try flow.require(flow.service.pendingDialog == nil, "A creative intake appeared before analysis")
-            try Data(contentsOf: track, options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-source.bin"), options: .atomic)
-            try Data(contentsOf: song[0], options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-assigned.bin"), options: .atomic)
-            try intakeDriver.record("native Track and optional Lyrics intake", fields: ["projectKey": flow.editor.projectId ?? "", "settingsSHA256": try retainIntakeProject(editor: flow.editor, output: evidenceURL), "trackName": track.lastPathComponent,
-                "trackSHA256": try FileDigest.sha256(of: track), "lyricsSupplied": lyrics != nil,
-                "lyricsName": lyrics?.lastPathComponent as Any? ?? NSNull(),
-                "nextPhase": "project_init", "creativeIntakeAbsent": true])
-            try flow.recordIntake(intakeDriver)
-            try await flow.approve("project_init")
-            try await flow.waitForHandoff("analysis")
-            try flow.require(flow.editor.productionSelectedPhase == "analysis", "Init approval left the old phase selected")
+            try await flow.beginTrackIntake(track: track, lyrics: lyrics)
             return flow
         } catch {
             flow.close()
             throw error
         }
+    }
+
+    static func openExisting(projectURL: URL, evidenceURL: URL) async throws -> MusicvideoHostFlowAcceptance {
+        try FileManager.default.createDirectory(at: evidenceURL, withIntermediateDirectories: true)
+        let runtime = RecordingRuntime(backend: .claudeCode)
+        let document = try await VideoProject.load(from: projectURL, agentService: makeService(runtime))
+        NSDocumentController.shared.addDocument(document)
+        MusicvideoNativeAcceptance.register(editor: document.editorViewModel, runtime: runtime)
+        document.makeWindowControllers()
+        document.showWindows()
+        let flow = MusicvideoHostFlowAcceptance(document: document, projectURL: projectURL, runtime: runtime, evidenceURL: evidenceURL)
+        flow.window.setContentSize(AppTheme.Window.projectMin)
+        flow.window.makeKeyAndOrderFront(nil)
+        await flow.editor.refreshEngineState()
+        return flow
+    }
+
+    func beginTrackIntake(track: URL, lyrics: URL?) async throws {
+        try await waitForDialog("Track", attachAs: "song")
+        try require(editor.projectState?.nextPhaseName == "project_init", "Track did not precede Project Init")
+        try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false,
+            "Empty Track intake was actionable")
+        let intakeDriver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-track-lyrics")
+        try await intakeDriver.chooseFile(track, in: window, trigger: "agent.dialog.choose-file")
+        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await waitForDialog("Lyrics", attachAs: "lyrics")
+        let song = AudioProjectLayout.songFiles(dataRoot: dataRoot)
+        try require(song.count == 1 && song[0].lastPathComponent == track.lastPathComponent
+            && (try FileDigest.sha256(of: song[0])) == (try FileDigest.sha256(of: track)),
+            "Track intake changed the source identity or its readable filename")
+        if let lyrics { try await intakeDriver.chooseFile(lyrics, in: window, trigger: "agent.dialog.choose-file") }
+        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await waitForHandoff("project_init")
+        try require(service.pendingDialog == nil, "A creative intake appeared before analysis")
+        try Data(contentsOf: track, options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-source.bin"), options: .atomic)
+        try Data(contentsOf: song[0], options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-assigned.bin"), options: .atomic)
+        try intakeDriver.record("native Track and optional Lyrics intake", fields: ["projectKey": editor.projectId ?? "", "settingsSHA256": try Self.retainIntakeProject(editor: editor, output: evidenceURL), "trackName": track.lastPathComponent,
+            "trackSHA256": try FileDigest.sha256(of: track), "lyricsSupplied": lyrics != nil,
+            "lyricsName": lyrics?.lastPathComponent as Any? ?? NSNull(),
+            "nextPhase": "project_init", "creativeIntakeAbsent": true])
+        try recordIntake(intakeDriver)
+        try await approve("project_init")
+        try await waitForHandoff("analysis")
+        try require(editor.productionSelectedPhase == "analysis", "Init approval left the old phase selected")
     }
 
     func runAnalysisOnNextNativeTurn() { runtime.runAnalysisOnNextTurn = true }
@@ -141,21 +160,7 @@ final class MusicvideoHostFlowAcceptance {
     func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p,
                               conceptType: ConceptType = .narrative, reconfirmRangeAfterReanalysis: Bool = false,
                               beforeBriefApproval: (@MainActor (EditorViewModel) async throws -> Void)? = nil) async throws {
-        guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
-              let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
-              let sections = object["sections"] as? [[String: Any]], sections.count == sectionLabels.count else {
-            throw Failure("The supplied labels do not cover the actual measured sections")
-        }
-        let labels: [[String: Any]] = try zip(sections, sectionLabels).map { section, label in
-            guard let index = section["index"] as? NSNumber else { throw Failure("A measured section has no index") }
-            return ["index": index.intValue, "label": label, "confidence": 1.0,
-                "note": "Supplied acceptance label; no live LLM inference."]
-        }
-        try await tool("write_analysis_interpretation", ["tempo_multiplier": 1.0,
-            "section_labels": labels, "overall_character": "Supplied acceptance interpretation of the measured track.",
-            "anomalies": []])
-        try await saveAndReopen(backend: .anthropicAPI, expectedPhase: "analysis")
-        try await approve("analysis")
+        try await finishAnalysis(sectionLabels: sectionLabels)
         try await waitForDialog("Existing story", attachAs: "script")
         try require(editor.productionSelectedPhase == "brief", "Analysis approval left the old phase selected")
         try await click("agent.dialog.confirm")
@@ -225,6 +230,15 @@ final class MusicvideoHostFlowAcceptance {
         }
         try require(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent("import/script.md").path),
             "Skipping Existing story invented supplied material")
+        try await finishBrief(finalResolution: finalResolution, conceptType: conceptType,
+            sectionLabels: sectionLabels, reconfirmRangeAfterReanalysis: reconfirmRangeAfterReanalysis,
+            beforeBriefApproval: beforeBriefApproval)
+        try await saveAndReopen(backend: .claudeCode, expectedPhase: "production_design")
+    }
+
+    private func finishBrief(finalResolution: VideoResolution, conceptType: ConceptType,
+                             sectionLabels: [String], reconfirmRangeAfterReanalysis: Bool = false,
+                             beforeBriefApproval: (@MainActor (EditorViewModel) async throws -> Void)? = nil) async throws {
         try await tool("record_affect", ["detected": [["tag": "meditative", "weight": 1.0]],
             "basis": "inferred", "rationale": "Supplied acceptance interpretation; no live LLM inference."])
         try await tool("write_brief", ["mission": "single_release", "target_platform": "YouTube",
@@ -235,7 +249,107 @@ final class MusicvideoHostFlowAcceptance {
         try await approve("brief")
         try await waitForHandoff("production_design")
         try require(editor.productionSelectedPhase == "production_design", "Brief approval left the old phase selected")
-        try await saveAndReopen(backend: .claudeCode, expectedPhase: "production_design")
+    }
+
+    func finishPreviousWorkflowIntake(historyFingerprint: String, storySHA256: String,
+                                      identitySHA256: String) async throws -> [[String: String]] {
+        let driver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "resume172-previous-material")
+        var selected: [[String: String]] = []
+        @MainActor func choose(_ role: PreviousWorkflowMaterialRole, hash: String) async throws {
+            guard let dialog = service.pendingDialog, let scope = service.previousWorkflowMaterialScope(for: dialog),
+                  scope.role == role else { throw Failure("The actual intake has no matching previous-material scope") }
+            let catalog = try await service.previousWorkflowMaterials(scope: scope)
+            let matches = catalog.items.filter { $0.selection.historyFingerprint == historyFingerprint
+                && $0.role == role && $0.selection.expectedFiles.contains(where: { $0.sha256 == hash }) }
+            guard matches.count == 1, let item = matches.first else {
+                throw Failure("The original approved material is not offered exactly once in the actual scoped picker")
+            }
+            let messages = service.messages.map(\.id)
+            try await driver.click("agent.dialog.previous-workflow.open", in: window)
+            try await driver.click("agent.dialog.previous-workflow.choice." + item.id, in: window)
+            try await driver.wait("actual previous material selected") {
+                driver.text("agent.dialog.previous-workflow.selected", in: self.window) == item.id
+                    && self.service.dialogDraft.previousWorkflowSelection == item.selection
+            }
+            try require(service.messages.map(\.id) == messages && service.dialogDraft.fileURLs.isEmpty,
+                "Selecting previous material invented a user turn or a file-picker selection")
+            try require(driver.text("agent.dialog.previous-workflow.open", in: window) == "collapsed",
+                "Choosing previous material did not collapse its disclosure")
+            try await driver.click("agent.dialog.previous-workflow.open", in: window)
+            try await driver.click("agent.dialog.previous-workflow.open", in: window)
+            try require(driver.text("agent.dialog.previous-workflow.selected", in: window) == item.id,
+                "Collapsing the previous-material list lost its selection")
+            if role == .script {
+                try await driver.fill("agent.dialog.direction", value: "Temporary native story edit", in: window)
+                try await driver.wait("typed story replaces the previous selection") {
+                    self.service.dialogDraft.previousWorkflowSelection == nil
+                        && driver.text("agent.dialog.previous-workflow.selected", in: self.window) == nil
+                }
+                try await driver.click("agent.dialog.previous-workflow.open", in: window)
+                try await driver.click("agent.dialog.previous-workflow.choice." + item.id, in: window)
+                try await driver.wait("original previous story selected again") {
+                    self.service.dialogDraft.previousWorkflowSelection == item.selection && self.service.dialogDraft.direction.isEmpty
+                }
+            } else {
+                let originalName = driver.text("agent.dialog.direction", in: window) ?? ""
+                try require(!originalName.isEmpty, "The selected identity has no visible name")
+                try await driver.fill("agent.dialog.direction", value: originalName + " revised", in: window)
+                try require(service.dialogDraft.previousWorkflowSelection == item.selection,
+                    "Editing the identity name discarded its previous-material selection")
+                try await driver.fill("agent.dialog.direction", value: originalName, in: window)
+            }
+            try driver.capture("selected-previous-" + role.rawValue, target: window)
+            selected.append(["role": role.rawValue, "materialID": item.id, "historyFingerprint": historyFingerprint,
+                "sourceSHA256": hash])
+            try await driver.click("agent.dialog.confirm", in: window)
+        }
+        try await waitForDialog("Existing story", attachAs: "script")
+        try await choose(.script, hash: storySHA256)
+        try await waitForDialog("Prepared character 1", attachAs: "character")
+        try await driver.click("agent.dialog.complete", in: window)
+        try await waitForDialog("Prepared location 1", attachAs: "location")
+        try await choose(.location, hash: identitySHA256)
+        try await waitForDialog("Prepared location 2", attachAs: "location")
+        guard let dialog = service.pendingDialog, let scope = service.previousWorkflowMaterialScope(for: dialog) else {
+            throw Failure("The repeated intake lost its scope after actual confirmation")
+        }
+        let remaining = try await service.previousWorkflowMaterials(scope: scope)
+        try require(!remaining.items.contains(where: { $0.selection.historyFingerprint == historyFingerprint && $0.identityName == "Stage" }),
+            "A currently confirmed Stage identity was offered again")
+        let manifest = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
+        let identities = manifest.entries.values.filter { $0.role == .location && $0.identitySlug == "stage" && $0.sha256 == identitySHA256 }
+        try require(identities.count == 1, "The actual historical location confirmation did not retain the original image bytes")
+        try require(try FileDigest.sha256(of: dataRoot.appendingPathComponent("import/script.md")) == storySHA256,
+            "The actual historical story confirmation did not retain the original text bytes")
+        try JSONEncoder().encode(manifest).write(to: evidenceURL.appendingPathComponent("resume172-confirmed-identities.json"))
+        try await driver.click("agent.dialog.complete", in: window)
+        try await waitForDialog("Style references", attachAs: "style")
+        try await driver.click("agent.dialog.confirm", in: window)
+        try await waitForHandoff("brief", hidden: false)
+        try driver.record("explicit previous-workflow material intake", fields: ["selected": selected,
+            "confirmedIdentityID": identities[0].id, "storySHA256": storySHA256, "identitySHA256": identitySHA256,
+            "projectID": editor.projectId ?? ""])
+        try recordIntake(driver)
+        try await finishBrief(finalResolution: .res720p, conceptType: .abstract, sectionLabels: ["opening"])
+        return selected
+    }
+
+    private func finishAnalysis(sectionLabels: [String]) async throws {
+        guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
+              let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+              let sections = object["sections"] as? [[String: Any]], sections.count == sectionLabels.count else {
+            throw Failure("The supplied labels do not cover the actual measured sections")
+        }
+        let labels: [[String: Any]] = try zip(sections, sectionLabels).map { section, label in
+            guard let index = section["index"] as? NSNumber else { throw Failure("A measured section has no index") }
+            return ["index": index.intValue, "label": label, "confidence": 1.0,
+                "note": "Supplied acceptance label; no live LLM inference."]
+        }
+        try await tool("write_analysis_interpretation", ["tempo_multiplier": 1.0,
+            "section_labels": labels, "overall_character": "Supplied acceptance interpretation of the measured track.",
+            "anomalies": []])
+        try await saveAndReopen(backend: .anthropicAPI, expectedPhase: "analysis")
+        try await approve("analysis")
     }
 
     func saveAndReopen(backend: AgentBackend, expectedPhase: String) async throws {
