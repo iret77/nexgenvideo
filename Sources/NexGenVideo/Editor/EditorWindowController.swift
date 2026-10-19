@@ -16,6 +16,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        guard !editorViewModel.isProjectEditingPaused,
+              !PipelineLedgerWriter.isRestoring(editor: editorViewModel) else { return nil }
+        guard window === self.window else { return editorViewModel.undoManager }
+        if editorViewModel.workspaceFocus == .production, editorViewModel.productionSelectedPhase == "storyboard",
+           editorViewModel.focusedPanel == .project {
+            return PipelineStoryboardEditor.undoManager(editor: editorViewModel)
+        }
+        return editorViewModel.undoManager
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === self.window else { return }
         onBecameKey?(window)
@@ -49,6 +60,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        if event.keyCode == 6, event.modifierFlags.contains(.command), !isTextInputFocused,
+           (editorViewModel.isProjectEditingPaused || PipelineLedgerWriter.isRestoring(editor: editorViewModel)) { return true }
         if !canRouteEditorCommands || isTextInputFocused || window?.firstResponder is NSControl {
             return false
         }
@@ -68,6 +81,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
         switch event.keyCode {
         case 49: // Space
+            if editorViewModel.workspaceFocus == .production,
+               editorViewModel.focusedPanel == .project,
+               let animatic = editorViewModel.storyboardAnimaticPlayback {
+                if animatic.isPlaying { animatic.pause() } else { Task { await animatic.play() } }
+                return true
+            }
             editorViewModel.togglePlayback()
             return true
 
@@ -229,7 +248,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     private var canRouteEditorCommands: Bool {
         guard let window else { return false }
-        return window.isKeyWindow && window.attachedSheet == nil && NSApp.modalWindow == nil
+        return !editorViewModel.isProjectEditingPaused && window.isKeyWindow && window.attachedSheet == nil && NSApp.modalWindow == nil
     }
 
     private var isTextInputFocused: Bool {
@@ -303,20 +322,37 @@ extension EditorWindowController: EditorActions {
         editorViewModel.addTimelineMarkerAtSelection()
     }
     @objc func showTimelineMarkers(_ sender: Any?) {
-        guard editorViewModel.canPresentMarkerPanel else { return }
+        guard canRouteEditorCommands, editorViewModel.canPresentMarkerPanel else { return }
         editorViewModel.markerPanelPresented = true
     }
 
 
     @objc func importMedia(_ sender: Any?) {
+        guard canRouteEditorCommands else { return }
         MediaImportFlow.present(
             editor: editorViewModel,
             destinationFolderId: editorViewModel.mediaPanelCurrentFolderId
         )
     }
 
+    @objc func importFilmFlow(_ sender: Any?) {
+        guard canRouteEditorCommands, let window,
+              FilmFlowImportPresenter.canPresent(editor: editorViewModel) else { return }
+        FilmFlowImportPresenter.present(editor: editorViewModel, in: window)
+    }
+
     @objc func showExport(_ sender: Any?) {
+        guard canRouteEditorCommands else { return }
         editorViewModel.showExportDialog = true
+    }
+
+    @objc func selectAll(_ sender: Any?) {
+        if canHandleMediaShortcut() {
+            editorViewModel.selectAllMediaPanelItems()
+        } else if canHandleTimelineEditShortcut() {
+            editorViewModel.selectedClipIds = Set(editorViewModel.timeline.tracks.flatMap(\.clips).map(\.id))
+            editorViewModel.inspectedObject = editorViewModel.selectionInspectedObject
+        }
     }
 
     @objc func copy(_ sender: Any?) {
@@ -429,6 +465,8 @@ extension EditorWindowController: EditorActions {
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard canRouteEditorCommands else { return false }
         switch menuItem.action {
+        case #selector(importFilmFlow(_:)):
+            return FilmFlowImportPresenter.canPresent(editor: editorViewModel)
         case #selector(toggleMediaPanel(_:)):
             menuItem.state = editorViewModel.isSidebarPresented ? .on : .off
             return true
@@ -498,6 +536,9 @@ extension EditorWindowController: EditorActions {
             }
             return canHandleTimelineEditShortcut() && !editorViewModel.selectedClipIds.isEmpty
 
+        case #selector(selectAll(_:)):
+            return canHandleMediaShortcut() ? !editorViewModel.mediaPanelOrderedItemIds.isEmpty
+                : canHandleTimelineEditShortcut() && !editorViewModel.timeline.tracks.flatMap(\.clips).isEmpty
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty
         case #selector(paste(_:)):

@@ -39,6 +39,7 @@ struct GenerationRequest {
         /// the `service.generate` (source asset uploaded as its reference) and returns the placeholder
         /// id, so the controller's compile stage is skipped while placement/feedback stay shared.
         case upscale(run: UpscaleSubmission)
+        case preparedUpscale(UpscaleGenerationSubmission)
     }
 
     let modality: Modality
@@ -167,6 +168,7 @@ enum GenerationController {
         let repairPlanID: String?
         let references: GenerationReferenceSnapshot?
         let preflight: Preflight?
+        let replacementTarget: GenerationClipReplacement.Snapshot?
         private(set) var reviewedPackage: GenerationPackageV1?
         private(set) var batchItem: GenerationBatchAuthorization?
         private var submitted = false
@@ -174,13 +176,15 @@ enum GenerationController {
         init(request: GenerationRequest, submission: PreparedSubmission, target: ResolvedGenerationTarget,
              compiledPrompt: String, notes: [String], home: URL?, scope: GenerationProjectMutationScope?,
              binding: PromptBinding, compilerInputsSHA256: String, destination: GenerationPackageV1.Destination, recipe: GenerationCompileRecipe?, repairPlanID: String?,
-             references: GenerationReferenceSnapshot?, preflight: Preflight?) {
+             references: GenerationReferenceSnapshot?, preflight: Preflight?,
+             replacementTarget: GenerationClipReplacement.Snapshot? = nil) {
             self.request = request; self.submission = submission; self.target = target
             self.compiledPrompt = compiledPrompt; self.notes = notes; self.home = home; self.scope = scope
             self.binding = binding; self.recipe = recipe; self.repairPlanID = repairPlanID
             self.compilerInputsSHA256 = compilerInputsSHA256
             self.destination = destination
             self.references = references; self.preflight = preflight
+            self.replacementTarget = replacementTarget
         }
 
         func claimSubmission() throws {
@@ -210,6 +214,7 @@ enum GenerationController {
         case audio(AudioGenerationSubmission, PreparedProviderParameters)
         case music(MusicGenerationSubmission)
         case upscale(GenerationRequest.UpscaleSubmission)
+        case preparedUpscale(UpscaleGenerationSubmission, PreparedProviderParameters)
 
         init(_ submission: GenerationRequest.Submission, compiledPrompt: String) throws {
             switch submission {
@@ -242,6 +247,10 @@ enum GenerationController {
                 self = .audio(value, parameters)
             case .music(let make): self = .music(make(compiledPrompt))
             case .upscale(let run): self = .upscale(run)
+            case .preparedUpscale(let value):
+                let parameters = try PreparedProviderParameters(referenceCount: 1) { value.parameters($0[0]) }
+                guard value.genInput.prompt.isEmpty else { throw GenerationRequestError.optionsInvalid("Upscale must not send an uncompiled prompt.") }
+                self = .preparedUpscale(value, parameters)
             }
         }
     }
@@ -290,7 +299,7 @@ enum GenerationController {
 
         }
         try await package.requireCurrentContext(editor: editor)
-        if package.payload.modality == "image" || package.payload.modality == "video" {
+        if ["image", "video", "audio"].contains(package.payload.modality) {
             try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
         }
         if let error = generation.preflight?() { throw GenerationRequestError.optionsInvalid(error) }
@@ -314,12 +323,15 @@ enum GenerationController {
             input = image.genInput; parameters = prepared; modality = "image"; count = image.numImages
         case .audio(let audio, let prepared):
             input = audio.genInput; parameters = prepared; modality = "audio"; count = 1
+        case .preparedUpscale(let upscale, let prepared):
+            input = upscale.genInput; parameters = prepared; modality = upscale.source.type.rawValue; count = 1
         default: return nil
         }
         let references = generation.references?.receipts ?? []
         input.referenceReceipts = references; input.compileRecipe = generation.recipe; input.takeRepairPlanID = generation.repairPlanID
         return try GenerationPackageV1(payload: .init(target: generation.target, modality: modality,
-            operation: input.productionRouting?.offeringCapabilities.inputPolicy.sourceOperation?.rawValue ?? "generate_\(modality)",
+            operation: generation.request.modality == .upscale ? "upscale"
+                : (generation.request.modality == .music ? "music" : (input.productionRouting?.offeringCapabilities.inputPolicy.sourceOperation?.rawValue ?? "generate_\(modality)")),
             intent: generation.request.intent, prompt: generation.compiledPrompt,
             promptRevisionID: PipelineRenderTakeStore.promptRevision(input), generationInput: GenerationPackageV1.normalized(input),
             binding: generation.binding, compilerInputsSHA256: generation.compilerInputsSHA256,
@@ -355,6 +367,17 @@ enum GenerationController {
         _ request: GenerationRequest, editor: EditorViewModel, preflight: Preflight? = nil
     ) async -> Result<PreparedGeneration, GenerationRequestError> {
         let requestHome = editor.workingRoot
+        let musicTimeline = request.modality == .music ? editor.timeline : nil
+        let musicGeneration = editor.openWorkingCopyGeneration
+        let musicRange = editor.validSelectedTimelineRange
+        let musicClips = editor.selectedClipIds
+        let replacementTarget: GenerationClipReplacement.Snapshot?
+        if case .replaceClip(let id, let reset) = request.placement {
+            replacementTarget = .init(clipID: id, resetTrim: reset, editor: editor)
+        } else { replacementTarget = nil }
+        do { try replacementTarget?.requireCurrent(editor: editor, modality: request.modality) }
+        catch let error as GenerationRequestError { return .failure(error) }
+        catch { return .failure(.gate(error.localizedDescription)) }
         if let message = preflight?() { return .failure(.optionsInvalid(message)) }
         let scope: GenerationProjectMutationScope?
         let binding: PromptBinding
@@ -366,7 +389,7 @@ enum GenerationController {
             let currentBinding = try await PromptCompiler.currentBinding(editor: editor,
                 shotId: request.precompiled?.binding.shotId ?? "none",
                 modality: request.composerModality,
-                modelId: request.modelId)
+                modelId: request.modelId, frameRole: request.precompiled?.binding.frameRole)
             if let compiledBinding = request.precompiled?.binding {
                 guard currentBinding.matchesCurrentState(of: compiledBinding) else {
                     throw GenerationRequestError.gate(
@@ -398,9 +421,28 @@ enum GenerationController {
         let target = request.target ?? GenerationService.dispatchTarget(modelId: request.modelId)
         guard target.modelId == request.modelId else { return .failure(.optionsInvalid("The selected route and compiled model do not match.")) }
         guard editor.workingRoot == requestHome else { return .failure(.gate("The active project changed during prompt compilation. Prepare the request again.")) }
-        let prepared: PreparedSubmission
-        do { prepared = try PreparedSubmission(request.submission, compiledPrompt: compiled) }
-        catch { return .failure(.optionsInvalid(error.localizedDescription)) }
+        var prepared: PreparedSubmission
+        let musicPreflight: Preflight?
+        do {
+            prepared = try PreparedSubmission(request.submission, compiledPrompt: compiled)
+            if case .music(let music) = prepared {
+                guard editor.timeline == musicTimeline, editor.openWorkingCopyGeneration == musicGeneration,
+                      editor.validSelectedTimelineRange == musicRange, editor.selectedClipIds == musicClips else {
+                    throw GenerationRequestError.gate("The music source changed during compilation. Prepare the request again.")
+                }
+                let value = try await MusicSourcePreparation.prepare(music, editor: editor)
+                let parameters = try PreparedProviderParameters(referenceCount: value.submission.references.count) { slots in
+                    var params = value.submission.params
+                    params.videoURL = slots.first
+                    return .audio(params)
+                }
+                prepared = .audio(value.submission, parameters)
+                musicPreflight = value.preflight
+            } else { musicPreflight = nil }
+        } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
+        let effectivePreflight: Preflight = {
+            preflight?() ?? musicPreflight?()
+        }
         let referenceSnapshot: GenerationReferenceSnapshot?
         do {
             switch prepared {
@@ -443,8 +485,18 @@ enum GenerationController {
                 guard audio.genInput.model == target.modelId else {
                     throw GenerationRequestError.optionsInvalid("The audio request changed its approved model.")
                 }
+                if let error = audio.model.validate(params: audio.params) { throw GenerationRequestError.optionsInvalid(error) }
+                guard audio.references.isEmpty || (audio.references.count == 1 && audio.references[0].type == .video
+                    && audio.model.inputs.contains(.video)) else {
+                    throw GenerationRequestError.optionsInvalid("This audio model does not accept the supplied source references.")
+                }
                 referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: audio.references,
                     trim: audio.trimmedSourceOverride, preprocess: audio.preprocessRef)
+            case .preparedUpscale(let upscale, _):
+                guard upscale.genInput.model == target.modelId, [.image, .video].contains(upscale.source.type) else {
+                    throw GenerationRequestError.optionsInvalid("The upscale request changed its source or model.")
+                }
+                referenceSnapshot = try await GenerationReferenceSnapshot.prepare(references: [upscale.source], trim: upscale.trimmedSource)
             default: referenceSnapshot = nil
             }
         } catch { return .failure(.optionsInvalid(error.localizedDescription)) }
@@ -461,17 +513,19 @@ enum GenerationController {
             } else { repairPlanID = nil }
             guard editor.workingRoot == requestHome,
                   try await PromptCompiler.currentBinding(editor: editor, shotId: binding.shotId,
-                    modality: request.composerModality, modelId: request.modelId)
+                    modality: request.composerModality, modelId: request.modelId, frameRole: binding.frameRole)
                     .matchesCurrentState(of: binding),
                   try await PromptComposer.inputFingerprint(projectDir: requestHome) == compilerInputsSHA256 else {
                 return .failure(.gate("The project or approved direction changed during preparation. Prepare the request again."))
             }
             try scope?.requireCurrent(editor: editor)
             try destination.requireCurrent(editor: editor)
+            try replacementTarget?.requireCurrent(editor: editor, modality: request.modality)
+            if let error = effectivePreflight() { throw GenerationRequestError.gate(error) }
             return .success(PreparedGeneration(request: request, submission: prepared, target: target,
                 compiledPrompt: compiled, notes: notes, home: requestHome, scope: scope, binding: binding,
                 compilerInputsSHA256: compilerInputsSHA256, destination: destination,
-                recipe: recipe, repairPlanID: repairPlanID, references: referenceSnapshot, preflight: preflight))
+                recipe: recipe, repairPlanID: repairPlanID, references: referenceSnapshot, preflight: effectivePreflight, replacementTarget: replacementTarget))
         } catch { return .failure(.gate(error.localizedDescription)) }
     }
 
@@ -496,8 +550,9 @@ enum GenerationController {
             guard editor.workingRoot == requestHome else { return .failure(.gate("The prepared request belongs to another project.")) }
             try generation.scope?.requireCurrent(editor: editor)
             try generation.destination.requireCurrent(editor: editor)
+            try generation.replacementTarget?.requireCurrent(editor: editor, modality: generation.request.modality)
             guard try await PromptCompiler.currentBinding(editor: editor, shotId: generation.binding.shotId,
-                modality: request.composerModality, modelId: request.modelId)
+                modality: request.composerModality, modelId: request.modelId, frameRole: generation.binding.frameRole)
                 .matchesCurrentState(of: generation.binding),
                   try await PromptComposer.inputFingerprint(projectDir: requestHome) == generation.compilerInputsSHA256 else {
                 return .failure(.gate("The approved direction changed. Prepare and review the generation again."))
@@ -515,9 +570,11 @@ enum GenerationController {
                 try referenceSnapshot?.requireIdentity(image.references)
             } else if case .audio(let audio, _) = prepared {
                 try referenceSnapshot?.requireIdentity(audio.references)
+            } else if case .preparedUpscale(let upscale, _) = prepared {
+                try referenceSnapshot?.requireIdentity([upscale.source])
             }
             if let package = generation.reviewedPackage,
-               package.payload.modality == "image" || package.payload.modality == "video" {
+               ["image", "video", "audio"].contains(package.payload.modality) {
                 try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
             }
             try generation.scope?.requireCurrent(editor: editor)
@@ -544,13 +601,14 @@ enum GenerationController {
         do {
             try await referenceSnapshot?.requireUnchanged()
             if let package = authorization.generationPackage,
-               package.payload.modality == "image" || package.payload.modality == "video" {
+               ["image", "video", "audio"].contains(package.payload.modality) {
                 try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
             }
             if let message = generation.preflight?() { throw GenerationRequestError.optionsInvalid(message) }
             guard editor.workingRoot == requestHome else { throw GenerationRequestError.gate("The active project changed during reference validation.") }
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
             try generation.destination.requireCurrent(editor: editor)
+            try generation.replacementTarget?.requireCurrent(editor: editor, modality: generation.request.modality)
         }
         catch {
             try? editor.recordSpendEvent(authorization: authorization, kind: .released, note: error.localizedDescription)
@@ -573,7 +631,7 @@ enum GenerationController {
         // (c) SUBMIT — the adapter's existing provider submission, with the compiled prompt injected.
         // (d) FEEDBACK — placeholder auto-selected where placed; the outcome is returned uniformly.
         let placeholderId = dispatch(
-            request, prepared: prepared, editor: editor,
+            request, prepared: prepared, replacementTarget: generation.replacementTarget, editor: editor,
             authorization: authorization,
             musicProgress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
         return .success(GenerationOutcome(placeholderId: placeholderId, notes: generation.notes))
@@ -656,6 +714,7 @@ enum GenerationController {
     private static func dispatch(
         _ request: GenerationRequest,
         prepared: PreparedSubmission,
+        replacementTarget: GenerationClipReplacement.Snapshot?,
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
         musicProgress: MusicProgress?,
@@ -667,27 +726,37 @@ enum GenerationController {
 
         switch prepared {
         case .video(let submission, let parameters):
-            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, snapshot: replacementTarget, then: onSuccess)
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization, preparedParameters: parameters,
-                onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
+                onComplete: onComplete, onFailure: failureHandler(request, editor: editor, snapshot: replacementTarget, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
         case .image(let submission, let parameters):
-            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, snapshot: replacementTarget, then: onSuccess)
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization, preparedParameters: parameters,
-                onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
+                onComplete: onComplete, onFailure: failureHandler(request, editor: editor, snapshot: replacementTarget, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
         case .audio(let submission, let parameters):
+            if request.modality == .music { musicProgress?.onPhase?(.generating) }
+            let complete = audioOnComplete(request, editor: editor,
+                destination: authorization.generationPackage?.payload.destination,
+                snapshot: replacementTarget, then: onSuccess)
+            let failed = failureHandler(request, editor: editor, snapshot: replacementTarget, then: onFailure)
             let id = submission.submit(
                 service: service, projectURL: projectURL, editor: editor,
                 authorization: authorization, preparedParameters: parameters,
-                onComplete: audioOnComplete(request, editor: editor, then: onSuccess),
-                onFailure: failureHandler(request, editor: editor, then: onFailure))
+                onComplete: { asset in
+                    complete?(asset)
+                    if request.modality == .music { musicProgress?.onFinished?() }
+                }, onFailure: {
+                    failed?()
+                    if request.modality == .music { musicProgress?.onFinished?() }
+                })
             place(request, placeholderId: id, editor: editor)
             return id
         case .music(let submission):
@@ -699,12 +768,19 @@ enum GenerationController {
                 authorization: authorization,
                 progress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
             return ""
+        case .preparedUpscale(let submission, let parameters):
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, snapshot: replacementTarget, then: onSuccess)
+            let id = submission.submit(service: service, projectURL: projectURL, editor: editor,
+                authorization: authorization, preparedParameters: parameters, onComplete: onComplete,
+                onFailure: failureHandler(request, editor: editor, snapshot: replacementTarget, then: onFailure))
+            place(request, placeholderId: id, editor: editor)
+            return id
         case .upscale(let run):
-            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, then: onSuccess)
+            let onComplete = replacementOnComplete(request, editor: editor, destination: authorization.generationPackage?.payload.destination, snapshot: replacementTarget, then: onSuccess)
             let id = run(
                 service, projectURL, editor,
                 authorization,
-                onComplete, failureHandler(request, editor: editor, then: onFailure))
+                onComplete, failureHandler(request, editor: editor, snapshot: replacementTarget, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
         }
@@ -743,6 +819,12 @@ enum GenerationController {
             duration = params.durationSeconds.map(Double.init) ?? duration
         case .music(let submission):
             duration = submission.spanSeconds
+        case .preparedUpscale(_, let parameters):
+            referenceCount = parameters.referenceSlots.count
+            if case .upscale(let params) = parameters.parameters {
+                duration = Double(params.durationSeconds)
+                resolution = params.targetResolution
+            }
         case .upscale:
             break
         }
@@ -781,40 +863,54 @@ enum GenerationController {
         }
     }
 
-    private static func replacementOnComplete(
+    static func replacementOnComplete(
         _ request: GenerationRequest, editor: EditorViewModel,
         destination: GenerationPackageV1.Destination? = nil,
+        snapshot: GenerationClipReplacement.Snapshot? = nil,
         then onSuccess: (@MainActor (MediaAsset?) -> Void)?
     ) -> (@MainActor (MediaAsset) -> Void)? {
         guard case .replaceClip(let clipId, let resetTrim) = request.placement else {
             guard let onSuccess else { return nil }
             return { asset in onSuccess(asset) }
         }
+        let captured = snapshot ?? GenerationClipReplacement.Snapshot(clipID: clipId, resetTrim: resetTrim, editor: editor)
         let firstOnly = FirstOnlyFlag()
         return { [weak editor] newAsset in
             guard firstOnly.fire() else { return }
-            if let editor, let destination {
-                do { try destination.requireCurrent(editor: editor) }
+            if let editor {
+                do {
+                    try destination?.requireCurrent(editor: editor)
+                    try captured.requireCurrent(editor: editor, modality: request.modality, resultType: newAsset.type)
+                }
                 catch {
-                    editor.clearPendingReplacement(clipId: clipId)
-                    editor.mediaPanelToast = MediaPanelToast(message: "The generated media is saved in Media. The clip changed during generation and was not replaced.")
+                    if captured.matchesProject(editor: editor) {
+                        captured.clearPending(editor: editor)
+                        editor.mediaPanelToast = MediaPanelToast(message: (error as? GenerationRequestError)?.localizedDescription
+                            ?? "The generated media is saved in Media. The clip changed during generation and was not replaced.")
+                    }
                     onSuccess?(newAsset)
                     return
                 }
             }
-            editor?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim)
-            editor?.clearPendingReplacement(clipId: clipId)
+            editor?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim,
+                preserveLinkedAudio: request.modality == .upscale, replacementType: newAsset.type)
+            if let editor {
+                captured.clearPending(editor: editor)
+            }
             onSuccess?(newAsset)
         }
     }
 
-    private static func audioOnComplete(
+    static func audioOnComplete(
         _ request: GenerationRequest, editor: EditorViewModel,
+        destination: GenerationPackageV1.Destination? = nil,
+        snapshot: GenerationClipReplacement.Snapshot? = nil,
         then onSuccess: (@MainActor (MediaAsset?) -> Void)?
     ) -> (@MainActor (MediaAsset) -> Void)? {
         guard case .timelineAt = request.placement else {
             // Library and replace-clip placements share the video/image completion path.
-            return replacementOnComplete(request, editor: editor, then: onSuccess)
+            return replacementOnComplete(request, editor: editor, destination: destination,
+                snapshot: snapshot, then: onSuccess)
         }
         return { [weak editor] asset in
             editor?.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
@@ -822,14 +918,18 @@ enum GenerationController {
         }
     }
 
-    private static func failureHandler(
+    static func failureHandler(
         _ request: GenerationRequest, editor: EditorViewModel,
+        snapshot: GenerationClipReplacement.Snapshot? = nil,
         then onFailure: (@MainActor () -> Void)?
     ) -> (@MainActor () -> Void)? {
         switch request.placement {
         case .replaceClip(let clipId, _):
             return { [weak editor] in
-                editor?.clearPendingReplacement(clipId: clipId)
+                if let editor {
+                    if let snapshot { snapshot.clearPending(editor: editor) }
+                    else { editor.clearPendingReplacement(clipId: clipId) }
+                }
                 onFailure?()
             }
         case .mediaLibrary where request.origin != .agentTool:

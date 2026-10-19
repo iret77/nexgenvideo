@@ -1,0 +1,301 @@
+name: Managed bpy runtime acceptance
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        type: string
+        required: true
+      app_zip:
+        type: string
+        required: true
+      distribution:
+        type: boolean
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  runtime:
+    # ci-lint: allow-CI005 Runtime evidence requires the released macOS 26 floor.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/download
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          path: ${{ runner.temp }}/source
+      - name: Relocate the exact app and prepare denied resources
+        env:
+          APP_ZIP: ${{ inputs.app_zip }}
+          DISTRIBUTION: ${{ inputs.distribution }}
+        run: |
+          set -euo pipefail
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(uname -m)" = arm64 ]
+          mkdir -p "$RUNNER_TEMP/relocated" "$RUNNER_TEMP/denied/foreign-project" \
+            "$RUNNER_TEMP/fake-bin" "$RUNNER_TEMP/approved-input"
+          ditto -x -k "$RUNNER_TEMP/download/$APP_ZIP" "$RUNNER_TEMP/relocated"
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          codesign --verify --strict --verbose=2 "$APP"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$GITHUB_SHA" ]
+          if [ "$DISTRIBUTION" = true ]; then
+            scripts/verify_bpy_bundle.sh "$APP" --distribution
+            xcrun stapler validate "$APP"
+            spctl -a -vvv -t exec "$APP"
+          else
+            scripts/verify_bpy_bundle.sh "$APP" --development
+          fi
+          python3 scripts/verify_bpy_distributable_source.py \
+            "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
+          printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
+          printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"
+          printf 'host-home-secret' > "$HOME/ngv-bpy-host-home-secret"
+          printf '{"approved":true}' > "$RUNNER_TEMP/approved-input/fixture.json"
+          ln -s "$RUNNER_TEMP/denied/provider-secret" "$RUNNER_TEMP/approved-input/symlink.json"
+          printf 'hardlink' > "$RUNNER_TEMP/approved-input/hardlink-source"
+          ln "$RUNNER_TEMP/approved-input/hardlink-source" "$RUNNER_TEMP/approved-input/hardlink.json"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
+          chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Prove pre-lease and post-exec host-crash cleanup
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          for mode in before-authorization after-authorization; do
+            set +e
+            env NGV_SELFTEST_BPY_HOST_CRASH="$mode" \
+              "$APP/Contents/MacOS/NexGenVideo" < /dev/null \
+              > "$RUNNER_TEMP/evidence/host-crash-$mode.log" 2>&1
+            status=$?
+            set -e
+            [ "$status" -ne 0 ]
+            for _ in $(seq 1 200); do
+              if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null; then
+                break
+              fi
+              sleep 0.05
+            done
+            ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null
+          done
+      - name: Prepare the independent retained Bible YAML parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/panorama-parser"
+          "$RUNNER_TEMP/panorama-parser/bin/python" -m pip install --quiet PyYAML==6.0.3
+      - name: Run real bpy acceptance without ambient Blender or Python
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          EVIDENCE="$RUNNER_TEMP/evidence"
+          mkdir -p "$EVIDENCE"
+          DENIED="$(jq -cn \
+            --arg secret "$RUNNER_TEMP/denied/provider-secret" \
+            --arg canonical "$RUNNER_TEMP/denied/canonical-artifact" \
+            --arg foreign "$RUNNER_TEMP/denied/foreign-project/scene.blend" \
+            --arg home "$HOME/ngv-bpy-host-home-secret" \
+            '[$secret,$canonical,$foreign,$home]')"
+          system_profiler SPHardwareDataType > "$EVIDENCE/hardware.txt"
+          sw_vers > "$EVIDENCE/os.txt"
+          before="$(pgrep -f 'BpyRuntime/python' || true)"
+          [ -z "$before" ]
+          /usr/bin/time -l env \
+            PATH="$RUNNER_TEMP/fake-bin" \
+            BLENDER_USER_CONFIG="$RUNNER_TEMP/denied/foreign-blender" \
+            PYTHONPATH="$RUNNER_TEMP/denied/foreign-python" \
+            NGV_TEST_SECRET="must-not-cross-xpc" \
+            NGV_BPY_DENIED_PATHS="$DENIED" \
+            NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
+            NGV_SELFTEST_BPY="$EVIDENCE" \
+            "$APP/Contents/MacOS/NexGenVideo" < /dev/null \
+            > "$EVIDENCE/runtime.log" 2> "$EVIDENCE/time.txt"
+          grep -q SELFTEST_BPY_OK "$EVIDENCE/runtime.log"
+          jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
+            .schema == "nexgenvideo/bpy-runtime-acceptance/2"
+            and .python == "3.13.15"
+            and .bpy == "5.2.2"
+            and .coldStartSeconds > 0
+            and .serviceColdStartSeconds > 0
+            and .warmJobSeconds > 0
+            and .hostJobSeconds > 0
+            and .hostPeakMemoryBytes > 0
+            and .jobMetrics.job_wall_seconds > 0
+            and .jobMetrics.worker_wall_seconds > 0
+            and .jobMetrics.verification_seconds > 0
+            and .jobMetrics.worker_peak_memory_bytes > 0
+            and .jobMetrics.verifier_peak_memory_bytes > 0
+            and .jobMetrics.service_peak_memory_bytes > 0
+            and .jobMetrics.disk_peak_bytes > 0
+            and .jobMetrics.file_peak_count > 0
+            and .jobMetrics.descendant_peak_count == 0
+            and .jobMetrics.worker_process_identifier != .jobMetrics.verifier_process_identifier
+            and .jobMetrics.autoexec_positive_control == 1
+            and .jobMetrics.vertices > 8
+            and .jobMetrics.polygons > 6
+            and .duplicateJoined == true
+            and .changedDuplicateRejected == true
+            and .failedOpenReleased == true
+            and .closeBeforeOpenReleased == true
+            and .forgedResultState == "timedOut"
+            and .cancelState == "cancelled"
+            and .rlimitASAllocationDenied == true
+            and (.outOfMemoryState == "failed" or .outOfMemoryState == "resourceLimited")
+            and .structuralLimitState == "resourceLimited"
+            and .renderOnlyGeometryState == "resourceLimited"
+            and .secondarySceneGeometryState == "resourceLimited"
+            and .prefixedUserGeometryState == "resourceLimited"
+            and .zeroEffectiveResolutionState == "resourceLimited"
+            and .noEnabledViewLayerState == "resourceLimited"
+            and .storageLimitState == "resourceLimited"
+            and .spatialAuthoring.glbImport == true
+            and .spatialAuthoring.quaternionKeyframes == true
+            and .spatialAuthoring.viewedFrameEdit == true
+            and .spatialAuthoring.cameraDimensions == true
+            and .spatialAuthoring.stableRestFrame == true
+            and .spatialAuthoring.resourceReceipt == true
+            and .spatialAuthoring.resolvedStatePixels == true
+            and .spatialAuthoring.fractionalTimebaseMovie == true
+            and .spatialAuthoring.derivationAuthentication == true
+            and .spatialAuthoring.completeShotSequence == true
+            and .spatialAuthoring.partialLastFrame == true
+            and .spatialAuthoring.sequenceTamperingRejected == true
+            and .spatialAuthoring.sequenceDiscardRevokes == true
+            and .spatialAuthoring.sequenceExtraChunkRejected == true
+            and .spatialAuthoring.evaluatedDeformationBounds == true
+            and .storageRecovery.bootIdentityRead == true
+            and .storageRecovery.normalHelperCompletion == true
+            and .storageRecovery.staleHelperRejected == true
+            and .storageRecovery.journalLockEnforced == true
+            and .storageRecovery.crashedHelperRetained == true
+            and .productionSpatial.nativeSceneAndCamera == true
+            and .productionSpatial.storyboardNativeDerivation == true
+            and .productionSpatial.completeShotState == true
+            and .productionSpatial.fullShotClayAndDistinctEndpoints == true
+            and .productionSpatial.biblePreviewAndAssignment == true
+            and .productionSpatial.staleBibleRejected == true
+            and .productionSpatial.changedBibleProofRejected == true
+            and .productionSpatial.savedProjectReopened == true
+            and .productionSpatial.promotion.nativeSpatialProofGraphAdmitted == true
+            and .productionSpatial.promotion.neutralSpatialRejectedAsAppearance == true
+            and .productionSpatial.promotion.neutralSpatialReferenceGeometryOnly == true
+            and .productionSpatial.referencePurpose.nativeGeometryAccepted == true
+            and .productionSpatial.referencePurpose.nativeAppearanceRejected == true
+            and .productionSpatial.referencePurpose.copiedAppearanceRejected == true
+            and .productionSpatial.referencePurpose.copiedGeometryAccepted == true
+            and .productionSpatial.referencePurpose.duplicateViewAliasRejected == true
+            and [.productionSpatial.nativeStoryboardUI[].scale] == [1, 1.25, 1.5]
+            and all(.productionSpatial.nativeStoryboardUI[];
+              .viewport == [960, 640] and .sourceFilePanel == true
+              and .sourcePreviewAndAssignment == true and .changedTimeRevokesPreview == true
+              and .sourcePreparedCancelUnchanged == true and .sourceStaleAssignmentUnchanged == true
+              and .externalPreviewAndAssignment == true and .nativeImageInspection == true
+              and .filePanelCancel == true and .preparedCancelUnchanged == true
+              and .staleAssignmentUnchanged == true
+              and (.screenshots | length) >= 10 and (.interactions | length) > 20)
+            and [.productionSpatial.nativeBibleUI[].scale] == [1, 1.25, 1.5]
+            and all(.productionSpatial.nativeBibleUI[];
+              .viewport == [960, 640] and .nativeSceneAndCameraSelection == true
+              and .requiredPurpose == true and .realRenderedPreview == true
+              and .nativeImageInspection == true and .exactPreviewAssigned == true
+              and .preparedCancelUnchanged == true and .staleAssignmentUnchanged == true
+              and .reloadAndAssign == true
+              and (.screenshots | length) >= 10 and (.interactions | length) > 20)
+            and ([.physicalStorage[].mode] | sort) == ["fileport", "memory-entry", "scm-rights"]
+            and all(.physicalStorage[];
+              .capacityBytes > 0 and .capacityBytes <= 67108864
+              and .filledBytes > 0 and .filledBytes <= .capacityBytes
+              and .retainedBytes == 4194304 and .storageErrno == 28
+              and (.retentionDeniedErrno == 0 or
+                   (.mode != "memory-entry" and (.retentionDeniedErrno == 1 or .retentionDeniedErrno == 13))))
+            and .aggregateByteLimitState == "resourceLimited"
+            and .unlinkedStorageLimitState == "resourceLimited"
+            and .renameChurnStorageLimitState == "resourceLimited"
+            and .healthyResourceChurnState == "awaitingConfirmation"
+            and .resourceScanErrorState == "crashed"
+            and .containerSiblingWriteDenied == true
+            and .supervisorSignalDenied == true
+            and .supervisorSignalRecovered == true
+            and .supervisorIdentityWriteFailureState == "failed"
+            and .supervisorIdentityWriteFailureRecovered == true
+            and .supervisorIdentityCaptureFailureState == "failed"
+            and .supervisorIdentityCaptureFailureRecovered == true
+            and .resourceSupervisorRecovered == true
+            and .crashState == "crashed"
+            and .serviceRecoveryRevision == "revision-e"
+            and .parentDeathJobFailedClosed == true
+            and .execveOrphanReaped == true
+            and .threeRealDocuments == true
+            and .thirdDocumentInitiallyDenied == true
+            and .slotReusedAfterClose == true
+            and .appTerminationJobStarted == true
+            and .appDelegateShutdown == true
+            and .operationPresentationLifetime == true
+            and .overlappingPresentations == true
+            and .operationDocumentClose == true
+            and .operationLastRelease == true
+            and .operationShutdown == true
+            and (.probeA | type == "number") and .probeA > 1
+            and (.probeB | type == "number") and .probeB > 1 and .probeA != .probeB
+            and (.serviceA | type == "number") and .serviceA > 1
+            and (.serviceB | type == "number") and .serviceB > 1 and .serviceA != .serviceB
+            and (.deniedPositiveControls | length) >= 3
+            and all(.deniedPositiveControls[]; .bytes > 0)
+            and .trustedVerification.secretEnvironmentAbsent == true
+            and .trustedVerification.autorunTextPresent == true
+            and .trustedVerification.autorunMarkerAbsent == true
+            and .trustedVerification.blenderBuildHash == "d13f752e3b9c"
+            and .trustedVerification.libraryVersions.alembic.version == [1, 8, 3]
+            and .trustedVerification.libraryVersions.ocio.version == [2, 5, 0]
+            and .trustedVerification.libraryVersions.oiio.version == [3, 1, 13]
+            and .trustedVerification.libraryVersions.opensubdiv.version == [3, 7, 0]
+            and .trustedVerification.libraryVersions.openvdb.version == [13, 0, 0]
+            and .trustedVerification.libraryVersions.usd.version == [0, 26, 3]
+            and (.trustedVerification.modifiers.NGV_Room | index("BEVEL")) != null
+            and (.trustedVerification.executable | startswith($app + "/"))
+            and (.trustedVerification.bpyModule | startswith($app + "/"))
+            and .trustedVerification.blenderUserConfig != $foreign
+            and (.trustedVerification.sessionRoot as $session | .trustedVerification.blenderUserConfig | startswith($session + "/"))
+            and (.trustedVerification.networkDenied.denied == true)
+            and (.trustedVerification.networkDenied.errno == 1 or .trustedVerification.networkDenied.errno == 13)
+            and all(.trustedVerification.deniedPaths[]; .denied == true and (.errno == 1 or .errno == 13))
+            and any(.trustedVerification.scenes[]; .engine == "CYCLES" and (.cyclesDevice == "GPU" or .cyclesDevice == "CPU"))
+          ' "$EVIDENCE/result.json"
+          python3 scripts/production_spatial_ui_evidence.py "$EVIDENCE"
+          "$RUNNER_TEMP/panorama-parser/bin/python" scripts/retained_spatial_evidence.py "$EVIDENCE"
+          python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/Helpers/BpyRuntime"
+          python3 scripts/bpy_protocol_evidence.py "$EVIDENCE"
+          python3 scripts/bpy_worker_evidence.py "$EVIDENCE"
+          test -s "$EVIDENCE/perspective.png"
+          for artifact in production-spatial-storyboard.png production-spatial-start.png \
+            production-spatial-end.png production-spatial-shot.mov \
+            production-spatial-shot-proof.json production-spatial-bible.png; do
+            test -s "$EVIDENCE/$artifact"
+          done
+          while IFS= read -r artifact; do
+            [[ -n "$artifact" && "$artifact" != */* && "$artifact" != .* ]]
+            test -f "$EVIDENCE/$artifact"
+            test -s "$EVIDENCE/$artifact"
+          done < <(jq -r '.productionSpatial | (.nativeStoryboardUI + .nativeBibleUI)[] | .screenshots[], .progress' "$EVIDENCE/result.json")
+          [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]
+          [ "$(sips -g pixelHeight "$EVIDENCE/perspective.png" | awk '/pixelHeight/{print $2}')" = 360 ]
+          sleep 2
+          after="$(pgrep -f 'BpyRuntime/python' || true)"
+          [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
+          du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-bpy-runtime-evidence-${{ github.sha }}
+          overwrite: true
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: error
+          retention-days: 90

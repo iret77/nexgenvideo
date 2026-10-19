@@ -92,6 +92,7 @@ enum ProjectPackageExporter {
 
         let encoder = JSONEncoder()
         try encoder.encode(timeline).write(to: staging.appendingPathComponent(Project.timelineFilename))
+        try ProjectEditorState.capture(timeline).write(to: staging.appendingPathComponent(ProjectEditorState.filename), options: .atomic)
         try encoder.encode(newManifest).write(to: staging.appendingPathComponent(Project.manifestFilename))
         try encoder.encode(generationLog).write(to: staging.appendingPathComponent(Project.generationLogFilename))
 

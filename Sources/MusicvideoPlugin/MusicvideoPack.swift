@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.7.2"
+let musicvideoMinAppVersion = "1.8.0"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -33,7 +33,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 
 public struct MusicvideoPack: Pack, PackResourceRootProviding {
     public let name = "musicvideo"
-    public let version = "0.5.16"
+    public let version = "0.6.0"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
@@ -42,7 +42,7 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
 
     static let productionKnowledgeDescriptor = ProductionKnowledgeConsumerDescriptorV1(
         id: "musicvideo-production-knowledge",
-        version: "1.2.1",
+        version: "1.3.0",
         packID: "musicvideo",
         profileResourceIDs: ["generative_film", "narrative_storytelling"],
         phaseSelections: [
@@ -93,30 +93,40 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "treatment",
-                libraryIDs: [
+                libraryIDs: ["musicvideo-performance-planning",
                     "film-craft-baseline", "story-containers",
                     "film-production-story-structures", "film-production-film-craft",
                     "film-production-genre-baselines", "film-production-workflows",
                 ],
-                intentTags: [
+                intentTags: ["music-performance", "visual-arc", "performance-coverage",
                     "craft", "story-development", "structure", "goal-driven", "short-form",
                     "color", "pacing", "story-structures", "film-craft",
                     "genre-baselines", "workflows",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
+                phase: "script", knowledgePhase: "treatment",
+                libraryIDs: ["musicvideo-performance-planning", "story-containers", "film-production-story-structures", "film-production-film-craft", "film-production-production-pipeline"],
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "story-development", "story-structures", "film-craft", "production-pipeline"]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
                 phase: "storyboard",
-                libraryIDs: [
+                libraryIDs: ["musicvideo-performance-planning",
                     "continuity-and-coverage", "film-craft-baseline",
                     "stylized-3d-animation",
                     "film-production-film-craft", "film-production-production-pipeline",
                     "film-production-renderability", "film-production-workflows",
                 ],
-                intentTags: [
+                intentTags: ["music-performance", "visual-arc", "performance-coverage",
                     "camera", "cinematography", "continuity", "coverage",
                     "editing", "lighting", "pacing", "spatial-clarity", "visual-strategy",
                     "film-craft", "production-pipeline", "renderability", "workflows",
                 ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "shot_planning", knowledgePhase: "shotlist",
+                libraryIDs: ["musicvideo-performance-planning", "continuity-and-coverage", "film-craft-baseline", "film-production-renderability", "film-production-video-prompting"],
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "camera", "continuity", "coverage", "renderability", "video-prompting"]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "bible",
@@ -134,13 +144,13 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "shotlist",
-                libraryIDs: [
+                libraryIDs: ["musicvideo-performance-planning",
                     "continuity-and-coverage", "film-craft-baseline",
                     "film-production-film-craft", "film-production-production-pipeline",
                     "film-production-renderability", "film-production-video-prompting",
                     "film-production-workflows",
                 ],
-                intentTags: [
+                intentTags: ["music-performance", "visual-arc", "performance-coverage",
                     "camera", "continuity", "editing", "craft", "spatial-clarity",
                     "film-craft", "production-pipeline", "renderability", "video-prompting",
                     "workflows",
@@ -176,14 +186,19 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
+                phase: "render_review", knowledgePhase: "review",
+                libraryIDs: ["musicvideo-performance-planning", "film-craft-baseline", "film-production-renderability", "film-production-video-prompting", "film-production-post-audio-legal"],
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "quality-control", "renderability", "video-prompting", "post-audio-legal"]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
                 phase: "render",
-                libraryIDs: [
+                libraryIDs: ["musicvideo-performance-planning",
                     "continuity-and-coverage", "film-craft-baseline",
                     "film-production-video-prompting", "film-production-style-control",
                     "film-production-production-pipeline", "film-production-workflows",
                     "film-production-post-audio-legal",
                 ],
-                intentTags: [
+                intentTags: ["music-performance", "visual-arc", "performance-coverage",
                     "continuity", "craft", "video-prompting", "style-control",
                     "production-pipeline", "workflows", "post-audio-legal",
                     "camera", "lighting", "color", "pacing", "visual-strategy",
@@ -202,8 +217,8 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
     ) throws -> ProductionKnowledgeActivationMetadataV1 {
         let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
         guard FileManager.default.fileExists(atPath: briefURL.path) else {
-            if let phaseIndex = MusicvideoPipelineLineage.phases.firstIndex(of: phase),
-               let briefIndex = MusicvideoPipelineLineage.phases.firstIndex(of: "brief"),
+            if let phaseIndex = MusicvideoProductionLineageV2.phases.firstIndex(of: phase),
+               let briefIndex = MusicvideoProductionLineageV2.phases.firstIndex(of: "brief"),
                phaseIndex > briefIndex {
                 throw GateBlocked(
                     "The approved Brief is missing. Repair or restore it before continuing."
@@ -224,6 +239,7 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             )
         }
         var tags = Set(brief.tone.map(\.rawValue))
+        tags.formUnion(["music-performance", "visual-arc", "performance-coverage"])
         tags.insert(brief.conceptType.rawValue)
         tags.insert(brief.visualMedium.rawValue)
         switch brief.visualMedium {
@@ -339,7 +355,10 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
         case "brief": return "Brief"
         case "production_design": return "Production Design"
         case "treatment": return "Treatment"
+        case "script": return "Script"
         case "storyboard": return "Storyboard"
+        case "shot_planning": return "Shot Planning"
+        case "render_review": return "Render Review"
         case "bible": return "Bible"
         case "shotlist": return "Shot List"
         case "sanity": return "Sanity Check"
@@ -383,16 +402,18 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
     }
 
     public func register(_ registry: EngineRegistry) {
-        registry.registerProjectSchemaMigration(
-            from: "musicvideo/legacy",
-            to: "musicvideo/2.0.0",
-            migrate: Self.migrateToMeasuredStructure
-        )
-        registry.registerProjectSchemaMigration(
-            from: "musicvideo/1.0.0",
-            to: "musicvideo/2.0.0",
-            migrate: Self.migrateToMeasuredStructure
-        )
+        for source in ["musicvideo/legacy", "musicvideo/1.0.0", "musicvideo/2.0.0"] {
+            registry.registerProjectSchemaMigration(from: source, to: "musicvideo/3.0.0") { projectURL in
+                let values = try projectURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isDirectory == true, values.isSymbolicLink != true else {
+                    throw GateBlocked("Choose a regular Recovery working copy for this production upgrade.")
+                }
+            }
+        }
+        registry.registerPhasePlacement("script", after: "treatment")
+        registry.registerPhasePlacement("storyboard", after: "script")
+        registry.registerPhasePlacement("shot_planning", after: "storyboard")
+        registry.registerPhasePlacement("render_review", after: "frames")
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.
         registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
@@ -511,57 +532,34 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             phase: "frames",
             summary: "Reconcile the role-aware Frames manifest with the approved shot list."
         ) {
-            try MusicvideoPhasePreparation.frames(dataRoot: $0)
+            try MusicvideoProductionPreparationV2.frames(dataRoot: $0)
         }
         registry.registerDeterministicStep(
             "prepare_final_render_manifest",
             phase: "render",
             summary: "Reconcile the final render manifest with the approved shot list."
         ) {
-            try MusicvideoPhasePreparation.render(dataRoot: $0)
+            try MusicvideoProductionPreparationV2.render(dataRoot: $0)
         }
         // Hard gate: the analysis gate can't be stamped until a real analysis artifact (with genuine
         // beats/downbeats) exists — the deterministic backstop against a fabricated song structure.
         registry.registerGateRequirement("project_init") { try MusicvideoGateChecks.requireProjectTrack(dataRoot: $0) }
-        registerHardenedGate("analysis", registry: registry) {
-            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: $0)
+        for phase in MusicvideoProductionLineageV2.phases {
+            registry.registerPhaseLineageProvider(phase) { try MusicvideoProductionLineageV2.snapshot(phase: phase, dataRoot: $0) }
+            if MusicvideoProductionLineageV2.executionInputPhases.contains(phase) {
+                registry.registerPhaseArtifactProvider(phase) { try MusicvideoProductionLineageV2.artifactPaths(phase: phase, dataRoot: $0) }
+            }
+            registry.registerGateRequirement(phase) { try MusicvideoProductionGateV2.requireCurrent(phase: phase, dataRoot: $0) }
         }
         registry.registerArtifactCandidateRequirement("analysis") {
             try MusicvideoGateChecks.requireAnalysisCandidate(dataRoot: $0, data: $1)
         }
         registry.registerArtifactWriteRequirement("analysis") {
-            try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: $0)
-            try MusicvideoPipelineLineage.requireCurrent(
+            try MusicvideoGateChecks.requireMeasuredAnalysis(dataRoot: $0)
+            try MusicvideoProductionLineageV2.requireCurrent(
                 phase: "analysis",
                 dataRoot: $0
             )
-        }
-        registerHardenedGate("brief", registry: registry) {
-            try MusicvideoGateChecks.requireRealBrief(dataRoot: $0)
-        }
-        registerHardenedGate("production_design", registry: registry) {
-            try MusicvideoGateChecks.requireRealProductionDesign(dataRoot: $0)
-        }
-        registerHardenedGate("treatment", registry: registry) {
-            try MusicvideoGateChecks.requireRealTreatment(dataRoot: $0)
-        }
-        registerHardenedGate("storyboard", registry: registry) {
-            try MusicvideoGateChecks.requireRealStoryboard(dataRoot: $0)
-        }
-        registerHardenedGate("bible", registry: registry) {
-            try MusicvideoGateChecks.requireRealBible(dataRoot: $0)
-        }
-        registerHardenedGate("shotlist", registry: registry) {
-            try MusicvideoGateChecks.requireRealShotlist(dataRoot: $0)
-        }
-        registerHardenedGate("sanity", registry: registry) {
-            try MusicvideoGateChecks.requireCurrentSanity(dataRoot: $0)
-        }
-        registerHardenedGate("frames", registry: registry) {
-            try MusicvideoGateChecks.requireRealFrames(dataRoot: $0)
-        }
-        registerHardenedGate("render", registry: registry) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: $0)
         }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
         registry.registerDeclarativeCockpitSurface(

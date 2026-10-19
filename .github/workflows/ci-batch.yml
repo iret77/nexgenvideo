@@ -20,6 +20,14 @@ on:
         description: Run the workspace UI acceptance
         type: boolean
         default: true
+      settings_owner_acceptance:
+        description: Run native Settings and genuine pack Recovery/restart acceptance
+        type: boolean
+        default: true
+      smart_search_owner_acceptance:
+        description: Run actual Smart Search download, CoreML, Storage and warm layouts
+        type: boolean
+        default: true
       musicvideo_analysis_acceptance:
         description: Run real audio analysis and startup handoffs with the private fixture
         type: boolean
@@ -31,10 +39,11 @@ permissions:
 
 concurrency:
   group: ci-batch-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   ci:
+    name: Compile, unit tests, app and native bpy acceptance
     uses: ./.github/workflows/ci.yml
 
   chat-hang-replay:
@@ -55,8 +64,23 @@ jobs:
     secrets: inherit
 
   workspace-ui-acceptance:
+    needs: ci
     if: inputs.workspace_ui_acceptance
     uses: ./.github/workflows/workspace-ui-acceptance.yml
+    with:
+      runtime_artifact: workspace-ui-app
+
+  external-gui-acceptance:
+    needs: ci
+    if: inputs.workspace_ui_acceptance
+    uses: ./.github/workflows/external-gui-acceptance.yml
+
+  settings-owner-acceptance:
+    needs: ci
+    if: inputs.settings_owner_acceptance
+    uses: ./.github/workflows/settings-owner-acceptance.yml
+    with:
+      runtime_artifact: workspace-ui-app
 
   musicvideo-analysis-acceptance:
     needs: workspace-ui-acceptance
@@ -66,3 +90,11 @@ jobs:
       runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
     secrets:
       NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+
+  smart-search-owner-acceptance:
+    needs: ci
+    if: inputs.smart_search_owner_acceptance
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/smart-search-owner-acceptance.yml

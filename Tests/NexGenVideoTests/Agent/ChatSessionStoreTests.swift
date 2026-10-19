@@ -534,7 +534,7 @@ struct ChatSessionStoreTests {
 
         _ = try service.requestGateApproval(GateApproval(phase: "brief"))
         #expect(service.sessionAttention(for: current) == .actionRequired)
-        _ = await service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
     }
 
     @Test("strict project load rejects a malformed chat instead of dropping it")

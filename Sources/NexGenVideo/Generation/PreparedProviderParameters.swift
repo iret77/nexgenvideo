@@ -22,6 +22,7 @@ struct PreparedProviderParameters: Sendable {
                 + video.referenceImageURLs + video.referenceVideoURLs + video.referenceAudioURLs
         case .image(let image): used = image.imageURLs + [image.maskURL].compactMap { $0 }
         case .audio(let audio): used = [audio.videoURL].compactMap { $0 }
+        case .upscale(let upscale): used = [upscale.sourceURL]
 
         default: throw GenerationRequestError.optionsInvalid("The prepared request has the wrong media type.")
         }
@@ -54,6 +55,9 @@ struct PreparedProviderParameters: Sendable {
             value.videoURL = value.videoURL.map(resolve)
             return .audio(value)
 
+        case .upscale(let value):
+            return .upscale(.init(sourceURL: resolve(value.sourceURL), durationSeconds: value.durationSeconds,
+                targetResolution: value.targetResolution, scaleFactor: value.scaleFactor))
         default:
             throw GenerationRequestError.optionsInvalid("The prepared request has the wrong media type.")
         }

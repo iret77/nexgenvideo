@@ -41,7 +41,7 @@ struct ProductionPhaseTransitionTests {
         #expect(approval.phase == "project_init")
         #expect(approval.dataRoot?.resolvingSymlinksInPath().path == dataRoot.resolvingSymlinksInPath().path)
 
-        let resolved = await editor.agentService.resolveGate(.approved)
+        let resolved = await editor.agentService.resolveGate(.approved, approvalID: editor.agentService.pendingGateApproval?.id ?? "missing")
         let result = try #require(resolved)
         #expect(!result.isError, "\(ToolHarness.textOf(result))")
         await editor.refreshEngineState()

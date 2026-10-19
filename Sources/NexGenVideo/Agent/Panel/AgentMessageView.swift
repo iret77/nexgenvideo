@@ -504,7 +504,7 @@ struct AgentMessageView: View {
                     if ToolRunPresentation.baseName(for: name) == ToolName.showBlocks.rawValue,
                        Self.parsedBlocks(inputJSON) != nil {
                         if index == firstStructuredResultIndex {
-                            AgentBlocksView(blocks: combinedStructuredBlocks)
+                            AgentBlocksView(blocks: combinedStructuredBlocks, messageID: message.id)
                         }
                     } else {
                         ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
@@ -850,6 +850,8 @@ struct AgentActivityView: View {
                 .accessibilityLabel("\(accessibilityState): \(label)")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                 .accessibilityHint(expanded ? "Hide technical details" : "Show technical details")
+                .reviewAcceptanceProbe("agent.activity.details." + activity.steps.map(\.id).joined(separator: "."),
+                    text: expanded ? "expanded" : "collapsed")
 
                 ForEach(Array(generationImages.enumerated()), id: \.offset) { _, base64 in
                     ToolResultImageView(base64: base64)
@@ -972,6 +974,8 @@ private struct ToolRunRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .reviewAcceptanceProbe("agent.toolrow." + ToolRunPresentation.baseName(for: name),
+                text: (expanded ? "expanded|" : "collapsed|") + (result?.isError == true ? "error" : "result"))
 
             if expanded {
                 ToolRunDetail(
@@ -1085,6 +1089,10 @@ private struct ToolRunDetail: View {
                 }
             }
         }
+        .reviewAcceptanceProbe("agent.tool.detail." + ToolRunPresentation.baseName(for: name),
+            text: (r.isError ? "error|" : "result|") + r.content.compactMap { block -> String? in
+                if case .text(let text) = block { text } else { nil }
+            }.joined(separator: "\n"))
     }
 
     private func prettyPrinted(_ json: String) -> String {
@@ -1131,7 +1139,9 @@ private struct ToolResultImageView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open image")
-                .accessibilityLabel("Open generated image")
+                .accessibilityLabel("Open image")
+                .reviewAcceptanceProbe("agent.tool.image",
+                    text: "\(Int(image.size.width))x\(Int(image.size.height))")
                 .sheet(isPresented: $showsPreview) {
                     ToolResultImagePreview(image: image)
                 }
@@ -1162,7 +1172,7 @@ private struct ToolResultImagePreview: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.sm) {
-                Text("Generated image")
+                Text("Image")
                     .interfaceFont(
                         size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
@@ -1178,12 +1188,14 @@ private struct ToolResultImagePreview: View {
                 }
                 .buttonStyle(.capsule)
                 .disabled(zoomScale <= AppTheme.ComponentSize.toolImageViewerMinZoom)
+                .reviewAcceptanceProbe("agent.tool.image.smaller", state: zoomScale > AppTheme.ComponentSize.toolImageViewerMinZoom)
 
                 Button("Fit") {
                     zoomScale = AppTheme.ComponentSize.toolImageViewerMinZoom
                 }
                 .buttonStyle(.capsule)
                 .disabled(zoomScale == AppTheme.ComponentSize.toolImageViewerMinZoom)
+                .reviewAcceptanceProbe("agent.tool.image.fit", state: zoomScale != AppTheme.ComponentSize.toolImageViewerMinZoom)
 
                 Button {
                     zoomScale = limitedZoom(
@@ -1194,10 +1206,12 @@ private struct ToolResultImagePreview: View {
                 }
                 .buttonStyle(.capsule)
                 .disabled(zoomScale >= AppTheme.ComponentSize.toolImageViewerMaxZoom)
+                .reviewAcceptanceProbe("agent.tool.image.larger", state: zoomScale < AppTheme.ComponentSize.toolImageViewerMaxZoom)
 
                 Button("Done") { dismiss() }
                     .buttonStyle(.capsule(.prominent))
                     .keyboardShortcut(.cancelAction)
+                    .reviewAcceptanceProbe("agent.tool.image.done")
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.vertical, AppTheme.Spacing.md)
@@ -1236,7 +1250,8 @@ private struct ToolResultImagePreview: View {
             idealHeight: AppTheme.ComponentSize.toolImageViewerIdeal.height
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Generated image preview")
+        .accessibilityLabel("Image preview")
+        .reviewAcceptanceProbe("agent.tool.image.preview", text: "\(Int(image.size.width))x\(Int(image.size.height))")
     }
 
     private func limitedZoom(_ scale: CGFloat) -> CGFloat {

@@ -1,5 +1,48 @@
 import SwiftUI
 
+@MainActor
+struct GeneralSettingsServices {
+    let notifications: () -> Bool
+    let saveNotifications: (Bool) -> Void
+    let configureNotifications: () -> Void
+    let telemetry: () -> Bool
+    let launchTelemetry: Bool
+    let saveTelemetry: (Bool) -> Void
+
+    static var live: Self {
+        .init(notifications: { AppNotifications.isEnabled }, saveNotifications: { AppNotifications.isEnabled = $0 },
+            configureNotifications: { AppNotifications.configure() }, telemetry: { Telemetry.isEnabled },
+            launchTelemetry: Telemetry.enabledForCurrentLaunch, saveTelemetry: { Telemetry.isEnabled = $0 })
+    }
+}
+
+@MainActor
+struct SettingsServices {
+    let defaults: UserDefaults
+    let catalog: ModelCatalog
+    let preferences: ModelPreferences
+    let research: ModelCapabilityResearchController
+    let providers: ProviderSettingsConnections
+    let agent: AgentSettingsServices
+    let externalMCP: ExternalMcpServers.Dependencies
+    let storage: StorageSettingsServices
+    let plugins: PluginManager
+    let pluginActions: PluginSettingsServices
+    let providerActivation: () -> ProviderActivation
+    let general: GeneralSettingsServices
+    var modelDiscovery: ModelDiscoveryActions = .live
+
+    static var live: Self {
+        .init(defaults: .standard, catalog: .shared, preferences: .shared, research: .shared,
+            providers: .live, agent: .live, externalMCP: .live, storage: .live,
+            plugins: PluginManager(), pluginActions: .live, providerActivation: { .current() }, general: .live)
+    }
+
+    func activation() -> ProviderActivation {
+        providerActivation()
+    }
+}
+
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case agent
@@ -52,10 +95,13 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @State private var selectedTab: SettingsTab
-    @State private var pluginManager = PluginManager()
+    @State private var pluginManager: PluginManager
+    private let services: SettingsServices
 
-    init(initialTab: SettingsTab = .general) {
+    init(initialTab: SettingsTab = .general, services: SettingsServices = .live) {
+        self.services = services
         _selectedTab = State(initialValue: initialTab)
+        _pluginManager = State(initialValue: services.plugins)
     }
 
     private var visibleTabs: [SettingsTab] {
@@ -70,9 +116,10 @@ struct SettingsView: View {
                 pluginManager: pluginManager
             )
         } detail: {
-            SettingsDetail(tab: selectedTab, pluginManager: pluginManager)
+            SettingsDetail(tab: selectedTab, services: services, openProviders: { selectedTab = .providers })
                 .id(selectedTab)
         }
+        .defaultAppStorage(services.defaults)
         .onAppear {
             if !visibleTabs.contains(selectedTab) {
                 selectedTab = visibleTabs.first ?? .general
@@ -152,6 +199,7 @@ private struct SettingsSidebar: View {
                     trailingHelp: attention?.help ?? "",
                     action: { selectedTab = tab }
                 )
+                .reviewAcceptanceProbe("settings.tab." + tab.rawValue, text: String(selectedTab == tab))
             }
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)
@@ -161,7 +209,8 @@ private struct SettingsSidebar: View {
 
 private struct SettingsDetail: View {
     let tab: SettingsTab
-    let pluginManager: PluginManager
+    let services: SettingsServices
+    let openProviders: @MainActor () -> Void
 
     var body: some View {
         SettingsPage(title: tab.label, subtitle: tab.subtitle) {
@@ -169,18 +218,21 @@ private struct SettingsDetail: View {
                 switch tab {
                 case .general:
                     AppearancePane()
-                    NotificationsPane()
-                    PrivacyPane()
+                    NotificationsPane(enabled: services.general.notifications(), save: services.general.saveNotifications,
+                        configure: services.general.configureNotifications)
+                    PrivacyPane(enabled: services.general.telemetry(), launchEnabled: services.general.launchTelemetry,
+                        save: services.general.saveTelemetry)
                 case .models:
-                    ModelsPane()
+                    ModelsPane(catalog: services.catalog, preferences: services.preferences, research: services.research,
+                        activation: { services.activation() }, openProviders: openProviders, discovery: services.modelDiscovery)
                 case .agent:
-                    AgentPane()
+                    AgentPane(services: services.agent, mcpDependencies: services.externalMCP, defaults: services.defaults)
                 case .plugins:
-                    PluginsPane(manager: pluginManager)
+                    PluginsPane(manager: services.plugins, services: services.pluginActions)
                 case .providers:
-                    ProvidersPane()
+                    ProvidersPane(catalog: services.catalog, connections: services.providers, discovery: services.modelDiscovery)
                 case .storage:
-                    StoragePane()
+                    StoragePane(services: services.storage, defaults: services.defaults)
                 }
             }
         }
@@ -459,6 +511,7 @@ struct SettingsToggleRow: View {
     var body: some View {
         SettingsRow(title: title, subtitle: subtitle) {
             Toggle("", isOn: $isOn)
+                .reviewAcceptanceProbe("settings.toggle." + title, text: String(isOn))
                 .labelsHidden()
                 .accessibilityLabel(title)
                 .toggleStyle(.switch)
@@ -473,15 +526,17 @@ final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private var hosting: NSHostingController<AnyView>?
+    private let services: SettingsServices
 
-    private init() {
-        let initialView = SettingsView().interfaceStyle()
-        let hosting = NSHostingController(rootView: AnyView(initialView.interfaceStyle()))
+    init(services: SettingsServices = .live, savesFrame: Bool = true) {
+        self.services = services
+        let initialView = SettingsView(services: services).interfaceStyle()
+        let hosting = NSHostingController(rootView: AnyView(initialView.defaultAppStorage(services.defaults)))
         let window = NSWindow(contentViewController: hosting)
         window.setContentSize(AppTheme.Window.settingsDefault)
         window.minSize = AppTheme.Window.settingsMin
         window.title = "Settings"
-        window.setFrameAutosaveName("NexGenVideoSettings-v2")
+        if savesFrame { window.setFrameAutosaveName("NexGenVideoSettings-v2") }
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = AppTheme.Background.surface
         window.isOpaque = true
@@ -500,9 +555,10 @@ final class SettingsWindowController: NSWindowController {
     func show(tab: SettingsTab? = nil) {
         if let tab {
             hosting?.rootView = AnyView(
-                SettingsView(initialTab: tab)
+                SettingsView(initialTab: tab, services: services)
                     .id(UUID())
                     .interfaceStyle()
+                    .defaultAppStorage(services.defaults)
             )
         }
         showWindow(nil)

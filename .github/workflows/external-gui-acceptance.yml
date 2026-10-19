@@ -1,0 +1,160 @@
+name: Installed App User Journey
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_run_id:
+        description: Run containing the already built workspace-ui-app artifact
+        required: true
+        type: string
+      interface_scale:
+        description: Resume one failed text size or exercise all three
+        type: choice
+        options: [all, '1', '1.25', '1.5']
+        default: all
+  workflow_call:
+    inputs:
+      runtime_run_id:
+        type: string
+        default: ''
+      interface_scale:
+        type: string
+        default: all
+      runtime_artifact:
+        type: string
+        default: workspace-ui-app
+      artifact_mode:
+        type: string
+        default: app
+      expected_dmg_sha256:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: external-gui-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  cases:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scales: ${{ steps.select.outputs.scales }}
+    steps:
+      - name: Select independent user journeys
+        id: select
+        env:
+          INTERFACE_SCALE: ${{ inputs.interface_scale }}
+          ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          scale = os.environ['INTERFACE_SCALE']
+          if scale not in {'all', '1', '1.25', '1.5'}:
+              raise SystemExit('Unknown interface text size')
+          mode = os.environ['ARTIFACT_MODE']
+          if mode not in {'app', 'dmg'}:
+              raise SystemExit('Unknown app artifact kind')
+          if mode == 'dmg' and not re.fullmatch('[a-f0-9]{64}', os.environ['EXPECTED_DMG_SHA256']):
+              raise SystemExit('DMG acceptance requires its exact publication hash')
+          scales = ['1', '1.25', '1.5'] if scale == 'all' else [scale]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('scales=' + json.dumps(scales) + '\n')
+          PY
+
+  acceptance:
+    needs: cases
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        scale: ${{ fromJSON(needs.cases.outputs.scales) }}
+    name: Normal app at ${{ matrix.scale }} text size
+    runs-on: macrunner
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
+          run-id: ${{ inputs.runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/external-runtime
+      - name: Verify the existing app belongs to this source
+        if: inputs.artifact_mode != 'dmg'
+        id: app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'external-runtime'
+          receipt = json.loads((root / 'workspace-ui-input.json').read_text())
+          if (receipt.get('schema') != 'nexgenvideo/workspace-ui-input/1'
+              or receipt.get('sourceSHA') != os.environ['GITHUB_SHA']
+              or any(not isinstance(receipt.get(key), str) or not re.fullmatch('[a-f0-9]{64}', receipt[key])
+                     for key in ('archiveSHA256', 'appTreeSHA256'))):
+              raise SystemExit('Runtime artifact has no matching producer receipt')
+          with (root / 'workspace-ui.tar.gz').open('rb') as archive:
+              digest = hashlib.file_digest(archive, 'sha256').hexdigest()
+          if digest != receipt['archiveSHA256']:
+              raise SystemExit('Runtime archive differs from the producer receipt')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('tree_sha256=' + receipt['appTreeSHA256'] + '\n')
+          PY
+          tar -xzf "$RUNNER_TEMP/external-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/external-runtime"
+          APP="$RUNNER_TEMP/external-runtime/NexGenVideo.app"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$GITHUB_SHA" ]
+          DIGEST="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$APP")"
+          EXPECTED="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["appTreeSHA256"])' "$RUNNER_TEMP/external-runtime/workspace-ui-input.json")"
+          [ "$DIGEST" = "$EXPECTED" ]
+      - name: Exercise the normal installed app through external input
+        if: inputs.artifact_mode != 'dmg'
+        env:
+          APP_TREE_SHA256: ${{ steps.app.outputs.tree_sha256 }}
+          INTERFACE_SCALE: ${{ matrix.scale }}
+        run: |
+          python3 scripts/external-gui/acceptance.py run \
+            --app "$RUNNER_TEMP/external-runtime/NexGenVideo.app" \
+            --app-tree-sha256 "$APP_TREE_SHA256" --source-sha "$GITHUB_SHA" \
+            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui"
+      - name: Install and exercise the exact publication DMG
+        if: inputs.artifact_mode == 'dmg'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          INTERFACE_SCALE: ${{ matrix.scale }}
+        run: |
+          python3 scripts/external-gui/acceptance.py run \
+            --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
+            --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$GITHUB_SHA" \
+            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui"
+      - name: Validate actual journey and exported-file evidence
+        env:
+          ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_MODE" = dmg ]; then
+            python3 scripts/external-gui/acceptance.py validate \
+              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" \
+              --dmg-sha256 "$EXPECTED_DMG_SHA256"
+          else
+            cp "$RUNNER_TEMP/external-runtime/workspace-ui-input.json" "$RUNNER_TEMP/external-gui/runtime-input.json"
+            python3 scripts/external-gui/acceptance.py validate \
+              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: external-gui-${{ inputs.artifact_mode || 'app' }}-${{ matrix.scale }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/external-gui
+          if-no-files-found: warn
+          retention-days: 14

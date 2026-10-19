@@ -41,14 +41,10 @@ struct ProjectPackBindingTests {
     }
 
     @Test func mutationGuardRejectsSameIDSiblingBindings() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let project = try directory()
         defer { try? FileManager.default.removeItem(at: project) }
-        let trusted = try #require(ProjectPackBinding(
-            id: "musicvideo",
-            version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
-        ))
+        let trusted = try CurrentMusicvideoFixture.binding
         try ProjectPluginSettings.setActivePlugin(trusted, projectURL: project)
 
         #expect(try ProjectPackGate.requireMutation(

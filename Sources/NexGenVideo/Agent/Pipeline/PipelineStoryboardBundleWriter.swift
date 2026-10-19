@@ -1,0 +1,330 @@
+import Foundation
+import NexGenEngine
+
+enum PipelineStoryboardBundleWriter {
+    struct NativeShotIdentity: Sendable {
+        let shotID: String
+        fileprivate init() { shotID = "shot-" + UUID().uuidString.lowercased() }
+    }
+
+    static func allocateNativeShotIdentity() -> NativeShotIdentity { NativeShotIdentity() }
+
+    struct Proposal: Codable, Sendable {
+        let summary: String
+        let steps: [StoryboardV2.StoryStep]
+        let bindings: [StoryboardCausalityV2.Binding]
+        let timebase: RationalTimebaseV1
+        let mode: Mode
+        let rangeStartTicks: Int64
+        let rangeDurationTicks: Int64
+        let audio: StoryboardTimingV1.AudioBinding?
+        let shots: [ShotProposal]
+    }
+
+    struct ShotProposal: Codable, Sendable {
+        let id: String?
+        let primaryStepID: String
+        let additionalStepIDs: [String]
+        let startTicks: Int64
+        let durationTicks: Int64
+        let cameraID: String?
+        let framing: StoryboardTimingV1.FramingIntent
+        let moments: [StoryboardTimingV1.Moment]
+    }
+
+    static func write(_ proposal: Proposal, origin: PlanningArtifactHeaderV1.Origin,
+                      access: PipelinePlanningWriteAccess,
+                      nativeIdentities: [NativeShotIdentity] = [],
+                      nativeReassignments: [PipelineStoryboardImageReassignment.Prepared] = [],
+                      generatedSketches: [PipelineStoryboardSketchGeneration.Prepared] = [],
+                      derivedSketches: [PipelineSpatialDerivationWriter.PreparedSketch] = [],
+                      nativeMediaSketches: [PipelineStoryboardNativeMedia.Prepared] = []) throws -> StoryboardBundleSnapshot {
+        guard access.phase == "storyboard" else { throw GateBlocked("Storyboard has a different phase owner.") }
+        let root = access.dataRoot
+        let script = try PlanningWriterIO.script(dataRoot: root)
+        var boundAudio = proposal.audio
+        var playbackReferences: [CanonicalArtifactReferenceV1] = []
+        if access.workflow.packID == "musicvideo" {
+            let range = try PlanningWriterIO.read(PlaybackRangeV1.self, at: PlaybackRangeV1.currentPath, dataRoot: root)
+            playbackReferences = try PipelinePlaybackRangeWriter.bindingReferences(range, dataRoot: root,
+                workflowID: access.workflow.contractID)
+            let plannedStart: Int64 = proposal.mode == .multicam ? 0 : range.startTicks
+            let plannedDuration = proposal.mode == .multicam ? range.audioDurationTicks : range.durationTicks
+            guard let track = range.header.inputs.first(where: { $0.role == "musicvideo.track" }) else {
+                throw GateBlocked("The playback range has no current original track binding.")
+            }
+            let expectedAudio = StoryboardTimingV1.AudioBinding(source: track, offsetTicks: 0, durationTicks: range.audioDurationTicks)
+            guard proposal.timebase == range.timebase, proposal.rangeStartTicks == plannedStart,
+                  proposal.rangeDurationTicks == plannedDuration, proposal.audio == nil || proposal.audio == expectedAudio else {
+                throw GateBlocked("Storyboard timing and original song binding must preserve the selected playback range. Multicam source plans retain the full song; its explicit excerpt applies at output assembly.")
+            }
+            boundAudio = expectedAudio
+        }
+        let revision = try PlanningWriterIO.nextRevision(directory: "storyboard", suffix: ".v2.yaml", dataRoot: root)
+        let prior = try ProductionPlanningStoreV1.readStoryboardIdentityHistory(dataRoot: root, through: revision - 1)
+        let scriptReference = try PlanningWriterIO.reference(ScriptV1.versionPath(script.header.revision),
+            id: "script", role: "core.script", dataRoot: root)
+        let header = PlanningArtifactHeaderV1(projectID: script.header.projectID, revision: revision,
+            origin: origin, inputs: [scriptReference])
+        let board = StoryboardV2(header: header, summary: proposal.summary, steps: proposal.steps)
+        let boardBytes = Data(try YAMLCoding.encode(board).utf8)
+        let boardReference = PlanningWriterIO.reference(StoryboardV2.versionPath(revision), id: "storyboard",
+            role: "core.storyboard-bundle", bytes: boardBytes)
+        let causalHeader = PlanningArtifactHeaderV1(projectID: header.projectID, revision: revision,
+            origin: origin, inputs: [scriptReference, boardReference])
+        let causality = StoryboardCausalityV2(header: causalHeader, bindings: proposal.bindings)
+        let causalityBytes = try PlanningWriterIO.json(causality)
+        let causalityReference = PlanningWriterIO.reference(StoryboardCausalityV2.versionPath(revision),
+            id: "storyboard.causality", role: "core.storyboard-bundle", bytes: causalityBytes)
+        var identityInputs = [boardReference]
+        if let prior {
+            identityInputs.append(try PlanningWriterIO.reference(StoryboardIdentityV1.versionPath(prior.header.revision),
+                id: "storyboard.prior-identity", role: "core.storyboard-identity-history", dataRoot: root))
+        }
+        var entries = prior?.entries ?? []
+        let priorEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.shotID, $0) })
+        guard Set(proposal.steps.map(\.id)).count == proposal.steps.count else {
+            throw GateBlocked("Storyboard step IDs must be unique.")
+        }
+        let steps = Dictionary(uniqueKeysWithValues: proposal.steps.map { ($0.id, $0) })
+        let allocated = Set(nativeIdentities.map(\.shotID))
+        guard allocated.count == nativeIdentities.count else { throw GateBlocked("Native shot identities must be unique.") }
+        var consumed = Set<String>()
+        var shots: [StoryboardTimingV1.PlannedShot] = []
+        var retained = Set<String>()
+        for shot in proposal.shots {
+            guard let step = steps[shot.primaryStepID] else { throw GateBlocked("A planned shot has no Storyboard step.") }
+            let actionHash = FileDigest.sha256(of: Data(step.action.utf8))
+            let id: String
+            if let existingID = shot.id {
+                if allocated.contains(existingID) {
+                    guard priorEntries[existingID] == nil, consumed.insert(existingID).inserted else {
+                        throw GateBlocked("A native shot identity was already used.")
+                    }
+                    entries.append(.init(shotID: existingID, primaryStepID: shot.primaryStepID,
+                        actionSHA256: actionHash, introducedRevision: revision))
+                } else {
+                    guard let old = priorEntries[existingID], old.retiredRevision == nil,
+                          old.primaryStepID == shot.primaryStepID, old.actionSHA256 == actionHash else {
+                        throw GateBlocked("A changed or retired action needs a new planned-shot identity. Omit its shot ID to create one.")
+                    }
+                }
+                id = existingID
+            } else {
+                id = "shot-" + UUID().uuidString.lowercased()
+                entries.append(.init(shotID: id, primaryStepID: shot.primaryStepID,
+                    actionSHA256: actionHash, introducedRevision: revision))
+            }
+            guard retained.insert(id).inserted else { throw GateBlocked("A planned shot occurs more than once.") }
+            shots.append(.init(id: id, primaryStepID: shot.primaryStepID, additionalStepIDs: shot.additionalStepIDs,
+                startTicks: shot.startTicks, durationTicks: shot.durationTicks, cameraID: shot.cameraID,
+                framing: shot.framing, moments: shot.moments))
+        }
+        guard consumed == allocated else { throw GateBlocked("Every allocated native shot identity must be published exactly once.") }
+        for reassignment in nativeReassignments {
+            guard let shot = shots.first(where: { $0.id == reassignment.targetShotID }),
+                  let moment = shot.moments.first(where: { $0.id == reassignment.targetMomentID }),
+                  moment.asset == reassignment.asset else {
+                throw GateBlocked("A native sketch reassignment does not match its target shot and moment.")
+            }
+        }
+        for sketch in generatedSketches {
+            guard let shot = shots.first(where: { $0.id == sketch.targetShotID }),
+                  let moment = shot.moments.first(where: { $0.id == sketch.targetMomentID }),
+                  moment.asset == sketch.asset else { throw GateBlocked("The generated sketch does not match its exact target moment.") }
+        }
+        for sketch in derivedSketches {
+            guard let shot = shots.first(where: { $0.id == sketch.targetShotID }),
+                  let moment = shot.moments.first(where: { $0.id == sketch.targetMomentID }),
+                  moment.asset == sketch.asset else { throw GateBlocked("The spatial view does not match its target Storyboard moment.") }
+        }
+        for sketch in nativeMediaSketches {
+            guard let shot = shots.first(where: { $0.id == sketch.targetShotID }),
+                  let moment = shot.moments.first(where: { $0.id == sketch.targetMomentID }),
+                  moment.asset == sketch.asset else { throw GateBlocked("The native source sketch does not match its exact target moment.") }
+        }
+        entries = entries.map { old in
+            guard old.retiredRevision == nil, !retained.contains(old.shotID) else { return old }
+            return .init(shotID: old.shotID, primaryStepID: old.primaryStepID, actionSHA256: old.actionSHA256,
+                introducedRevision: old.introducedRevision, retiredRevision: revision)
+        }
+        let identity = StoryboardIdentityV1(header: .init(projectID: header.projectID, revision: revision,
+            origin: origin, inputs: identityInputs), entries: entries)
+        let identityBytes = try PlanningWriterIO.json(identity)
+        let identityReference = PlanningWriterIO.reference(StoryboardIdentityV1.versionPath(revision),
+            id: "storyboard.identity", role: "core.storyboard-bundle", bytes: identityBytes)
+        var timingInputs = [scriptReference, boardReference, causalityReference, identityReference]
+        var boundPaths = Set(timingInputs.map(\.path))
+        for reference in playbackReferences + [boundAudio?.source].compactMap({ $0 }) {
+            _ = try ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: root)
+            if boundPaths.insert(reference.path).inserted {
+                timingInputs.append(.init(id: "storyboard.input.\(timingInputs.count)", role: reference.role,
+                    path: reference.path, sha256: reference.sha256))
+            } else if timingInputs.first(where: { $0.path == reference.path })?.sha256 != reference.sha256 {
+                throw GateBlocked("Storyboard audio and playback range inputs disagree about their source bytes.")
+            }
+        }
+        let timing = StoryboardTimingV1(header: .init(projectID: header.projectID, revision: revision,
+            origin: origin, inputs: timingInputs),
+            timebase: proposal.timebase, mode: proposal.mode, rangeStartTicks: proposal.rangeStartTicks,
+            rangeDurationTicks: proposal.rangeDurationTicks, audio: boundAudio, shots: shots)
+        try StoryboardBundleValidator.validate(storyboard: board, causality: causality, timing: timing,
+            identity: identity, script: script, priorIdentity: prior, requireVisuals: false)
+        let timingBytes = try PlanningWriterIO.json(timing)
+        let versionPaths = [StoryboardV2.versionPath(revision), StoryboardCausalityV2.versionPath(revision),
+                            StoryboardIdentityV1.versionPath(revision), StoryboardTimingV1.versionPath(revision)]
+        let currentPaths = [StoryboardV2.currentPath, StoryboardCausalityV2.currentPath,
+                            StoryboardIdentityV1.currentPath, StoryboardTimingV1.currentPath]
+        let bytes = [boardBytes, causalityBytes, identityBytes, timingBytes]
+        let bundleFiles: [(path: String, bytes: Data)] = versionPaths.indices.flatMap {
+            [(versionPaths[$0], bytes[$0]), (currentPaths[$0], bytes[$0])]
+        }
+        let reassignmentFiles = nativeReassignments.flatMap(\.files) + generatedSketches.flatMap(\.files) + derivedSketches.flatMap(\.files) + nativeMediaSketches.flatMap(\.files)
+        for file in reassignmentFiles {
+            guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(file.path).path) else {
+                throw GateBlocked("Native sketch reassignment receipts are immutable.")
+            }
+        }
+        let files = bundleFiles + reassignmentFiles
+        guard Set(files.map { $0.0 }).count == files.count else { throw GateBlocked("Storyboard publication paths must be unique.") }
+        try access.publish(files) {
+            let snapshot = try PlanningWriterIO.storyboard(dataRoot: root, requireVisuals: false)
+            let preparedTargets = nativeReassignments.map { ($0.targetMomentID, $0.asset) }
+                + generatedSketches.map { ($0.targetMomentID, $0.asset) }
+                + derivedSketches.map { ($0.targetMomentID, $0.asset) }
+                + nativeMediaSketches.map { ($0.targetMomentID, $0.asset) }
+            for (momentID, asset) in preparedTargets {
+                guard snapshot.sketchProblems[momentID] == nil, snapshot.sketchProofs[asset.proof.path] != nil else {
+                    throw GateBlocked("A prepared sketch no longer matches its target intent, framing or image bytes.")
+                }
+            }
+            for proof in snapshot.sketchProofs.values {
+                try PipelineStoryboardSketchEvidence.requireCurrent(proof, root)
+            }
+        }
+        return try PlanningWriterIO.storyboard(dataRoot: root, requireVisuals: false)
+    }
+
+    static func proposal(from snapshot: StoryboardBundleSnapshot,
+                         replacing momentID: String, in shotID: String,
+                         with asset: StoryboardTimingV1.SketchAsset) -> Proposal {
+        let timing = snapshot.timing
+        return Proposal(summary: snapshot.storyboard.summary, steps: snapshot.storyboard.steps,
+            bindings: snapshot.causality.bindings, timebase: timing.timebase, mode: timing.mode,
+            rangeStartTicks: timing.rangeStartTicks, rangeDurationTicks: timing.rangeDurationTicks,
+            audio: timing.audio, shots: timing.shots.map { shot in
+                ShotProposal(id: shot.id, primaryStepID: shot.primaryStepID, additionalStepIDs: shot.additionalStepIDs,
+                    startTicks: shot.startTicks, durationTicks: shot.durationTicks, cameraID: shot.cameraID,
+                    framing: shot.framing, moments: shot.moments.map { moment in
+                        guard shot.id == shotID, moment.id == momentID else { return moment }
+                        return .init(id: moment.id, offsetTicks: moment.offsetTicks, intent: moment.intent, asset: asset)
+                    })
+            })
+    }
+
+    @MainActor
+    static func attachImage(from url: URL, shotID: String, momentID: String,
+                            expectedFingerprint: String, editor: EditorViewModel) async throws -> StoryboardBundleSnapshot {
+        try await PipelineStoryboardUploadedImageWriter.assign(from: url, shotID: shotID, momentID: momentID,
+            expectedFingerprint: expectedFingerprint, editor: editor)
+    }
+}
+
+enum PipelineStoryboardSketchEvidence {
+    private struct Selection: Codable {
+        let schema: String
+        let receiptID: String
+        let originalName: String
+        let expectedFingerprint: String
+        let proof: StoryboardSketchProofV1
+    }
+
+    static func selectionFile(proof: StoryboardSketchProofV1, receiptID: String,
+                              originalName: String, expectedFingerprint: String) throws -> (path: String, bytes: Data) {
+        let path = try selectionPath(receiptID)
+        let receipt = Selection(schema: "storyboard-sketch-selection/v1", receiptID: receiptID,
+            originalName: originalName, expectedFingerprint: expectedFingerprint, proof: proof)
+        return (path, try PlanningWriterIO.json(receipt))
+    }
+
+    static func recordSelection(proof: StoryboardSketchProofV1, receiptID: String,
+                                originalName: String, expectedFingerprint: String, dataRoot: URL) throws {
+        let file = try selectionFile(proof: proof, receiptID: receiptID,
+            originalName: originalName, expectedFingerprint: expectedFingerprint)
+        let url = dataRoot.appendingPathComponent(file.path)
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw GateBlocked("Sketch selection receipts are immutable.") }
+        _ = try ProjectLocalFile.ensureDirectory("storyboard/sketch-selection-receipts", dataRoot: dataRoot)
+        try file.bytes.write(to: url, options: .atomic)
+    }
+
+    static func requireCurrent(_ proof: StoryboardSketchProofV1, _ dataRoot: URL) throws {
+        try requireCurrent(proof, dataRoot, visited: [])
+    }
+
+    static func references(_ proof: StoryboardSketchProofV1, _ dataRoot: URL) throws -> [CanonicalArtifactReferenceV1] {
+        try references(proof, dataRoot, visited: [])
+    }
+
+    private static func references(_ proof: StoryboardSketchProofV1, _ dataRoot: URL,
+                                   visited: Set<String>) throws -> [CanonicalArtifactReferenceV1] {
+        switch proof.source {
+        case .uploaded(_, let id):
+            return [try PlanningWriterIO.reference(selectionPath(id), id: "sketch-selection.\(id)",
+                role: "core.storyboard-sketch-selection", dataRoot: dataRoot)]
+        case .reassigned(_, let original, let id):
+            guard visited.count < 64, !visited.contains(original.path) else {
+                throw GateBlocked("The sketch reassignment history is invalid.")
+            }
+            let originalProof = try JSONDecoder().decode(StoryboardSketchProofV1.self,
+                from: Data(contentsOf: ProjectLocalFile.requireHash(original.sha256, at: original.path, dataRoot: dataRoot)))
+            return [try PlanningWriterIO.reference(selectionPath(id), id: "sketch-selection.\(id)",
+                role: "core.storyboard-sketch-selection", dataRoot: dataRoot)]
+                + (try references(originalProof, dataRoot, visited: visited.union([original.path])))
+        case .spatialDerived:
+            return try PipelineSpatialDerivationWriter.storyboardReferences(proof, dataRoot: dataRoot)
+        case .sourceFrame, .externalConfirmed:
+            return try PipelineStoryboardNativeMedia.references(proof, dataRoot: dataRoot)
+        case .generated:
+            return []
+        }
+    }
+
+    private static func requireCurrent(_ proof: StoryboardSketchProofV1, _ dataRoot: URL, visited: Set<String>) throws {
+        try proof.requireCurrentBytes(dataRoot: dataRoot)
+        switch proof.source {
+        case .uploaded(_, let receiptID):
+            let receipt = try PlanningWriterIO.read(Selection.self, at: selectionPath(receiptID), dataRoot: dataRoot)
+            guard receipt.schema == "storyboard-sketch-selection/v1", receipt.receiptID == receiptID,
+                  receipt.proof == proof, !receipt.originalName.isEmpty,
+                  receipt.expectedFingerprint.count == 64 else { throw GateBlocked("The sketch's native selection receipt is invalid.") }
+        case .reassigned(let originalImage, let originalProof, let receiptID):
+            guard !visited.contains(originalProof.path), originalImage.sha256 == proof.image.sha256 else {
+                throw GateBlocked("The sketch reassignment history is invalid.")
+            }
+            let receipt = try PlanningWriterIO.read(Selection.self, at: selectionPath(receiptID), dataRoot: dataRoot)
+            guard receipt.schema == "storyboard-sketch-selection/v1", receipt.receiptID == receiptID,
+                  receipt.proof == proof, !receipt.originalName.isEmpty, receipt.expectedFingerprint.count == 64 else {
+                throw GateBlocked("The sketch's native reassignment receipt is invalid.")
+            }
+            let bytes = try Data(contentsOf: ProjectLocalFile.requireHash(originalProof.sha256, at: originalProof.path, dataRoot: dataRoot))
+            let original = try JSONDecoder().decode(StoryboardSketchProofV1.self, from: bytes)
+            guard original.projectID == proof.projectID, original.image == originalImage else {
+                throw GateBlocked("The sketch reassignment does not preserve its original image provenance.")
+            }
+            try requireCurrent(original, dataRoot, visited: visited.union([originalProof.path]))
+        case .generated:
+            try PipelineStoryboardSketchGeneration.requireGenerated(proof, dataRoot: dataRoot)
+        case .spatialDerived:
+            try PipelineSpatialDerivationWriter.requireStoryboardSketch(proof, dataRoot: dataRoot)
+        case .sourceFrame, .externalConfirmed:
+            try PipelineStoryboardNativeMedia.requireCurrent(proof, dataRoot: dataRoot)
+        }
+    }
+
+    private static func selectionPath(_ id: String) throws -> String {
+        guard let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id else {
+            throw GateBlocked("The sketch selection receipt is invalid.")
+        }
+        return "storyboard/sketch-selection-receipts/\(id).v1.json"
+    }
+}

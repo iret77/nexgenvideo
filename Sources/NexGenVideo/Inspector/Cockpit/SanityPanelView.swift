@@ -137,6 +137,7 @@ struct SanityPanelView: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+        .reviewAcceptanceProbe("sanity.finding." + finding.code + "." + (targetShot ?? "project"), text: finding.level.rawValue + ": " + finding.message)
         .onTapGesture {
             // A finding points at a shot — clicking it inspects that shot (docs/UI_UX_CONCEPT.md §4).
             if let shot = targetShot { editor.inspectedObject = .shot(shot) }

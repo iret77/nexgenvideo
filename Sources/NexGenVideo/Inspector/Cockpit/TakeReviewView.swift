@@ -3,9 +3,10 @@ import SwiftUI
 import NexGenEngine
 
 struct TakeReviewView: View {
+    private let onOpen: (() -> Void)?
     @Environment(EditorViewModel.self) private var editor
     @State private var presented = false
-    @State private var takes: [PipelineRenderTakeV1] = []
+    @State private var takes: [TakeChoice] = []
     @State private var selectedID = ""
     @State private var snapshot: TakeReview.Snapshot?
     @State private var player: AVPlayer?
@@ -19,8 +20,19 @@ struct TakeReviewView: View {
     @State private var canSelect = false
     @State private var canWrite = false
 
+    private struct TakeChoice: Identifiable, Sendable {
+        let take: PipelineRenderTakeV1
+        let shotLabel: String
+        var id: String { take.id }
+    }
+
+    init(initialTakeID: String = "", onOpen: (() -> Void)? = nil) {
+        _selectedID = State(initialValue: initialTakeID)
+        self.onOpen = onOpen
+    }
+
     var body: some View {
-        Button("Review video takes") { presented = true }
+        Button("Review video takes") { onOpen?(); presented = true }
             .buttonStyle(InlineActionButtonStyle())
             .reviewAcceptanceProbe("take.open")
             .sheet(isPresented: $presented) { reviewSheet }
@@ -39,14 +51,16 @@ struct TakeReviewView: View {
             else {
                 Picker("Take", selection: $selectedID) {
                     Text("Choose a take").tag("")
-                    ForEach(takes, id: \.id) { take in
-                        Text("\(take.shotID) · \(take.phase) · \(take.recordedAt) · \(take.id.prefix(8))").tag(take.id)
+                    ForEach(Array(takes.enumerated()), id: \.element.id) { index, choice in
+                        let phase = choice.take.phase == "preview" ? String(localized: "Draft") : String(localized: "Production")
+                        Text("\(choice.shotLabel) · \(phase) · Take \(index + 1) · \(choice.take.recordedAt)").tag(choice.id)
                     }
                 }
                     .reviewAcceptanceProbe("take.picker", text: selectedID)
                     .disabled(busy)
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
+                        .reviewAcceptanceProbe("take.preview.player")
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
                     TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
@@ -70,7 +84,7 @@ struct TakeReviewView: View {
                             busy = false
                         }
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .reviewAcceptanceProbe("take.use")
+                        .reviewAcceptanceProbe("take.use", state: !busy && canSelect && canWrite)
                         .disabled(busy || !canSelect || !canWrite)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
@@ -81,7 +95,7 @@ struct TakeReviewView: View {
                                 .foregroundStyle(AppTheme.Text.secondaryColor)
                         }
                         Picker("Finding", selection: $verdict) {
-                            Text("Meets the approved plan").tag(TakeReview.Verdict.conforms)
+                            Text(verdictLabel(.conforms)).tag(TakeReview.Verdict.conforms)
                             Text("Reject").tag(TakeReview.Verdict.rejected)
                             if pass != .identity { Text("Accept deviation — explain").tag(TakeReview.Verdict.acceptedDeviation) }
                             if pass != .identity { Text("Not applicable — explain").tag(TakeReview.Verdict.notApplicable) }
@@ -95,32 +109,35 @@ struct TakeReviewView: View {
                             TextField("End seconds", value: $end, format: .number)
                                 .reviewAcceptanceProbe("take.end", text: String(end))
                         }
+                        let canRecord = !busy && !observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            && start.isFinite && end.isFinite && start >= 0 && end > start && end <= snapshot.durationSeconds
                         Button("Record pass") {
                             findings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: start, endSeconds: end))
                             observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds
                         }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .reviewAcceptanceProbe("take.record-pass", text: String(findings.count))
-                        .disabled(busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
+                        .reviewAcceptanceProbe("take.record-pass", state: canRecord, text: String(findings.count))
+                        .disabled(!canRecord)
                     } else {
                         ForEach(findings, id: \.pass) { finding in
-                            Text("\(finding.pass.label): \(finding.verdict.rawValue) — \(finding.observation)")
+                            Text("\(finding.pass.label): \(verdictLabel(finding.verdict)) — \(finding.observation)")
                         }
                         Button("Save take review") {
                             busy = true
                             Task {
                                 do {
                                     try await TakeReview.save(snapshot: snapshot, findings: findings, editor: editor)
+                                    await editor.refreshEngineState()
                                     message = "Review saved for this exact take. Rejected takes cannot pass Render approval."
                                     canSelect = findings.count == TakeReview.Pass.allCases.count && findings.allSatisfy { $0.verdict != .rejected }
                                 } catch { message = error.localizedDescription }
                                 busy = false
                             }
                         }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                            .reviewAcceptanceProbe("take.save", text: String(findings.count))
+                            .reviewAcceptanceProbe("take.save", state: !busy && canWrite, text: String(findings.count))
                             .disabled(busy || !canWrite)
                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
+                            .reviewAcceptanceProbe("take.review-again", state: !busy)
                             .buttonStyle(InlineActionButtonStyle()).disabled(busy)
                     }
                 }
@@ -145,16 +162,21 @@ struct TakeReviewView: View {
         canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
             declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
         do {
+            let productionV2 = editor.usesProductionPlanningV2
             let values = try await Task.detached(priority: .userInitiated) {
                 let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
+                let projection = productionV2 ? try ProductionPlanningLineageV2.projection(dataRoot: root) : nil
                 return try ["preview", "final"].flatMap { phase in
                     try PipelineRenderTakeStore.load(dataRoot: root, project: project, phase: phase).takeIDs.map {
-                        try PipelineRenderTakeStore.take(id: $0, dataRoot: root)
+                        let take = try PipelineRenderTakeStore.take(id: $0, dataRoot: root)
+                        let number = projection?.shots.firstIndex { $0.id == take.shotID }
+                        return TakeChoice(take: take, shotLabel: number.map { String(localized: "Shot \($0 + 1)") }
+                            ?? (productionV2 ? String(localized: "Previous plan shot") : take.shotID))
                     }
                 }
             }.value
             guard editor.workingRoot == home else { return }
-            takes = values.sorted { $0.recordedAt > $1.recordedAt }
+            takes = values.sorted { $0.take.recordedAt > $1.take.recordedAt }
         } catch { if editor.workingRoot == home { message = error.localizedDescription } }
     }
 
@@ -173,5 +195,14 @@ struct TakeReviewView: View {
                 findings = review.findings; canSelect = review.accepted
             }
         } catch { if selectedID == id, editor.workingRoot == home { message = error.localizedDescription } }
+    }
+
+    private func verdictLabel(_ value: TakeReview.Verdict) -> String {
+        switch value {
+        case .conforms: String(localized: "Meets the approved plan")
+        case .rejected: String(localized: "Rejected")
+        case .acceptedDeviation: String(localized: "Accepted deviation")
+        case .notApplicable: String(localized: "Not applicable")
+        }
     }
 }

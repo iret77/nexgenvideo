@@ -437,6 +437,7 @@ enum AppTheme {
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentDecisionMaxHeight: CGFloat = 318
         static let productionArtifactMinHeight: CGFloat = 120
+        static let productionDecisionSummaryMinHeight: CGFloat = 48
         static let choicePickerIdealWidth: CGFloat = 180
         static let choicePickerHeight: CGFloat = 32
         static let agentBlockLabelWidth: CGFloat = 96
@@ -467,6 +468,11 @@ enum AppTheme {
         static let storyboardCardMinHeight: CGFloat = 130
         static let activityFlyoutWidth: CGFloat = 480
         static let activityFlyoutHeight: CGFloat = 560
+        static let productionDockMaximumFraction: CGFloat = 0.5
+        static let productionDockStatusLineHeight: CGFloat = 20
+        static let productionDecisionReviewWidth: CGFloat = 720
+        static let productionDecisionReviewHeight: CGFloat = 500
+        static let productionAssetPreviewHeight: CGFloat = 220
 
         static let mediaFolderTreeMin: CGFloat = 180
         static let mediaFolderTreeDefault: CGFloat = 220

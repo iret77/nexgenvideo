@@ -35,14 +35,14 @@ struct ShotlistPanelView: View {
         case .idle, .loading:
             centeredProgress()
         case .failed(let error):
-            CockpitStateView.error(error, title: "Couldn't load the shotlist",
-                                   subject: "the shotlist",
+            CockpitStateView.error(error, title: "Couldn't load the Shot List",
+                                   subject: "the Shot List",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
                                    isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
-            CockpitStateView.empty(icon: "film.stack", title: "No shotlist yet",
-                                   message: "This project doesn't have a shotlist.")
+            CockpitStateView.empty(icon: "film.stack", title: "No Shot List yet",
+                                   message: "This project doesn't have a Shot List.")
         case .loaded(.some(let data)):
             loadedBody(data)
         }
@@ -52,7 +52,7 @@ struct ShotlistPanelView: View {
     private func loadedBody(_ data: ShotlistData) -> some View {
         if data.shots.isEmpty {
             CockpitStateView.empty(icon: "film.stack", title: "No shots",
-                                   message: "This shotlist has no shots yet.")
+                                   message: "This Shot List has no shots yet.")
         } else {
             let hybrid = isHybrid(data)
             let shots = filtered(data.shots)

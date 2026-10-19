@@ -110,10 +110,7 @@ final class ClaudeCodeRuntime {
                 line: ClaudeCodeLaunch.userMessageLine(payload, imageBlocks: imageBlocks)
             ) == true else {
                 generation &+= 1
-                readTask?.cancel()
-                readTask = nil
-                process?.terminate()
-                process = nil
+                retireCurrentProcess()
                 fail("Claude Code stopped before the next turn could start.")
                 return false
             }
@@ -124,11 +121,29 @@ final class ClaudeCodeRuntime {
 
     func stop() {
         generation &+= 1
-        readTask?.cancel()
-        readTask = nil
-        process?.terminate()
-        process = nil
+        retireCurrentProcess()
         onUpdate(mapper.messages, false)
+    }
+
+    private func retireCurrentProcess() {
+        let reader = readTask
+        reader?.cancel()
+        readTask = nil
+        let child = process
+        child?.terminate()
+        process = nil
+        let previous = stopDrain
+        stopDrain = Task { @MainActor in
+            let priorStopped = await previous?.value ?? true
+            await child?.shutdownAndWait()
+            await reader?.value
+            return priorStopped && (child.map { !$0.isRunning && $0.exitStatus != nil } ?? true)
+        }
+    }
+
+    func waitUntilStopped() async -> Bool {
+        let drained = await stopDrain?.value ?? true
+        return drained && process == nil
     }
 
     /// Returns true if the process started (and the first message was sent); false on failure
@@ -169,8 +184,7 @@ final class ClaudeCodeRuntime {
             guard newProcess.send(
                 line: ClaudeCodeLaunch.userMessageLine(firstMessage, imageBlocks: imageBlocks)
             ) else {
-                newProcess.terminate()
-                process = nil
+                retireCurrentProcess()
                 fail("Failed to send the first turn to Claude Code.")
                 return false
             }
@@ -201,8 +215,7 @@ final class ClaudeCodeRuntime {
                 case .waiting:
                     continue
                 case .authenticationRequired:
-                    process?.terminate()
-                    process = nil
+                    retireCurrentProcess()
                     onRuntimeFailure?(AgentRuntimeFailure(
                         kind: .authenticationRequired,
                         message: "Claude Code authentication is required."
@@ -312,4 +325,6 @@ final class ClaudeCodeRuntime {
         env["MCP_TOOL_IDLE_TIMEOUT"] = "1800000"
         return env
     }
+
+    private var stopDrain: Task<Bool, Never>?
 }

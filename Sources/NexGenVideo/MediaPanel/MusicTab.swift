@@ -2,12 +2,19 @@ import SwiftUI
 
 struct MusicTab: View {
     @Environment(EditorViewModel.self) var editor
+    private let suppliedServices: GenerationPanelServices?
+    private var services: GenerationPanelServices {
+        suppliedServices ?? (WorkspaceUIAcceptance.isRequested ? editor.generationPanelServicesOverride : nil) ?? .live
+    }
+
+    init(services: GenerationPanelServices? = nil) { self.suppliedServices = services }
 
     @State private var selectedModelId: String?
     @State private var mode: MusicGenerationSubmission.Mode = .videoToMusic
     @State private var prompt: String = ""
     @State private var textDuration: Double = 90
     @State private var isGenerating = false
+    @State private var preparationTask: Task<Void, Never>?
     @State private var generatingLabel = "Generating..."
     /// Runtime feedback distinct from the calm validation guidance below the field: a failed render
     /// (error) or a finished one (success). Auto-clears; never shown in alarm-red for a mere "not
@@ -19,6 +26,7 @@ struct MusicTab: View {
     @State private var genDialog: AgentDialog?
     /// Seeds genDialog's mood section when opened from the Mood submenu.
     @State private var dialogPreselected: [String: Set<String>] = [:]
+    @State private var dialogDraft = AgentDialogDraft()
 
     private struct Banner: Equatable { let text: String; let kind: Kind; enum Kind { case success, error } }
 
@@ -27,10 +35,8 @@ struct MusicTab: View {
     // Usable-only (#159): an activated provider must service the model AND the user hasn't disabled it
     // in Settings → Models — never offer a music model that would fail at request time.
     private var models: [AudioModelConfig] {
-        AudioModelConfig.allModels.filter {
-            $0.category == .music
-                && ModelPreferences.shared.isEnabled($0.id)
-                && GenerationProvider.canRun(modelId: $0.id)
+        services.catalog.audio.filter {
+            $0.category == .music && services.canRun($0.id)
         }
     }
 
@@ -56,7 +62,7 @@ struct MusicTab: View {
     }
     private var isTextMode: Bool { effectiveMode == .textToMusic }
 
-    private var source: EditorViewModel.TimelineSpan? { editor.selectedTimelineSpan() }
+    private var source: EditorViewModel.TimelineSpan? { MusicSourcePreparation.timelineSpan(editor: editor) }
 
     private var spanSeconds: Double {
         guard let source else { return 0 }
@@ -73,7 +79,8 @@ struct MusicTab: View {
     }
 
     private var costDuration: Int {
-        isTextMode ? Int(textDuration.rounded()) : Int(spanSeconds.rounded())
+        guard let model else { return 0 }
+        return (try? MusicSourcePreparation.providerDurationSeconds(spanSeconds: isTextMode ? textDuration : spanSeconds, model: model)) ?? 0
     }
 
     private var estimatedCost: Int? {
@@ -84,27 +91,29 @@ struct MusicTab: View {
     private var validationNote: String? {
         guard let model else { return "No music models available." }
         if isTextMode {
-            if trimmedPrompt.isEmpty { return "Describe the music — or tap Generate to shape it." }
+            if trimmedPrompt.isEmpty { return "Describe the music — or prepare it to choose a direction." }
         } else {
             guard source != nil else {
                 return "Add video to the timeline, then mark a range to score only part of it."
             }
             if let issue = model.validate(spanSeconds: spanSeconds) { return issue }
+            do { _ = try MusicSourcePreparation.providerDurationSeconds(spanSeconds: spanSeconds, model: model) }
+            catch { return error.localizedDescription }
         }
         return nil
     }
 
     private var canGenerate: Bool {
-        guard let model, !isGenerating else { return false }
+        guard let model, !isGenerating, genDialog == nil else { return false }
         // Text mode is always actionable: an empty intent opens the generative shaping dialog
         // rather than blocking. Video mode still needs a valid source span.
         if isTextMode { return true }
-        return source != nil && model.validate(spanSeconds: spanSeconds) == nil
+        return source != nil && (try? MusicSourcePreparation.providerDurationSeconds(spanSeconds: spanSeconds, model: model)) != nil
     }
 
     private var generateLabel: String {
-        if let cost = estimatedCost, cost > 0 { return "Generate · \(CostEstimator.format(cost))" }
-        return "Generate"
+        if let cost = estimatedCost, cost > 0 { return "Prepare Music · \(CostEstimator.format(cost))" }
+        return "Prepare Music"
     }
 
     private var sourceSummary: String {
@@ -131,6 +140,7 @@ struct MusicTab: View {
                     AgentDialogCard(
                         dialog: dialog,
                         preselected: dialogPreselected,
+                        externalDraft: $dialogDraft,
                         accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                         // Route through the ONE shared handler (audit #3). It dispatches on the
                         // dialog's `.generationIntent` purpose to the intent sink installed below.
@@ -153,7 +163,9 @@ struct MusicTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.surfaceColor)
-        .onDisappear { dismissGenerationDialog() }
+        .onAppear { synchronizeDuration() }
+        .onChange(of: model?.id) { _, _ in dismissGenerationDialog(); synchronizeDuration() }
+        .onDisappear { preparationTask?.cancel(); dismissGenerationDialog() }
     }
 
     private var sourceSection: some View {
@@ -165,6 +177,8 @@ struct MusicTab: View {
                         Button("Text to Music") { mode = .textToMusic }
                     } label: { menuValueLabel(modeLabel(effectiveMode)) }
                     .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                    .disabled(isGenerating || genDialog != nil)
+                    .reviewAcceptanceProbe("music.input", state: !isGenerating && genDialog == nil, text: modeLabel(effectiveMode))
                 }
             }
             if isTextMode {
@@ -173,22 +187,33 @@ struct MusicTab: View {
                     label: "Duration",
                     labelHelp: "Length of the generated music. It's placed at the playhead, or at the marked range start."
                 ) {
-                    ScrubbableNumberField(
-                        value: textDuration,
-                        range: Double(model?.minSeconds ?? 1)...Double(model?.maxSeconds ?? 600),
-                        format: "%.0f",
-                        valueSuffix: " s",
-                        onChanged: { textDuration = $0 }
-                    ) { textDuration = $0 }
+                    if let durations = model?.durations, !durations.isEmpty {
+                        Menu {
+                            ForEach(durations, id: \.self) { duration in
+                                Button("\(duration) s") { textDuration = Double(duration) }
+                            }
+                        } label: { menuValueLabel("\(Int(textDuration)) s") }
+                            .menuStyle(.button).buttonStyle(.capsule(.secondary)).menuIndicator(.hidden)
+                            .reviewAcceptanceProbe("music.duration", text: String(Int(textDuration)))
+                    } else {
+                        ScrubbableNumberField(value: textDuration,
+                            range: Double(model?.minSeconds ?? 1)...Double(model?.maxSeconds ?? 600),
+                            format: "%.0f", valueSuffix: " s", onChanged: { textDuration = $0 }) { textDuration = $0 }
+                            .reviewAcceptanceProbe("music.duration", text: String(Int(textDuration)))
+                    }
                 }
             } else {
                 InspectorRow(
                     icon: "film",
                     label: "Video",
                     labelHelp: "Uses the whole timeline by default. Mark a range on the timeline to score only that span."
-                ) { valueText(sourceSummary) }
+                ) { valueText(sourceSummary).reviewAcceptanceProbe("music.source", text: sourceSummary) }
+                Text("Preparation adds a frozen video preview to Media. Generation starts only after approval.")
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
             }
         }
+        .disabled(isGenerating || genDialog != nil)
     }
 
     private func modeLabel(_ m: MusicGenerationSubmission.Mode) -> String {
@@ -224,7 +249,9 @@ struct MusicTab: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .menuStyle(.button).buttonStyle(.capsule(.secondary)).menuIndicator(.hidden).fixedSize().focusable(false)
+                .disabled(models.isEmpty || isGenerating || genDialog != nil)
+                .reviewAcceptanceProbe("music.model", state: !models.isEmpty && !isGenerating && genDialog == nil, text: model?.id)
             }
         }
     }
@@ -233,6 +260,8 @@ struct MusicTab: View {
         InspectorSection("Direction") {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 TextField("Mood, genre, energy, instruments…", text: $prompt, axis: .vertical)
+                    .disabled(isGenerating || genDialog != nil)
+                    .reviewAcceptanceProbe("music.intent", text: prompt)
                     .textFieldStyle(.plain)
                     .lineLimit(2...5)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -259,6 +288,7 @@ struct MusicTab: View {
         VStack(spacing: AppTheme.Spacing.sm) {
             if let banner {
                 Text(banner.text)
+                    .reviewAcceptanceProbe("music.result", text: banner.text)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(banner.kind == .error ? AppTheme.Status.errorColor : AppTheme.Status.successColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -279,6 +309,7 @@ struct MusicTab: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canGenerate)
+                .reviewAcceptanceProbe("music.prepare", state: canGenerate)
 
                 agentMenu
             }
@@ -297,6 +328,13 @@ struct MusicTab: View {
             .lineLimit(1)
     }
 
+    private func synchronizeDuration() {
+        guard let model else { return }
+        if let durations = model.durations, !durations.isEmpty {
+            if !durations.contains(Int(textDuration.rounded())), let duration = durations.first { textDuration = Double(duration) }
+        } else { textDuration = min(max(textDuration, Double(model.minSeconds)), Double(model.maxSeconds)) }
+    }
+
     private func clock(_ frame: Int) -> String {
         let total = Double(frame) / Double(max(1, editor.timeline.fps))
         let m = Int(total) / 60
@@ -308,12 +346,14 @@ struct MusicTab: View {
         Menu {
             Button {
                 mode = .videoToMusic
-            } label: { Label("Generate music for the timeline", systemImage: "music.note") }
+            } label: { Label("Use Timeline Video", systemImage: effectiveMode == .videoToMusic ? "checkmark" : "film") }
+            .disabled(isGenerating || genDialog != nil || source == nil || (model.map { !supportsVideoMode($0) } ?? true))
             Menu {
                 ForEach(Self.moodMenuOptions, id: \.id) { option in
                     Button(option.label) { openMoodDialog(preselecting: option.id) }
                 }
             } label: { Label("Mood", systemImage: "slider.horizontal.3") }
+            .disabled(!canGenerate)
             Divider() // app-theme: native-menu-divider
             Button {
                 editor.agentService.stageTask(.init(title: "Revise Timeline Music", systemImage: "music.note",
@@ -322,12 +362,14 @@ struct MusicTab: View {
             } label: { Label("Revise timeline music…", systemImage: "music.note") }
             .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
         } label: {
-            ActionMenuLabel(title: "Agent Mode")
+            ActionMenuLabel(title: "Music Actions")
         }
         .menuStyle(.button)
         .buttonStyle(.capsule(.secondary, size: .regular))
         .menuIndicator(.hidden)
-        .help("Let Agent generate music for you. Choose a starter, or ask Agent in the chat.")
+        .disabled(isGenerating || genDialog != nil)
+        .reviewAcceptanceProbe("music.actions", state: !isGenerating && genDialog == nil)
+        .help("Choose a musical direction or prepare a focused revision.")
     }
 
     // Mirrors the mood chip ids in makeMusicDialog's "mood" section.
@@ -339,31 +381,39 @@ struct MusicTab: View {
     /// Opens the existing shaping dialog with a mood preselected — clicks compose the intent,
     /// never canned prose handed to the agent.
     private func openMoodDialog(preselecting moodId: String) {
-        guard let model else { return }
-        installGenerationSink(model: model)
-        genDialog = Self.makeMusicDialog(model: model)
-        dialogPreselected = ["mood": [moodId]]
+        guard canGenerate, let model else { return }
+        openGenerationDialog(model: model, selections: ["mood": [moodId]])
     }
 
     private func generate() {
         banner = nil
-        guard let model else { return }
+        guard canGenerate, let model else { return }
         // Text mode with no direction → enter the generative flow: shape the music with the dialog
         // instead of firing a silent, under-specified render.
         if isTextMode, trimmedPrompt.isEmpty {
-            installGenerationSink(model: model)
-            genDialog = Self.makeMusicDialog(model: model)
-            dialogPreselected = [:]
+            openGenerationDialog(model: model, selections: [:])
             return
         }
         performGenerate(intent: trimmedPrompt.isEmpty ? nil : trimmedPrompt, model: model)
     }
 
-    /// Install the shared generation-dialog sink for the current model: the ONE handler on
-    /// AgentService composes the dialog answer into an intent and calls back here, which runs the
-    /// unified controller. Set when a shaping dialog opens so it captures the current model.
-    private func installGenerationSink(model: AudioModelConfig) {
-        editor.agentService.onGenerationDialogIntent = { intent in
+    private func openGenerationDialog(model: AudioModelConfig, selections: [String: Set<String>]) {
+        let dialog = Self.makeMusicDialog()
+        let inputMode = effectiveMode, selectedSource = source, duration = textDuration
+        let timeline = editor.timeline, selectedRange = editor.validSelectedTimelineRange
+        let root = editor.workingRoot, generation = editor.openWorkingCopyGeneration, direction = prompt
+        genDialog = dialog
+        dialogPreselected = selections
+        dialogDraft = AgentDialogDraft()
+        dialogDraft.direction = prompt
+        editor.agentService.onGenerationDialogIntent = .init(dialogID: dialog.id) { intent in
+            guard genDialog?.id == dialog.id, self.model?.id == model.id,
+                  effectiveMode == inputMode, source == selectedSource, textDuration == duration,
+                  editor.workingRoot == root, editor.openWorkingCopyGeneration == generation, prompt == direction,
+                  editor.timeline == timeline, editor.validSelectedTimelineRange == selectedRange else {
+                banner = .init(text: "The music input changed. Prepare the direction again.", kind: .error)
+                return
+            }
             let trimmed = intent.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
             prompt = trimmed
@@ -372,21 +422,22 @@ struct MusicTab: View {
     }
 
     private func dismissGenerationDialog() {
-        editor.agentService.onGenerationDialogIntent = nil
+        if editor.agentService.onGenerationDialogIntent?.dialogID == genDialog?.id {
+            editor.agentService.onGenerationDialogIntent = nil
+        }
         genDialog = nil
         dialogPreselected = [:]
+        dialogDraft = AgentDialogDraft()
     }
 
-    /// A music-shaping dialog seeded for the current model — mood (single) + character (multi) as
-    /// chips, plus a free-text direction. Length stays a first-class field in the panel above.
-    private static func makeMusicDialog(model: AudioModelConfig) -> AgentDialog {
+    private static func makeMusicDialog() -> AgentDialog {
         AgentDialog(
             id: UUID().uuidString,
             title: "Shape the music",
             symbol: "music.note",
             intro: "Pick a direction, or type your own — NexGenVideo writes the model prompt.",
             costHint: nil,
-            confirmLabel: "Generate",
+            confirmLabel: "Prepare Music",
             textField: AgentDialog.DialogTextField(placeholder: "Anything specific (instruments, reference, mood)…", multiline: false),
             sections: [
                 AgentDialog.Section(id: "mood", label: "Mood", kind: .choices(options: [
@@ -414,6 +465,7 @@ struct MusicTab: View {
     /// linter gated) and drives `MusicGenerationSubmission` — which places the clip on the timeline.
     /// Success/failure/phase flow back through the callbacks and render as the Banner + spinner.
     private func performGenerate(intent: String?, model: AudioModelConfig) {
+        guard !isGenerating else { return }
         let source: EditorViewModel.TimelineSpan
         let span: Double
         if isTextMode {
@@ -421,11 +473,18 @@ struct MusicTab: View {
             source = .init(startFrame: textPlacementFrame, frameCount: frameCount)
             span = textDuration
         } else {
-            guard let videoSource = self.source else { return }
+            guard let videoSource = self.source else {
+                banner = .init(text: "Add video in the selected timeline range before preparing music.", kind: .error)
+                return
+            }
             source = videoSource
             span = spanSeconds
         }
         let mode: MusicGenerationSubmission.Mode = isTextMode ? .textToMusic : .videoToMusic
+        if let issue = model.validate(spanSeconds: span) {
+            banner = .init(text: issue, kind: .error)
+            return
+        }
 
         isGenerating = true
         banner = nil
@@ -435,7 +494,7 @@ struct MusicTab: View {
             modality: .music, modelId: model.id, intent: intent ?? "",
             durationSeconds: span,
             placement: .timelineAt(startFrame: source.startFrame, spanSeconds: span, actionName: "Add Music"),
-            origin: .panel,
+            origin: .panel, target: services.target(model.id),
             submission: .music(make: { compiled in
                 MusicGenerationSubmission(
                     mode: mode, model: model, prompt: compiled.isEmpty ? nil : compiled,
@@ -443,20 +502,32 @@ struct MusicTab: View {
             }))
         // Composition reads the ledger off the main thread (async); await the outcome and surface a
         // compile/preflight failure (nothing was submitted) as the error Banner.
-        Task { @MainActor in
-            let outcome = await GenerationController.submit(
-                request, editor: editor,
-                musicProgress: .init(
-                    onPhase: { generatingLabel = $0.label },
-                    onFinished: { isGenerating = false }),
-                onSuccess: { _ in
-                    // Audio lands on an audio track below the fold — say so, and it's already selected
-                    // on the timeline so the eye can find it.
-                    banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
-                })
-            if case .failure(let error) = outcome {
+        let direction = prompt
+        let duration = textDuration
+        preparationTask = Task { @MainActor in
+            do {
+                let generation = try await GenerationController.prepare(request, editor: editor, preflight: {
+                    guard self.model?.id == model.id, self.effectiveMode == mode,
+                          self.prompt == direction, self.textDuration == duration,
+                          mode != .videoToMusic || self.source == source else {
+                        return "The music input, direction, model or duration changed. Prepare the request again."
+                    }
+                    return nil
+                }).get()
+                _ = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: services.quoteLoader)
+                guard try await GenerationReviewSheet.confirm(generation: generation, title: "Review Music", editor: editor, services: services) else {
+                    isGenerating = false
+                    return
+                }
+                let outcome = await GenerationController.submitPrepared(generation, editor: editor,
+                    musicProgress: .init(onPhase: { generatingLabel = $0.label }, onFinished: { isGenerating = false }),
+                    onSuccess: { _ in
+                        banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
+                    }, onFailure: { isGenerating = false }, quoteLoader: services.quoteLoader)
+                if case .failure(let error) = outcome { throw error }
+            } catch {
                 isGenerating = false
-                banner = .init(text: error.errorDescription ?? "Generation failed.", kind: .error)
+                banner = .init(text: error.localizedDescription, kind: .error)
             }
         }
     }

@@ -20,6 +20,22 @@ passing evidence. `ci.yml`'s first job carries the same name,
 `Light Checks`, so a dispatched run (for example the release metadata flow) also
 satisfies the required check.
 
+`external-gui-acceptance.yml` reuses the same-source `workspace-ui-app` artifact
+and builds only its external XCTest driver. Separate macrunner jobs exercise the
+normal installed app at 100/125/150%; a failed size can be selected independently.
+Each job checks the archive and app tree against the build producer's source-bound
+receipt, which is retained with the journey evidence. Independent workflow runs
+have separate concurrency groups so a new batch cannot displace a queued release journey.
+The journey covers generic import/edit/save/reopen/export without internal app
+acceptance flags. Screenshots, accessibility trees, input records, project snapshots
+and independently decoded output accompany the result. It supplements the macOS 26
+checks; the current macrunner desktop runs macOS 27.
+
+The release workflow uploads the exact notarized DMG for a separate external
+journey at 100%. Publication and publication recovery require that journey's
+success for the same source and DMG hash. A failed GUI job resumes against the
+existing DMG without repeating compilation, signing or notarization.
+
 ## CI pipeline
 
 CI classifies the diff (a run without a pull-request base verifies everything),

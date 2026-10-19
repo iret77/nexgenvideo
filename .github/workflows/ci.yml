@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   source_gate:
@@ -60,6 +60,10 @@ jobs:
           METADATA_VERIFIED: ${{ steps.metadata.outputs.verified || 'false' }}
         run: python3 scripts/ci_changes.py --base "$BASE_SHA" --head "$HEAD_SHA" --metadata-verified "$METADATA_VERIFIED"
 
+      - name: Require distributable bpy before app transfer
+        if: steps.classify.outputs.bundle_required == 'true'
+        run: python3 scripts/verify_bpy_runtime.py --distribution
+
       - name: Enforce AppTheme
         if: steps.classify.outputs.build_required == 'true'
         run: python3 scripts/lint_app_theme.py
@@ -99,10 +103,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  bpy-source:
+    needs: source_gate
+    if: needs.source_gate.outputs.bundle_required == 'true'
+    uses: ./.github/workflows/bpy-source-closure.yml
+    with:
+      distribution: true
+
   build_test:
     name: Build & Test
-    needs: source_gate
-    if: needs.source_gate.outputs.build_required == 'true'
+    needs: [source_gate, bpy-source]
+    if: ${{ !cancelled() && needs.source_gate.result == 'success' && needs.source_gate.outputs.build_required == 'true' && (needs.bpy-source.result == 'success' || needs.bpy-source.result == 'skipped') }}
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: macrunner
     timeout-minutes: 30
@@ -187,6 +198,21 @@ jobs:
 
       - name: Verify tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
+
+      - uses: actions/download-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          path: .build/bpy-source
+
+      - name: Stage the verified bpy runtime
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_bpy_distributable_source.py \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          scripts/stage_bpy_runtime.sh .build/bpy-runtime
 
       - name: Bundle (debug, ad-hoc signed)
         if: needs.source_gate.outputs.bundle_required == 'true'
@@ -319,7 +345,38 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NexGenVideo-app
-          path: .build/NexGenVideo.zip
+          path: |
+            .build/NexGenVideo.zip
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Transfer the same app and pack for workspace acceptance
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace-transfer"
+          tar -czf "$RUNNER_TEMP/workspace-transfer/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          NGV_WORKSPACE_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app .build/NexGenVideo.app)"
+          export NGV_WORKSPACE_APP_TREE_SHA256
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'workspace-transfer'
+          digest = hashlib.sha256()
+          with (root / 'workspace-ui.tar.gz').open('rb') as archive:
+              for chunk in iter(lambda: archive.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          receipt = {'schema': 'nexgenvideo/workspace-ui-input/1', 'sourceSHA': os.environ['GITHUB_SHA'],
+                     'archiveSHA256': digest.hexdigest(), 'appTreeSHA256': os.environ['NGV_WORKSPACE_APP_TREE_SHA256']}
+          (root / 'workspace-ui-input.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
+          PY
+          cp .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.* "$RUNNER_TEMP/workspace-transfer/"
+      - uses: actions/upload-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: workspace-ui-app
+          path: ${{ runner.temp }}/workspace-transfer/*
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -371,9 +428,18 @@ jobs:
             evidence/*.log
             evidence/*.png
 
+  bpy-runtime:
+    needs: [source_gate, build_test]
+    if: needs.source_gate.outputs.bundle_required == 'true'
+    uses: ./.github/workflows/bpy-runtime-acceptance.yml
+    with:
+      artifact: NexGenVideo-app
+      app_zip: NexGenVideo.zip
+      distribution: false
+
   merge_gate:
     name: Merge Gate
-    needs: [source_gate, build_test, ui_render, diagnostic-startup]
+    needs: [source_gate, build_test, ui_render, diagnostic-startup, bpy-source, bpy-runtime]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -388,7 +454,7 @@ jobs:
           if needs["source_gate"]["result"] != "success":
               raise SystemExit("Light Checks did not succeed")
           plan = needs["source_gate"]["outputs"]
-          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required")):
+          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required"), ("bpy-source", "bundle_required"), ("bpy-runtime", "bundle_required")):
               if plan.get(key) not in ("true", "false"):
                   raise SystemExit(f"Invalid CI plan: {key}")
               expected = "success" if plan[key] == "true" else "skipped"

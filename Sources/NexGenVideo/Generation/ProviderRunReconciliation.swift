@@ -46,6 +46,7 @@ struct ProviderRunReconciliation: Sendable {
     var mcpClient: @Sendable (GenerationProvider) async -> (any MCPStatusClient)? = {
         await ProviderMCP.client(for: $0) as (any MCPStatusClient)?
     }
+    var mcpReferenceUploader: MCPMediaUpload.ReferenceUploader? = nil
 }
 
 /// A submitted run whose provider receipt can be queried for its status.
@@ -126,23 +127,46 @@ extension GenerationService {
         lastReconciliation[home] = now
         reconcilingHomes.insert(home)
         defer { reconcilingHomes.remove(home) }
-        let batchItems = GenerationBatchStore.batchItemsByTransaction(home: home)
-        let skipped = ActiveSpendTransactions.current.union(batchItems.keys)
+        guard (try? await reconciliationOwnership(scope: scope, editor: editor)) != nil else { return 0 }
         var settled = 0
-        for run in Self.reconcilableRuns(in: editor.generationLog, excluding: skipped) {
-            guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
+        for run in Self.reconcilableRuns(in: editor.generationLog, excluding: ActiveSpendTransactions.current) {
+            guard !Task.isCancelled, (try? scope.requireCurrent(editor: editor)) != nil,
+                  let batchItems = try? await reconciliationOwnership(scope: scope, editor: editor) else { break }
+            guard batchItems[run.transactionID] == nil else { continue }
             guard let status = await providerStatus(of: run), status != .running else { continue }
-            guard (try? scope.requireCurrent(editor: editor)) != nil else { break }
+            guard !Task.isCancelled, (try? scope.requireCurrent(editor: editor)) != nil else { break }
             guard !ActiveSpendTransactions.current.contains(run.transactionID) else { continue }
             if await settleReconciled(run, status: status, scope: scope, editor: editor) { settled += 1 }
         }
         let cutoff = now.addingTimeInterval(-reconciliation.lateBillWindow)
         for run in Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff) {
-            guard let key = reconciliation.providerKey(.fal),
-                  (try? scope.requireCurrent(editor: editor)) != nil else { break }
+            guard !Task.isCancelled,
+                  let batchItems = try? await reconciliationOwnership(scope: scope, editor: editor) else { break }
+            guard batchItems.permitsLateBill(run.transactionID),
+                  !ActiveSpendTransactions.current.contains(run.transactionID) else { continue }
+            let batchItem = batchItems[run.transactionID]
+            guard await Self.hasBatchBillingAuthority(batchItem, run: run,
+                projectKey: batchItems.projectKey) else { continue }
+            guard !Task.isCancelled,
+                  let currentItems = try? await reconciliationOwnership(scope: scope, editor: editor),
+                  currentItems.projectKey == batchItems.projectKey,
+                  currentItems[run.transactionID] == batchItem,
+                  currentItems.permitsLateBill(run.transactionID),
+                  !ActiveSpendTransactions.current.contains(run.transactionID),
+                  (try? scope.requireCurrent(editor: editor)) != nil,
+                  let key = reconciliation.providerKey(.fal) else { break }
             guard let bill = await reconciliation.falCharge(run.requestID, run.reservation.endpoint, key) else { continue }
             // A late bill replaces a settlement that recorded no money; the write stays in the queried project.
-            guard (try? scope.requireCurrent(editor: editor)) != nil,
+            guard !Task.isCancelled,
+                  await Self.hasBatchBillingAuthority(batchItem, run: run,
+                    projectKey: batchItems.projectKey),
+                  !Task.isCancelled,
+                  let currentItems = try? await reconciliationOwnership(scope: scope, editor: editor),
+                  currentItems.projectKey == batchItems.projectKey,
+                  currentItems[run.transactionID] == batchItem,
+                  currentItems.permitsLateBill(run.transactionID),
+                  !ActiveSpendTransactions.current.contains(run.transactionID),
+                  (try? scope.requireCurrent(editor: editor)) != nil,
                   Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff).contains(run) else { continue }
             let authorization = GenerationAuthorization(
                 transactionId: run.transactionID,
@@ -150,13 +174,49 @@ extension GenerationService {
                     endpoint: run.reservation.endpoint, binding: nil),
                 estimate: run.reservation.money,
                 projectMutationScope: scope,
-                batchItem: batchItems[run.transactionID]
+                batchItem: batchItem
             )
             markFinished(authorization: authorization, billed: bill, note: "fal billed this run after it settled.",
                 editor: editor)
             if !Self.unbilledFalRuns(in: editor.generationLog, settledAfter: cutoff).contains(run) { settled += 1 }
         }
         return settled
+    }
+
+    private func reconciliationOwnership(scope: GenerationProjectMutationScope,
+                                         editor: EditorViewModel) async throws -> GenerationBatchStore.ReconciliationOwnership {
+        try Task.checkCancellation()
+        try scope.requireCurrent(editor: editor)
+        let reading = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try GenerationBatchStore.reconciliationOwnership(home: scope.projectHome)
+        }
+        let result = try await withTaskCancellationHandler { try await reading.value } onCancel: { reading.cancel() }
+        try Task.checkCancellation()
+        try scope.requireCurrent(editor: editor)
+        return result
+    }
+
+    private static func hasBatchBillingAuthority(_ batch: GenerationBatchAuthorization?, run: ReconcilableRun,
+                                                  projectKey: String?) async -> Bool {
+        guard let batch else { return true }
+        guard let projectKey else { return false }
+        let reading = Task.detached(priority: .utility) {
+            guard !Task.isCancelled, let record = try? GenerationExecutionAuthorityStore.live().load(projectKey: projectKey, batchID: batch.batchID) else {
+                return false
+            }
+            return !record.spendEvents.contains {
+                $0.transactionId == run.transactionID && ($0.kind == .charged || $0.kind == .released
+                    || ($0.kind == .settled && $0.money != nil))
+            } && record.journal.executions.contains { $0.itemID == batch.itemID && $0.transactionID == run.transactionID }
+                && record.spendEvents.contains {
+                    $0.kind == .submitted && $0.transactionId == run.transactionID
+                        && $0.providerRequestId == run.requestID && $0.providerRequestResumable == true
+                        && $0.provider == run.reservation.provider && $0.transport == run.reservation.transport
+                        && $0.endpoint == run.reservation.endpoint && $0.model == run.reservation.model
+                }
+        }
+        return await withTaskCancellationHandler { await reading.value } onCancel: { reading.cancel() }
     }
 
     private func providerStatus(of run: ReconcilableRun) async -> ProviderRunStatus? {
@@ -166,7 +226,9 @@ extension GenerationService {
             guard let client = await config.mcpClient(event.provider) else { return nil }
             let status: ProviderRunStatus?
             do {
+                try Task.checkCancellation()
                 let tools = try await client.discoverTools()
+                try Task.checkCancellation()
                 status = try await MCPGenerationExecutor.status(jobID: run.requestID, tools: tools, client: client)
             } catch {
                 status = nil
@@ -198,6 +260,9 @@ extension GenerationService {
         scope: GenerationProjectMutationScope,
         editor: EditorViewModel
     ) async -> Bool {
+        guard !Task.isCancelled, (try? scope.requireCurrent(editor: editor)) != nil,
+              let batchItems = try? await reconciliationOwnership(scope: scope, editor: editor),
+              batchItems[run.transactionID] == nil else { return false }
         let event = run.reservation
         let binding = event.transport == .api ? nil : ProviderBinding(
             provider: event.provider, transport: event.transport, kind: .generation,
@@ -226,7 +291,9 @@ extension GenerationService {
             billed = await reconciliation.falCharge(run.requestID, event.endpoint, key)
         }
         // The bill lookup awaited; the write must still target the project the query started in.
-        guard (try? scope.requireCurrent(editor: editor)) != nil,
+        guard !Task.isCancelled, (try? scope.requireCurrent(editor: editor)) != nil,
+              let batchItems = try? await reconciliationOwnership(scope: scope, editor: editor),
+              batchItems[run.transactionID] == nil,
               Self.isOpen(run.transactionID, in: editor.generationLog),
               !ActiveSpendTransactions.current.contains(run.transactionID) else { return false }
         markFinished(authorization: authorization, billed: billed, providerCost: cost, note: note, editor: editor)

@@ -6,13 +6,29 @@ struct GateApprovalCard: View {
     let error: String?
     let isWorking: Bool
     var isBlocked: Bool = false
-    let onApprove: () -> Void
-    let onDecline: () -> Void
-    @FocusState private var approveFocused: Bool
+    let onApprove: (String) -> Void
+    let onDecline: (String) -> Void
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.productionDecisionCompact) private var compact
+    @Environment(\.generationDecisionMaximumHeight) private var availableHeight
     @State private var review = GateReviewModel()
     @State private var showsDiagnostics = false
     @State private var showsChanges = false
+    @State private var showsReviewDetails = false
+
+    private struct ReadinessKey: Equatable {
+        let approvalID: String
+        let engineRevision: Int
+        let blocked: Bool
+        let timeline: Timeline?
+        let media: [String: URL]?
+    }
+
+    private var readinessKey: ReadinessKey {
+        .init(approvalID: approval.id, engineRevision: editor.engineStateRevision, blocked: isBlocked,
+            timeline: approval.phase == "render" ? editor.timeline : nil,
+            media: approval.phase == "render" ? Dictionary(editor.mediaAssets.map { ($0.id, $0.url) }, uniquingKeysWith: { first, _ in first }) : nil)
+    }
 
     private var reviewDestination: String {
         PipelineSurfaceRouting.reviewDestinationLabel(for: approval.phase, contract: editor.uiContract,
@@ -20,10 +36,77 @@ struct GateApprovalCard: View {
     }
 
     private var reviewHint: String {
-        approval.isRewind ? "Inspect the approved work before allowing a revision. Respond here in Tasks." : "Review in \(reviewDestination), then respond here in Tasks."
+        approval.isRewind ? "Inspect the approved work before allowing a revision." : "Review in \(reviewDestination) before approving."
     }
 
     var body: some View {
+        Group {
+            if compact { compactCard }
+            else { expandedCard }
+        }
+        .task(id: readinessKey) {
+            await review.refresh(approval: approval, editor: editor)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(approval.decisionTitle)
+        .sheet(isPresented: $showsReviewDetails) {
+            ProductionDecisionReview(title: approval.decisionTitle, identifier: "agent.gate", runtimeEvidenceEnabled: evidenceEnabled) {
+                ScrollView {
+                    summary.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } footer: {
+                EmptyView()
+            }
+        }
+    }
+
+    private var compactCard: some View {
+        GenerationBatchDecisionLayout(
+            maximumHeight: availableHeight ?? AppTheme.ComponentSize.agentDecisionMaxHeight,
+            minimumBodyHeight: AppTheme.ComponentSize.productionDecisionSummaryMinHeight,
+            spacing: AppTheme.Spacing.sm,
+            fillsMaximumHeight: false,
+            hasExplicitHeightLimit: availableHeight != nil
+        ) {
+            HStack(spacing: AppTheme.Spacing.md) {
+                openButton
+                    .buttonStyle(.inlineAction(.neutral))
+                Spacer(minLength: AppTheme.Spacing.none)
+                Button("Details") { showsReviewDetails = true }
+                    .buttonStyle(.inlineAction(.neutral))
+                    .accessibilityIdentifier("agent.gate.review.open")
+                    .background { acceptanceProbe("review.open", enabled: true) }
+            }
+            ScrollView {
+                compactSummary.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            footerRow
+        }
+    }
+
+    private var compactSummary: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+            if let comparison = priorComparisonText { Text(comparison).foregroundStyle(AppTheme.Text.primaryColor) }
+            if case .rewind(_, let phases) = approval.action {
+                Text("Resets approvals from \(approval.phaseLabel): \(phases.map(PhaseDisplay.label).joined(separator: ", ")). Existing media is kept.")
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+            } else {
+                Text("Continue production. Generation costs require separate approval.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            if isBlocked {
+                Text("Finish the running phase before approving.").foregroundStyle(AppTheme.Status.warningColor)
+            } else if let blocker = review.blocker {
+                Text(blocker).foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            if let error { Text(error).foregroundStyle(AppTheme.Status.errorColor) }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var expandedCard: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
             ScrollView {
@@ -31,12 +114,8 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            Button("Open \(reviewDestination)") {
-                editor.revealReviewSurface(for: approval.phase)
-            }
-            .buttonStyle(.capsule(.secondary, size: .regular))
-            .disabled(isWorking || isBlocked)
-            .background { acceptanceProbe("open", enabled: !(isWorking || isBlocked), text: reviewDestination) }
+            openButton
+                .buttonStyle(.capsule(.secondary, size: .regular))
             if let blocker = review.blocker, !isBlocked {
                 Text(blocker)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -57,18 +136,16 @@ struct GateApprovalCard: View {
                               lineWidth: AppTheme.BorderWidth.thin)
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .id(approval.id)
-        .task(id: "\(approval.id):\(editor.engineStateRevision):\(isBlocked)") {
-            await review.refresh(approval: approval, editor: editor)
-        }
-        .onAppear {
-            Task { @MainActor in
-                await Task.yield()
-                approveFocused = !isBlocked
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(approval.decisionTitle)
+    }
+
+    private var openButton: some View {
+        Button("Open \(reviewDestination)") { editor.revealReviewSurface(for: approval.phase) }
+            .disabled(isWorking || isBlocked)
+            .background { acceptanceProbe("open", enabled: !(isWorking || isBlocked), text: reviewDestination) }
+    }
+
+    private var evidenceEnabled: Bool {
+        WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested || GenerationBatchReviewSelfTest.isRequested
     }
 
     private var header: some View {
@@ -80,15 +157,14 @@ struct GateApprovalCard: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
-            Button(action: onDecline) {
+            Button { onDecline(approval.id) } label: {
                 Image(systemName: "xmark")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
             .disabled(isWorking || isBlocked)
-            .keyboardShortcut(.cancelAction)
-            .help("Not yet (Esc)")
+            .help("Not yet")
         }
     }
 
@@ -184,25 +260,22 @@ struct GateApprovalCard: View {
     }
 
     private var footerRow: some View {
-        ViewThatFits(in: .horizontal) {
-            approvalActions(horizontal: true)
-            approvalActions(horizontal: false)
-        }
+        approvalActions
     }
 
-    private func approvalActions(horizontal: Bool) -> some View {
-        let layout = horizontal ? AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
-            : AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
-        return layout {
-            Button("Not yet") { onDecline() }
+    private var approvalActions: some View {
+        WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
+            Button("Not yet") { onDecline(approval.id) }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(isWorking || isBlocked)
                 .background { acceptanceProbe("decline", enabled: !(isWorking || isBlocked)) }
-            if horizontal { Spacer() }
             Button {
+                let selectedApproval = approval
                 Task {
-                    await review.refresh(approval: approval, editor: editor)
-                    if review.isReady { onApprove() }
+                    await review.refresh(approval: selectedApproval, editor: editor)
+                    if !Task.isCancelled, review.isReady, review.readyApprovalID == selectedApproval.id {
+                        onApprove(selectedApproval.id)
+                    }
                 }
             } label: {
                 if isWorking {
@@ -218,7 +291,6 @@ struct GateApprovalCard: View {
                     acceptanceProbe("approve", enabled: !(isWorking || isBlocked || !review.isReady),
                         text: review.isReady ? nil : review.blocker)
                 }
-                .focused($approveFocused)
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""
                 )
@@ -227,7 +299,7 @@ struct GateApprovalCard: View {
 
     @ViewBuilder
     private func acceptanceProbe(_ part: String, enabled: Bool, text: String? = nil) -> some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+        if evidenceEnabled {
             AppRelaunchClickProbe(identifier: "agent.gate.\(part)", acceptanceState: enabled, acceptanceText: text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)

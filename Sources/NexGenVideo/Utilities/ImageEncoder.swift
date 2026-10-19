@@ -29,6 +29,27 @@ enum ImageEncoder {
         return output
     }
 
+    nonisolated static func encode(data: Data) -> Output? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        if data.count <= maxBytes, max(width, height) <= maxLongestEdge,
+           let type = CGImageSourceGetType(source) as String? {
+            let mime: String?
+            switch type {
+            case UTType.png.identifier: mime = "image/png"
+            case UTType.jpeg.identifier: mime = "image/jpeg"
+            case UTType.gif.identifier: mime = "image/gif"
+            case UTType.webP.identifier: mime = "image/webp"
+            default: mime = nil
+            }
+            if let mime { return Output(data: data, mime: mime) }
+        }
+        guard let image = makeThumbnail(source: source, maxPixelSize: maxLongestEdge) else { return nil }
+        return encodeWithinBudget(image)
+    }
+
     /// JPEG-encode an already-decoded `CGImage`. Shared with video frame sampling.
     nonisolated static func encodeJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
         let buffer = NSMutableData()

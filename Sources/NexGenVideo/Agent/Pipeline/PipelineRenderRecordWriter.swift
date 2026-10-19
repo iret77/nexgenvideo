@@ -114,6 +114,7 @@ enum PipelineRenderRecordWriter {
         dataRoot: URL,
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
         failureProbe: ((FailurePoint) throws -> Void)? = nil
     ) throws -> RenderRecordPublicationV1 {
         try validatePhase(manifest.phase)
@@ -125,18 +126,13 @@ enum PipelineRenderRecordWriter {
         try requirePackMutation(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         let transactionID = UUID().uuidString.lowercased()
         let lockPath = transactionPath(phase: manifest.phase)
         let lockURL = PipelineLayout.url(lockPath, in: dataRoot)
-        if FileManager.default.fileExists(atPath: lockURL.path) {
-            try recoverInterruptedTransaction(
-                dataRoot: dataRoot,
-                phase: manifest.phase,
-                lockURL: lockURL
-            )
-        }
+        try recoverInterruptedTransaction(dataRoot: dataRoot, phase: manifest.phase, lockURL: lockURL)
         let lockDescriptor = try acquireExclusiveLock(
             transactionID: transactionID,
             lockURL: lockURL,
@@ -144,10 +140,7 @@ enum PipelineRenderRecordWriter {
         )
         var preserveRecoveryJournal = false
         defer {
-            if !preserveRecoveryJournal,
-               FileManager.default.fileExists(atPath: lockURL.path) {
-                try? FileManager.default.removeItem(at: lockURL)
-            }
+            if !preserveRecoveryJournal { try? removeOwnedLock(descriptor: lockDescriptor, at: lockURL) }
             _ = flock(lockDescriptor, LOCK_UN)
             _ = Darwin.close(lockDescriptor)
         }
@@ -386,7 +379,8 @@ enum PipelineRenderRecordWriter {
             try requirePackMutation(
                 dataRoot: dataRoot,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             canonicalWritesStarted = true
             if let preparedLastFrame, let lastFrameURL {
@@ -459,7 +453,8 @@ enum PipelineRenderRecordWriter {
         dataRoot: URL,
         phase: String,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> MutationSnapshot {
         try validatePhase(phase)
         try requireSafeLocations(
@@ -470,26 +465,21 @@ enum PipelineRenderRecordWriter {
         try requirePackMutation(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         let lockURL = PipelineLayout.url(
             transactionPath(phase: phase),
             in: dataRoot
         )
-        if FileManager.default.fileExists(atPath: lockURL.path) {
-            try recoverInterruptedTransaction(
-                dataRoot: dataRoot,
-                phase: phase,
-                lockURL: lockURL
-            )
-        }
+        try recoverInterruptedTransaction(dataRoot: dataRoot, phase: phase, lockURL: lockURL)
         let descriptor = try acquireExclusiveLock(
             transactionID: UUID().uuidString.lowercased(),
             lockURL: lockURL,
             phase: phase
         )
         defer {
-            try? FileManager.default.removeItem(at: lockURL)
+            try? removeOwnedLock(descriptor: descriptor, at: lockURL)
             _ = flock(descriptor, LOCK_UN)
             _ = Darwin.close(descriptor)
         }
@@ -689,12 +679,14 @@ enum PipelineRenderRecordWriter {
     private static func requirePackMutation(
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws {
         _ = try ProjectPackGate.requireMutation(
             projectURL: FrameInventory.projectHome(of: dataRoot),
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
     }
 
@@ -703,6 +695,13 @@ enum PipelineRenderRecordWriter {
         phase: String
     ) throws -> Set<String> {
         guard phase != "frames" else { return [] }
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: FrameInventory.projectHome(of: dataRoot))
+        if try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)?.isProductionV2 == true {
+            let planned = ShotDeliveryModeResolverV1.stillShotIDs(in: ProductionPlanningLineageV2.projection(dataRoot: dataRoot).executionPlan)
+            let rendered = try loadRenderManifest(dataRoot: dataRoot, phase: phase).entries.filter { $0.value.status == .rendered }
+            return planned.intersection(Set(rendered.keys))
+        }
         let planURL = PipelineLayout.url(
             PipelineLayout.executionPlanFile,
             in: dataRoot
@@ -841,13 +840,7 @@ enum PipelineRenderRecordWriter {
         phase: String
     ) throws -> RenderRecordPublicationV1? {
         let lockURL = PipelineLayout.url(transactionPath(phase: phase), in: dataRoot)
-        if FileManager.default.fileExists(atPath: lockURL.path) {
-            try recoverInterruptedTransaction(
-                dataRoot: dataRoot,
-                phase: phase,
-                lockURL: lockURL
-            )
-        }
+        try recoverInterruptedTransaction(dataRoot: dataRoot, phase: phase, lockURL: lockURL)
         return try loadPublicationIgnoringLock(
             dataRoot: dataRoot,
             phase: phase
@@ -1673,33 +1666,29 @@ enum PipelineRenderRecordWriter {
         lockURL: URL
     ) throws {
         let fileManager = FileManager.default
-        let descriptor = Darwin.open(lockURL.path, O_RDWR)
+        let descriptor = Darwin.open(lockURL.path, O_RDWR | O_EXLOCK | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         if descriptor < 0 {
-            if errno == ENOENT { return }
-            throw PipelineRenderRecordError.transactionInProgress(phase)
-        }
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-            let lockError = errno
-            _ = Darwin.close(descriptor)
-            if lockError == EWOULDBLOCK || lockError == EAGAIN {
-                throw PipelineRenderRecordError.transactionInProgress(phase)
-            }
-            throw PipelineRenderRecordError.publicationRollbackFailed(
-                String(cString: strerror(lockError))
-            )
+            let code = errno
+            if code == ENOENT { return }
+            if code == EAGAIN || code == EWOULDBLOCK { throw PipelineRenderRecordError.transactionInProgress(phase) }
+            throw PipelineRenderRecordError.unsafePath(lockURL.lastPathComponent)
         }
         defer {
             _ = flock(descriptor, LOCK_UN)
             _ = Darwin.close(descriptor)
         }
-        let transactionID = (try? String(contentsOf: lockURL, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard try lockNamesDescriptor(descriptor, at: lockURL) else { return }
+        var bytes = [UInt8](repeating: 0, count: 128)
+        let count = Darwin.pread(descriptor, &bytes, bytes.count, 0)
+        guard count >= 0 else { throw PipelineRenderRecordError.publicationFailed("The render transaction lock could not be read.") }
+        let transactionID = String(decoding: bytes.prefix(count), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard UUID(uuidString: transactionID) != nil else {
             try removeOrphanedStagingDirectories(
                 dataRoot: dataRoot,
                 phase: phase
             )
-            try fileManager.removeItem(at: lockURL)
+            try removeOwnedLock(descriptor: descriptor, at: lockURL)
             return
         }
         let staging = PipelineLayout.url(PipelineLayout.rendersDir, in: dataRoot)
@@ -1723,14 +1712,14 @@ enum PipelineRenderRecordWriter {
                dataRoot: dataRoot
            ) {
             try? fileManager.removeItem(at: staging)
-            try fileManager.removeItem(at: lockURL)
+            try removeOwnedLock(descriptor: descriptor, at: lockURL)
             return
         }
 
         let journalURL = staging.appendingPathComponent("recovery.json")
         guard fileManager.fileExists(atPath: journalURL.path) else {
             try? fileManager.removeItem(at: staging)
-            try fileManager.removeItem(at: lockURL)
+            try removeOwnedLock(descriptor: descriptor, at: lockURL)
             return
         }
         do {
@@ -1763,6 +1752,8 @@ enum PipelineRenderRecordWriter {
                 && additionalPaths.allSatisfy({
                     isImmutableShotProvenancePath($0, phase: phase)
                         || PipelineRenderTakeStore.isRecoveryPath($0, phase: phase)
+                        || isFrameEvidencePath($0, phase: phase)
+                        || isProductionEvidencePath($0, phase: phase)
                 })
             guard journal.schema == RecoveryJournal.schemaVersion,
                   journal.phase == phase,
@@ -1815,7 +1806,7 @@ enum PipelineRenderRecordWriter {
                 )
             }
             try? fileManager.removeItem(at: staging)
-            try fileManager.removeItem(at: lockURL)
+            try removeOwnedLock(descriptor: descriptor, at: lockURL)
         } catch let error as PipelineRenderRecordError {
             throw error
         } catch {
@@ -1842,6 +1833,25 @@ enum PipelineRenderRecordWriter {
         }
     }
 
+    static func lockNamesDescriptor(_ descriptor: Int32, at path: URL) throws -> Bool {
+        var held = stat(), named = stat()
+        guard fstat(descriptor, &held) == 0, held.st_mode & S_IFMT == S_IFREG else {
+            throw PipelineRenderRecordError.unsafePath(path.lastPathComponent)
+        }
+        guard held.st_nlink > 0 else { return false }
+        if lstat(path.path, &named) != 0 {
+            if errno == ENOENT { return false }
+            throw PipelineRenderRecordError.unsafePath(path.lastPathComponent)
+        }
+        guard named.st_mode & S_IFMT == S_IFREG else { throw PipelineRenderRecordError.unsafePath(path.lastPathComponent) }
+        return held.st_dev == named.st_dev && held.st_ino == named.st_ino
+    }
+
+    static func removeOwnedLock(descriptor: Int32, at path: URL) throws {
+        guard try lockNamesDescriptor(descriptor, at: path) else { return }
+        try FileManager.default.removeItem(at: path)
+    }
+
     private static func acquireExclusiveLock(
         transactionID: String,
         lockURL: URL,
@@ -1849,24 +1859,25 @@ enum PipelineRenderRecordWriter {
     ) throws -> Int32 {
         let descriptor = Darwin.open(
             lockURL.path,
-            O_WRONLY | O_CREAT | O_EXCL,
+            O_WRONLY | O_CREAT | O_EXCL | O_EXLOCK | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
             mode_t(S_IRUSR | S_IWUSR)
         )
         guard descriptor >= 0 else {
-            if errno == EEXIST {
+            if errno == EEXIST || errno == EAGAIN || errno == EWOULDBLOCK {
                 throw PipelineRenderRecordError.transactionInProgress(phase)
             }
             throw PipelineRenderRecordError.publicationFailed(
                 String(cString: strerror(errno))
             )
         }
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-            let lockError = errno
+        do {
+            guard try lockNamesDescriptor(descriptor, at: lockURL) else {
+                throw PipelineRenderRecordError.transactionInProgress(phase)
+            }
+        } catch {
+            _ = flock(descriptor, LOCK_UN)
             _ = Darwin.close(descriptor)
-            try? FileManager.default.removeItem(at: lockURL)
-            throw PipelineRenderRecordError.publicationFailed(
-                String(cString: strerror(lockError))
-            )
+            throw error
         }
         let data = Data(transactionID.utf8)
         var offset = 0
@@ -1900,9 +1911,9 @@ enum PipelineRenderRecordWriter {
         guard let writeError else {
             return descriptor
         }
+        try? removeOwnedLock(descriptor: descriptor, at: lockURL)
         _ = flock(descriptor, LOCK_UN)
         _ = Darwin.close(descriptor)
-        try? FileManager.default.removeItem(at: lockURL)
         throw PipelineRenderRecordError.publicationFailed(
             String(cString: strerror(writeError))
         )
@@ -2078,6 +2089,42 @@ enum PipelineRenderRecordWriter {
                 throw PipelineRenderRecordError.unsafePath(path)
             }
         }
+    }
+
+    private static func isFrameEvidencePath(_ path: String, phase: String) -> Bool {
+        guard phase == "frames", path.hasPrefix("frames/reference-usage/") || path.hasPrefix("frames/production-receipts/") else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return components.count == 3 && !components[2].contains("..")
+            && (components[2].hasSuffix("-start.v1.json") || components[2].hasSuffix("-end.v1.json"))
+    }
+
+    private static func isProductionEvidencePath(_ path: String, phase: String) -> Bool {
+        guard phase == "final" else { return false }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.first == "renders", parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return false }
+        if parts.count == 3, parts[1] == "production-records" {
+            let name = String(parts[2])
+            guard name.hasSuffix(".v1.json") else { return false }
+            let id = String(name.dropLast(".v1.json".count))
+            return UUID(uuidString: String(id.dropFirst("current-".count))) != nil && id.hasPrefix("current-")
+                || isSHA256Component(id)
+        }
+        if parts.count == 4, parts[1] == "submissions" {
+            return isSHA256Component(String(parts[2]))
+                && ["receipt.v1.json", "binding.v1.json"].contains(String(parts[3]))
+        }
+        if parts.count == 4, ["selections", "still-deliveries"].contains(String(parts[1])), UUID(uuidString: String(parts[2])) != nil {
+            let name = String(parts[3])
+            if name == "current.v1.json" { return true }
+            guard name.hasSuffix(".v1.json") else { return false }
+            let id = name.dropLast(".v1.json".count)
+            return isSHA256Component(String(id))
+        }
+        return false
+    }
+
+    private static func isSHA256Component(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
     private static func isImmutableShotProvenancePath(

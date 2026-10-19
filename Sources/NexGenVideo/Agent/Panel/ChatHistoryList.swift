@@ -55,11 +55,14 @@ struct ChatHistoryList: View {
         ) {
             if let pendingDeletion {
                 Button("Delete “\(pendingDeletion.title)”", role: .destructive) {
+                    guard canSwitch else { return }
                     onDelete(pendingDeletion.id)
                     self.pendingDeletion = nil
-                }
+                }.disabled(!canSwitch)
+                    .reviewAcceptanceProbe("agent.history.delete-confirm", state: canSwitch, text: pendingDeletion.id.uuidString)
             }
             Button("Cancel", role: .cancel) { pendingDeletion = nil }
+                .reviewAcceptanceProbe("agent.history.delete-cancel")
         } message: {
             Text("This permanently removes the selected conversation from history.")
         }
@@ -86,6 +89,7 @@ struct ChatHistoryList: View {
             TextField("Search conversations", text: $query)
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
+                .reviewAcceptanceProbe("agent.history.search", text: query)
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)
@@ -131,6 +135,7 @@ struct ChatHistoryList: View {
                     .joined(separator: ", ")
             )
             .disabled(!canSwitch && !isCurrent)
+            .reviewAcceptanceProbe("agent.history.select." + session.id.uuidString, state: canSwitch || isCurrent, text: session.title)
             Button { pendingDeletion = session } label: {
                 Image(systemName: "trash")
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -139,6 +144,7 @@ struct ChatHistoryList: View {
             .buttonStyle(.plain)
             .disabled(!canSwitch)
             .accessibilityLabel("Delete \(session.title)")
+            .reviewAcceptanceProbe("agent.history.delete." + session.id.uuidString, state: canSwitch)
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)

@@ -21,6 +21,8 @@ struct MomentDragTests {
         #expect(MediaTab.assetSegment(fromDragString: "nexgen-asset://x#5-2") == nil)
         #expect(MediaTab.assetSegment(fromDragString: "nexgen-asset://x#-1-2") == nil)
         #expect(MediaTab.assetSegment(fromDragString: "nexgen-asset://x#junk") == nil)
+        #expect(MediaTab.assetSegment(fromDragString: "nexgen-asset://x#0-inf") == nil)
+        #expect(MediaTab.assetSegment(fromDragString: "nexgen-asset://x#nan-2") == nil)
         #expect(MediaTab.assetSegment(fromDragString: "nexgen-folder://x#1-2") == nil)
         #expect(MediaTab.assetId(fromDragString: "nexgen-asset://x#junk") == "x")
     }
@@ -29,4 +31,15 @@ struct MomentDragTests {
         let s = MediaTab.assetDragString(forAssetId: "x", segment: 0.0...0.5)
         #expect(MediaTab.assetSegment(fromDragString: s) == 0.0...0.5)
     }
+    @Test func invalidOrOutOfSourceSegmentsNeverFallBackToTheWholeAsset() {
+        let editor = EditorViewModel()
+        editor.mediaAssets = [MediaAsset(id: "x", url: URL(fileURLWithPath: "/source.mov"), type: .video, name: "Source", duration: 2)]
+        for suffix in ["0-inf", "junk", "1-5", "3-4", "1-1e300"] {
+            let payload = "nexgen-asset://x#" + suffix
+            #expect(editor.assetsFromDragPayload(payload).isEmpty)
+            #expect(editor.segmentsFromDragPayload(payload).isEmpty)
+        }
+        #expect(editor.assetsFromDragPayload("nexgen-asset://x#0.5-1.5").map(\.id) == ["x"])
+    }
+
 }

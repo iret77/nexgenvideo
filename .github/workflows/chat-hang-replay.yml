@@ -23,7 +23,7 @@ jobs:
       - uses: ./.github/actions/cache-swiftpm-dependencies
       - name: Build replay app
         run: |
-          scripts/bundle.sh debug
+          scripts/bundle.sh debug --without-bpy-runtime-for-ci-transfer
           tar -czf "$RUNNER_TEMP/chat-replay.tar.gz" -C .build NexGenVideo.app
       - uses: actions/upload-artifact@v4
         with:

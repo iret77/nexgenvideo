@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import NexGenEngine
 import Testing
@@ -6,6 +7,26 @@ import Testing
 @Suite("Generation batch single-use execution")
 @MainActor
 struct GenerationBatchTests {
+    private final class AcceptedRequestURLProtocol: URLProtocol, @unchecked Sendable {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            guard request.httpMethod == "POST", request.url?.absoluteString == "https://queue.fal.run/fal-ai/gemini-25-flash-image/edit",
+                  let url = request.url, let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"request_id":"accepted-close-unit-job"}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+    private final class ReconciliationProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        func record() { lock.withLock { calls += 1 } }
+        var count: Int { lock.withLock { calls } }
+    }
     @MainActor
     private final class PendingQuoteFixture {
         private var continuation: CheckedContinuation<Void, Never>?
@@ -24,6 +45,38 @@ struct GenerationBatchTests {
 
         func finish() {
             continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    @MainActor
+    private final class CancellationQuoteFixture {
+        private var continuation: CheckedContinuation<GenerationMoney, Error>?
+        private(set) var didStart = false
+        private(set) var didCancel = false
+
+        func quote() async throws -> GenerationMoney {
+            didStart = true
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    guard !Task.isCancelled else {
+                        didCancel = true
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    self.continuation = continuation
+                }
+            } onCancel: {
+                Task { @MainActor in
+                    self.didCancel = true
+                    self.continuation?.resume(throwing: CancellationError())
+                    self.continuation = nil
+                }
+            }
+        }
+
+        func finish() {
+            continuation?.resume(returning: GenerationPackageFixture.money(0.40))
             continuation = nil
         }
     }
@@ -92,8 +145,467 @@ struct GenerationBatchTests {
         }
     }
 
-    private func waitUntil(_ predicate: () -> Bool) async {
-        for _ in 0..<100 where !predicate() { await Task.yield() }
+    private func waitUntil(_ predicate: () -> Bool) async -> Bool {
+        for _ in 0..<1000 {
+            if predicate() { return true }
+            await Task.yield()
+        }
+        return predicate()
+    }
+
+    @Test func busyPhasePreservesApprovedQueuedItemsAndDoesNotAdvanceTheBatchQueue() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: home))
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.catalogReadiness = {}
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let next = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey,
+            phase: batch.payload.phase, items: batch.payload.items))
+        let nextApproved = try await GenerationBatchStore.approve(next, editor: editor)
+        let lease = try #require(editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: dataRoot, label: "Native edit"))
+        defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease) }
+        coordinator.start(batchID: batch.id, editor: editor, remainingBatchIDs: [next.id])
+        try #require(await waitUntil { coordinator.activeBatchID == nil })
+        let paused = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(paused == approved)
+        #expect(try GenerationBatchStore.load(id: next.id, home: home) == nextApproved)
+        #expect(coordinator.continuation(for: paused) == .queuedRequests)
+        #expect(!coordinator.canContinue(paused, editor: editor))
+        #expect(coordinator.error?.contains("paused") == true)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+        editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease)
+        #expect(coordinator.canContinue(paused, editor: editor))
+        await Task.yield()
+        #expect(coordinator.activeBatchID == nil)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == approved)
+    }
+
+    @Test func cancelingAPausedBatchCompletesItsActualAgentSuspension() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let origin = ToolCallOrigin.embeddedRuntime(chatSessionID: try #require(service.currentSessionId), runtimeGenerationID: UUID())
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        let result = try service.presentGenerationBatch(batch, recoveries: recoveries, origin: origin, editor: editor)
+        #expect(result.turnDisposition == .suspendTurn)
+        let marker = try #require(result.content.compactMap { block -> String? in
+            if case .text(let text) = block { return text }; return nil
+        }.first)
+        service.messages = [AgentMessage(role: .user, blocks: [.toolResult(toolUseId: "paused-batch", content: [.text(marker)], isError: false)])]
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: home))
+        let coordinator = editor.generationBatchCoordinator
+        defer { coordinator.cancelForClose() }
+        coordinator.catalogReadiness = {}
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let lease = try #require(editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: dataRoot, label: "Native edit"))
+        defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease) }
+        coordinator.start(batchID: batch.id, editor: editor)
+        try #require(await waitUntil { coordinator.pausedBatches[batch.id]?.reason == .hostBusy && coordinator.activeBatchID == nil })
+        #expect(!service.hasPendingHostFollowUp)
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        #expect(service.hasPendingHostFollowUp)
+        #expect(coordinator.pausedBatches[batch.id] == nil)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
+        let texts = service.messages.flatMap(\.blocks).flatMap { block -> [String] in
+            guard case .toolResult(let id, let content, _) = block, id == "paused-batch" else { return [] }
+            return content.compactMap { if case .text(let text) = $0 { return text }; return nil }
+        }
+        #expect(texts.contains { $0.contains("has settled after cancellation") })
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func aPreSubmissionRefusalPreservesTheApprovedQueuedJournal() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.catalogReadiness = {}
+        coordinator.providerActivation = { ProviderActivation() }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        coordinator.start(batchID: batch.id, editor: editor)
+        try #require(await waitUntil { coordinator.activeBatchID == nil && coordinator.pausedBatches[batch.id]?.reason == .requestRefused })
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == approved)
+        #expect(coordinator.canContinue(approved, editor: editor))
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+        await Task.yield()
+        #expect(coordinator.activeBatchID == nil)
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        coordinator.continueBatch(batchID: batch.id, editor: editor)
+        #expect(coordinator.activeBatchID == nil)
+    }
+
+    @Test func automaticRestorationDoesNotRestartAnExplicitlyRefusedBatch() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.catalogReadiness = {}
+        coordinator.providerActivation = { ProviderActivation() }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        coordinator.start(batchID: batch.id, editor: editor)
+        try #require(await waitUntil { coordinator.activeBatchID == nil && coordinator.pausedBatches[batch.id]?.reason == .requestRefused })
+        let restore = try #require(coordinator.resume(editor: editor, retryKnownJobs: false))
+        await restore.value
+        #expect(coordinator.activeBatchID == nil)
+        #expect(coordinator.pausedBatches[batch.id]?.reason == .requestRefused)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == approved)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func terminalCancellationResumesOtherApprovedWorkOnlyAfterTheHostLeaseEnds() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: home))
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.catalogReadiness = {}
+        coordinator.providerActivation = { ProviderActivation() }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let other = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey,
+            phase: batch.payload.phase, items: batch.payload.items))
+        let otherApproved = try await GenerationBatchStore.approve(other, editor: editor)
+        let lease = try #require(editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: dataRoot, label: "Other native edit"))
+        defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease) }
+        coordinator.start(batchID: batch.id, editor: editor, remainingBatchIDs: [other.id])
+        try #require(await waitUntil { coordinator.activeBatchID == nil && coordinator.pausedBatches[batch.id]?.reason == .hostBusy })
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        await Task.yield()
+        #expect(coordinator.activeBatchID == nil)
+        #expect(try GenerationBatchStore.load(id: other.id, home: home) == otherApproved)
+        editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease)
+        try #require(await waitUntil { coordinator.activeBatchID == nil && coordinator.pausedBatches[other.id]?.reason == .requestRefused })
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
+        #expect(try GenerationBatchStore.load(id: other.id, home: home) == otherApproved)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func asynchronousConsumeRefusalAndCancellationKeepTheirActualJournalStates() async throws {
+        for canceled in [false, true] {
+            let (root, editor, batch) = try await fixture()
+            defer { cleanup(root) }
+            let home = try #require(editor.workingRoot)
+            let coordinator = editor.generationBatchCoordinator
+            defer { coordinator.cancelForClose() }
+            coordinator.providerActivation = { ProviderActivation() }
+            editor.generationService.reconciliation.providerKey = { _ in nil }
+            let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+            let item = batch.payload.items[0]
+            let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+            let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+                target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+                requiresVerifiedCeiling: true, batchItem: batchItem, quoteLoader: { _, _ in GenerationPackageFixture.money() })
+            let references = try await GenerationPackageInputs.restore(package: item.package, editor: editor)
+            let authorization = GenerationAuthorization(transactionId: reserved.transactionId, target: reserved.target,
+                estimate: reserved.estimate, projectMutationScope: reserved.projectMutationScope,
+                compileRecipe: item.package.payload.generationInput.compileRecipe, referenceSnapshot: references,
+                generationPackage: item.package, batchItem: batchItem)
+            let parameters = try item.package.restoreParameters()
+            var failed = false
+            let placeholder = editor.generationService.generate(genInput: item.package.payload.generationInput,
+                assetType: .image, placeholderDuration: 1, buildParams: { _ in parameters.parameters },
+                preparedParameters: parameters, fileExtension: "png", projectURL: home, editor: editor,
+                authorization: authorization, onFailure: { failed = true })
+            if canceled { coordinator.cancelRemaining(batchID: batch.id, editor: editor) }
+            await editor.generationService.waitForGeneration(placeholderId: placeholder)
+            #expect(failed)
+            let current = try GenerationBatchStore.load(id: batch.id, home: home)
+            if canceled {
+                #expect(current.journal.executions.allSatisfy { $0.state == .canceled })
+                try coordinator.requireAfterGenerationWait(batchItem, placeholderID: placeholder, editor: editor)
+            } else {
+                #expect(current.journal == approved.journal)
+                #expect(throws: (any Error).self) {
+                    try coordinator.requireAfterGenerationWait(batchItem, placeholderID: placeholder, editor: editor)
+                }
+                let asset = try #require(editor.mediaAssets.first { $0.id == placeholder })
+                if case .failed(let reason) = asset.generationStatus {
+                    #expect(reason.contains("approved provider and model are unavailable"))
+                } else { Issue.record("The actual asynchronous consume refusal must fail its placeholder.") }
+            }
+            #expect(!editor.generationLog.spendEvents.contains { $0.kind == .submitted || $0.kind == .charged })
+        }
+    }
+
+    @Test func canceledRestorationCannotReconcileOrStartItsLoadedApproval() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let home = try #require(editor.workingRoot)
+        #expect(try GenerationBatchStore.all(home: home).contains {
+            $0.batch.id == batch.id && $0.authorityAvailable && $0.journal.executions.allSatisfy { $0.state == .queued }
+        })
+        let restoration = GenerationBatchCoordinator()
+        restoration.catalogReadiness = {}
+        #expect(restoration.snapshots.isEmpty)
+        let task = try #require(restoration.resume(editor: editor))
+        task.cancel()
+        await task.value
+        #expect(restoration.snapshots.isEmpty)
+        #expect(restoration.activeBatchID == nil)
+        #expect(restoration.error == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+    }
+
+    @Test func closingAfterRestorationHasStartedItsJobPreservesUnusedApproval() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot), coordinator = editor.generationBatchCoordinator
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let barrier = PendingQuoteFixture()
+        let target = batch.payload.items[0].package.payload.target
+        let pricing = try batch.payload.items[0].package.pricingInput()
+        coordinator.catalogReadiness = { _ = await barrier.quote(target, pricing) }
+        defer { barrier.finish(); coordinator.cancelForClose() }
+        let restoration = try #require(coordinator.resume(editor: editor))
+        await restoration.value
+        try #require(await waitUntil { barrier.didStart && coordinator.activeBatchID == batch.id })
+        #expect(coordinator.hasCloseWork)
+        #expect(coordinator.snapshots.contains { $0.batch.id == batch.id && $0.authorityAvailable })
+        let closing = coordinator.cancelForClose()
+        let repeated = coordinator.cancelForClose()
+        barrier.finish()
+        await closing.value
+        await repeated.value
+        #expect(!coordinator.hasCloseWork)
+        #expect(coordinator.activeBatchID == nil)
+        #expect(coordinator.error == nil)
+        #expect(coordinator.pausedBatches.isEmpty)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == approved)
+        #expect(editor.generationLog.spendEvents.isEmpty && editor.mediaAssets.isEmpty)
+    }
+
+    @Test func closeCancelsAndDrainsAnActualPricingPreparationBeforePublication() async throws {
+        let (root, editor, priced) = try await fixture()
+        defer { cleanup(root) }
+        let original = priced.payload.items[0]
+        let package = try original.package.replacingPricing(estimate: nil, failure: .init(reason: .exchangeRateUnavailable,
+            provider: nil, endpoint: "fixture://ecb", detail: "Controlled quote wait"))
+        let inputs = try await GenerationPackageInputs.restore(package: original.package, editor: editor)
+        try await GenerationPackageInputs.persist(package: package, snapshot: inputs, editor: editor)
+        let item = GenerationBatch.Item(id: original.id, purpose: original.purpose, package: package)
+        let batch = try GenerationBatch(payload: .init(nonce: priced.payload.nonce, projectKey: priced.payload.projectKey,
+            phase: priced.payload.phase, items: [item], requestSHA256: priced.payload.requestSHA256))
+        let coordinator = editor.generationBatchCoordinator, barrier = CancellationQuoteFixture()
+        try coordinator.present(batch, recoveries: [item.id: GenerationBatchRecovery(options: []) { _, _ in package }])
+        let home = try #require(editor.workingRoot)
+        let files = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
+        var before: [String: Data] = [:]
+        for case let file as URL in files where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+            before[file.path] = try Data(contentsOf: file)
+        }
+        let preparation = Task { await coordinator.retryPricing(editor: editor, quoteLoader: { _, _ in try await barrier.quote() }) }
+        defer { preparation.cancel(); barrier.finish(); coordinator.cancelForClose() }
+        try #require(await waitUntil { barrier.didStart && coordinator.isRecovering })
+        #expect(coordinator.hasCloseWork)
+        await coordinator.cancelForClose().value
+        await preparation.value
+        #expect(barrier.didCancel)
+        #expect(!coordinator.hasCloseWork && !coordinator.isRecovering)
+        #expect(coordinator.pending == batch && coordinator.error == nil)
+        for (path, bytes) in before { #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == bytes) }
+        let after = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
+        var paths = Set<String>()
+        for case let file as URL in after where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { paths.insert(file.path) }
+        #expect(paths == Set(before.keys))
+        #expect(editor.generationLog.spendEvents.isEmpty && editor.mediaAssets.isEmpty)
+    }
+
+    @Test func committedQuitCannotStartNewWorkAfterItsDrainHasCompleted() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.startsApprovedBatches = false
+        let recoveries = Dictionary(uniqueKeysWithValues: batch.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        })
+        try coordinator.present(batch, recoveries: recoveries)
+        await coordinator.preflight(editor: editor, expectedBatchID: batch.id)
+        try #require(coordinator.canApprovePending)
+        await coordinator.cancelForClose(preventNewWork: true).value
+        #expect(!coordinator.hasCloseWork && !coordinator.canApprovePending)
+        await coordinator.approve(editor: editor, expectedBatchID: batch.id)
+        #expect(coordinator.pending == batch && coordinator.activeBatchID == nil)
+        #expect(coordinator.resume(editor: editor) == nil)
+        let home = try #require(editor.workingRoot)
+        #expect(try GenerationBatchStore.all(home: home).isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty && editor.mediaAssets.isEmpty)
+    }
+
+    @Test func closeCancelsTheOwnedContinuationWithoutWaitingForAForeignPhase() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let coordinator = editor.generationBatchCoordinator
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: home))
+        _ = try await GenerationBatchStore.approve(batch, editor: editor)
+        let lease = try #require(editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: dataRoot, label: "Unrelated native edit"))
+        defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: dataRoot, id: lease) }
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        try #require(coordinator.hasCloseWork)
+        await Task.yield()
+        let close = coordinator.cancelForClose()
+        var drained = false
+        let observer = Task { await close.value; drained = true }
+        defer { observer.cancel() }
+        for _ in 0..<200 {
+            if drained { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(drained)
+        #expect(editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: dataRoot, id: lease))
+        #expect(!coordinator.hasCloseWork)
+    }
+
+    @Test func acceptedHTTPFixtureReceiptAfterCloseIsDurableWithoutProjectByteChanges() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-close-receipt-\(UUID()).ngv")
+        try Fixtures.prepareProjectPackage(at: root)
+        defer { cleanup(root) }
+        let editor = EditorViewModel()
+        editor.projectURL = root
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let (_, package) = try await GenerationPackageFixture.prepare(editor: editor, endpoint: endpoint)
+        let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
+            phase: nil, items: [.init(id: UUID().uuidString, purpose: "HTTP acceptance fixture only", package: package)]))
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let home = try #require(editor.workingRoot), item = batch.payload.items[0], transaction = UUID().uuidString
+        let target = package.payload.target
+        let reservation = GenerationSpendEvent(transactionId: transaction, kind: .reserved, model: target.modelId,
+            provider: target.provider, transport: target.transport, endpoint: target.endpoint, money: package.payload.estimate)
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+        }
+        let authorization = GenerationAuthorization(transactionId: transaction, target: target, estimate: package.payload.estimate,
+            projectMutationScope: try GenerationProjectMutationScope(projectHome: home, editor: editor), generationPackage: package,
+            batchItem: .init(batchID: batch.id, itemID: item.id))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AcceptedRequestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let requestID = try await FalClient(apiKey: "unit-no-key", session: session).submit(endpoint: endpoint,
+            inputBody: JSONSerialization.data(withJSONObject: ["prompt": package.payload.generationInput.prompt]))
+        let lifetime = GenerationBatchExecutionLifetime()
+        lifetime.abandon()
+        func projectBytes() throws -> [String: Data] {
+            let files = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
+            var result: [String: Data] = [:]
+            for case let file as URL in files where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                result[file.path] = try Data(contentsOf: file)
+            }
+            return result
+        }
+        let before = try projectBytes()
+        let beforeLog = editor.generationLog
+        let recorded = GenerationBatchExecutionLifetime.$current.withValue(lifetime) {
+            editor.generationService.markSubmitted(authorization: authorization, providerRequestId: requestID, resumable: true, editor: editor)
+        }
+        #expect(recorded)
+        #expect(editor.generationLog == beforeLog)
+        #expect(try projectBytes() == before)
+        let projectJournal = home.appendingPathComponent("generation-batches/\(batch.id)/journal.json")
+        #expect(try JSONDecoder().decode(GenerationBatchJournal.self, from: Data(contentsOf: projectJournal)) == submitting.journal)
+        let authority = try GenerationExecutionAuthorityStore.live().load(projectKey: batch.payload.projectKey, batchID: batch.id)
+        #expect(authority.journal.executions[0].state == .running)
+        #expect(authority.journal.executions[0].providerRequestID == requestID)
+        #expect(authority.spendEvents.filter { $0.kind == .submitted }.map(\.providerRequestId) == [requestID])
+        let idempotent = GenerationBatchExecutionLifetime.$current.withValue(lifetime) {
+            editor.generationService.markSubmitted(authorization: authorization, providerRequestId: requestID, resumable: true, editor: editor)
+        }
+        #expect(idempotent)
+        #expect(try projectBytes() == before)
+        #expect(try GenerationExecutionAuthorityStore.live().load(projectKey: batch.payload.projectKey, batchID: batch.id) == authority)
+    }
+
+    @Test func explicitContinuationRechecksCancellationAndHostAuthority() async throws {
+        let (root, editor, batch) = try await fixture(stop: 100)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let coordinator = editor.generationBatchCoordinator
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        #expect(coordinator.continuation(for: approved) == .queuedRequests)
+        coordinator.cancelRemaining(batchID: batch.id, editor: editor)
+        coordinator.continueBatch(batchID: batch.id, editor: editor)
+        #expect(coordinator.activeBatchID == nil)
+        let canceled = try GenerationBatchStore.load(id: batch.id, home: home)
+        #expect(canceled.journal.executions.allSatisfy { $0.state == .canceled })
+        #expect(coordinator.continuation(for: canceled) == nil)
+        let second = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: batch.payload.projectKey,
+            phase: nil, items: batch.payload.items))
+        let secondApproved = try await GenerationBatchStore.approve(second, editor: editor)
+        #expect(coordinator.canContinue(secondApproved, editor: editor))
+        let authority = try GenerationExecutionAuthorityStore.live()
+        try authority.removeForTesting(projectKey: batch.payload.projectKey, batchID: second.id)
+        coordinator.continueBatch(batchID: second.id, editor: editor)
+        #expect(coordinator.activeBatchID == nil)
+        let historyOnly = try GenerationBatchStore.load(id: second.id, home: home)
+        #expect(!historyOnly.authorityAvailable)
+        #expect(coordinator.continuation(for: historyOnly) == nil)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+        #expect(editor.mediaAssets.isEmpty)
+    }
+
+    @Test func ambiguousSubmissionIsNotOfferedAsAnUnsentRequest() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let submitting = try GenerationBatchStore.update(approved, editor: editor) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: "uncertain",
+                placeholders: placeholders(item, transaction: "uncertain"), batch: batch)
+            $0.cancelRemaining()
+        }
+        let coordinator = editor.generationBatchCoordinator
+        #expect(coordinator.continuation(for: submitting) == nil)
+        coordinator.continueBatch(batchID: batch.id, editor: editor)
+        #expect(coordinator.activeBatchID == nil)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == submitting)
+        let blocked = try GenerationBatchStore.update(submitting, editor: editor) {
+            try $0.stop(itemID: item.id, state: .blocked, detail: "No provider receipt was saved")
+        }
+        #expect(coordinator.continuation(for: blocked) == nil)
+        coordinator.continueBatch(batchID: batch.id, editor: editor)
+        #expect(coordinator.activeBatchID == nil)
+        #expect(try GenerationBatchStore.load(id: batch.id, home: home) == blocked)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+    }
+
+    @Test func recordedSubmissionReceiptOffersOnlyStatusContinuation() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let batchItem = GenerationBatchAuthorization(batchID: batch.id, itemID: item.id)
+        let ceiling = try #require(item.package.payload.estimate)
+        let reserved = try await GenerationBudgetGuard.authorize(input: item.package.pricingInput(),
+            target: item.package.payload.target, editor: editor, approvedPackage: item.package,
+            requiresVerifiedCeiling: true, batchItem: batchItem, quoteLoader: { _, _ in ceiling })
+        let transaction = try #require(reserved.transactionId)
+        let reservation = try #require(editor.generationLog.spendEvents.first { $0.transactionId == transaction })
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+            $0.cancelRemaining()
+        }
+        #expect(editor.generationBatchCoordinator.continuation(for: submitting, editor: editor) == nil)
+        let authorization = GenerationAuthorization(transactionId: transaction, target: reserved.target,
+            estimate: reserved.estimate, projectMutationScope: reserved.projectMutationScope,
+            generationPackage: item.package, batchItem: batchItem)
+        try editor.recordSpendEvent(authorization: authorization, kind: .submitted,
+            providerRequestId: "recorded-provider-job", providerRequestResumable: true, money: ceiling)
+        #expect(editor.generationBatchCoordinator.continuation(for: submitting, editor: editor) == .recordedJobs)
+        #expect(editor.generationBatchCoordinator.continuation(for: submitting) == nil)
+        #expect(editor.generationBatchCoordinator.activeBatchID == nil)
     }
 
     @Test func reviewProjectionGroupsAndNumbersOneThirteenAndFiftyItems() async throws {
@@ -216,7 +728,7 @@ struct GenerationBatchTests {
                 quoteLoader: quote.quote
             )
         }
-        await waitUntil { quote.didStart }
+        try #require(await waitUntil { quote.didStart })
         #expect(editor.generationBatchCoordinator.recoveringItemIDs.contains(first.id))
         editor.generationBatchCoordinator.remove(itemID: first.id, editor: editor)
         let reduced = try #require(editor.generationBatchCoordinator.pending)
@@ -278,7 +790,7 @@ struct GenerationBatchTests {
                 quoteLoader: quote.quote
             )
         }
-        await waitUntil { quote.didStart }
+        try #require(await waitUntil { quote.didStart })
         if requestsRevision { editor.generationBatchCoordinator.requestRevision(editor: editor) }
         else { editor.generationBatchCoordinator.decline(editor: editor) }
         #expect(editor.generationBatchCoordinator.pending == nil)
@@ -1153,6 +1665,140 @@ struct GenerationBatchTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
+    @Test func missingProjectProjectionCannotTurnAnAuthorizedBatchIntoAnUnscopedRunOrBill() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let transaction = UUID().uuidString
+        let target = item.package.payload.target
+        #expect(target.provider == .fal && target.transport == .api)
+        let reservation = GenerationSpendEvent(transactionId: transaction, kind: .reserved,
+            model: target.modelId, provider: target.provider, transport: target.transport,
+            endpoint: target.endpoint, money: item.package.payload.estimate)
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+        }
+        let receipt = GenerationSpendEvent(transactionId: transaction, kind: .submitted,
+            model: target.modelId, provider: target.provider, transport: target.transport,
+            endpoint: target.endpoint, providerRequestId: "known-provider-job", providerRequestResumable: true)
+        _ = try GenerationBatchStore.update(submitting, editor: editor, addingSpendEvents: [receipt]) {
+            try $0.recordProviderRequest(itemID: item.id, transactionID: transaction,
+                requestID: "known-provider-job", resumable: true)
+        }
+        let initial = try GenerationBatchStore.reconciliationOwnership(home: home)
+        #expect(initial[transaction] == GenerationBatchAuthorization(batchID: batch.id, itemID: item.id))
+        #expect(initial.permitsLateBill(transaction))
+        let directory = home.appendingPathComponent("generation-batches")
+        try FileManager.default.moveItem(at: directory, to: home.appendingPathComponent("saved-batch-projection"))
+        let missing = try GenerationBatchStore.reconciliationOwnership(home: home)
+        #expect(missing[transaction] == initial[transaction])
+        #expect(!missing.permitsLateBill(transaction))
+        #expect(missing["unrelated-single-run"] == nil)
+        #expect(missing.permitsLateBill("unrelated-single-run"))
+        let probe = ReconciliationProbe()
+        editor.generationService.reconciliation = ProviderRunReconciliation(minimumInterval: 0,
+            providerKey: { _ in probe.record(); return nil }, falCharge: { _, _, _ in probe.record(); return nil })
+        editor.generationLog.spendEvents = [reservation, receipt]
+        let now = Date()
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: now) == 0)
+        #expect(probe.count == 0)
+        #expect(editor.generationLog.spendEvents == [reservation, receipt])
+        editor.generationLog.spendEvents.append(GenerationSpendEvent(transactionId: transaction, kind: .settled,
+            model: target.modelId, provider: target.provider, transport: target.transport, endpoint: target.endpoint))
+        let settled = editor.generationLog.spendEvents
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: now.addingTimeInterval(1)) == 0)
+        #expect(probe.count == 0)
+        #expect(editor.generationLog.spendEvents == settled)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    private func lateBillBatchFixture(hostKind: GenerationSpendEvent.Kind = .settled) async throws -> (URL, EditorViewModel, GenerationBatchAuthorization, [GenerationSpendEvent]) {
+        let (root, editor, batch) = try await fixture()
+        let approved = try await GenerationBatchStore.approve(batch, editor: editor)
+        let item = batch.payload.items[0]
+        let target = item.package.payload.target
+        #expect(target.provider == .fal && target.transport == .api)
+        let transaction = UUID().uuidString
+        let reservation = GenerationSpendEvent(transactionId: transaction, kind: .reserved,
+            model: target.modelId, provider: target.provider, transport: target.transport,
+            endpoint: target.endpoint, money: item.package.payload.estimate)
+        let submitting = try GenerationBatchStore.update(approved, editor: editor, addingSpendEvents: [reservation]) {
+            try $0.beginSubmission(itemID: item.id, packageID: item.package.id, transactionID: transaction,
+                placeholders: placeholders(item, transaction: transaction), batch: batch)
+        }
+        let submitted = GenerationSpendEvent(transactionId: transaction, kind: .submitted,
+            model: target.modelId, provider: target.provider, transport: target.transport, endpoint: target.endpoint,
+            providerRequestId: "late-batch-job", providerRequestResumable: true, money: reservation.money)
+        let settled = GenerationSpendEvent(transactionId: transaction, kind: .settled,
+            model: target.modelId, provider: target.provider, transport: target.transport, endpoint: target.endpoint)
+        if hostKind != .reserved {
+            _ = try GenerationBatchStore.update(submitting, editor: editor,
+                addingSpendEvents: hostKind == .submitted ? [submitted] : [submitted, settled]) {
+                try $0.recordProviderRequest(itemID: item.id, transactionID: transaction, requestID: "late-batch-job", resumable: true)
+            }
+        }
+        let events = [reservation, submitted, settled]
+        editor.generationLog.spendEvents = events
+        #expect(GenerationService.unbilledFalRuns(in: editor.generationLog, settledAfter: .distantPast).count == 1)
+        return (root, editor, GenerationBatchAuthorization(batchID: batch.id, itemID: item.id), events)
+    }
+
+    @Test(arguments: [GenerationSpendEvent.Kind.charged, .settled])
+    func hostRecordedMoneyPreventsAnotherLateBill(kind: GenerationSpendEvent.Kind) async throws {
+        let (root, editor, authorization, events) = try await lateBillBatchFixture()
+        defer { cleanup(root) }
+        let transaction = events[0].transactionId
+        let closing = GenerationSpendEvent(transactionId: transaction, kind: kind, model: events[0].model,
+            provider: .fal, transport: .api, endpoint: events[0].endpoint, money: GenerationPackageFixture.money(0.4))
+        try GenerationBatchStore.recordSpendEvent(closing, authorization: authorization, editor: editor)
+        let authority = try GenerationExecutionAuthorityStore.live()
+        let home = try #require(editor.workingRoot)
+        let projectKey = try #require(ProjectIdentity.existingUUID(for: home))
+        let before = try authority.load(projectKey: projectKey, batchID: authorization.batchID)
+        let probe = ReconciliationProbe()
+        let bill = GenerationPackageFixture.money(0.4)
+        editor.generationService.reconciliation = ProviderRunReconciliation(minimumInterval: 0,
+            providerKey: { _ in probe.record(); return "fixture-key" },
+            falCharge: { _, _, _ in probe.record(); return bill })
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor) == 0)
+        #expect(probe.count == 0)
+        #expect(editor.generationLog.spendEvents == events)
+        #expect(try authority.load(projectKey: projectKey, batchID: authorization.batchID) == before)
+    }
+
+    @Test(arguments: [false, true])
+    func lateBillRechecksHostMoneyAfterAwait(hostChargedDuringLookup: Bool) async throws {
+        let (root, editor, authorization, events) = try await lateBillBatchFixture()
+        defer { cleanup(root) }
+        let gate = PendingQuoteFixture()
+        let bill = GenerationPackageFixture.money(0.4)
+        let target = ResolvedGenerationTarget(modelId: "fixture", provider: .fal, endpoint: "fixture", binding: nil)
+        let pricing = GenerationPricingInput(modelId: "fixture", modality: .image, durationSeconds: nil,
+            outputCount: 1, resolution: nil, quality: nil, promptCharacterCount: 1, generateAudio: nil, referenceCount: 0)
+        editor.generationService.reconciliation = ProviderRunReconciliation(minimumInterval: 0,
+            providerKey: { _ in "fixture-key" }, falCharge: { _, _, _ in await gate.quote(target, pricing) })
+        let reconciling = Task { await editor.generationService.reconcileOpenRuns(editor: editor) }
+        for _ in 0..<400 where !gate.didStart { try await Task.sleep(for: .milliseconds(5)) }
+        guard gate.didStart else { reconciling.cancel(); gate.finish(); Issue.record("Expected the actual late-bill lookup"); return }
+        defer { gate.finish(); reconciling.cancel() }
+        if hostChargedDuringLookup {
+            let charged = GenerationSpendEvent(transactionId: events[0].transactionId, kind: .charged,
+                model: events[0].model, provider: .fal, transport: .api, endpoint: events[0].endpoint, money: bill)
+            try GenerationBatchStore.recordSpendEvent(charged, authorization: authorization, editor: editor)
+        }
+        gate.finish()
+        #expect(await reconciling.value == (hostChargedDuringLookup ? 0 : 1))
+        let home = try #require(editor.workingRoot)
+        let record = try GenerationExecutionAuthorityStore.live().load(
+            projectKey: #require(ProjectIdentity.existingUUID(for: home)), batchID: authorization.batchID)
+        #expect(record.spendEvents.filter { $0.kind == .charged }.count == 1)
+        if hostChargedDuringLookup { #expect(editor.generationLog.spendEvents == events) }
+        else { #expect(editor.generationLog.spendEvents.last?.money == bill) }
+    }
+
     @Test func hostAuthorityRestoresAnOlderProjectWithoutReissuingApproval() async throws {
         let (root, editor, batch) = try await fixture()
         let authorityRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-authority-\(UUID().uuidString)")
@@ -1404,8 +2050,14 @@ struct GenerationBatchTests {
         #expect(try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil)
         let stored = try GenerationBatchStore.load(id: batch.id, home: home)
         #expect(stored.authorityAvailable)
-        _ = try GenerationBatchStore.update(stored, editor: editor) { $0.cancelRemaining() }
+        #expect(coordinator.snapshots == [stored])
+        #expect(coordinator.continuation(for: stored, editor: editor) == .queuedRequests)
+        let canceled = try GenerationBatchStore.update(stored, editor: editor) { $0.cancelRemaining() }
+        #expect(coordinator.snapshots == [canceled])
+        #expect(coordinator.continuation(for: canceled, editor: editor) == nil)
         #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
+        let existing = try await GenerationBatchStore.approve(batch, editor: editor)
+        #expect(existing == canceled && coordinator.snapshots == [existing])
         try FileManager.default.removeItem(at: home.appendingPathComponent("generation-batches"))
         coordinator.cancelRemaining(batchID: batch.id, editor: editor)
         #expect(coordinator.error == nil)
@@ -1475,5 +2127,142 @@ struct GenerationBatchTests {
         try GenerationBatchStore.reconcileRuntime([restored], editor: editor)
         #expect(editor.mediaAssets.contains(where: { $0.id == entry.id && $0.generationStatus == .none }))
         #expect(editor.mediaManifest.entries.contains(entry))
+    }
+
+    @Test(arguments: [GenerationSpendEvent.Kind.charged, .settled, .released])
+    func finalHostBillingRefusesACachedLateCommit(kind: GenerationSpendEvent.Kind) async throws {
+        let hostKind: GenerationSpendEvent.Kind = kind == .released ? .reserved : kind == .settled ? .submitted : .settled
+        let (root, editor, batch, events) = try await lateBillBatchFixture(hostKind: hostKind)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let key = try #require(ProjectIdentity.existingUUID(for: home))
+        let store = try GenerationExecutionAuthorityStore.live()
+        let stale = try store.load(projectKey: key, batchID: batch.batchID)
+        let bill = GenerationPackageFixture.money(0.4)
+        let target = ResolvedGenerationTarget(modelId: events[0].model, provider: .fal,
+            endpoint: events[0].endpoint, binding: nil)
+        let cached = GenerationAuthorization(transactionId: events[0].transactionId, target: target,
+            estimate: events[0].money, projectMutationScope: try GenerationProjectMutationScope(projectHome: home, editor: editor),
+            batchItem: batch)
+        let closing = GenerationSpendEvent(transactionId: events[0].transactionId, kind: kind,
+            model: target.modelId, provider: .fal, transport: .api, endpoint: target.endpoint,
+            money: kind == .released ? nil : bill)
+        try GenerationBatchStore.recordSpendEvent(closing, authorization: batch, editor: editor)
+        let current = try store.load(projectKey: key, batchID: batch.batchID)
+        let hostEvents = Array(events.prefix(kind == .released ? 1 : kind == .settled ? 2 : 3))
+        #expect(current.spendEvents == hostEvents + [closing])
+        try store.recordSpendEvent(closing, authorization: batch)
+        #expect(try store.load(projectKey: key, batchID: batch.batchID) == current)
+        #expect(editor.generationLog.spendEvents == events)
+        editor.generationService.markFinished(authorization: cached, billed: bill, editor: editor)
+        #expect(editor.generationLog.spendEvents == events)
+        #expect(try store.load(projectKey: key, batchID: batch.batchID) == current)
+        let repeated = GenerationSpendEvent(transactionId: events[0].transactionId, kind: .charged,
+            model: target.modelId, provider: .fal, transport: .api, endpoint: target.endpoint, money: bill)
+        do {
+            _ = try store.update(expected: current, journal: current.journal, adding: [repeated])
+            Issue.record("A second closing event must not bypass the spend writer through a journal update.")
+        } catch {
+            #expect(error.localizedDescription.contains("already has a final billing event"))
+        }
+        #expect(try store.load(projectKey: key, batchID: batch.batchID) == current)
+        #expect(throws: GenerationRequestError.self) {
+            _ = try store.update(expected: stale, journal: stale.journal, adding: [repeated])
+        }
+    }
+
+    @Test func hostRecordWritersShareANonwaitingRecordLock() async throws {
+        let (root, editor, batch, events) = try await lateBillBatchFixture()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let key = try #require(ProjectIdentity.existingUUID(for: home))
+        let store = try GenerationExecutionAuthorityStore.live()
+        let independent = try GenerationExecutionAuthorityStore(root: store.root, hostID: store.hostID)
+        let before = try store.load(projectKey: key, batchID: batch.batchID)
+        let folder = store.root.appendingPathComponent(store.hostID).appendingPathComponent(key).appendingPathComponent(batch.batchID)
+        let charged = GenerationSpendEvent(transactionId: events[0].transactionId, kind: .charged,
+            model: events[0].model, provider: .fal, transport: .api, endpoint: events[0].endpoint,
+            money: GenerationPackageFixture.money(0.4))
+        do {
+            let descriptor = open(folder.appendingPathComponent(".record.lock").path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+            try #require(descriptor >= 0)
+            defer { Darwin.close(descriptor) }
+            try #require(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+            do {
+                try independent.recordSpendEvent(charged, authorization: batch)
+                Issue.record("A competing spend write must refuse the held record lock.")
+            } catch { #expect(error.localizedDescription.contains("being updated by another operation")) }
+            do {
+                _ = try independent.update(expected: before, journal: before.journal, adding: [charged])
+                Issue.record("A competing journal write must use the same record lock.")
+            } catch { #expect(error.localizedDescription.contains("being updated by another operation")) }
+            #expect(try store.load(projectKey: key, batchID: batch.batchID) == before)
+        }
+        try independent.recordSpendEvent(charged, authorization: batch)
+        let after = try store.load(projectKey: key, batchID: batch.batchID)
+        #expect(after.spendEvents == events + [charged])
+        #expect(throws: GenerationRequestError.self) {
+            _ = try store.update(expected: before, journal: before.journal, adding: [charged])
+        }
+        #expect(try store.load(projectKey: key, batchID: batch.batchID) == after)
+    }
+
+    @Test func aChangedPendingBatchDoesNotInventAnApprovedPhaseRun() async throws {
+        let (root, editor, original) = try await fixture(stop: 1)
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: home))
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            Gates(project: "demo", gates: ["brief": Gate(approved: true), "frames": Gate()]),
+            to: PipelineLayout.gatesFile)
+        let old = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: original.payload.projectKey,
+            phase: "frames", items: original.payload.items))
+        let replacement = try old.removing(itemIDs: [old.payload.items[0].id])
+        let coordinator = editor.generationBatchCoordinator
+        coordinator.startsApprovedBatches = false
+        try coordinator.present(replacement, recoveries: Dictionary(uniqueKeysWithValues: replacement.payload.items.map { item in
+            (item.id, GenerationBatchRecovery(options: []) { _, _ in item.package })
+        }))
+        let grant = try #require(editor.phaseSpendApproval.grant(phase: "frames", editor: editor))
+        await coordinator.approveRecordingPhaseRun(old, editor: editor, grant: grant)
+        #expect(coordinator.pending == replacement)
+        #expect(editor.phaseSpendApproval.current?.runs.isEmpty == true)
+        #expect(try GenerationBatchStore.all(home: home).isEmpty)
+        await coordinator.approveRecordingPhaseRun(replacement, editor: editor, grant: grant)
+        #expect(coordinator.pending == nil)
+        #expect(editor.phaseSpendApproval.current?.runs.count == 1)
+        #expect(try GenerationBatchStore.all(home: home).map(\.batch.id) == [replacement.id])
+    }
+
+    @Test func cancellationAfterFinalInputChecksCannotPublishThePackage() async throws {
+        let (root, editor, batch) = try await fixture()
+        defer { cleanup(root) }
+        let original = batch.payload.items[0].package
+        let snapshot = try await GenerationPackageInputs.restore(package: original, editor: editor)
+        let package = try original.replacingPricing(estimate: GenerationPackageFixture.money(0.3), failure: nil)
+        let home = try #require(editor.workingRoot)
+        let packageURL = home.appendingPathComponent("generation-packages/\(package.id).json")
+        let manifestURL = home.appendingPathComponent("generation-packages/\(package.id).inputs.json")
+        let gate = PendingQuoteFixture()
+        let pricing = try package.pricingInput()
+        let publishing = Task {
+            try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor,
+                beforePublication: { _ = await gate.quote(package.payload.target, pricing) })
+        }
+        defer { publishing.cancel(); gate.finish() }
+        for _ in 0..<400 where !gate.didStart { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(gate.didStart)
+        #expect(!FileManager.default.fileExists(atPath: packageURL.path))
+        #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
+        publishing.cancel()
+        gate.finish()
+        await #expect(throws: CancellationError.self) { try await publishing.value }
+        #expect(!FileManager.default.fileExists(atPath: packageURL.path))
+        #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
+        try await GenerationPackageInputs.persist(package: package, snapshot: snapshot, editor: editor)
+        try await GenerationPackageInputs.validate(package: package, editor: editor)
+        #expect(try Data(contentsOf: packageURL) == GenerationPackageV1.canonicalData(package))
+        #expect(try GenerationBatchStore.all(home: home).isEmpty)
+        #expect(editor.generationLog.spendEvents.isEmpty)
     }
 }

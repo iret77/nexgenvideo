@@ -1,0 +1,23 @@
+name: NexGenVideoExternalGUI
+options:
+  bundleIdPrefix: de.h5ventures.nexgenvideo.acceptance
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  NexGenVideoExternalUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [NexGenVideoExternalUITests]
+schemes:
+  NexGenVideoExternalGUI:
+    build:
+      targets:
+        NexGenVideoExternalUITests: [test]
+    test:
+      targets: [NexGenVideoExternalUITests]

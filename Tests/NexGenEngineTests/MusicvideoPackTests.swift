@@ -486,12 +486,15 @@ struct MusicvideoPackTests {
         reg.load(MusicvideoPack())
         let migrations = reg.engine.projectSchemaMigrations
         #expect(migrations.contains {
-            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/3.0.0"
         })
         #expect(migrations.contains {
-            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/3.0.0"
         })
-        #expect(migrations.count == 2)
+        #expect(migrations.contains {
+            $0.from == "musicvideo/2.0.0" && $0.to == "musicvideo/3.0.0"
+        })
+        #expect(migrations.count == 3)
     }
 
     @Test("measured-structure migration rewinds analysis and downstream approvals")

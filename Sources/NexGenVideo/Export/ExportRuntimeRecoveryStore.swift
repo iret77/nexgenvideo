@@ -255,7 +255,7 @@ enum ExportRuntimeRecoveryStore {
         let companionCount = record.items.filter { $0.role == .companion }.count
         let packageCount = record.items.filter { $0.role == .package }.count
         let rolesValid = switch record.kind {
-        case .xml: documentCount == 1 && companionCount == 0 && packageCount == 0
+        case .xml: documentCount == 1 && companionCount <= 1 && packageCount == 0
         case .fcpxml: documentCount == 1 && companionCount <= 1 && packageCount == 0
         case .project: documentCount == 0 && companionCount == 0 && packageCount == 1
         }

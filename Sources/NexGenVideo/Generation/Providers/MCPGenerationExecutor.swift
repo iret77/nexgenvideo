@@ -258,6 +258,9 @@ enum MCPGenerationExecutor {
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
     ) async -> String {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else {
+            return "Local restoration stopped; the provider job remains available for later reconciliation."
+        }
         let cancellation = Task.detached {
             await cancelAcceptedJob(jobID: jobID, tools: tools, client: client)
         }

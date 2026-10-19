@@ -2,11 +2,6 @@ import AppKit
 import NexGenEngine
 import SwiftUI
 
-// Read-only Bible cockpit panel: shows the production Bible (characters, ensembles, props, locations,
-// look) with reference-sheet thumbnails, loaded via the engine read CLI (CockpitDataService.bible).
-// Segmented picker across the entity kinds; per-entity cards; explicit loading / empty / error /
-// engine-not-ready states. No mutations.
-
 struct BiblePanelView: View {
     @Environment(\.projectPalette) private var palette
     @Environment(EditorViewModel.self) private var editor
@@ -17,6 +12,7 @@ struct BiblePanelView: View {
         case props = "Props"
         case locations = "Locations"
         case look = "Look"
+        case references = "Shot references"
     }
 
     private enum LoadState: Equatable {
@@ -30,14 +26,53 @@ struct BiblePanelView: View {
     @State private var section: Section = .characters
     /// Guards against a stale reload result overwriting a newer one when the project changes mid-flight.
     @State private var loadToken = 0
+    @State private var spatialLocation: BiblePanelSheetTarget?
+    @State private var panoramaLocation: BiblePanelSheetTarget?
+
+    private var sheetContext: BiblePanelSheetTarget.Context {
+        .init(home: editor.workingRoot, projectID: editor.projectId, generation: editor.openWorkingCopyGeneration)
+    }
+
+    private var canOpenPanorama: Bool {
+        sheetContext.isReady && editor.usesProductionPlanningV2
+            && !editor.agentService.isStreaming && !editor.agentService.isComposerBlocked
+    }
+
+    private var canOpenSpatial: Bool {
+        canOpenPanorama && editor.projectState?.nextPhaseName == "bible"
+    }
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: editor.projectURL) { await load() }
+        .task(id: sheetContext) {
+            spatialLocation = nil; panoramaLocation = nil
+            await load()
+        }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+        .onChange(of: editor.usesProductionPlanningV2) { _, enabled in
+            if !enabled {
+                spatialLocation = nil; panoramaLocation = nil
+                if section == .references { section = .characters }
+            }
+        }
+
+        .sheet(isPresented: Binding(get: {
+            editor.usesProductionPlanningV2 && spatialLocation?.isCurrent(sheetContext) == true
+        }, set: { if !$0 { spatialLocation = nil } })) {
+            if let target = spatialLocation, target.isCurrent(sheetContext), editor.usesProductionPlanningV2 {
+                BibleSpatialViewSheet(home: target.home, locationID: target.locationID, generation: target.context.generation).environment(editor)
+            }
+        }
+        .sheet(isPresented: Binding(get: {
+            editor.usesProductionPlanningV2 && panoramaLocation?.isCurrent(sheetContext) == true
+        }, set: { if !$0 { panoramaLocation = nil } })) {
+            if let target = panoramaLocation, target.isCurrent(sheetContext), editor.usesProductionPlanningV2 {
+                LocationPanoramaView(home: target.home, locationID: target.locationID).environment(editor)
+            }
+        }
     }
 
     @ViewBuilder
@@ -46,16 +81,16 @@ struct BiblePanelView: View {
         case .idle, .loading:
             centered { ProgressView().controlSize(.small) }
         case .failed(let error):
-            CockpitStateView.error(error, title: "Couldn't load the Bible",
-                                   subject: "the Bible",
+            CockpitStateView.error(error, title: "Couldn't load references",
+                                   subject: "references",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
                                    isStarting: editor.productionStarting, hasProduction: editor.hasProductionPipeline) { Task { await load() } }
         case .loaded(nil):
             emptyState(
                 icon: "book.closed",
-                title: "No Bible yet",
-                message: "This project doesn't have a production Bible."
+                title: "No references yet",
+                message: "This project has no production references yet."
             )
         case .loaded(.some(let bible)):
             loadedBody(bible)
@@ -65,27 +100,33 @@ struct BiblePanelView: View {
     @ViewBuilder
     private func loadedBody(_ bible: BibleData) -> some View {
         sectionPicker
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                switch section {
-                case .characters: entityList(bible.characters, kind: .character)
-                case .ensembles: entityList(bible.ensembles, kind: .ensemble)
-                case .props: entityList(bible.props, kind: .prop)
-                case .locations: entityList(bible.locations, kind: .location)
-                case .look: lookContent(bible.look)
+        if section == .references {
+            ProductionObligationView()
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                    switch section {
+                    case .characters: entityList(bible.characters, kind: .character)
+                    case .ensembles: entityList(bible.ensembles, kind: .ensemble)
+                    case .props: entityList(bible.props, kind: .prop)
+                    case .locations: entityList(bible.locations, kind: .location)
+                    case .look: lookContent(bible.look)
+                    case .references: EmptyView()
+                    }
                 }
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var sectionPicker: some View {
         Picker("", selection: $section) {
-            ForEach(Section.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            ForEach(Section.allCases.filter { $0 != .references || editor.usesProductionPlanningV2 }, id: \.self) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
+        .reviewAcceptanceProbe("bible.section", text: section.rawValue)
         .labelsHidden()
         .padding(.horizontal, AppTheme.Spacing.lg)
         .padding(.top, AppTheme.Spacing.md)
@@ -100,7 +141,7 @@ struct BiblePanelView: View {
             emptyState(
                 icon: "tray",
                 title: "None yet",
-                message: "No \(section.rawValue.lowercased()) in this Bible."
+                message: "No \(section.rawValue.lowercased()) in References."
             )
         } else {
             ForEach(entities) { entity in
@@ -117,6 +158,25 @@ struct BiblePanelView: View {
                     .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
                     .onTapGesture { inspect(ref) }
                     .accessibilityAction(named: "Inspect \(entity.name)") { inspect(ref) }
+                if kind == .location, editor.usesProductionPlanningV2 {
+                    Button("Panorama and camera views…") {
+                        guard canOpenPanorama else { return }
+                        panoramaLocation = .init(locationID: ref.id, context: sheetContext)
+                    }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(!canOpenPanorama)
+                        .reviewAcceptanceProbe("bible.panorama.open.\(entity.id)", state: canOpenPanorama)
+                    Button("Create camera view…") {
+                        guard canOpenSpatial else { return }
+                        spatialLocation = .init(locationID: ref.id, context: sheetContext)
+                    }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(!canOpenSpatial)
+                        .help(ReferenceEditingGuidance.message(editor: editor, allowedPhases: ["bible"])
+                            ?? (sheetContext.isReady ? "Render a saved location camera, inspect its geometry view and assign it to this location in References."
+                                : "Wait for the project session to finish loading."))
+                        .reviewAcceptanceProbe("bible.spatial.open.\(entity.id)", state: canOpenSpatial)
+                }
             }
         }
     }
@@ -134,7 +194,7 @@ struct BiblePanelView: View {
             emptyState(
                 icon: "paintpalette",
                 title: "No look defined",
-                message: "This Bible has no look guide yet."
+                message: "References has no look guide yet."
             )
         } else {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
@@ -158,7 +218,11 @@ struct BiblePanelView: View {
                     )
             )
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
-            .onTapGesture { editor.inspectedObject = .look }
+            .onTapGesture {
+                editor.inspectedObject = .look
+                editor.inspectorPanelVisible = true
+            }
+            .reviewAcceptanceProbe("bible.look.select")
         }
     }
 
@@ -191,15 +255,15 @@ struct BiblePanelView: View {
     // MARK: - Load
 
     private func load() async {
+        loadToken += 1
+        let token = loadToken, context = sheetContext
         guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }
-        loadToken += 1
-        let token = loadToken
         state = .loading
         let result = await CockpitDataService.bible(projectDir: dir)
-        guard token == loadToken else { return }
+        guard !Task.isCancelled, token == loadToken, context == sheetContext else { return }
         switch result {
         case .success(let bible): state = .loaded(bible)
         case .failure(let error): state = .failed(error)
@@ -279,6 +343,11 @@ struct BibleEntityCard: View {
                 .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
+                .background {
+                    if presentation == .board, let reference {
+                        Color.clear.reviewAcceptanceProbe("bible.entity.select." + reference.kind.rawValue + "." + reference.id)
+                    }
+                }
         }
     }
 
@@ -337,6 +406,7 @@ struct BibleEntityCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Preview \(entity.name), \(sheet.key)")
+                    .reviewAcceptanceProbe("bible.sheet." + reference.kind.rawValue + "." + reference.id + "." + sheet.key, text: sheet.path)
                 } else {
                     SheetThumbnailView(label: sheet.key, path: sheet.path, projectDir: projectDir)
                 }

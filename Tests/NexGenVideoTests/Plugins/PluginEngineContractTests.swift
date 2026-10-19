@@ -27,6 +27,15 @@ struct PluginEngineContractTests {
         #expect(PluginGate.evaluate(info: info(contract: EngineContract.current), appVersion: "0.4.1") == nil)
     }
 
+    @Test func productionPlanningSymbolsRequireTheNewHostWithoutDroppingOlderPacks() {
+        #expect(PluginGate.contractCheck(packContract: 12, engine: 11, minimumCompatible: 2)
+                == .requiresEngineContract(pack: 12, app: 11))
+        #expect(PluginGate.contractCheck(packContract: 11, engine: 12, minimumCompatible: 2) == nil)
+        #expect(PluginGate.contractCheck(packContract: 2, engine: 12, minimumCompatible: 2) == nil)
+        #expect(PluginGate.contractCheck(packContract: 1, engine: 12, minimumCompatible: 2)
+                == .requiresEngineContract(pack: 1, app: 12))
+    }
+
     @Test func differingContractIsIncompatible() {
         for packContract in [
             EngineContract.minimumCompatible - 1,

@@ -217,6 +217,8 @@ struct CockpitSurfaceData: Decodable, Sendable, Equatable, Identifiable {
     var dataFile: String
     var layout: [CockpitSurfacePrimitiveData]
 
+    var displayName: String { PhaseDisplay.hostLabel(phase) ?? title }
+
     enum CodingKeys: String, CodingKey {
         case id, title, symbol, phase, layout
         case dataFile = "data_file"

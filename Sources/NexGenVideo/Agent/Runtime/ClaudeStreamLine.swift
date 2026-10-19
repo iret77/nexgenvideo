@@ -20,6 +20,7 @@ enum ClaudeStreamEvent: Sendable {
     case sessionStarted(sessionId: String)
     /// One completed block of the assistant message identified by `messageId`.
     case assistantBlock(messageId: String, block: ClaudeBlock)
+    case responseMetadata(messageID: String, modelID: String)
     /// A tool result returned to the model (arrives on a `user` line).
     case toolResult(toolUseId: String, blocks: [ToolResult.Block], isError: Bool)
     /// `result` — the turn finished, with optional cost and error.
@@ -61,10 +62,16 @@ struct ClaudeCodeAuthenticationEventBuffer {
     private var deferred: [ClaudeStreamEvent] = []
 
     mutating func receive(_ events: [ClaudeStreamEvent]) -> Resolution {
+        if events.contains(where: \.requiresAuthentication) {
+            deferred.removeAll()
+            return .authenticationRequired
+        }
+        if events.contains(where: { if case .assistantBlock(_, .toolUse(_, _, _)) = $0 { return true }; return false }) {
+            let ready = deferred + events
+            deferred.removeAll()
+            return .events(ready)
+        }
         if deferred.isEmpty {
-            if events.contains(where: \.requiresAuthentication) {
-                return .authenticationRequired
-            }
             if events.contains(where: \.isAuthenticationMessageCandidate),
                !Self.finishesTurn(events) {
                 deferred = events
@@ -74,10 +81,6 @@ struct ClaudeCodeAuthenticationEventBuffer {
         }
 
         deferred.append(contentsOf: events)
-        if events.contains(where: \.requiresAuthentication) {
-            deferred.removeAll()
-            return .authenticationRequired
-        }
         guard Self.finishesTurn(events) else {
             return .waiting
         }
@@ -142,7 +145,11 @@ enum ClaudeStreamDecoder {
               let content = message["content"] as? [[String: Any]]
         else { return [] }
 
-        return content.compactMap { block in
+        var events: [ClaudeStreamEvent] = []
+        if let modelID = message["model"] as? String, !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            events.append(.responseMetadata(messageID: messageId, modelID: modelID))
+        }
+        events += content.compactMap { block in
             switch block["type"] as? String {
             case "text":
                 guard let text = block["text"] as? String, !text.isEmpty else { return nil }
@@ -155,6 +162,7 @@ enum ClaudeStreamDecoder {
                 return nil
             }
         }
+        return events
     }
 
     private static func toolResults(_ obj: [String: Any]) -> [ClaudeStreamEvent] {

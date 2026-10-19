@@ -12,6 +12,7 @@ struct ToolbarView: View {
                 toolbarButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: undo)
                 toolbarButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: redo)
             }
+            .disabled(PipelineLedgerWriter.isRestoring(editor: editor))
 
             // Tool mode
             HStack(spacing: AppTheme.Spacing.md) {
@@ -30,6 +31,7 @@ struct ToolbarView: View {
             // Add content
             HStack(spacing: AppTheme.Spacing.md) {
                 textGlyphButton("T", help: "Add Text", action: { _ = editor.addTextClip() })
+                    .reviewAcceptanceProbe("editing.add-text")
                 Button {
                     editor.markerPanelPresented = true
                 } label: {
@@ -51,6 +53,7 @@ struct ToolbarView: View {
                     isDisabled: editor.zoomScale <= editor.minZoomScale,
                     action: zoomOut
                 )
+                .reviewAcceptanceProbe("timeline.zoom.out", enabledState: editor.zoomScale > editor.minZoomScale)
                 // Log-mapped so slider travel is uniform per zoom factor
                 let zoomBinding = Binding(
                     get: { log(editor.zoomScale) },
@@ -60,12 +63,14 @@ struct ToolbarView: View {
                     .controlSize(.mini)
                     .tint(editor.projectPalette.accent)
                     .frame(width: AppTheme.ComponentSize.toolbarZoomWidth)
+                    .reviewAcceptanceProbe("timeline.zoom.slider", text: String(editor.zoomScale))
                 zoomButton(
                     "plus.magnifyingglass",
                     help: "Zoom In",
                     isDisabled: editor.zoomScale >= Zoom.max,
                     action: zoomIn
                 )
+                .reviewAcceptanceProbe("timeline.zoom.in", enabledState: editor.zoomScale < Zoom.max)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.md)

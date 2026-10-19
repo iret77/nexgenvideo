@@ -80,6 +80,9 @@ struct GenerationPackageTests {
         #expect(editor.generationLog.spendEvents.isEmpty)
         #expect(package.payload.outputCount == 1)
         #expect(package.payload.prompt == generation.compiledPrompt)
+        let recoveredResult = Data(#"{"images":[{"url":"https://output.invalid/recovered-image.png"}]}"#.utf8)
+        #expect(try FalOutput.urls(from: recoveredResult, shape: GenerationService.resumedFalOutputShape(package: package))
+            == ["https://output.invalid/recovered-image.png"])
         guard case .image(let submission, let parameters) = generation.submission else { Issue.record("Expected image"); return }
         var input = submission.genInput
         input.referenceReceipts = []; input.compileRecipe = generation.recipe

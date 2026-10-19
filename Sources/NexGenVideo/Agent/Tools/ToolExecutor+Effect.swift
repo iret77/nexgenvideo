@@ -19,6 +19,9 @@ extension ToolExecutor {
         guard !input.clipIds.isEmpty else { throw ToolError("clipIds is empty.") }
         let adds = input.effects ?? []
         let removes = input.remove ?? []
+        guard !removes.contains(ClipAnimationEnvelope.effectType) else {
+            throw ToolError("The retained clip envelope is edited with fade controls, not apply_effect.")
+        }
         guard !adds.isEmpty || !removes.isEmpty else {
             throw ToolError("Provide effects to add/update or remove types to delete.")
         }

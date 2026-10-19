@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import NexGenEngine
@@ -13,14 +14,10 @@ struct PipelineRenderRecordWriterTests {
 
     @Test("Publication rechecks the exact pack binding before canonical writes")
     func publicationRejectsBindingChangeAtCommit() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let fixture = try makeDataRoot()
         defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
-        let trusted = try #require(ProjectPackBinding(
-            id: "musicvideo",
-            version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
-        ))
+        let trusted = try CurrentMusicvideoFixture.binding
         let sibling = try #require(ProjectPackBinding(
             id: trusted.id,
             version: "0.4.5",
@@ -65,6 +62,7 @@ struct PipelineRenderRecordWriterTests {
             ]
         )
 
+        var enteredTransaction = false
         #expect(throws: PipelineRenderRecordError.self) {
             _ = try PipelineRenderRecordWriter.publish(
                 manifest: manifest,
@@ -83,9 +81,12 @@ struct PipelineRenderRecordWriterTests {
                         sibling,
                         projectURL: fixture.home
                     )
+                    enteredTransaction = true
                 }
             )
         }
+        #expect(enteredTransaction)
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: fixture.home) == .bound(sibling))
 
         if let before {
             #expect(try Data(contentsOf: manifestURL) == before)
@@ -680,6 +681,47 @@ struct PipelineRenderRecordWriterTests {
         )
     }
 
+    @Test("An empty but actively locked transaction is never recovered")
+    func activeEmptyLockIsNotAnInterruptedTransaction() throws {
+        let fixture = try makeDataRoot()
+        defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        let lockURL = PipelineLayout.url("renders/.record-frames.in-progress", in: fixture.dataRoot)
+        let descriptor = Darwin.open(lockURL.path, O_RDWR | O_CREAT | O_EXCL | O_EXLOCK | O_NONBLOCK, mode_t(S_IRUSR | S_IWUSR))
+        #expect(descriptor >= 0)
+        guard descriptor >= 0 else { return }
+        defer { _ = Darwin.close(descriptor) }
+        #expect(throws: PipelineRenderRecordError.transactionInProgress("frames")) {
+            try PipelineRenderRecordWriter.loadMutationSnapshot(dataRoot: fixture.dataRoot, phase: "frames")
+        }
+        #expect(FileManager.default.fileExists(atPath: lockURL.path))
+        #expect(try Data(contentsOf: lockURL).isEmpty)
+    }
+
+    @Test("A still-linked retired descriptor cannot remove a replacement writer lock")
+    func retiredLockCannotRemoveReplacement() throws {
+        let fixture = try makeDataRoot()
+        defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        let path = PipelineLayout.url("renders/.record-frames.in-progress", in: fixture.dataRoot)
+        let old = Darwin.open(path.path, O_RDWR | O_CREAT | O_EXCL | O_EXLOCK | O_NONBLOCK | O_NOFOLLOW, mode_t(S_IRUSR | S_IWUSR))
+        guard old >= 0 else { Issue.record("Could not create the retired lock fixture"); return }
+        defer { _ = Darwin.close(old) }
+        #expect(try PipelineRenderRecordWriter.lockNamesDescriptor(old, at: path))
+        let retired = path.appendingPathExtension("retired")
+        try FileManager.default.moveItem(at: path, to: retired)
+        let current = Darwin.open(path.path, O_RDWR | O_CREAT | O_EXCL | O_EXLOCK | O_NONBLOCK | O_NOFOLLOW, mode_t(S_IRUSR | S_IWUSR))
+        guard current >= 0 else { Issue.record("Could not create the replacement lock fixture"); return }
+        defer { _ = Darwin.close(current) }
+        let bytes = Data("current writer".utf8)
+        try FileHandle(fileDescriptor: current, closeOnDealloc: false).write(contentsOf: bytes)
+        #expect(try PipelineRenderRecordWriter.lockNamesDescriptor(old, at: retired))
+        #expect(try !PipelineRenderRecordWriter.lockNamesDescriptor(old, at: path))
+        try PipelineRenderRecordWriter.removeOwnedLock(descriptor: old, at: path)
+        #expect(try Data(contentsOf: path) == bytes)
+        #expect(try PipelineRenderRecordWriter.lockNamesDescriptor(current, at: path))
+        try PipelineRenderRecordWriter.removeOwnedLock(descriptor: current, at: path)
+        #expect(!FileManager.default.fileExists(atPath: path.path))
+    }
+
     @Test("A truncated stale lock cannot brick a render phase")
     func truncatedStaleLockRecovers() throws {
         let fixture = try makeDataRoot()
@@ -997,6 +1039,57 @@ struct PipelineRenderRecordWriterTests {
         )
         #expect(immutableArtifacts.count == 3)
         #expect(Set(predecessorAssets.keys).count == 3)
+    }
+
+    @Test("Historical materialization must contain the exact graph embedded in its routing proof")
+    func historicalMaterializationCannotSubstituteTheGraph() throws {
+        let fixture = try makeDataRoot(project: "project-001")
+        defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        _ = try ProjectIdentity.key(for: fixture.home)
+        let projectKey = try #require(ProjectIdentity.existingUUID(for: fixture.home))
+        let original = try validGenerationProof(shotID: "shot-001", predecessor: nil)
+        let graph = try #require(original.historicalAssetGraph)
+        let originalDemands = try #require(original.historicalDemandSet)
+        let contentID = String(repeating: "a", count: 64)
+        let directory = "execution/materialized/shot-001/" + contentID
+        _ = try ProjectLocalFile.ensureDirectory(directory, dataRoot: fixture.dataRoot)
+        func write<T: Encodable>(_ value: T, file: String, id: String, role: String) throws -> CanonicalArtifactReferenceV1 {
+            let bytes = try ReferencePlanCanonicalCodecV2.encode(value)
+            let path = directory + "/" + file
+            try bytes.write(to: fixture.dataRoot.appendingPathComponent(path))
+            return .init(id: id, role: role, path: path, sha256: FileDigest.sha256(of: bytes))
+        }
+        let graphRef = try write(graph, file: "asset-graph.v1.json", id: graph.id, role: AssetGraphV1.artifactRole)
+        let demands = ReferenceDemandSetV1(id: originalDemands.id, projectID: originalDemands.projectID,
+            shotID: originalDemands.shotID, assetGraph: graphRef, demands: originalDemands.demands)
+        let demandsRef = try write(demands, file: "demands.v1.json", id: demands.id, role: ReferenceDemandSetV1.artifactRole)
+        let plan = ReferencePlanV2(id: original.referencePlan.id, projectID: original.projectID,
+            shotID: original.shotID, demandSet: demandsRef, route: original.referencePlan.route,
+            budget: original.referencePlan.budget, bindings: original.referencePlan.bindings,
+            optionalDrops: original.referencePlan.optionalDrops)
+        let planRef = try write(plan, file: "reference-plan.v1.json", id: plan.id, role: "reference-plan")
+        let routeRef = try write(original.route, file: "route.v1.json", id: original.route.id, role: "route")
+        func proof(receiptGraph: CanonicalArtifactReferenceV1) throws -> ProductionGenerationRoutingProofV1 {
+            let receipt = PipelineProductionInputMaterializer.Receipt(schema: "production-input-materialization/v1",
+                workflow: try .core(.current), projectKey: projectKey, shotID: original.shotID,
+                projection: routeRef, promotion: routeRef, plannedRoute: routeRef,
+                graph: receiptGraph, demands: demandsRef, route: routeRef, referencePlan: planRef,
+                requirement: original.requirement, sourceMedia: [], inputs: [], predecessor: nil)
+            let receiptRef = try write(receipt, file: "receipt.v1.json", id: contentID, role: "host.production-input-materialization")
+            var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+            object["historical_demand_set"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(demands))
+            object["reference_plan"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plan))
+            object["reference_plan_sha256"] = planRef.sha256
+            object["production_materialization"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(receiptRef))
+            return try JSONDecoder().decode(ProductionGenerationRoutingProofV1.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        try PipelineProductionRouting.validateHistoricalProof(proof(receiptGraph: graphRef), dataRoot: fixture.dataRoot)
+        let foreign = AssetGraphV1(id: try AssetGraphContentAddressV1.graphID(projectID: "another-project", assets: []),
+            projectID: "another-project", assets: [])
+        let changed = try write(foreign, file: "asset-graph.v1.json", id: graphRef.id, role: graphRef.role)
+        #expect(throws: PipelineProductionRoutingError.self) {
+            try PipelineProductionRouting.validateHistoricalProof(proof(receiptGraph: changed), dataRoot: fixture.dataRoot)
+        }
     }
 
     @Test("Historical routing rejects a self-consistent divergent offering contract")

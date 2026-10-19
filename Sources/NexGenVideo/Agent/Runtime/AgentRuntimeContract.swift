@@ -153,7 +153,7 @@ struct AgentRuntimeHostContext: Sendable {
             baseInstructions: AgentInstructions.serverInstructions(language: interfaceLanguage),
             pack: pack,
             phaseInstructions: phaseInstructions,
-            toolSchemas: tools.map {
+            toolSchemas: tools.filter { $0.name != .writeRenderReview }.map {
                 AgentRuntimeToolSchema(
                     name: $0.name.rawValue,
                     description: $0.description,
@@ -297,6 +297,18 @@ protocol AgentRuntimeAdapter: AnyObject {
     func cancel(sessionID: UUID)
     func resume(_ request: AgentRuntimeSessionRequest) throws
     func end(sessionID: UUID)
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence?
+    func awaitModelResponseEvidence(toolUseID: String, sessionID: UUID, turnID: UUID) async -> AgentModelResponseEvidence?
+}
+
+extension AgentRuntimeAdapter {
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence? { nil }
+    func awaitModelResponseEvidence(toolUseID: String, sessionID: UUID, turnID: UUID) async -> AgentModelResponseEvidence? {
+        guard !Task.isCancelled, state == .running(sessionID: sessionID, turnID: turnID),
+              let evidence = modelResponseEvidence(toolUseID: toolUseID),
+              evidence.sessionID == sessionID, evidence.turnID == turnID else { return nil }
+        return evidence
+    }
 }
 
 enum AgentRuntimeContractError: LocalizedError, Equatable, Sendable {

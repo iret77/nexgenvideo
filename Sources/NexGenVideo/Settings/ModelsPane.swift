@@ -38,15 +38,28 @@ enum ModelsPaneProjection {
 }
 
 struct ModelsPane: View {
-    private var prefs = ModelPreferences.shared
-    private var catalog = ModelCatalog.shared
+    private let prefs: ModelPreferences
+    private let catalog: ModelCatalog
+    private let research: ModelCapabilityResearchController
+    private let activation: @MainActor () -> ProviderActivation
+    private let openProviders: @MainActor () -> Void
+    private let discovery: ModelDiscoveryActions
+
+    init(catalog: ModelCatalog = .shared, preferences: ModelPreferences = .shared,
+         research: ModelCapabilityResearchController = .shared,
+         activation: @escaping @MainActor () -> ProviderActivation = { .current() },
+         openProviders: @escaping @MainActor () -> Void = { SettingsWindowController.shared.show(tab: .providers) },
+         discovery: ModelDiscoveryActions = .live) {
+        self.catalog = catalog; self.prefs = preferences; self.research = research
+        self.activation = activation; self.openProviders = openProviders; self.discovery = discovery
+    }
 
     @State private var query = ""
     @State private var keyRevision = 0
 
     private var sections: [ModelsPaneProjection.Section] {
         _ = keyRevision
-        let activation = ProviderActivation.current()
+        let activation = activation()
         let image = catalog.image.map { row(id: $0.id, name: $0.displayName, activation: activation) }
         let video = catalog.video.map { row(id: $0.id, name: $0.displayName, activation: activation) }
         let audio = catalog.audio.map { row(id: $0.id, name: $0.displayName, activation: activation) }
@@ -65,14 +78,14 @@ struct ModelsPane: View {
     }
 
     private func row(id: String, name: String, activation: ProviderActivation) -> ModelsPaneProjection.Row {
-        let providers = Set(ProviderManifest.bindings(forModelId: id)
-            .filter { activation.isActive($0.provider, $0.transport) }
+        let providers = Set(catalog.settingsBindings(forModelID: id, activation: activation)
             .map { $0.provider.displayName })
         return .init(id: id, displayName: name, providers: providers.sorted().joined(separator: " · "))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            ModelCatalogRefreshControl(hasConnection: !activation().active.isEmpty, actions: discovery)
             SettingsSection(
                 "Show in generation tools",
                 subtitle: "Models from your connected providers are enabled by default."
@@ -82,7 +95,7 @@ struct ModelsPane: View {
                     SettingsCard {
                         SettingsRow(title: emptyStateText) {
                             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Button("Open Providers") { SettingsWindowController.shared.show(tab: .providers) }
+                                Button("Open Providers", action: openProviders)
                             }
                         }
                     }
@@ -92,6 +105,7 @@ struct ModelsPane: View {
             ForEach(sections) { section in
                 sectionView(section)
             }
+            ModelCapabilityResearchPane(catalog: catalog, research: research, activation: activation)
         }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             keyRevision += 1
@@ -103,9 +117,13 @@ struct ModelsPane: View {
 
     private var emptyStateText: String {
         guard catalog.isLoaded else { return "Loading models…" }
+        if discovery.isRefreshing() { return "Refreshing models…" }
         let hasRunnableModel = (catalog.image.map(\.id) + catalog.video.map(\.id) + catalog.audio.map(\.id) + catalog.upscale.map(\.id))
-            .contains { GenerationProvider.canRun(modelId: $0) }
-        guard hasRunnableModel else { return "Connect a provider to see its models." }
+            .contains { !catalog.settingsBindings(forModelID: $0, activation: activation()).isEmpty }
+        guard hasRunnableModel else {
+            return activation().active.isEmpty ? "Connect a provider to see its models."
+                : "No models are currently available. Refresh models, or review the connection in Providers."
+        }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return "No models match \"\(trimmed)\"." }
         return "Connect a provider to see its models."
@@ -117,6 +135,7 @@ struct ModelsPane: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             TextField("Search models or providers", text: $query)
+                .reviewAcceptanceProbe("settings.models.search", text: query)
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -155,6 +174,28 @@ struct ModelsPane: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)
+            .reviewAcceptanceProbe("settings.models.enabled." + row.id, text: String(prefs.isEnabled(row.id)))
+        }
+    }
+}
+
+struct ModelCatalogRefreshControl: View {
+    let hasConnection: Bool
+    let actions: ModelDiscoveryActions
+
+    var body: some View {
+        SettingsCard {
+            SettingsRow(title: "Model list", subtitle: hasConnection
+                ? "Refresh models from the providers you've set up. No content is generated."
+                : "Connect a provider before refreshing its models.") {
+                if actions.isRefreshing() { ProgressView().controlSize(.small) }
+                Button(actions.isRefreshing() ? "Refreshing…" : "Refresh models") {
+                    guard hasConnection, !actions.isRefreshing() else { return }
+                    actions.refresh()
+                }
+                .disabled(!hasConnection || actions.isRefreshing())
+                .reviewAcceptanceProbe("settings.catalog.refresh", state: hasConnection && !actions.isRefreshing())
+            }
         }
     }
 }

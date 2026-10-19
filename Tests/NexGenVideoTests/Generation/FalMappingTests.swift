@@ -552,6 +552,7 @@ struct FalRegistryTests {
         #expect(refCaps.maxReferenceVideos == 3)
         #expect(refCaps.maxReferenceAudios == 3)
         #expect(refCaps.maxTotalReferences == 12)
+        #expect(refCaps.referenceTagNoun == "Image")
     }
 
     @Test func seedance25FamilyPresentWithRangeAutoAndReferenceBudget() throws {
@@ -585,6 +586,7 @@ struct FalRegistryTests {
         #expect(caps.maxReferenceVideos == 10)
         #expect(caps.maxReferenceAudios == 10)
         #expect(caps.maxTotalReferences == 50)
+        #expect(caps.referenceTagNoun == "Image")
 
         let image = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/image-to-video"))
         guard case .video(let imageCaps) = image.entry.uiCapabilities else {

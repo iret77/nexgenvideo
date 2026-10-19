@@ -51,4 +51,14 @@ struct SegmentTrimTests {
         #expect(clip?.trimEndFrame == 0)            // ends at asset end → no tail trim
         #expect(clip?.sourceDurationFrames == 3000) // references the whole 100s × 30 source
     }
+    @Test func segmentTruncatesBothEndpointsBeforeSubtractingDuration() {
+        let e = editor()
+        let a = asset()
+        e.createClips(from: [a], trackIndex: 0, startFrame: 0, segments: [a.id: 0.017...0.083])
+        let clip = e.timeline.tracks[0].clips.first
+        #expect(clip?.trimStartFrame == 0)
+        #expect(clip?.durationFrames == 2)
+        #expect(clip?.trimEndFrame == 2998)
+    }
+
 }

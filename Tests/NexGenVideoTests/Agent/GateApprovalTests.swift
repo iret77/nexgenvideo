@@ -179,10 +179,24 @@ struct GateApprovalTests {
         let service = editor.agentService
 
         _ = try service.requestGateApproval(GateApproval(phase: "brief"))
-        let result = await service.resolveGate(.declined)
+        let result = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(result?.isError == false)
         #expect(service.pendingGateApproval == nil)
+    }
+
+    @Test("A delayed decision cannot resolve a replacement approval", arguments: [GateDecision.approved, .declined])
+    func delayedDecisionKeepsReplacement(decision: GateDecision) async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let original = try service.requestGateApproval(GateApproval(phase: "brief")).approval
+        _ = await service.resolveGate(.declined, approvalID: original.id)
+        let replacement = try service.requestGateApproval(GateApproval(phase: "analysis")).approval
+        let result = await service.resolveGate(decision, approvalID: original.id)
+        #expect(result == nil)
+        #expect(service.pendingGateApproval?.id == replacement.id)
+        #expect(service.gateApprovalError == nil)
+        #expect(!service.gateApprovalIsWriting)
     }
 
     @Test("an embedded gate keeps its resume owner")
@@ -200,7 +214,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: origin
         )
-        _ = await service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(service.pendingGateApproval == nil)
         #expect(service.hasPendingHostFollowUp)
@@ -217,7 +231,7 @@ struct GateApprovalTests {
         let service = editor.agentService
 
         _ = try service.requestGateApproval(GateApproval(phase: "brief"))
-        _ = await service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
         await Task.yield()
 
         #expect(service.messages.isEmpty)
@@ -238,7 +252,7 @@ struct GateApprovalTests {
             origin: .externalMCP(sessionID: externalSession)
         )
         #expect(service.pendingGateApproval?.sessionId == nil)
-        _ = await service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
         #expect(service.messages.isEmpty)
 
         _ = try service.requestGateApproval(
@@ -385,7 +399,7 @@ struct GateApprovalTests {
             phase: "project_init",
             dataRoot: missingRoot
         ))
-        let result = await service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
@@ -444,7 +458,7 @@ struct GateApprovalTests {
             at: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
         )
 
-        let result = await service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval == nil)
@@ -485,7 +499,7 @@ struct GateApprovalTests {
             ),
             purpose: .workflowIntake
         )
-        let result = await service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
         #expect(result?.isError == false)
         try service.presentDialog(intake)
         #expect(!service.resumePendingGateFollowUp())
@@ -550,7 +564,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: origin
         )
-        _ = await h.editor.agentService.resolveGate(.declined)
+        _ = await h.editor.agentService.resolveGate(.declined, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
 
         let stale = await h.executor.execute(
             name: "get_timeline",
@@ -582,7 +596,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: origin
         )
-        _ = await h.editor.agentService.resolveGate(.declined)
+        _ = await h.editor.agentService.resolveGate(.declined, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
         #expect(!h.editor.agentService.resumePendingGateFollowUp())
         #expect(h.editor.agentService.hasPendingHostFollowUp)
 
@@ -617,7 +631,7 @@ struct GateApprovalTests {
             GateApproval(phase: "brief"),
             origin: origin
         )
-        _ = await service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined, approvalID: service.pendingGateApproval?.id ?? "missing")
         #expect(service.toolCallBlockReason(
             tool: .getTimeline,
             args: [:],
@@ -725,6 +739,34 @@ struct GateApprovalTests {
         #expect(projectInit?["state"] as? String == "approved")
     }
 
+    @Test("Project reload cannot replace an approval before its commit returns")
+    func projectReloadDuringCommitKeepsDecisionOwnership() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        let requested = await h.runRaw("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"])
+        #expect(!requested.isError)
+        let original = try #require(service.pendingGateApproval)
+        var observedCommit = false
+        var replacementBlocked = false
+        h.editor.onPipelineChanged = {
+            observedCommit = service.gateApprovalIsWriting
+            service.loadSessions(from: nil)
+            do { _ = try service.requestGateApproval(GateApproval(phase: "analysis")) }
+            catch is ToolError { replacementBlocked = true }
+            catch { Issue.record("Unexpected replacement refusal: \(error)") }
+        }
+        let result = await service.resolveGate(.approved, approvalID: original.id)
+        h.editor.onPipelineChanged = nil
+        #expect(result?.isError == false)
+        #expect(observedCommit)
+        #expect(replacementBlocked)
+        #expect(!service.gateApprovalIsWriting)
+        let replacement = try service.requestGateApproval(GateApproval(phase: "analysis")).approval
+        #expect(service.pendingGateApproval?.id == replacement.id)
+        #expect(service.gateApprovalError == nil)
+    }
+
     @Test("approval click keeps its card open when pipeline mutation owns the project")
     func approvalClickWaitsForPipelineMutation() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -743,7 +785,7 @@ struct GateApprovalTests {
                 label: "record_render"
             )
         )
-        let blockedResult = await h.editor.agentService.resolveGate(.approved)
+        let blockedResult = await h.editor.agentService.resolveGate(.approved, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
         let blocked = try #require(blockedResult)
         #expect(blocked.isError)
         #expect(ToolHarness.textOf(blocked).contains("record_render"))
@@ -753,7 +795,7 @@ struct GateApprovalTests {
             projectRoot: dataRoot,
             id: competingMutation
         )
-        let approvedResult = await h.editor.agentService.resolveGate(.approved)
+        let approvedResult = await h.editor.agentService.resolveGate(.approved, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
         let approved = try #require(approvedResult)
         #expect(!approved.isError)
         #expect(h.editor.agentService.pendingGateApproval == nil)

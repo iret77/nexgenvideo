@@ -6,7 +6,7 @@ import Testing
 
 @Suite("Pipeline readiness presentation")
 struct PipelineReadinessPresentationTests {
-    @Test("Bible failures carry a typed requirement without exposing diagnostics")
+    @Test("References failures carry a typed requirement without exposing diagnostics")
     func missingBible() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         do {
@@ -16,7 +16,7 @@ struct PipelineReadinessPresentationTests {
             #expect(failure.requirement == .document)
             #expect(failure.diagnostic.contains("bible/bible.yaml"))
             let message = PipelineReadinessPresentation.message(for: failure.requirement, phase: "bible")
-            #expect(message.contains("Bible"))
+            #expect(message.contains("References"))
             #expect(message.contains("reference images"))
             #expect(!message.contains("bible.yaml"))
             #expect(!message.contains(root.path))
@@ -27,7 +27,7 @@ struct PipelineReadinessPresentationTests {
     func missingViews() {
         let characters = PipelineReadinessPresentation.message(for: .characterViews, phase: "bible")
         let locations = PipelineReadinessPresentation.message(for: .locationViews, phase: "bible")
-        #expect(characters.contains("Bible"))
+        #expect(characters.contains("References"))
         #expect(characters.contains("character views"))
         #expect(locations.contains("location views"))
         #expect(!characters.contains("character_view_request"))

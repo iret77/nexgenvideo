@@ -45,6 +45,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
     var characterRefs: [String]
     var locationRef: String?
     var propRefs: [String]
+    var entityRefs: [BibleEntityRef]
 
     enum CodingKeys: String, CodingKey {
         case id, section, type, description, framing, mood
@@ -55,6 +56,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         case characterRefs = "character_refs"
         case locationRef = "location_ref"
         case propRefs = "prop_refs"
+        case entityRefs = "entity_refs"
     }
 
     init(from decoder: Decoder) throws {
@@ -76,6 +78,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         characterRefs = try c.decodeIfPresent([String].self, forKey: .characterRefs) ?? []
         locationRef = try c.decodeIfPresent(String.self, forKey: .locationRef)
         propRefs = try c.decodeIfPresent([String].self, forKey: .propRefs) ?? []
+        entityRefs = try c.decodeIfPresent([BibleEntityRef].self, forKey: .entityRefs) ?? []
     }
 
     /// A one-line summary preferring the human description, then the visual prompt.

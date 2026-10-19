@@ -61,7 +61,7 @@ final class ToolHarness {
     func runGate(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async -> ToolResult {
         let pending = await executor.execute(name: name, args: args)
         guard !pending.isError, editor.agentService.pendingGateApproval != nil else { return pending }
-        return await editor.agentService.resolveGate(decision) ?? pending
+        return await editor.agentService.resolveGate(decision, approvalID: editor.agentService.pendingGateApproval?.id ?? "missing") ?? pending
     }
 
     /// `runGate` (default: approve) + decode the .ok JSON payload — the approval must have been granted.
@@ -100,6 +100,11 @@ final class ToolHarness {
         asset.hasAudio = hasAudio
         editor.mediaAssets.append(asset)
         return asset
+    }
+
+    init(editor: EditorViewModel, executor: ToolExecutor) {
+        self.editor = editor
+        self.executor = executor
     }
 }
 

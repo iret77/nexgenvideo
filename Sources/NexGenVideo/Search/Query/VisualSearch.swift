@@ -2,7 +2,7 @@ import Accelerate
 import Foundation
 
 enum VisualSearch {
-    struct Hit: Equatable {
+    struct Hit: Equatable, Sendable {
         let assetID: String
         let time: Double
         let shotStart: Double
@@ -18,10 +18,14 @@ enum VisualSearch {
         relativeCutoff: Float = 0.85,
         minScore: Float? = nil
     ) -> [Hit] {
+        guard !query.isEmpty, query.allSatisfy(\.isFinite), limit > 0,
+              relativeCutoff.isFinite, relativeCutoff >= 0,
+              minScore?.isFinite != false else { return [] }
         var hits: [Hit] = []
         for (assetID, index) in indexes {
             let dim = index.header.dim
-            guard dim == query.count, index.header.count > 0 else { continue }
+            guard dim == query.count, index.header.count > 0,
+                  (try? EmbeddingStore.validate(index)) != nil else { continue }
             var scores = [Float](repeating: 0, count: index.header.count)
             // scores = vectors (count×dim) · query
             cblas_sgemv(
@@ -32,7 +36,7 @@ enum VisualSearch {
             )
             // Keep only the best frame of each shot so one scene doesn't flood results.
             var bestPerShot: [Double: (row: Int, score: Float)] = [:]
-            for (i, score) in scores.enumerated() {
+            for (i, score) in scores.enumerated() where score.isFinite {
                 let shot = index.rows[i].shotStart
                 if let existing = bestPerShot[shot], existing.score >= score { continue }
                 bestPerShot[shot] = (i, score)
@@ -46,7 +50,11 @@ enum VisualSearch {
                 ))
             }
         }
-        hits.sort { $0.score > $1.score }
+        hits.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.assetID != $1.assetID { return $0.assetID < $1.assetID }
+            return $0.time < $1.time
+        }
         if let minScore {
             hits = hits.filter { $0.score >= minScore }
         }

@@ -295,11 +295,17 @@ enum GenerationBatchReviewSelfTest {
             }
         )
         try present(fifty, editor: editor)
+        guard let lastItem = GenerationBatchReviewProjection(batch: fifty).sections.last?.items.last else {
+            throw Failure(message: "50-item review has no final request")
+        }
         for width in [CGFloat(400), AppTheme.Layout.agentPanelMax] {
+            writeBatchLayoutEvidence(in: window, context: "before resize to \(Int(width))")
             place(window, contentSize: NSSize(
                 width: width,
                 height: minimumPanelHeight
             ))
+            window.contentView?.layoutSubtreeIfNeeded()
+            writeBatchLayoutEvidence(in: window, context: "after resize to \(Int(width))")
             try await reveal(
                 identifier: "generation-batch.remove.\(fifty.payload.items[0].id)",
                 in: window,
@@ -311,6 +317,17 @@ enum GenerationBatchReviewSelfTest {
                 "generation-batch.approve",
             ], in: window, context: "50-item \(Int(width))-point large-text review")
             try await verifyLastRequest(fifty, in: window, context: "50-item \(Int(width))-point large-text review")
+            if width == AppTheme.Layout.agentPanelMax {
+                for expanded in [true, false] {
+                    let identifier = "generation-batch.details.\(lastItem.id)"
+                    try await reveal(identifier: identifier, in: window, context: "last request Details at \(Int(width)) points")
+                    try await verifyDetailsToggle(identifier: identifier, itemID: lastItem.id,
+                        expectExpanded: expanded, in: window, runtimeEvidence: runtimeEvidence)
+                }
+            }
+            try await requireVisible(["generation-batch.approve"], in: window,
+                context: "50-item approval after Details at \(Int(width)) points")
+            try captureWindow(window, name: "generation-batch-50-\(Int(width))-last-request.png")
         }
         editor.generationBatchCoordinator.decline(editor: editor)
         try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
@@ -319,6 +336,15 @@ enum GenerationBatchReviewSelfTest {
     }
 
     private static func verifyProductionDock(editor: EditorViewModel, window: NSWindow) async throws {
+        @MainActor final class MenuReceipt {
+            var menu: NSMenu?
+            var titles: [String] = []
+            var revisionEnabled: Bool?
+            var phaseEnabled: Bool?
+            var closed = false
+            var keyFailure: String?
+        }
+
         let defaults = UserDefaults.standard
         let previousScale = defaults.object(forKey: AppTheme.Typography.scaleKey)
         let savedAssets = editor.mediaAssets
@@ -359,11 +385,8 @@ enum GenerationBatchReviewSelfTest {
                         && !editor.generationBatchCoordinator.canApprovePending
                 }) else { throw Failure(message: "production dock did not show its missing-reference failure") }
             }
-            for identifier in ["generation-batch.details.\(pending.payload.items[0].id)",
-                               "generation-batch.revise", "generation-batch.approve-phase", "generation-batch.approve"] {
-                try await reveal(identifier: identifier, in: window, context: "minimal production dock at 150 percent")
-            }
-            try await requireVisible(["generation-batch.revise", "generation-batch.approve-phase", "generation-batch.approve"],
+            try await requireVisible(["generation-batch.review.open", "generation-batch.actions",
+                                      "generation-batch.cost", "generation-batch.decline", "generation-batch.approve"],
                 in: window, context: "production dock footer at 150 percent")
             guard let artifact = findClickProbes(in: host, identifier: "production.artifact").first,
                   let dock = findClickProbes(in: host, identifier: "production.dock").first,
@@ -373,15 +396,101 @@ enum GenerationBatchReviewSelfTest {
             let artifactFrame = artifact.convert(artifact.bounds, to: host)
             let dockFrame = dock.convert(dock.bounds, to: host)
             let statusFrame = status.convert(status.bounds, to: host)
-            guard artifactFrame.height >= AppTheme.ComponentSize.productionArtifactMinHeight - 1,
+            guard host.bounds.size == AppTheme.Window.projectMin, artifactFrame.height >= 240,
                   dockFrame.height > 0, host.bounds.contains(artifactFrame), host.bounds.contains(dockFrame),
                   host.bounds.contains(statusFrame), !artifactFrame.intersects(dockFrame), !dockFrame.intersects(statusFrame),
-                  controlState("generation-batch.approve", in: window) == !missing,
-                  controlState("generation-batch.approve-phase", in: window) == !missing else {
+                  controlState("generation-batch.approve", in: window) == !missing else {
                 throw Failure(message: "production dock obscured its artifact, status or approval state at minimum window size")
             }
             try captureWindow(window, name: "generation-production-dock-\(missing ? "missing-reference" : "unpriced")-150.png")
-            writeEvidence("production-dock textScale=1.5 window=960x640 missingReference=\(missing) artifactHeight=\(artifactFrame.height) dockHeight=\(dockFrame.height) footerVisible=true")
+            let pendingBefore = editor.generationBatchCoordinator.pending?.id
+            let activeBefore = editor.generationBatchCoordinator.activeBatchID
+            let authorizationBefore = editor.generationBatchCoordinator.autoApprovingPhase
+            let menuReceipt = MenuReceipt()
+            let began = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                object: nil, queue: .main) { notification in
+                MainActor.assumeIsolated {
+                    guard let menu = notification.object as? NSMenu else { return }
+                    menuReceipt.menu = menu
+                    menuReceipt.titles = menu.items.map(\.title)
+                    menuReceipt.revisionEnabled = menu.items.first { $0.title == "Ask agent to revise" }?.isEnabled
+                    menuReceipt.phaseEnabled = menu.items.first { $0.title == "Allow all paid AI runs in Bible" }?.isEnabled
+                    do { try postKey(code: 53, characters: "\u{1b}", in: window) }
+                    catch { menuReceipt.keyFailure = error.localizedDescription }
+                }
+            }
+            let ended = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification,
+                object: nil, queue: .main) { notification in
+                MainActor.assumeIsolated {
+                    if let menu = notification.object as? NSMenu, menu === menuReceipt.menu { menuReceipt.closed = true }
+                }
+            }
+            defer {
+                NotificationCenter.default.removeObserver(began)
+                NotificationCenter.default.removeObserver(ended)
+            }
+            if let failure = postMouseClick(identifier: "generation-batch.actions", in: window) {
+                throw Failure(message: failure)
+            }
+            guard await waitUntil(timeout: .seconds(5), { menuReceipt.closed || menuReceipt.keyFailure != nil }),
+                  menuReceipt.keyFailure == nil, menuReceipt.revisionEnabled == true,
+                  menuReceipt.phaseEnabled == !missing,
+                  menuReceipt.titles.contains(where: { $0.contains("phase approval") && $0.contains("rewind")
+                      && $0.contains("withdrawal") && $0.contains("app quit") }) else {
+                throw Failure(message: "production generation actions did not expose their native states and phase scope: \(menuReceipt.titles), keyFailure=\(menuReceipt.keyFailure ?? "none")")
+            }
+            if let failure = postMouseClick(identifier: "generation-batch.review.open", in: window) {
+                throw Failure(message: failure)
+            }
+            guard await waitUntil(timeout: .seconds(5), {
+                window.attachedSheet.map { hasProbe(identifier: "generation-batch.review", in: $0) } == true
+            }), let sheet = window.attachedSheet, sheet.sheetParent === window,
+                  let screen = sheet.screen ?? window.screen, screen.visibleFrame.contains(sheet.frame) else {
+                throw Failure(message: "the input review did not open as a wholly on-screen sheet of the production document")
+            }
+            try await requireVisible(["generation-batch.review.close", "generation-batch.revise",
+                                      "generation-batch.approve-phase", "generation-batch.decline", "generation-batch.approve"],
+                in: sheet, context: "expanded production input review at 150 percent")
+            guard controlState("generation-batch.approve", in: sheet) == !missing,
+                  controlState("generation-batch.approve-phase", in: sheet) == !missing,
+                  findClickProbes(in: host, identifier: "generation-batch.list").isEmpty else {
+                throw Failure(message: "expanded input review duplicated its list or changed the approval state")
+            }
+            let detailsID = "generation-batch.details.\(pending.payload.items[0].id)"
+            try await reveal(identifier: detailsID, in: sheet, context: "expanded production request")
+            if let failure = postMouseClick(identifier: detailsID, in: sheet) { throw Failure(message: failure) }
+            guard await waitUntil(timeout: .seconds(5), {
+                hasProbe(identifier: "generation-batch.expanded.\(pending.payload.items[0].id)", in: sheet)
+            }), let referenceID = unpriced.payload.references.first?.assetID else {
+                throw Failure(message: "expanded production review did not reveal its concrete request")
+            }
+            let previewID = "generation-input.preview.\(referenceID)"
+            try await reveal(identifier: previewID, in: sheet, context: "production input image review")
+            guard controlState(previewID, in: sheet) == !missing else {
+                throw Failure(message: "production input review did not distinguish the real image from the missing reference")
+            }
+            try captureWindow(sheet, name: "generation-production-inputs-\(missing ? "missing-reference" : "unpriced")-150.png")
+            if missing {
+                if let failure = postMouseClick(identifier: "generation-batch.review.close", in: sheet) {
+                    throw Failure(message: failure)
+                }
+            } else {
+                try postKey(code: 53, characters: "\u{1b}", in: sheet)
+            }
+            guard await waitUntil(timeout: .seconds(5), { window.attachedSheet == nil && window.isKeyWindow }),
+                  editor.generationBatchCoordinator.pending?.id == pendingBefore,
+                  editor.generationBatchCoordinator.activeBatchID == activeBefore,
+                  editor.generationBatchCoordinator.autoApprovingPhase == authorizationBefore else {
+                throw Failure(message: "opening and closing the native input review changed the proposal or execution authority")
+            }
+            try await requireVisible(["generation-batch.review.open", "generation-batch.cost", "generation-batch.decline",
+                                      "generation-batch.approve"], in: window, context: "production controls restored after input review")
+            let scale = AppTheme.Typography.validatedScale(defaults.double(forKey: AppTheme.Typography.scaleKey))
+            let size = host.bounds.size
+            guard scale == 1.5, size == NSSize(width: 960, height: 640) else {
+                throw Failure(message: "production dock did not retain the required measured scale and viewport")
+            }
+            writeEvidence("production-dock textScale=\(scale) window=\(Int(size.width))x\(Int(size.height)) missingReference=\(missing) artifactHeight=\(artifactFrame.height) dockHeight=\(dockFrame.height) footerVisible=true nativeMenuScope=true nativeMenuEscape=true expandedInputs=true proposalUnchanged=true")
         }
     }
 
@@ -769,9 +878,12 @@ enum GenerationBatchReviewSelfTest {
 
     private static func verifyLastRequest(_ batch: GenerationBatch, in window: NSWindow, context: String) async throws {
         let projection = GenerationBatchReviewProjection(batch: batch)
-        guard let lastID = projection.sections.last?.items.last?.id else {
+        guard let lastItem = projection.sections.last?.items.last else {
             throw Failure(message: "\(context) has no last request")
         }
+        let lastID = lastItem.id
+        writeEvidence("last-request-target context=\(context) itemCount=\(projection.itemCount) "
+            + "itemID=\(lastID) manifestIndex=\(lastItem.manifestIndex) purpose=\(lastItem.purpose)")
         let identifier = "generation-batch.details.\(lastID)"
         try await reveal(identifier: identifier, in: window, context: context, searchTowardEnd: true)
         try await requireVisible([
@@ -887,26 +999,18 @@ enum GenerationBatchReviewSelfTest {
                     + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now)))")
                 return
             } else {
-                guard let scrollView = probe.enclosingScrollView else {
-                    throw Failure(message: "\(context) cannot reveal \(identifier): native probe has no enclosing NSScrollView")
-                }
+                let scrollView = try scrollContainerClipping(probe, context: context)
                 let target = probe.convert(probe.bounds, to: scrollView.contentView)
-                guard target.height <= scrollView.contentView.bounds.height else {
-                    throw Failure(
-                        message: "\(context) cannot show \(identifier) completely: the control is taller than "
-                            + "its list viewport; " + scrollGeometry(probe: probe, scrollView: scrollView)
-                    )
-                }
+                let visible = scrollView.contentView.bounds
+                let movement = target.minY < visible.minY ? target.minY - visible.minY : target.maxY - visible.maxY
+                let distance = Int32(min(CGFloat(Int32.max), max(1, min(ceil(abs(movement)), floor(visible.height * 0.75)))))
+                let delta = (movement > 0) == scrollView.contentView.isFlipped ? -distance : distance
                 let before = scrollView.contentView.bounds.origin
-                if let failure = AppRelaunchSelfTest.scrollProbeToVisible(probe, in: window) {
-                    lastBoundary = failure
-                    try? await Task.sleep(for: .milliseconds(100))
-                    continue
-                }
+                try await scrollList(scrollView, delta: delta, in: window)
                 root.layoutSubtreeIfNeeded()
                 let after = scrollView.contentView.bounds.origin
                 if before != after { lastProgress = clock.now }
-                let progress = "moved=\(before != after) before=\(pointDescription(before)) "
+                let progress = "wheelDelta=\(delta) moved=\(before != after) before=\(pointDescription(before)) "
                     + "after=\(pointDescription(after)) " + scrollGeometry(probe: probe, scrollView: scrollView)
                 if progress != lastBoundary {
                     writeEvidence("scroll-progress identifier=\(identifier) \(progress)")
@@ -920,6 +1024,35 @@ enum GenerationBatchReviewSelfTest {
                 + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now))) "
                 + "idleSeconds=\(durationSeconds(lastProgress.duration(to: clock.now))); last boundary: \(lastBoundary)"
         )
+    }
+
+    private static func scrollContainerClipping(_ probe: NSView, context: String) throws -> NSScrollView {
+        var ancestor = probe.superview
+        while let current = ancestor {
+            defer { ancestor = current.superview }
+            guard let clip = current as? NSClipView, let scroll = clip.enclosingScrollView else { continue }
+            let target = probe.convert(probe.bounds, to: clip)
+            let visible = clip.bounds
+            guard !visible.contains(target) else { continue }
+            guard [target.minX, target.minY, target.maxX, target.maxY, visible.minX, visible.minY,
+                   visible.maxX, visible.maxY].allSatisfy(\.isFinite), visible.height > 0,
+                  target.height <= visible.height, target.minX >= visible.minX, target.maxX <= visible.maxX else {
+                throw Failure(message: "\(context) cannot reveal the full control with vertical wheel input; "
+                    + scrollGeometry(probe: probe, scrollView: scroll))
+            }
+            return scroll
+        }
+        throw Failure(message: "\(context) control is not ready and has no vertically clipping scroll container")
+    }
+
+    private static func writeBatchLayoutEvidence(in window: NSWindow, context: String) {
+        guard let root = window.contentView else { return }
+        let list = findClickProbes(in: root, identifier: "generation-batch.list").first
+        let geometry = list.flatMap { probe in
+            probe.enclosingScrollView.map { scrollGeometry(probe: probe, scrollView: $0) }
+        } ?? "list=absent"
+        writeEvidence("resize context=\(context) window=\(rectDescription(window.frame)) "
+            + "root=\(rectDescription(root.bounds)) \(geometry)")
     }
 
     private static func durationSeconds(_ duration: Duration) -> Double {
@@ -1002,7 +1135,7 @@ enum GenerationBatchReviewSelfTest {
         }
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
         let contentPoint = root.convert(location, from: nil)
-        let appKitHitChain = viewChain(from: root.hitTest(contentPoint))
+        let appKitHitChain = viewChain(from: root.hitTest(root.convert(contentPoint, to: root.superview)))
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.mouseEvent(
             with: .leftMouseDown,

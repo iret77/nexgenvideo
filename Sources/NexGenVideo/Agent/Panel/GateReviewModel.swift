@@ -57,6 +57,7 @@ enum StoryboardReviewBinding: String, Sendable {
 @MainActor @Observable
 final class GateReviewModel {
     private(set) var isReady = false
+    private(set) var readyApprovalID: String?
     private(set) var blocker: String? = "Checking the current phase…"
     private var generation = 0
 
@@ -64,12 +65,14 @@ final class GateReviewModel {
         generation += 1
         let token = generation
         isReady = false
+        readyApprovalID = nil
         blocker = "Checking the current phase…"
         guard let root = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: root),
               approval.dataRoot?.standardizedFileURL == dataRoot.standardizedFileURL,
               approval.declaredPack == editor.declaredPluginName,
-              approval.declaredBinding == editor.declaredPluginBinding else {
+              approval.declaredBinding == editor.declaredPluginBinding,
+              approval.declaredProductionContract == editor.declaredProductionContract else {
             blocker = "This request no longer belongs to the current project. Request a new approval."
             return
         }
@@ -77,10 +80,12 @@ final class GateReviewModel {
             let readiness = await NativeGateWriter.controlReadiness(projectDir: root,
                 phase: approval.phase, declaredPack: approval.declaredPack,
                 declaredBinding: approval.declaredBinding,
-                executionCoordinator: editor.pipelinePhaseRunCoordinator)
+                declaredProductionContract: approval.declaredProductionContract,
+                editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator)
             let currentHash = try? FileDigest.sha256(of: PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot))
             guard token == generation, editor.workingRoot == root, !Task.isCancelled else { return }
             isReady = readiness.mutations.isReady && currentHash == expectedHash
+            readyApprovalID = isReady ? approval.id : nil
             blocker = isReady ? nil : "The pipeline changed or is busy. Request a new revision decision."
             return
         }
@@ -88,8 +93,24 @@ final class GateReviewModel {
             blocker = "This revision changed. Request a new approval for the updated artifact."
             return
         }
+        let workflow: HostWorkflowKey?
+        do {
+            workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+                expectedPack: approval.declaredBinding, expectedProductionContract: approval.declaredProductionContract)
+        } catch { blocker = error.localizedDescription; return }
+        var visualStoryboardFingerprint: String?
         var snapshot: StoryboardReviewSnapshot?
-        if approval.phase == "storyboard" {
+        if approval.phase == "storyboard", workflow?.isProductionV2 == true {
+            do {
+                visualStoryboardFingerprint = try await Task.detached(priority: .utility) {
+                    try PlanningWriterIO.storyboard(dataRoot: dataRoot).fingerprint
+                }.value
+            } catch {
+                guard token == generation, !Task.isCancelled else { return }
+                blocker = error.localizedDescription
+                return
+            }
+        } else if approval.phase == "storyboard" {
             do {
                 snapshot = try await Task.detached(priority: .utility) {
                     try StoryboardReviewSnapshot.read(root: dataRoot)
@@ -110,12 +131,24 @@ final class GateReviewModel {
             phase: approval.phase,
             declaredPack: approval.declaredPack,
             declaredBinding: approval.declaredBinding,
-            executionCoordinator: editor.pipelinePhaseRunCoordinator
+            declaredProductionContract: approval.declaredProductionContract,
+            editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
         )
         guard token == generation, !Task.isCancelled else { return }
         guard readiness.mutations.isReady, readiness.approval.isReady else {
-            blocker = "\(approval.phaseLabel) is incomplete or no longer matches its approved source material. Ask the agent to update it."
+            blocker = readiness.approval.userMessage
+                ?? "\(approval.phaseLabel) is incomplete or no longer matches its approved source material. Ask the agent to update it."
             return
+        }
+        if let visualStoryboardFingerprint {
+            let current = try? await Task.detached(priority: .utility) {
+                try PlanningWriterIO.storyboard(dataRoot: dataRoot).fingerprint
+            }.value
+            guard token == generation, !Task.isCancelled else { return }
+            guard current == visualStoryboardFingerprint else {
+                blocker = "The visual Storyboard changed during review. Open the current revision before approving."
+                return
+            }
         }
         if let snapshot {
             let current = try? await Task.detached(priority: .utility) {
@@ -128,7 +161,8 @@ final class GateReviewModel {
             }
         }
         guard editor.workingRoot == root,
-              editor.declaredPluginBinding == approval.declaredBinding else {
+              editor.declaredPluginBinding == approval.declaredBinding,
+              editor.declaredProductionContract == approval.declaredProductionContract else {
             blocker = "The project changed. Request a new approval."
             return
         }
@@ -136,6 +170,7 @@ final class GateReviewModel {
             blocker = "The artifact changed during validation. Request a new approval."
             return
         }
+        readyApprovalID = approval.id
         isReady = true
         blocker = nil
     }

@@ -70,7 +70,7 @@ enum DirectImageDiscovery {
                 )
             }
             return .transientFailure(
-                "Model catalog refresh failed: \(error.localizedDescription). NexGenVideo will retry automatically."
+                "Model catalog refresh failed: \(error.localizedDescription). Check your connection, then choose Refresh models in Providers or Models."
             )
         }
     }

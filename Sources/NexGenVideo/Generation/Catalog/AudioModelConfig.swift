@@ -9,6 +9,11 @@ struct AudioGenerationParams: Encodable, Sendable {
     let durationSeconds: Int?
     var videoURL: String? = nil
 
+    func replacingPrompt(_ prompt: String) -> Self {
+        Self(prompt: prompt, voice: voice, lyrics: lyrics, styleInstructions: styleInstructions,
+            instrumental: instrumental, durationSeconds: durationSeconds, videoURL: videoURL)
+    }
+
     enum CodingKeys: String, CodingKey {
         case kind, prompt, voice, lyrics, styleInstructions, instrumental, durationSeconds, videoURL
     }
@@ -75,6 +80,7 @@ struct AudioModelConfig: Identifiable, Sendable {
     var supportsInstrumental: Bool { caps.supportsInstrumental }
     var supportsStyleInstructions: Bool { caps.supportsStyleInstructions }
     var durations: [Int]? { caps.durations }
+    var supportsDurationSelection: Bool { durations != nil || caps.minSeconds != nil || caps.maxSeconds != nil }
     var minPromptLength: Int { caps.minPromptLength }
 
     var inputs: [Input] { (caps.inputs ?? ["text"]).compactMap(Input.init(rawValue:)) }
@@ -83,12 +89,13 @@ struct AudioModelConfig: Identifiable, Sendable {
     var maxSeconds: Int { caps.maxSeconds ?? 900 }
 
     func validate(spanSeconds: Double) -> String? {
-        let s = Int(spanSeconds.rounded())
-        if s < minSeconds {
-            return "\(displayName) needs at least \(minSeconds)s of video (selection is \(s)s)."
+        guard spanSeconds.isFinite, spanSeconds > 0 else { return "Choose a valid audio duration." }
+        let selected = String(format: "%.2f", spanSeconds)
+        if spanSeconds < Double(minSeconds) {
+            return "\(displayName) needs at least \(minSeconds)s (selection is \(selected)s)."
         }
-        if s > maxSeconds {
-            return "\(displayName) accepts at most \(maxSeconds)s of video (selection is \(s)s)."
+        if spanSeconds > Double(maxSeconds) {
+            return "\(displayName) accepts at most \(maxSeconds)s (selection is \(selected)s)."
         }
         return nil
     }
@@ -111,6 +118,12 @@ struct AudioModelConfig: Identifiable, Sendable {
             let shown = Array(allowed.prefix(6)) + (allowed.count > 6 ? ["…"] : [])
             return unsupportedValue(model: displayName, field: "voice", value: v, allowed: shown)
         }
+        if params.lyrics?.isEmpty == false, !supportsLyrics { return "\(displayName) does not accept lyrics." }
+        if params.styleInstructions?.isEmpty == false, !supportsStyleInstructions { return "\(displayName) does not accept style instructions." }
+        if params.instrumental, !supportsInstrumental { return "\(displayName) does not offer an instrumental setting." }
+        if params.videoURL != nil, !inputs.contains(.video) { return "\(displayName) does not accept a source video." }
+        if let duration = params.durationSeconds, supportsDurationSelection,
+           let error = validate(spanSeconds: Double(duration)) { return error }
         if let allowed = durations, let d = params.durationSeconds, !allowed.contains(d) {
             return unsupportedValue(
                 model: displayName, field: "duration",

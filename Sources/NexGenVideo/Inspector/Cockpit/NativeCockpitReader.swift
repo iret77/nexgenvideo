@@ -37,8 +37,9 @@ enum NativeCockpitReader {
     // MARK: - Projectless kinds
 
     /// `read.py` "phases": the active pack contract's ordered pipeline as a JSON string array.
-    static func phasesJSON(activePack: String? = nil) throws -> Data {
-        try serialize(try mergedPhaseOrder(activePack: activePack))
+    static func phasesJSON(activePack: String? = nil, workflow: HostWorkflowKey? = nil) throws -> Data {
+        try serialize(try workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? mergedPhaseOrder(activePack: activePack))
     }
 
     /// The pipeline order for a project's active pack.
@@ -48,9 +49,19 @@ enum NativeCockpitReader {
 
     /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
     /// `core.ui_contract.full_contract()` overlaid with the active pack's entries.
-    static func contractJSON(activePack: String? = nil) throws -> Data {
+    static func contractJSON(activePack: String? = nil, workflow: HostWorkflowKey? = nil) throws -> Data {
         let registry = PackCatalog.registry(activePack: activePack)
-        let contract = UIContract.fullContract(packEntries: registry.uiContracts)
+        var contract = UIContract.fullContract(packEntries: registry.uiContracts)
+        if let workflow, workflow.isProductionV2 {
+            contract["script"] = .init(surface: "prose", taskClass: "interpretation")
+            contract["shot_planning"] = .init(surface: "review", taskClass: "planning")
+            contract["render_review"] = .init(surface: "review", taskClass: "review")
+            let order = try PhaseContractRuntime.order(workflow: workflow)
+            guard order.allSatisfy({ contract[$0] != nil }) else {
+                throw NativeError.load("The production workflow has an unavailable review surface.")
+            }
+            contract = contract.filter { order.contains($0.key) }
+        }
         var phases: [String: Any] = [:]
         for (phase, entry) in contract {
             phases[phase] = ["surface": entry.surface, "task_class": entry.taskClass]
@@ -215,16 +226,10 @@ enum NativeCockpitReader {
 
     /// `read.py` "state": `mcp_server.project_state()` → `ProjectState.model_dump()` (snake_case, no
     /// aliasing). Phase order comes from the active pack contract.
-    static func stateJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
-        let snapshot: ProjectStateBuilder.ProjectState
-        do {
-            snapshot = try ProjectStateBuilder.buildSnapshot(
-                dataRoot: dataRoot,
-                order: try mergedPhaseOrder(activePack: activePack)
-            )
-        } catch {
-            throw NativeError.notInitialized
-        }
+    static func stateJSON(dataRoot: URL, activePack: String? = nil, workflow: HostWorkflowKey? = nil) throws -> Data {
+        let order = try workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? mergedPhaseOrder(activePack: activePack)
+        let snapshot = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, order: order)
         let spend = try projectSpendSnapshot(dataRoot: dataRoot)
         let approvalEvidence = FileDigest.$readinessCache.withValue(
             approvalEvidenceDigests
@@ -232,7 +237,8 @@ enum NativeCockpitReader {
             phaseApprovalEvidence(
                 snapshot,
                 dataRoot: dataRoot,
-                activePack: activePack
+                activePack: activePack,
+                workflow: workflow
             )
         }
         let recovery = ConfirmedIdentityProvenanceRecovery.status(
@@ -298,7 +304,8 @@ enum NativeCockpitReader {
     static func phaseApprovalEvidence(
         _ snapshot: ProjectStateBuilder.ProjectState,
         dataRoot: URL,
-        activePack: String?
+        activePack: String?,
+        workflow: HostWorkflowKey? = nil
     ) -> [String: PhaseApprovalEvidence] {
         let registry = PackCatalog.registry(activePack: activePack)
         let wiringBlocker: String? = {
@@ -340,15 +347,19 @@ enum NativeCockpitReader {
                 continue
             }
             do {
-                try PipelineGateEvidenceValidator.requireCurrent(
-                    phase: phase.phase,
-                    dataRoot: dataRoot,
-                    requirement: try PhaseContractRuntime.gateRequirement(
-                        activePack: activePack,
-                        phase: phase.phase,
-                        registry: registry
-                    )
-                )
+                if let workflow, workflow.isProductionV2 {
+                    try GateGuard.checkApprovable(phase: phase.phase, dataRoot: dataRoot,
+                        requirement: PhaseContractRuntime.gateRequirement(workflow: workflow, phase: phase.phase, registry: registry))
+                    if try PhaseContractRuntime.contract(workflow: workflow).phase(phase.phase)?.nativeLineageRequiresRecord == true {
+                        guard let provider = try PhaseContractRuntime.lineageProvider(workflow: workflow, phase: phase.phase, registry: registry) else {
+                            throw GateBlocked("This approval has no current production evidence.")
+                        }
+                        try PipelineLineageStore.requireCurrent(phase: phase.phase, snapshot: provider(dataRoot), dataRoot: dataRoot)
+                    }
+                } else {
+                    try PipelineGateEvidenceValidator.requireCurrent(phase: phase.phase, dataRoot: dataRoot,
+                        requirement: PhaseContractRuntime.gateRequirement(activePack: activePack, phase: phase.phase, registry: registry))
+                }
                 result[phase.phase] = PhaseApprovalEvidence(
                     current: true,
                     blocker: nil
@@ -444,8 +455,44 @@ enum NativeCockpitReader {
 
     /// `read.py` "shotlist": the latest shotlist `model_dump(by_alias=True, mode="json")`, or literal
     /// `null` when none exists yet.
-    static func shotlistJSON(dataRoot: URL) throws -> Data {
-        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
+    static func shotlistJSON(dataRoot: URL, workflow: HostWorkflowKey? = nil) throws -> Data {
+        if workflow?.isProductionV2 == true {
+            guard let plan = try ProductionPlanPresentation.projectionIfPresent(dataRoot: dataRoot) else { return Data("null".utf8) }
+            let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: plan, dataRoot: dataRoot)
+            let graph = try PipelineShotPlanningPromotionStore.plannedGraph(promotion: promotion, dataRoot: dataRoot)
+            guard let bible = try loadBible(dataRoot: dataRoot) else { throw NativeError.load("References is missing.") }
+            let shots: [[String: Any]] = try plan.shots.map { shot in
+                var entityIDs = shot.blocking.map(\.entityID)
+                var assetIDs = shot.blocking.compactMap(\.anchorAssetID)
+                if let source = shot.sourceAssetID { assetIDs.append(source) }
+                if shot.generationRequirement != nil {
+                    let demands = try PipelineShotPlanningPromotionStore.plannedDemands(for: shot.id, promotion: promotion, dataRoot: dataRoot)
+                    assetIDs += demands.demands.map(\.assetID)
+                }
+                entityIDs += graph.assets.filter { assetIDs.contains($0.id) }.compactMap(\.entityID)
+                var seen = Set<String>()
+                let entities: [[String: String]] = entityIDs.compactMap { id in
+                    guard seen.insert(id).inserted, let entity = bible.lookupId(id) else { return nil }
+                    let kind: String
+                    switch entity {
+                    case .character: kind = "character"
+                    case .ensemble: kind = "ensemble"
+                    case .prop: kind = "prop"
+                    case .location: kind = "location"
+                    }
+                    return ["kind": kind, "id": id]
+                }
+                var result: [String: Any] = ["id": shot.id, "source_mode": shot.sourceMode.rawValue,
+                    "description": shot.primaryAction, "production_plan": true,
+                    "duration_s": plan.timing(for: shot.id).map { plan.timebase.seconds(for: $0.durationTicks) } ?? 0]
+                result["entity_refs"] = entities
+                if let framing = shot.camera.framingID { result["framing"] = framing }
+                return result
+            }
+            return try serialize(["schema": plan.schema, "project": plan.header.projectID,
+                "mode": plan.mode.rawValue, "generated": "", "shots": shots])
+        }
+        guard let shotlist = try loadShotlist(dataRoot: dataRoot) else {
             return Data("null".utf8)
         }
         let encoder = JSONEncoder()
@@ -464,7 +511,28 @@ enum NativeCockpitReader {
 
     /// `read.py` "frames": `frames.inventory.inventory(...)` → `{project, shots:[{shot_id, frames:
     /// [{name, path}], audit}]}`. The audit passthrough is a YAML mapping (or null).
-    static func framesJSON(dataRoot: URL) throws -> Data {
+    static func framesJSON(dataRoot: URL, workflow: HostWorkflowKey? = nil) throws -> Data {
+        if workflow?.isProductionV2 == true {
+            guard let plan = try ProductionPlanPresentation.projectionIfPresent(dataRoot: dataRoot) else {
+                return try serialize(["project": "", "shots": []])
+            }
+            let manifest: FramesManifest?
+            if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(PipelineLayout.framesManifestFile).path) {
+                manifest = try loadFramesManifest(dataRoot: dataRoot)
+                guard manifest?.project == plan.header.projectID else { throw GateBlocked("The Frames inventory belongs to another project.") }
+            } else { manifest = nil }
+            let current = try manifest?.reconciled(with: plan)
+            let shots: [[String: Any]] = try plan.shots.compactMap { shot in
+                let roles = plan.requiredFrameRoles(for: shot.id)
+                guard !roles.isEmpty else { return nil }
+                let frames: [[String: Any]] = try (current?.shot(shot.id)?.frames ?? []).map { frame in
+                    _ = try ProjectLocalFile.resolve(frame.path, dataRoot: dataRoot)
+                    return ["name": frame.role == "start" ? "Start frame" : "End frame", "path": frame.path]
+                }
+                return ["shot_id": shot.id, "frames": frames, "audit": NSNull()]
+            }
+            return try serialize(["project": plan.header.projectID, "shots": shots])
+        }
         let inventory = try FrameInventory.inventory(projectDir: dataRoot)
         let shots: [[String: Any]] = inventory.shots.map { shot in
             [
@@ -478,7 +546,13 @@ enum NativeCockpitReader {
 
     /// `read.py` "sanity": `mcp_server.run_sanity` → `{project, findings:[{level, code, shot_id,
     /// message}]}`, or `{error:"no shotlist", project_dir}` when there's no shotlist yet.
-    static func sanityJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
+    static func sanityJSON(dataRoot: URL, activePack: String? = nil, workflow: HostWorkflowKey? = nil) throws -> Data {
+        if workflow?.isProductionV2 == true {
+            guard let plan = try ProductionPlanPresentation.projectionIfPresent(dataRoot: dataRoot) else {
+                return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
+            }
+            return try sanityJSON(ProductionPlanAuditV1.report(projection: plan, dataRoot: dataRoot))
+        }
         guard let report = sanityReport(dataRoot: dataRoot, activePack: activePack) else {
             return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
         }

@@ -8,6 +8,7 @@ private struct ProjectEditableContents: Sendable {
     var manifest: MediaManifest?
     var generationLog: GenerationLog?
     var thumbnail: Data?
+    var effectResourceProblems: [ProjectEffectResources.Problem]
 }
 
 private struct ProjectPackageContents: Sendable {
@@ -17,6 +18,7 @@ private struct ProjectPackageContents: Sendable {
     var thumbnail: Data?
     var workingCopyKey: String
     var workingCopy: ProjectWorkingCopy.OpenResult
+    var effectResourceProblems: [ProjectEffectResources.Problem]
 }
 
 private struct ProjectPackageSnapshot: Sendable {
@@ -29,6 +31,7 @@ private struct ProjectPackageSnapshot: Sendable {
     var mintNewIdentity: Bool
     var packDeclaration: ProjectPackGate.MutationDeclaration
     var packVerificationRoot: URL
+    var editorState: Data
 }
 
 private enum PackBindingFinalization: Equatable {
@@ -58,6 +61,7 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var loadedManifest: MediaManifest?
     private nonisolated(unsafe) var loadedGenerationLog: GenerationLog?
     private nonisolated(unsafe) var loadedThumbnail: Data?
+    private nonisolated(unsafe) var loadedEffectResourceProblems: [ProjectEffectResources.Problem] = []
     private nonisolated(unsafe) var loadedWorkingCopyKey: String?
     private nonisolated(unsafe) var loadedWorkingCopy: ProjectWorkingCopy.OpenResult?
 
@@ -84,11 +88,13 @@ final class VideoProject: NSDocument {
     override class var autosavesInPlace: Bool { false }
 
     @MainActor
-    static func load(from url: URL, agentService: AgentService? = nil) async throws -> VideoProject {
+    static func load(from url: URL, agentService: AgentService? = nil,
+                     configureEditor: (@MainActor (EditorViewModel) -> Void)? = nil) async throws -> VideoProject {
         var contents = try await Task.detached(priority: .userInitiated) {
             try readProjectPackage(at: url)
         }.value
         let doc = agentService.map { VideoProject(agentService: $0) } ?? VideoProject()
+        configureEditor?(doc.editorViewModel)
         doc.fileURL = url
         doc.fileType = typeIdentifier
         doc.applyLoadedContents(contents)
@@ -118,6 +124,7 @@ final class VideoProject: NSDocument {
         loadedManifest = contents.manifest
         loadedGenerationLog = contents.generationLog
         loadedThumbnail = contents.thumbnail
+        loadedEffectResourceProblems = contents.effectResourceProblems
         loadedWorkingCopyKey = contents.workingCopyKey
         loadedWorkingCopy = contents.workingCopy
         Log.project.notice(
@@ -154,7 +161,7 @@ final class VideoProject: NSDocument {
     private nonisolated static func readProjectPackage(at url: URL) throws -> ProjectPackageContents {
         if ProjectIdentity.existingKey(for: url) == nil {
             try ProjectWorkingCopy.validateForOpen(url)
-            _ = try readEditableContents(at: url)
+            _ = try readEditableContents(at: url, normalizeResources: false)
         }
         let key = try ProjectIdentity.key(for: url)
         let workingCopy = try ProjectWorkingCopy.open(key: key, packageURL: url)
@@ -166,13 +173,16 @@ final class VideoProject: NSDocument {
             generationLog: contents.generationLog,
             thumbnail: contents.thumbnail,
             workingCopyKey: key,
-            workingCopy: workingCopy
+            workingCopy: workingCopy,
+            effectResourceProblems: contents.effectResourceProblems
         )
     }
 
     private nonisolated static func readEditableContents(
-        at root: URL
+        at root: URL,
+        normalizeResources: Bool = true
     ) throws -> ProjectEditableContents {
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: root)
         let data = try requiredData(Project.timelineFilename, in: root)
         let timeline: Timeline
         do {
@@ -182,6 +192,7 @@ final class VideoProject: NSDocument {
             throw error
         }
 
+        let resources = try ProjectEffectResources.open(timeline: timeline, projectRoot: root, importLegacy: normalizeResources)
         let manifest: MediaManifest?
         if let manifestData = try optionalData(Project.manifestFilename, in: root) {
             do {
@@ -214,10 +225,11 @@ final class VideoProject: NSDocument {
         let thumbnail = try optionalData(Project.thumbnailFilename, in: root)
 
         return ProjectEditableContents(
-            timeline: timeline,
+            timeline: ProjectEditorState.restoring(ProjectEditorState.read(in: root), to: resources.timeline),
             manifest: manifest,
             generationLog: generationLog,
-            thumbnail: thumbnail
+            thumbnail: thumbnail,
+            effectResourceProblems: resources.problems
         )
     }
 
@@ -339,7 +351,8 @@ final class VideoProject: NSDocument {
                 _ = try ProjectPackGate.requireLiveMutation(
                     projectURL: verificationRoot,
                     declaredPack: editorViewModel.declaredPluginName,
-                    declaredBinding: editorViewModel.declaredPluginBinding
+                    declaredBinding: editorViewModel.declaredPluginBinding,
+                    declaredProductionContract: editorViewModel.declaredProductionContract
                 )
                 return nil
             } catch {
@@ -399,7 +412,8 @@ final class VideoProject: NSDocument {
         }
         guard let data = snapshotTimeline,
               let packDeclaration = snapshotPackDeclaration,
-              let packVerificationRoot = snapshotPackVerificationRoot else {
+              let packVerificationRoot = snapshotPackVerificationRoot,
+              let editorState = snapshotEditorState else {
             Log.project.error("save: prepared snapshot is incomplete at write()")
             throw CocoaError(.fileWriteUnknown)
         }
@@ -414,7 +428,8 @@ final class VideoProject: NSDocument {
                 workingCopyKey: snapshotWorkingCopyKey,
                 mintNewIdentity: snapshotMintNewIdentity,
                 packDeclaration: packDeclaration,
-                packVerificationRoot: packVerificationRoot
+                packVerificationRoot: packVerificationRoot,
+                editorState: editorState
             ),
             to: url,
             sourceURL: snapshotSourceProjectURL
@@ -425,11 +440,14 @@ final class VideoProject: NSDocument {
         clearSaveSnapshot()
         snapshotPackDeclaration = ProjectPackGate.MutationDeclaration(
             packName: editorViewModel.declaredPluginName,
-            binding: editorViewModel.declaredPluginBinding
+            binding: editorViewModel.declaredPluginBinding,
+            productionContract: editorViewModel.declaredProductionContract
         )
         snapshotPackVerificationRoot = verificationRoot
         do {
+            try requireEditableWorkingCopy()
             snapshotTimeline = try JSONEncoder().encode(editorViewModel.timeline)
+            snapshotEditorState = try ProjectEditorState.capture(editorViewModel.timeline)
             snapshotManifest = try JSONEncoder().encode(editorViewModel.mediaManifest)
             snapshotGenerationLog = try JSONEncoder().encode(editorViewModel.generationLog)
             var chatFiles: [(name: String, data: Data)] = []
@@ -456,6 +474,7 @@ final class VideoProject: NSDocument {
 
     private nonisolated func clearSaveSnapshot() {
         snapshotTimeline = nil
+        snapshotEditorState = nil
         snapshotManifest = nil
         snapshotGenerationLog = nil
         snapshotThumbnail = nil
@@ -470,30 +489,44 @@ final class VideoProject: NSDocument {
     }
 
     private func checkpointWorkingCopy() {
-        guard let key = editorViewModel.openWorkingCopyKey else { return }
         do {
-            var chatFiles: [(name: String, data: Data)] = []
-            for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
-                guard let data = ChatSessionStore.encodeSession(session) else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-                chatFiles.append((name: "\(session.id.uuidString).json", data: data))
-            }
-            let snapshot = ProjectWorkingCopy.Checkpoint(
-                timeline: try JSONEncoder().encode(editorViewModel.timeline),
-                manifest: try JSONEncoder().encode(editorViewModel.mediaManifest),
-                generationLog: try JSONEncoder().encode(editorViewModel.generationLog),
-                thumbnail: cachedThumbnail,
-                chatSessionFiles: chatFiles
-            )
-            try ProjectWorkingCopy.checkpoint(key: key, snapshot: snapshot)
+            guard editorViewModel.openWorkingCopyKey != nil else { return }
+            try checkpointForProductionUpgrade()
             checkpointFailurePresented = false
         } catch {
             Log.project.error("working-copy checkpoint failed: \(error.localizedDescription)")
-            if !checkpointFailurePresented {
+            if let reason = editorViewModel.workingCopyWriteBlockReason { editorViewModel.mediaPanelToast = MediaPanelToast(message: reason) } else if !checkpointFailurePresented {
                 checkpointFailurePresented = true
                 presentError(error)
             }
+        }
+    }
+
+    func checkpointForProductionUpgrade() throws {
+        draftCheckpointTask?.cancel()
+        draftCheckpointTask = nil
+        try requireEditableWorkingCopy()
+        guard let key = editorViewModel.openWorkingCopyKey else { throw CocoaError(.fileWriteUnknown) }
+        var chatFiles: [(name: String, data: Data)] = []
+        for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
+            guard let data = ChatSessionStore.encodeSession(session) else { throw CocoaError(.fileWriteUnknown) }
+            chatFiles.append((name: "\(session.id.uuidString).json", data: data))
+        }
+        let snapshot = ProjectWorkingCopy.Checkpoint(
+            timeline: try JSONEncoder().encode(editorViewModel.timeline),
+            manifest: try JSONEncoder().encode(editorViewModel.mediaManifest),
+            generationLog: try JSONEncoder().encode(editorViewModel.generationLog),
+            thumbnail: cachedThumbnail,
+            chatSessionFiles: chatFiles,
+            editorState: try ProjectEditorState.capture(editorViewModel.timeline)
+        )
+        try ProjectWorkingCopy.checkpoint(key: key, snapshot: snapshot)
+    }
+
+    private func requireEditableWorkingCopy() throws {
+        if let reason = editorViewModel.workingCopyWriteBlockReason {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError,
+                userInfo: [NSLocalizedDescriptionKey: reason])
         }
     }
 
@@ -517,19 +550,24 @@ final class VideoProject: NSDocument {
             _ = try ProjectPackGate.requireMutation(
                 projectURL: snapshot.packVerificationRoot,
                 declaredPack: snapshot.packDeclaration.packName,
-                declaredBinding: snapshot.packDeclaration.binding
+                declaredBinding: snapshot.packDeclaration.binding,
+                declaredProductionContract: snapshot.packDeclaration.productionContract
             )
         }
         try validateBinding()
+        let liveTimeline = try JSONDecoder().decode(Timeline.self, from: snapshot.timeline)
+        let portableTimeline = try ProjectEffectResources.portable(liveTimeline, projectRoot: snapshot.packVerificationRoot)
+        let portableData = try JSONEncoder().encode(portableTimeline)
         if let key = snapshot.workingCopyKey {
             try ProjectWorkingCopy.checkpoint(
                 key: key,
                 snapshot: ProjectWorkingCopy.Checkpoint(
-                    timeline: snapshot.timeline,
+                    timeline: portableData,
                     manifest: snapshot.manifest,
                     generationLog: snapshot.generationLog,
                     thumbnail: snapshot.thumbnail,
-                    chatSessionFiles: snapshot.chatSessionFiles
+                    chatSessionFiles: snapshot.chatSessionFiles,
+                    editorState: snapshot.editorState
                 )
             )
             try ProjectWorkingCopy.persist(
@@ -557,7 +595,14 @@ final class VideoProject: NSDocument {
         } else {
             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         }
-        try snapshot.timeline.write(
+        for resource in try ProjectEffectResources.capture(timeline: portableTimeline, projectRoot: snapshot.packVerificationRoot) {
+            let destination = try ProjectEffectResources.url(for: resource.path, projectRoot: staging)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.copyItem(at: resource.url, to: destination) }
+        }
+        _ = try ProjectEffectResources.capture(timeline: portableTimeline, projectRoot: staging)
+        try snapshot.editorState.write(to: staging.appendingPathComponent(ProjectEditorState.filename), options: .atomic)
+        try portableData.write(
             to: staging.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )
@@ -660,15 +705,20 @@ final class VideoProject: NSDocument {
     // MARK: - Close
 
     override func close() {
+        BpyRuntimeHost.shared.unregister(document: self)
         draftCheckpointTask?.cancel()
         draftCheckpointTask = nil
+        let generationRestoration = generationRestorationTask
+        generationRestoration?.cancel()
+        generationRestorationTask = nil
         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
         // launch doesn't mistake it for crash-surviving unsaved work.
         if let fileURL,
            ProjectPackMigration.hasPending(projectURL: fileURL) {
             ProjectPackMigration.cancel(projectURL: fileURL)
         }
-        editorViewModel.releaseWorkingCopy()
+        editorViewModel.generationBatchCoordinator.cancelForClose()
+        editorViewModel.releaseWorkingCopy(afterGenerationRestoration: generationRestoration)
         super.close()
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .projectDocumentSetChanged, object: self)
@@ -699,6 +749,8 @@ final class VideoProject: NSDocument {
     override func makeWindowControllers() {
         cachedThumbnail = loadedThumbnail
         loadedThumbnail = nil
+        editorViewModel.effectResourceProblems = loadedEffectResourceProblems
+        loadedEffectResourceProblems = []
         if let loaded = loadedTimeline {
             editorViewModel.timeline = loaded
             loadedTimeline = nil
@@ -797,11 +849,14 @@ final class VideoProject: NSDocument {
         }
         editorViewModel.searchIndex.projectOpened()
         if !editorViewModel.recoveredUnsavedWork {
-            editorViewModel.generationBatchCoordinator.resume(editor: editorViewModel)
+            let batchRestoration = editorViewModel.generationBatchCoordinator.resume(editor: editorViewModel)
             let editor = editorViewModel
-            Task { [weak editor] in
+            generationRestorationTask = Task { [weak editor] in
                 guard let editor else { return }
-                await editor.generationService.reconcileOpenRuns(editor: editor)
+                await withTaskCancellationHandler {
+                    await editor.generationService.reconcileOpenRuns(editor: editor)
+                    await batchRestoration?.value
+                } onCancel: { batchRestoration?.cancel() }
             }
         }
         editorViewModel.updateTelemetryContext()
@@ -815,16 +870,24 @@ final class VideoProject: NSDocument {
         }
     }
 
-    private func reloadEditableContents(from home: URL) async -> Bool {
+    func reloadEditableContents(from home: URL,
+        beforeApply: (@MainActor @Sendable () async -> Void)? = nil) async -> Bool {
+        guard editorViewModel.workingCopyHome == home,
+              let key = editorViewModel.openWorkingCopyKey,
+              let generation = editorViewModel.openWorkingCopyGeneration else { return false }
         draftCheckpointTask?.cancel()
         draftCheckpointTask = nil
         let result = await Task.detached(priority: .userInitiated) {
             Result { try Self.readEditableContents(at: home) }
         }.value
-        guard editorViewModel.workingCopyHome == home else { return false }
+        await beforeApply?()
+        guard !Task.isCancelled, editorViewModel.workingCopyHome == home,
+              editorViewModel.openWorkingCopyKey == key,
+              editorViewModel.openWorkingCopyGeneration == generation else { return false }
         switch result {
         case .success(let contents):
             editorViewModel.timeline = contents.timeline
+            editorViewModel.effectResourceProblems = contents.effectResourceProblems
             editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
             editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
             cachedThumbnail = contents.thumbnail
@@ -836,7 +899,7 @@ final class VideoProject: NSDocument {
             Log.project.error(
                 "discard recovery reload failed: \(error.localizedDescription)"
             )
-            presentError(error)
+            editorViewModel.mediaPanelToast = MediaPanelToast(message: "The saved project could not be reloaded: \(error.localizedDescription)")
             return false
         }
     }
@@ -958,14 +1021,22 @@ final class VideoProject: NSDocument {
         super.updateChangeCount(.changeDone)
         editorViewModel.isDocumentEdited = isDocumentEdited
         draftCheckpointTask?.cancel()
+        guard let key = editorViewModel.openWorkingCopyKey,
+              let generation = editorViewModel.openWorkingCopyGeneration else {
+            draftCheckpointTask = nil
+            return
+        }
         draftCheckpointTask = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.editorViewModel.openWorkingCopyKey == key,
+                  self.editorViewModel.openWorkingCopyGeneration == generation else { return }
             self.draftCheckpointTask = nil
             self.checkpointWorkingCopy()
         }
     }
 
-    private var draftCheckpointTask: Task<Void, Never>?
+    private(set) var draftCheckpointTask: Task<Void, Never>?
+    private nonisolated(unsafe) var snapshotEditorState: Data?
+    private(set) var generationRestorationTask: Task<Void, Never>?
 
 }

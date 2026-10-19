@@ -41,9 +41,11 @@ public struct MusicvideoPatternProvider: PatternProviding {
     }
 
     public func recommend(briefJSON: Data, optionsJSON: Data) throws -> Data {
-        let options = (try? JSONDecoder().decode(Options.self, from: optionsJSON))
-            ?? Options(projectProfile: nil, perceivedBpm: nil, matchMode: nil, excludedPatternIds: nil, maxResults: nil)
-        let brief = try? JSONDecoder().decode(Brief.self, from: briefJSON)
+        let options = try JSONDecoder().decode(Options.self, from: optionsJSON)
+        if let count = options.maxResults, count <= 0 {
+            throw GateBlocked("Pattern comparison requires a positive result count.")
+        }
+        let brief = try JSONDecoder().decode(Brief?.self, from: briefJSON)
         do {
             let (set, coverage) = try PatternFitLibrary.recommend(
                 brief: brief, projectOverride: options.projectProfile, perceivedBpm: options.perceivedBpm,
@@ -60,7 +62,7 @@ public struct MusicvideoPatternProvider: PatternProviding {
     }
 
     public func get(id: String) throws -> Data? {
-        guard !id.trimmingCharacters(in: .whitespaces).isEmpty,
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             let pattern = Patterns.pattern(withId: id, in: try Patterns.loadAllPatterns()) else {
             return nil
         }

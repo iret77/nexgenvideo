@@ -202,7 +202,13 @@ struct ClaudeCodeRuntimeAdapterTests {
             currentMessage: current
         ))
 
+        driver.callbacks?.events([
+            .responseMetadata(messageID: "response", modelID: "actual-model"),
+            .assistantBlock(messageId: "response", block: .toolUse(id: "review", name: "write_render_review", inputJSON: "{}")),
+        ])
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") != nil)
         adapter.cancel(sessionID: sessionID)
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") == nil)
         driver.callbacks?.events([
             .assistantBlock(messageId: "m1", block: .text("late")),
             .turnFinished(isError: false, errorMessage: nil, costUSD: 1),
@@ -216,6 +222,64 @@ struct ClaudeCodeRuntimeAdapterTests {
         #expect(claudeTerminals(events) == [.cancelled])
         #expect(!payloads.contains(.text(messageID: "m1", value: "late", isDelta: false)))
         #expect(adapter.state == .ready(sessionID: sessionID))
+    }
+
+    @Test("a new runtime session cannot reuse completed model evidence", arguments: [false, true])
+    func reconfigurationAndEndDiscardModelEvidence(end: Bool) async throws {
+        let driver = FakeClaudeCodeDriver()
+        let adapter = ClaudeCodeRuntimeAdapter { _, callbacks in driver.callbacks = callbacks; return driver }
+        let sessionID = UUID()
+        try adapter.start(claudeSessionRequest(sessionID: sessionID))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Review")])
+        let stream = try adapter.send(.init(sessionID: sessionID, turnID: UUID(), messages: [current], currentMessage: current))
+        driver.callbacks?.events([
+            .responseMetadata(messageID: "response", modelID: "actual-model"),
+            .assistantBlock(messageId: "response", block: .toolUse(id: "review", name: "write_render_review", inputJSON: "{}")),
+            .turnFinished(isError: false, errorMessage: nil, costUSD: nil),
+        ])
+        _ = await collectClaudeEvents(stream)
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") != nil)
+        if end { adapter.end(sessionID: sessionID) }
+        else { try adapter.resume(claudeSessionRequest(sessionID: sessionID)) }
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") == nil)
+    }
+
+    @Test("MCP waits for actual stdout evidence and rejects callbacks from a cancelled runtime")
+    func pendingMCPUsesOnlyCurrentRuntimeStdout() async throws {
+        let driver = FakeClaudeCodeDriver()
+        let adapter = ClaudeCodeRuntimeAdapter { _, callbacks in driver.callbacks = callbacks; return driver }
+        let sessionID = UUID(), oldTurn = UUID(), newTurn = UUID()
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Review")])
+        try adapter.start(claudeSessionRequest(sessionID: sessionID))
+        _ = try adapter.send(.init(sessionID: sessionID, turnID: oldTurn, messages: [current], currentMessage: current))
+        defer { adapter.cancel(sessionID: sessionID) }
+        func requirePending() async throws {
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(2))
+            while adapter.pendingModelEvidenceCount == 0, clock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            try #require(adapter.pendingModelEvidenceCount == 1)
+        }
+        let oldCallbacks = try #require(driver.callbacks)
+        let cancelled = Task { await adapter.awaitModelResponseEvidence(toolUseID: "toolu_actual", sessionID: sessionID, turnID: oldTurn) }
+        try await requirePending()
+        adapter.cancel(sessionID: sessionID)
+        #expect(await cancelled.value == nil)
+        try adapter.resume(claudeSessionRequest(sessionID: sessionID))
+        _ = try adapter.send(.init(sessionID: sessionID, turnID: newTurn, messages: [current], currentMessage: current))
+        let pending = Task { await adapter.awaitModelResponseEvidence(toolUseID: "toolu_actual", sessionID: sessionID, turnID: newTurn) }
+        try await requirePending()
+        oldCallbacks.events(ClaudeStreamDecoder.decode(line: #"{"type":"assistant","message":{"id":"old-response","model":"old-model","content":[{"type":"tool_use","id":"toolu_actual","name":"mcp__nexgen__write_render_review","input":{}}]}}"#))
+        #expect(adapter.modelResponseEvidence(toolUseID: "toolu_actual") == nil)
+        driver.callbacks?.events(ClaudeStreamDecoder.decode(line: #"{"type":"assistant","message":{"id":"new-response","model":"actual-model","content":[{"type":"tool_use","id":"toolu_actual","name":"mcp__nexgen__write_render_review","input":{}}]}}"#))
+        let actual = try #require(await pending.value)
+        #expect(actual.messageID == "new-response")
+        #expect(actual.modelID == "actual-model")
+        #expect(actual.turnID == newTurn)
+        #expect(actual.toolName == "mcp__nexgen__write_render_review")
+        #expect(await adapter.awaitModelResponseEvidence(toolUseID: "toolu_actual", sessionID: sessionID, turnID: oldTurn) == nil)
+        adapter.cancel(sessionID: sessionID)
     }
 
     @Test("send refusal becomes one backend-unavailable failure")

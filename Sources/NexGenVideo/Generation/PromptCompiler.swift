@@ -18,6 +18,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
     let promptDialectVersion: Int
     let frameReferencePlanSHA256: String
     let promptIRSHA256: String
+    let frameRole: String?
 
     private enum CodingKeys: String, CodingKey {
         case projectKey, shotId, shotFingerprint, routeArtifactSHA256
@@ -25,7 +26,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
         case referencePlanSHA256, orderedBindingsSHA256, styleFingerprint
         case compilerInputsSHA256, promptDialectID, promptDialectVersion
         case frameReferencePlanSHA256
-        case promptIRSHA256
+        case promptIRSHA256, frameRole
     }
 
     init(
@@ -43,7 +44,8 @@ struct PromptBinding: Codable, Sendable, Equatable {
         promptDialectID: String = "none",
         promptDialectVersion: Int = 0,
         frameReferencePlanSHA256: String = "none",
-        promptIRSHA256: String = "none"
+        promptIRSHA256: String = "none",
+        frameRole: String? = nil
     ) {
         self.projectKey = projectKey
         self.shotId = shotId
@@ -60,6 +62,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
         self.promptDialectVersion = promptDialectVersion
         self.frameReferencePlanSHA256 = frameReferencePlanSHA256
         self.promptIRSHA256 = promptIRSHA256
+        self.frameRole = frameRole
     }
 
     init(from decoder: Decoder) throws {
@@ -85,7 +88,8 @@ struct PromptBinding: Codable, Sendable, Equatable {
             promptIRSHA256: try values.decodeIfPresent(
                 String.self,
                 forKey: .promptIRSHA256
-            ) ?? "none"
+            ) ?? "none",
+            frameRole: try values.decodeIfPresent(String.self, forKey: .frameRole)
         )
     }
 
@@ -110,6 +114,15 @@ struct CompiledPrompt: Sendable {
     let token: String
     let notes: [String]
     let binding: PromptBinding
+    let sourceIRData: Data?
+
+    init(text: String, token: String, notes: [String], binding: PromptBinding, sourceIRData: Data? = nil) {
+        self.text = text
+        self.token = token
+        self.notes = notes
+        self.binding = binding
+        self.sourceIRData = sourceIRData
+    }
 }
 
 enum PromptCompiler {
@@ -164,12 +177,46 @@ enum PromptCompiler {
         shotId: String = "none",
         shot: PromptComposer.ShotProjection? = nil,
         preserveCompositionOverride: Bool? = nil,
-        modelCatalog: ModelCatalog = .shared
+        modelCatalog: ModelCatalog = .shared,
+        revalidate: (@MainActor @Sendable () throws -> Void)? = nil,
+        frameRole requestedFrameRole: String? = nil,
+        beforePublication: (@MainActor @Sendable () async throws -> Void)? = nil
     ) async throws -> CompiledPrompt {
+        try Task.checkCancellation()
+        try revalidate?()
+        let workflowBefore = try PipelineProductionPromptCompiler.workflow(editor: editor)
+        if requestedFrameRole != nil {
+            guard workflowBefore?.isProductionV2 == true, shotId != "none", case .image = modality else {
+                throw ToolError("frameRole is only available for a planned production boundary image.")
+            }
+        }
+        var productionShot = shot
+        var frameRole: String?
+        if workflowBefore?.isProductionV2 == true, shotId != "none", case .image = modality,
+           let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            guard let planned = projection.shots.first(where: { $0.id == shotId }) else {
+                throw ToolError("Compile the exact start or end boundary intent returned by next_render_shot for this production image.")
+            }
+            let role = try PipelineProductionFramesWriter.boundaryRole(intent: intent, requestedRole: requestedFrameRole,
+                shot: planned, requiredRoles: projection.requiredFrameRoles(for: shotId), endBoundary: projection.endFrameBoundaries[shotId])
+            frameRole = role
+            productionShot = try PipelineProductionPromptCompiler.shotProjection(shotID: shotId, dataRoot: root, boundaryRole: role)
+        }
         guard shotId == "none" || shot != nil else {
             throw ToolError(
                 "Shot-bound compilation requires the current shot projection."
             )
+        }
+        if workflowBefore?.isProductionV2 == true, shotId != "none", case .video = modality, let editor,
+           let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            let plan = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            if plan.chains.allSatisfy({ $0.shotID != shotId }) {
+                _ = try await PipelineProductionInputMaterializer.prepare(shotID: shotId, editor: editor, catalog: modelCatalog,
+                    revalidate: revalidate)
+                try Task.checkCancellation()
+                try revalidate?()
+            }
         }
         if shotId != "none", case .image = modality, let shot {
             try validateImageShotSourceContract(sourceMode: shot.sourceMode)
@@ -179,8 +226,10 @@ enum PromptCompiler {
             shotId: shotId,
             modality: modality,
             modelId: modelId,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: frameRole
         )
+        try Task.checkCancellation()
+        try revalidate?()
         let videoContext: PromptComposer.VideoContext?
         let imageContext: PromptComposer.ImageContext?
         if case .video = modality {
@@ -196,12 +245,14 @@ enum PromptCompiler {
             videoContext = nil
         }
         if case .image = modality,
-           let plan = try currentFrameReferencePlan(
+           let plan = try await currentFrameReferencePlan(
                editor: editor,
                shotId: shotId,
                modelId: modelId,
-               modelCatalog: modelCatalog
+               modelCatalog: modelCatalog, frameRole: frameRole
            ) {
+            try Task.checkCancellation()
+            try revalidate?()
             guard plan.fingerprint == binding.frameReferencePlanSHA256 else {
                 throw ToolError(
                     "The frame reference plan changed during prompt compilation. Compile the current shot again."
@@ -213,6 +264,8 @@ enum PromptCompiler {
         } else {
             imageContext = nil
         }
+        try Task.checkCancellation()
+        try revalidate?()
         let preserveComposition = preserveCompositionOverride
             ?? preservesComposition(modelId: modelId, modelCatalog: modelCatalog)
         let composed = try await PromptComposer.compose(
@@ -225,22 +278,29 @@ enum PromptCompiler {
             setting: setting,
             lighting: lighting,
             style: style,
-            shot: shot,
+            shot: productionShot,
             preserveComposition: preserveComposition,
             videoContext: videoContext,
-            imageContext: imageContext
+            imageContext: imageContext,
+            capturesImageIR: workflowBefore?.isProductionV2 == true
         )
-        guard try await currentBinding(
+        try await beforePublication?()
+        try Task.checkCancellation()
+        try revalidate?()
+        guard try PipelineProductionPromptCompiler.workflow(editor: editor) == workflowBefore,
+              try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modality,
             modelId: modelId,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: frameRole
         ) == binding else {
             throw ToolError(
                 "The project direction changed during prompt compilation. Compile the current shot again."
             )
         }
+        try Task.checkCancellation()
+        try revalidate?()
         let compiledBinding = binding.withPromptIRSHA256(
             composed.sourceIRSHA256 ?? "none"
         )
@@ -252,7 +312,17 @@ enum PromptCompiler {
                 binding: compiledBinding
             ),
             notes: composed.notes,
-            binding: compiledBinding)
+            binding: compiledBinding, sourceIRData: composed.sourceIRData)
+        if let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+           workflowBefore?.isProductionV2 == true, modality.usesVisualStyle {
+            let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
+            let kind: String
+            switch modality { case .video: kind = "video"; case .image: kind = "image"; case .audio: kind = "audio"; case .music: kind = "music" }
+            try Task.checkCancellation()
+            try revalidate?()
+            _ = try ProductionCompiledPromptStore.record(compiled, modelID: modelId, modality: kind,
+                projectID: project.project, dataRoot: root)
+        }
         remember(
             compiled,
             recipe: CompileRecipe(
@@ -295,8 +365,8 @@ enum PromptCompiler {
             editor: editor,
             shotId: recipe.binding.shotId,
             modality: recipe.modality,
-            modelId: recipe.modelId,
-            modelCatalog: modelCatalog
+            modelId: allowCurrentRoutingChange ? modelId : recipe.modelId,
+            modelCatalog: modelCatalog, frameRole: recipe.binding.frameRole
         )
         guard current.matchesCurrentState(of: recipe.binding)
                 || (allowCurrentRoutingChange
@@ -316,7 +386,7 @@ enum PromptCompiler {
             shotId: recipe.binding.shotId,
             shot: try currentShotProjection(editor: editor, shotId: recipe.binding.shotId),
             preserveCompositionOverride: preserveCompositionOverride,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: recipe.binding.frameRole
         )
     }
 
@@ -393,10 +463,12 @@ enum PromptCompiler {
     /// Resolve a model id to its composition modality (the `compile_prompt` tool only receives a model
     /// id). Video/image use the engine builders; everything audio-shaped composes as merged text.
     @MainActor
-    static func modalityForModel(_ modelId: String) -> PromptComposer.Modality {
-        if VideoModelConfig.allModels.contains(where: { $0.id == modelId }) { return .video }
-        if ImageModelConfig.allModels.contains(where: { $0.id == modelId }) { return .image }
-        if AudioModelConfig.allModels.contains(where: { $0.id == modelId }) { return .audio }
+    static func modalityForModel(
+        _ modelId: String, modelCatalog: ModelCatalog = .shared
+    ) -> PromptComposer.Modality {
+        if modelCatalog.video.contains(where: { $0.id == modelId }) { return .video }
+        if modelCatalog.image.contains(where: { $0.id == modelId }) { return .image }
+        if modelCatalog.audio.contains(where: { $0.id == modelId }) { return .audio }
         return .video
     }
 
@@ -411,7 +483,7 @@ enum PromptCompiler {
             + "\(binding.routeSHA256)|\(binding.referencePlanSHA256)|"
             + "\(binding.orderedBindingsSHA256)|\(binding.styleFingerprint)|\(binding.compilerInputsSHA256 ?? "none")|"
             + "\(binding.promptDialectID)|\(binding.promptDialectVersion)|"
-            + "\(binding.frameReferencePlanSHA256)|\(binding.promptIRSHA256)|"
+            + "\(binding.frameReferencePlanSHA256)|\(binding.promptIRSHA256)|\(binding.frameRole ?? "none")|"
             + "\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -466,7 +538,8 @@ enum PromptCompiler {
         shotId: String,
         modality: PromptComposer.Modality,
         modelId: String? = nil,
-        modelCatalog: ModelCatalog = .shared
+        modelCatalog: ModelCatalog = .shared,
+        frameRole: String? = nil
     ) async throws -> PromptBinding {
         let root = editor?.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
@@ -503,6 +576,11 @@ enum PromptCompiler {
                 promptDialectID: dialect?.id ?? "none",
                 promptDialectVersion: dialect?.version ?? 0
             )
+        }
+        if let root, try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try await PipelineProductionPromptCompiler.binding(shotID: shotId, modality: modality, modelID: modelId,
+                dataRoot: root, editor: editor, catalog: modelCatalog, projectKey: projectKey,
+                styleFingerprint: styleFingerprint, compilerInputsSHA256: compilerInputsSHA256, frameRole: frameRole)
         }
         guard let root,
               let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
@@ -547,7 +625,7 @@ enum PromptCompiler {
         }
         let framePlan: FrameReferencePlanV1?
         if case .image = modality, let modelId {
-            framePlan = try currentFrameReferencePlan(
+            framePlan = try await currentFrameReferencePlan(
                 editor: editor,
                 shotId: shotId,
                 modelId: modelId,
@@ -571,13 +649,18 @@ enum PromptCompiler {
         editor: EditorViewModel?,
         shotId: String,
         modelId: String,
-        modelCatalog: ModelCatalog = .shared
-    ) throws -> FrameReferencePlanV1? {
+        modelCatalog: ModelCatalog = .shared,
+        frameRole: String? = nil
+    ) async throws -> FrameReferencePlanV1? {
         guard shotId != "none",
               let editor,
               let projectHome = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: projectHome) else {
             return nil
+        }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try await PipelineProductionPromptCompiler.framePlan(shotID: shotId, modelID: modelId,
+                dataRoot: dataRoot, catalog: modelCatalog, frameRole: frameRole)
         }
         let activePack: String?
         do {
@@ -657,6 +740,10 @@ enum PromptCompiler {
         guard let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
               let shot else {
             throw ToolError("Shot-bound video compilation requires the active project and shot projection.")
+        }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            return try PipelineProductionPromptCompiler.videoContext(shotID: shotId, modelID: modelId,
+                dataRoot: root, editor: editor, catalog: modelCatalog, binding: expectedBinding)
         }
         let routing = try currentVideoRouting(
             editor: editor,
@@ -846,6 +933,10 @@ enum PromptCompiler {
         shotId: String
     ) throws -> PromptComposer.ShotProjection? {
         guard shotId != "none" else { return nil }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true,
+           let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            return try PipelineProductionPromptCompiler.shotProjection(shotID: shotId, dataRoot: root)
+        }
         guard let root = editor?.workingRoot.flatMap({
             DataRootResolver.dataRoot(of: $0)
         }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
@@ -859,10 +950,10 @@ enum PromptCompiler {
                     + "\"none\" if this prompt belongs to no shot."
             )
         }
-        let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(
+        let forceHandles = try YAMLArtifactStore(dataRoot: root).load(
             Brief.self,
             at: PipelineLayout.briefFile
-        ))?.cutHandlesMode == .withOverlap
+        ).cutHandlesMode == .withOverlap
         return PromptComposer.ShotProjection(shot, forceHandles: forceHandles)
     }
 
@@ -899,11 +990,12 @@ enum PromptCompiler {
             }
             return
         }
+        let remembered = args.string("compileToken").flatMap { rememberedBinding(token: $0, text: prompt, modelId: modelId) }
         let binding = try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modalityForModel(modelId),
-            modelId: modelId
+            modelId: modelId, frameRole: remembered?.frameRole
         )
         guard let token = args.string("compileToken"),
               let compiledBinding = rememberedBinding(
@@ -938,7 +1030,8 @@ extension PromptBinding {
             promptDialectID: promptDialectID,
             promptDialectVersion: promptDialectVersion,
             frameReferencePlanSHA256: frameReferencePlanSHA256,
-            promptIRSHA256: value
+            promptIRSHA256: value,
+            frameRole: frameRole
         )
     }
 
@@ -950,5 +1043,6 @@ extension PromptBinding {
         projectKey == other.projectKey
             && shotId == other.shotId
             && shotFingerprint == other.shotFingerprint
+            && frameRole == other.frameRole
     }
 }

@@ -965,6 +965,10 @@ enum MusicvideoGateChecks {
         try requireAnalysis(dataRoot: dataRoot, requiresInterpretation: true)
     }
 
+    static func requireMeasuredAnalysis(dataRoot: URL) throws {
+        try requireAnalysis(dataRoot: dataRoot, requiresInterpretation: false, allowsUnresolvedMeasurement: true)
+    }
+
     static func requireInterpretableAnalysis(dataRoot: URL) throws {
         try requireAnalysis(dataRoot: dataRoot, requiresInterpretation: false)
     }
@@ -978,7 +982,8 @@ enum MusicvideoGateChecks {
 
     private static func requireAnalysis(
         dataRoot: URL,
-        requiresInterpretation: Bool
+        requiresInterpretation: Bool,
+        allowsUnresolvedMeasurement: Bool = false
     ) throws {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot) else {
             throw GateBlocked(
@@ -993,13 +998,15 @@ enum MusicvideoGateChecks {
                     + "decodes the song and writes real beats/downbeats. Never describe the song's "
                     + "structure from listening; it must be measured.")
         }
-        try requireAnalysis(object: obj, dataRoot: dataRoot, requiresInterpretation: requiresInterpretation)
+        try requireAnalysis(object: obj, dataRoot: dataRoot, requiresInterpretation: requiresInterpretation,
+            allowsUnresolvedMeasurement: allowsUnresolvedMeasurement)
     }
 
     private static func requireAnalysis(
         object obj: [String: Any],
         dataRoot: URL,
-        requiresInterpretation: Bool
+        requiresInterpretation: Bool,
+        allowsUnresolvedMeasurement: Bool = false
     ) throws {
         let beats = (obj["beats"] as? [Any])?.count ?? 0
         let downbeats = (obj["downbeats"] as? [Any])?.count ?? 0
@@ -1086,6 +1093,10 @@ enum MusicvideoGateChecks {
         let resolutionMethod = resolutionObject?["method"] as? String
         if resolutionObject?["status"] as? String == "needs_review",
            resolutionMethod == "unresolved" {
+            if allowsUnresolvedMeasurement, !requiresInterpretation {
+                try requireUnresolvedMeasurement(object: obj, dataRoot: dataRoot)
+                return
+            }
             let detail = resolutionObject?["detail"] as? String
                 ?? "The measured bar grid or acoustic structure evidence is incomplete."
             throw GateBlocked(
@@ -1351,6 +1362,55 @@ enum MusicvideoGateChecks {
                 dataRoot: dataRoot
             )
         }
+    }
+
+    private static func requireUnresolvedMeasurement(object: [String: Any], dataRoot: URL) throws {
+        let bytes = try JSONSerialization.data(withJSONObject: object)
+        let analysis = try JSONDecoder().decode(Analysis.self, from: bytes)
+        guard let resolutionObject = object["structure_resolution"] as? [String: Any] else {
+            throw GateBlocked("The unresolved measurement has no structural evidence.")
+        }
+        let recorded = try JSONDecoder().decode(Consolidator.StructureResolution.self,
+            from: JSONSerialization.data(withJSONObject: resolutionObject))
+        let candidates = analysis.structureCandidates.filter { $0.source != .alignment }
+        let rebuilt = Consolidator.consolidateDetailed(candidateSeries: candidates.map {
+            .init(source: $0.source.rawValue, sections: $0.sections)
+        }, alignment: analysis.alignment, alignmentReport: nil,
+            downbeats: analysis.downbeats, durationS: analysis.durationS)
+        let stages = object["pipeline_stages"] as? [String] ?? []
+        let diagnostics = object["stage_diagnostics"] as? [[String: Any]] ?? []
+        guard recorded.version == Consolidator.resolutionVersion,
+              recorded.status == .needsReview, recorded.method == "unresolved", recorded.hierarchy == nil,
+              rebuilt.resolution.status == .needsReview,
+              recorded.minimumSectionBars == rebuilt.resolution.minimumSectionBars,
+              recorded.detectorSources == rebuilt.resolution.detectorSources,
+              recorded.candidateBoundaryCount == rebuilt.resolution.candidateBoundaryCount,
+              recorded.consensusBoundaryCount == rebuilt.resolution.consensusBoundaryCount,
+              recorded.acceptedBoundaryCount == 0, recorded.boundaryEvidence.isEmpty,
+              recorded.alignmentMarkerCount >= 0, recorded.resolvedAlignmentMarkerCount >= 0,
+              recorded.resolvedAlignmentMarkerCount <= recorded.alignmentMarkerCount,
+              recorded.discardedBoundaryCount == rebuilt.resolution.discardedBoundaryCount,
+              !recorded.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              analysis.sections.count == rebuilt.sections.count,
+              zip(analysis.sections, rebuilt.sections).allSatisfy({ pair in
+                  pair.0.index == pair.1.index && pair.0.start == pair.1.start && pair.0.end == pair.1.end
+                      && pair.0.cluster == pair.1.cluster && pair.0.source == pair.1.source && pair.0.confidence == pair.1.confidence
+              }),
+              Set(["load_audio", "rhythm", "features"]).isSubset(of: Set(stages)),
+              !stages.contains("structure"), !stages.contains("music_understanding"),
+              diagnostics.contains(where: { $0["stage"] as? String == "native_dsp" && $0["status"] as? String == "succeeded" }),
+              analysis.sampleRate > 0, analysis.durationS.isFinite,
+              analysis.energyCurve.allSatisfy({ $0.t.isFinite && $0.rms.isFinite && (0...analysis.durationS).contains($0.t) && (0...1).contains($0.rms) }),
+              analysis.tempoCurve.allSatisfy({ $0.t.isFinite && $0.bpm.isFinite && (0...analysis.durationS).contains($0.t) && $0.bpm > 0 }) else {
+            throw GateBlocked("The unresolved analysis does not match its canonical measured candidates, grid and DSP evidence. Re-run analysis.")
+        }
+        if analysis.downbeatSource == .beatTransformer {
+            guard diagnostics.contains(where: { $0["stage"] as? String == "neural_beat_grid" && $0["status"] as? String == "succeeded" }) else {
+                throw GateBlocked("The unresolved analysis has no measured beat-grid provenance.")
+            }
+        }
+        _ = try verifiedAlignmentTimingEvidence(resolutionObject, object: object, dataRoot: dataRoot,
+            markerCount: recorded.alignmentMarkerCount)
     }
 
     private static func requireEvidenceStructure(

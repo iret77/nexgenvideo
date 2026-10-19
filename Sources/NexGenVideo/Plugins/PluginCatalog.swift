@@ -111,6 +111,8 @@ enum PluginCatalogService {
         return url
     }
 
+    @MainActor static var nativeAcceptanceSession: URLSession?
+
     enum FetchError: Error { case http(Int); case empty; case insecureURL(String) }
 
     /// Fetch + decode the catalog. Errors (offline, 404 before the first release,
@@ -125,7 +127,10 @@ enum PluginCatalogService {
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
             request.timeoutInterval = 15
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let session = await MainActor.run {
+                WorkspaceUIAcceptance.isRequested ? (nativeAcceptanceSession ?? .shared) : .shared
+            }
+            let (data, response) = try await session.data(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 return .failure(FetchError.http(http.statusCode))
             }

@@ -151,7 +151,7 @@ final class MCPService {
         on server: Server,
         origin: MCPHTTPServer.SessionOrigin
     ) async {
-        let tools: [Tool] = ToolDefinitions.all.map { def in
+        let tools: [Tool] = ToolDefinitions.all.filter { $0.name != .writeRenderReview }.map { def in
             Tool(name: def.name.rawValue, description: def.description, inputSchema: def.mcpSchemaValue)
         }
 
@@ -176,9 +176,24 @@ final class MCPService {
         let result = await toolExecutor.execute(
             name: params.name,
             args: args,
-            origin: origin
+            origin: origin,
+            toolUseID: Self.toolUseID(params)
         )
         return result.toMCPResult()
+    }
+
+    nonisolated static func toolUseID(_ params: CallTool.Parameters) -> String? {
+        validToolUseID(params._meta?["claudecode/toolUseId"]?.stringValue)
+    }
+
+    nonisolated static func toolUseID(_ request: MCP20260728.Request) -> String? {
+        validToolUseID(request.params["_meta"]?.objectValue?["claudecode/toolUseId"]?.stringValue)
+    }
+
+    nonisolated private static func validToolUseID(_ value: String?) -> String? {
+        guard let value, !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        return value
     }
 
     private func registerResources(on server: Server) async {
@@ -234,6 +249,7 @@ final class MCPService {
                 )
             }
             let tools = ToolDefinitions.all
+                .filter { $0.name != .writeRenderReview }
                 .sorted { $0.name.rawValue < $1.name.rawValue }
                 .map { definition in
                     MCP20260728.WireValue.object([
@@ -288,7 +304,8 @@ final class MCPService {
             let result = await toolExecutor.execute(
                 name: name,
                 args: arguments,
-                origin: origin
+                origin: origin,
+                toolUseID: Self.toolUseID(request)
             )
             let content = result.content.map { block -> MCP20260728.WireValue in
                 switch block {

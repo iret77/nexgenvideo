@@ -1,0 +1,448 @@
+{
+  "dependencyManifest": {
+    "path": "blender-library-dependencies.md",
+    "sha256": "d73c19d962ec21cd5db79c84962e4d6ae3b3373d9c7383f96b05d168b753bcbe",
+    "url": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/deps.md?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b"
+  },
+  "libraries": [
+    {
+      "family": "OpenEXR",
+      "officialLibraryPath": "openexr/lib/libIex.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:e65761f93267accb2c86d24e360802fe70cc3ca300fcee4503aed8f1163a3dc6\nsize 744384\n",
+      "pointerSHA256": "aab64503cf1caea3291bea7a22aec81dc5d4fbdce10a2c1f1213fd0fd6359052",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openexr/lib/libIex.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "e65761f93267accb2c86d24e360802fe70cc3ca300fcee4503aed8f1163a3dc6",
+      "size": 744384,
+      "wheelPath": "bpy/lib/libIex.dylib"
+    },
+    {
+      "family": "OpenEXR",
+      "officialLibraryPath": "openexr/lib/libIlmThread.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:5b76cebfe13c0e6d2d1dd9c8bd899e3c6931bfaf2124e29d1c2accd3dbfa9331\nsize 84096\n",
+      "pointerSHA256": "92f0154f4b3c94bb83a471222d7e51ba95284ad680b34786ab2209e320611e68",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openexr/lib/libIlmThread.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "5b76cebfe13c0e6d2d1dd9c8bd899e3c6931bfaf2124e29d1c2accd3dbfa9331",
+      "size": 84096,
+      "wheelPath": "bpy/lib/libIlmThread.dylib"
+    },
+    {
+      "family": "Imath",
+      "officialLibraryPath": "imath/lib/libImath.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:50c33c294c3b8c0be796d50f722d815f18216d4c1c955fa9f8faea5e9547ad39\nsize 356176\n",
+      "pointerSHA256": "3032d69dafdcfc5f93b582cbdd7427a7ac3904d69c26ab2ff4a759d652521b66",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/imath/lib/libImath.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "50c33c294c3b8c0be796d50f722d815f18216d4c1c955fa9f8faea5e9547ad39",
+      "size": 356176,
+      "wheelPath": "bpy/lib/libImath.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXCore.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:d62e361cf0f1c131a67f8d0718a8c6bda4e3ae5fb3b4c16e19a35389c58a0e0f\nsize 1062952\n",
+      "pointerSHA256": "56f0cd85fcc6098dc4ff12340f66ed71cf235d249f87cfe34759b85dc41f5bbe",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXCore.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "d62e361cf0f1c131a67f8d0718a8c6bda4e3ae5fb3b4c16e19a35389c58a0e0f",
+      "size": 1062952,
+      "wheelPath": "bpy/lib/libMaterialXCore.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXFormat.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:91b7d7f72628277c1a273dcae5d5ba69e044498a8515b9ccf09ada1dc5a07dfe\nsize 344728\n",
+      "pointerSHA256": "e116c9e0572ff9275c0417d53f8345ec3b883312f6346b4e68b12f68e6d5bef5",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXFormat.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "91b7d7f72628277c1a273dcae5d5ba69e044498a8515b9ccf09ada1dc5a07dfe",
+      "size": 344728,
+      "wheelPath": "bpy/lib/libMaterialXFormat.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXGenGlsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:01f6384e0464c176ab91100e427540c4d55521fee7d574cb1675c0882b3fdaae\nsize 385592\n",
+      "pointerSHA256": "8804d15c1641cd2835d7b0ba47deeeb25877f3379457d919d907b84f5f184cc7",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXGenGlsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "01f6384e0464c176ab91100e427540c4d55521fee7d574cb1675c0882b3fdaae",
+      "size": 385592,
+      "wheelPath": "bpy/lib/libMaterialXGenGlsl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXGenMdl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:8c7ef14dd89557d720d242df374b3d29d49302cb48790bc40f6c4523ccf68d60\nsize 407480\n",
+      "pointerSHA256": "b9812ba38f8eb1b9c5ff4e19528c358a4ba5fb87a7239804792eaf9c6d335f34",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXGenMdl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "8c7ef14dd89557d720d242df374b3d29d49302cb48790bc40f6c4523ccf68d60",
+      "size": 407480,
+      "wheelPath": "bpy/lib/libMaterialXGenMdl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXGenMsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:b8b341fefdaf8273ec03c472d5dbce4ac525a26f6b4b02dce7103fbf1e0b5874\nsize 353320\n",
+      "pointerSHA256": "e83ed0607dde48807f22a126a82a0147186599022bb853194f7b7b2923da9ed6",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXGenMsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "b8b341fefdaf8273ec03c472d5dbce4ac525a26f6b4b02dce7103fbf1e0b5874",
+      "size": 353320,
+      "wheelPath": "bpy/lib/libMaterialXGenMsl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXGenOsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:8f4827b14fd478ef10fc894773759158dc65e85f12d2db6f3d7ea0604f0a7f48\nsize 238920\n",
+      "pointerSHA256": "5fa19c130f3a4cab34afb508b4b1ea64e68601dc72501b24ccf811fa360e7e6a",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXGenOsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "8f4827b14fd478ef10fc894773759158dc65e85f12d2db6f3d7ea0604f0a7f48",
+      "size": 238920,
+      "wheelPath": "bpy/lib/libMaterialXGenOsl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXGenShader.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:01a1e7e636d421fd0d642205e99a82605ee962b4c58f3149295cd43e8b417bcf\nsize 811384\n",
+      "pointerSHA256": "13e9eba213d5d4b0df912f0b030fa81bc04ce4a18b7ba8eca51dc71caf244165",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXGenShader.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "01a1e7e636d421fd0d642205e99a82605ee962b4c58f3149295cd43e8b417bcf",
+      "size": 811384,
+      "wheelPath": "bpy/lib/libMaterialXGenShader.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXRender.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:9063968ff6220290ea2fda4d1f9a64b244e15be87fbd7d14d139bcd25c522f7b\nsize 625592\n",
+      "pointerSHA256": "56c7566d541d06dc9a1ec9d8f78ec9855b16ec1ecea5ff9c75947ba67b750c4a",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXRender.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "9063968ff6220290ea2fda4d1f9a64b244e15be87fbd7d14d139bcd25c522f7b",
+      "size": 625592,
+      "wheelPath": "bpy/lib/libMaterialXRender.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXRenderGlsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:50d32f1a359b8e1594f2193a5766511e1b4cde09d8bfdef7244d064bb3cc2664\nsize 469712\n",
+      "pointerSHA256": "d2be7ad5d0a70e9ed360da7877850194ad9562366a2d5c13261ca27469e28638",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXRenderGlsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "50d32f1a359b8e1594f2193a5766511e1b4cde09d8bfdef7244d064bb3cc2664",
+      "size": 469712,
+      "wheelPath": "bpy/lib/libMaterialXRenderGlsl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXRenderHw.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:718a53d0ad126a223b64fde611c97124bb199dc74fbf6c8e195f811b3c789623\nsize 53768\n",
+      "pointerSHA256": "64262c8415f33d0f858be9002ecf460ffaf7e73440d80e1a6b159c918aa79c78",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXRenderHw.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "718a53d0ad126a223b64fde611c97124bb199dc74fbf6c8e195f811b3c789623",
+      "size": 53768,
+      "wheelPath": "bpy/lib/libMaterialXRenderHw.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXRenderMsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:626782e657e833e759b1f4558d17197d7b1ab640f38c99fb42da9bf4c54fbbb4\nsize 378952\n",
+      "pointerSHA256": "ebac27568ab5b36b838453532f3f1ecb00f94ab03677d1eb06a2bfb44b2394f5",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXRenderMsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "626782e657e833e759b1f4558d17197d7b1ab640f38c99fb42da9bf4c54fbbb4",
+      "size": 378952,
+      "wheelPath": "bpy/lib/libMaterialXRenderMsl.dylib"
+    },
+    {
+      "family": "MaterialX",
+      "officialLibraryPath": "materialx/lib/libMaterialXRenderOsl.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:2245bba5611450cf9a2133549dc834a388a0aeb47a1a4a1f0643205735c9788a\nsize 136664\n",
+      "pointerSHA256": "8993cfb583d1b6ae5599a355d9a3d6ad8caecf56cabdeeeb910b2e93308f40b3",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/materialx/lib/libMaterialXRenderOsl.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "2245bba5611450cf9a2133549dc834a388a0aeb47a1a4a1f0643205735c9788a",
+      "size": 136664,
+      "wheelPath": "bpy/lib/libMaterialXRenderOsl.dylib"
+    },
+    {
+      "family": "OpenColorIO",
+      "officialLibraryPath": "opencolorio/lib/libOpenColorIO.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:09138dce818f6a32972a5af093a3237f6f50ced67f8201ffc83bfbcb28ed30c0\nsize 6965720\n",
+      "pointerSHA256": "38c4c791a328c50e9d7c636bc5cbe6c699722f4076bc5c222885b3ff644a6fb0",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/opencolorio/lib/libOpenColorIO.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "09138dce818f6a32972a5af093a3237f6f50ced67f8201ffc83bfbcb28ed30c0",
+      "size": 6965720,
+      "wheelPath": "bpy/lib/libOpenColorIO.dylib"
+    },
+    {
+      "family": "OpenEXR",
+      "officialLibraryPath": "openexr/lib/libOpenEXR.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:74c873151d5f6333cafd0bcd3233886e707da4b9ff6936f78442206199376509\nsize 1113600\n",
+      "pointerSHA256": "fe4f1784008a076261b6fa76deefb169df8f24bc3c70f4ad683771396c74853d",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openexr/lib/libOpenEXR.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "74c873151d5f6333cafd0bcd3233886e707da4b9ff6936f78442206199376509",
+      "size": 1113600,
+      "wheelPath": "bpy/lib/libOpenEXR.dylib"
+    },
+    {
+      "family": "OpenEXR",
+      "officialLibraryPath": "openexr/lib/libOpenEXRCore.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:4155ad0faaf1e2f3be6e9a0b422690f88676933fc69d02188551f71c7628c6b3\nsize 399112\n",
+      "pointerSHA256": "289679a67be17cc33972d327829cd382f5fcb7fbfde10e34f5ac1a55a570d869",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openexr/lib/libOpenEXRCore.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "4155ad0faaf1e2f3be6e9a0b422690f88676933fc69d02188551f71c7628c6b3",
+      "size": 399112,
+      "wheelPath": "bpy/lib/libOpenEXRCore.dylib"
+    },
+    {
+      "family": "OpenEXR",
+      "officialLibraryPath": "openexr/lib/libOpenEXRUtil.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:86ec139feb70c074930421db5ef0c41a4d141799d5502f5ccd4346f45f01e14a\nsize 237160\n",
+      "pointerSHA256": "385e2be20efaec2b4ffaac2d874534a03c5aa31db1971795ac3f33ddba298cb5",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openexr/lib/libOpenEXRUtil.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "86ec139feb70c074930421db5ef0c41a4d141799d5502f5ccd4346f45f01e14a",
+      "size": 237160,
+      "wheelPath": "bpy/lib/libOpenEXRUtil.dylib"
+    },
+    {
+      "family": "OpenImageDenoise",
+      "officialLibraryPath": "openimagedenoise/lib/libOpenImageDenoise.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:1db422de6b24ea9712d07ab7859364402a7824b2ce3961466f37b72e77cb34da\nsize 138744\n",
+      "pointerSHA256": "b39bb0a24398f9a7b6005138d74fd43b93bdea58a3f34c5e284c59c3ed8fc766",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimagedenoise/lib/libOpenImageDenoise.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "1db422de6b24ea9712d07ab7859364402a7824b2ce3961466f37b72e77cb34da",
+      "size": 138744,
+      "wheelPath": "bpy/lib/libOpenImageDenoise.dylib"
+    },
+    {
+      "family": "OpenImageDenoise",
+      "officialLibraryPath": "openimagedenoise/lib/libOpenImageDenoise_core.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:ab4bbe7d0b6d94d8f863d887e50ab23abd2125043999dcd135bce09360ba8442\nsize 47281488\n",
+      "pointerSHA256": "2a42df854c6e1c27b4aa236dc33212ef12778f4d6ed213175a8a6b69002d79d9",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimagedenoise/lib/libOpenImageDenoise_core.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "ab4bbe7d0b6d94d8f863d887e50ab23abd2125043999dcd135bce09360ba8442",
+      "size": 47281488,
+      "wheelPath": "bpy/lib/libOpenImageDenoise_core.dylib"
+    },
+    {
+      "family": "OpenImageDenoise",
+      "officialLibraryPath": "openimagedenoise/lib/libOpenImageDenoise_device_cpu.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:4ab459538d2f2deaa9b7d39412cf4a3a250f97641c24b11b3e8d96adef6f366d\nsize 287752\n",
+      "pointerSHA256": "ed67934d55739e1591165b4942e349cfee5d47526df43d431937d9dda9938bb1",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimagedenoise/lib/libOpenImageDenoise_device_cpu.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "4ab459538d2f2deaa9b7d39412cf4a3a250f97641c24b11b3e8d96adef6f366d",
+      "size": 287752,
+      "wheelPath": "bpy/lib/libOpenImageDenoise_device_cpu.dylib"
+    },
+    {
+      "family": "OpenImageDenoise",
+      "officialLibraryPath": "openimagedenoise/lib/libOpenImageDenoise_device_metal.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:014a23d45cfa77f71c68a9d47eb0cc150ebf3a0b68853f00bbe91e1bb2efdf4d\nsize 242840\n",
+      "pointerSHA256": "a1a460204efc6ff4158c02c5002f8905cdbce876832415c868f190951fb49cee",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimagedenoise/lib/libOpenImageDenoise_device_metal.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "014a23d45cfa77f71c68a9d47eb0cc150ebf3a0b68853f00bbe91e1bb2efdf4d",
+      "size": 242840,
+      "wheelPath": "bpy/lib/libOpenImageDenoise_device_metal.dylib"
+    },
+    {
+      "family": "OpenImageIO",
+      "officialLibraryPath": "openimageio/lib/libOpenImageIO.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:c74a9f7d6f55d9a78c18d394889dcf50e41313d4c12610a0f3809dbc5056e99a\nsize 16355720\n",
+      "pointerSHA256": "e65eea8c81b160fa8ad45fee946eca907602dff96de29a27a02126cf72e4fe5e",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimageio/lib/libOpenImageIO.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "c74a9f7d6f55d9a78c18d394889dcf50e41313d4c12610a0f3809dbc5056e99a",
+      "size": 16355720,
+      "wheelPath": "bpy/lib/libOpenImageIO.dylib"
+    },
+    {
+      "family": "OpenImageIO",
+      "officialLibraryPath": "openimageio/lib/libOpenImageIO_Util.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:321cf9b9d1d4beae66e88bf059fb8dc7ca46b3514e6215994596f1dd5efed4f1\nsize 893720\n",
+      "pointerSHA256": "d29864d5071637b4ffd417e82d5575636278b2c2c9599942c92e21a0189eb5a6",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openimageio/lib/libOpenImageIO_Util.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "321cf9b9d1d4beae66e88bf059fb8dc7ca46b3514e6215994596f1dd5efed4f1",
+      "size": 893720,
+      "wheelPath": "bpy/lib/libOpenImageIO_Util.dylib"
+    },
+    {
+      "family": "SDL",
+      "officialLibraryPath": "sdl/lib/libSDL3.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:4bb16fafb409867dead717ebc31dc1298e906c0a229d22ba0013cffdd0208b6b\nsize 2746784\n",
+      "pointerSHA256": "dd2e745b3ac3c43063bc65a455df28056a816f79ffb18d610d139866c582dcfd",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/sdl/lib/libSDL3.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "4bb16fafb409867dead717ebc31dc1298e906c0a229d22ba0013cffdd0208b6b",
+      "size": 2746784,
+      "wheelPath": "bpy/lib/libSDL3.dylib"
+    },
+    {
+      "family": "Ceres Solver",
+      "officialLibraryPath": "ceres/lib/libceres.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:878ecf2ddbe28e7a1f108445412834bdf5b3ecf5fb4463ab5d1cac16987a547f\nsize 8678400\n",
+      "pointerSHA256": "bb2b06cc13da05e0a7aedd952026036213dcb6f38dd50c2da1417b6418be92b7",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/ceres/lib/libceres.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "878ecf2ddbe28e7a1f108445412834bdf5b3ecf5fb4463ab5d1cac16987a547f",
+      "size": 8678400,
+      "wheelPath": "bpy/lib/libceres.dylib"
+    },
+    {
+      "family": "Draco",
+      "officialLibraryPath": "draco/lib/libdraco.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:74c2d4c48710e4de6debf35528191b79d5bbc9def1f43bab76c45e8cb3153560\nsize 1390944\n",
+      "pointerSHA256": "5e2529f8bb95891f55db4231afe246647075d23680ffde350acd038d826966dc",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/draco/lib/libdraco.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "74c2d4c48710e4de6debf35528191b79d5bbc9def1f43bab76c45e8cb3153560",
+      "size": 1390944,
+      "wheelPath": "bpy/lib/libdraco.dylib"
+    },
+    {
+      "family": "Embree",
+      "officialLibraryPath": "embree/lib/libembree4.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:969f6d4fb162e44779fcda5c9e34ebc79e08227c93e1fbbfbe795441d2179140\nsize 15147184\n",
+      "pointerSHA256": "84ccdc2c52240883a7584fe8e41b52333af7b0ca429e3b7815a19fd00efdc546",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/embree/lib/libembree4.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "969f6d4fb162e44779fcda5c9e34ebc79e08227c93e1fbbfbe795441d2179140",
+      "size": 15147184,
+      "wheelPath": "bpy/lib/libembree4.dylib"
+    },
+    {
+      "family": "meshoptimizer",
+      "officialLibraryPath": "meshoptimizer/lib/libmeshoptimizer.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:a1af4a4ff12c4064b8a33bf158a1a39980dfb0e15553c14b289ff17ae727331d\nsize 176664\n",
+      "pointerSHA256": "4b080c988a8f3a362097e73b47b7316022f5ff259f9f0d1a6313fc38a70395d9",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/meshoptimizer/lib/libmeshoptimizer.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "a1af4a4ff12c4064b8a33bf158a1a39980dfb0e15553c14b289ff17ae727331d",
+      "size": 176664,
+      "wheelPath": "bpy/lib/libmeshoptimizer.dylib"
+    },
+    {
+      "family": "OpenJPH",
+      "officialLibraryPath": "openjph/lib/libopenjph.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:83859a9b05d5ca9962688cb845db45f944551622b2df188bcdc30f4b3a3cd947\nsize 343920\n",
+      "pointerSHA256": "36404bef3daffcbd539ee5b22c16950ecf3c4925ae2b5fa018d05bce3ec72015",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openjph/lib/libopenjph.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "83859a9b05d5ca9962688cb845db45f944551622b2df188bcdc30f4b3a3cd947",
+      "size": 343920,
+      "wheelPath": "bpy/lib/libopenjph.dylib"
+    },
+    {
+      "family": "OpenVDB",
+      "officialLibraryPath": "openvdb/lib/libopenvdb.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:43963a772b9582eae35d3db0388971ebcd5bdb52381814a9a5c392cbac6c890f\nsize 65822128\n",
+      "pointerSHA256": "d06fbc9332d5d5adfec3a202fd243c421275cb2f1f551cab5e3817a3adc72e86",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/openvdb/lib/libopenvdb.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "43963a772b9582eae35d3db0388971ebcd5bdb52381814a9a5c392cbac6c890f",
+      "size": 65822128,
+      "wheelPath": "bpy/lib/libopenvdb.dylib"
+    },
+    {
+      "family": "OpenXR SDK",
+      "officialLibraryPath": "xr_openxr_sdk/lib/libopenxr_loader.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:468aa756d3b73de2214b5b384b5c42e2fd87862ec467e54f9a5841debc2553b7\nsize 465480\n",
+      "pointerSHA256": "1f68a13593a7e13aad0abc5d350fde056000ea8202bbe80ff7da2dda36b148d0",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/xr_openxr_sdk/lib/libopenxr_loader.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "468aa756d3b73de2214b5b384b5c42e2fd87862ec467e54f9a5841debc2553b7",
+      "size": 465480,
+      "wheelPath": "bpy/lib/libopenxr_loader.dylib"
+    },
+    {
+      "family": "OpenSubdiv",
+      "officialLibraryPath": "opensubdiv/lib/libosdCPU.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:0644e45b214f7d9294b5f3b1730c5b90b6a03b7cb4e49bd3dc8e086c82d76d75\nsize 837328\n",
+      "pointerSHA256": "d8e69aec26ff5dbc915734d5c5dc79f99ff46624d956f260319fc28ae8a36caa",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/opensubdiv/lib/libosdCPU.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "0644e45b214f7d9294b5f3b1730c5b90b6a03b7cb4e49bd3dc8e086c82d76d75",
+      "size": 837328,
+      "wheelPath": "bpy/lib/libosdCPU.dylib"
+    },
+    {
+      "family": "OpenSubdiv",
+      "officialLibraryPath": "opensubdiv/lib/libosdGPU.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:f12c3c357bdb8ec76b11afdeb5f1e82bc2de3ee37070dbadd7e31ba1afaa0770\nsize 978656\n",
+      "pointerSHA256": "23c70c84024c5c1e076b4ebce9070e14702c32b48db16ec511cac648d444a7c4",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/opensubdiv/lib/libosdGPU.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "f12c3c357bdb8ec76b11afdeb5f1e82bc2de3ee37070dbadd7e31ba1afaa0770",
+      "size": 978656,
+      "wheelPath": "bpy/lib/libosdGPU.dylib"
+    },
+    {
+      "family": "Open Shading Language",
+      "officialLibraryPath": "osl/lib/liboslcomp.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:af7d8657ae2bc232e4420ed82d9c6d011390c2ce84a7ad69cac68ecf2e1e8558\nsize 49702608\n",
+      "pointerSHA256": "90d5116fa673aca3e5812dd305a5a2591997081e16e5a22402b6da1a275fd108",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/osl/lib/liboslcomp.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "af7d8657ae2bc232e4420ed82d9c6d011390c2ce84a7ad69cac68ecf2e1e8558",
+      "size": 49702608,
+      "wheelPath": "bpy/lib/liboslcomp.dylib"
+    },
+    {
+      "family": "Open Shading Language",
+      "officialLibraryPath": "osl/lib/liboslexec.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:50cb60084e697b448be6c964a55c6fd5d1eea034c0755af19e9639b18d4b04bc\nsize 53318672\n",
+      "pointerSHA256": "fd51198597a1918cd17b23b5f5b4fc7860459d64ea79e0a5ccd14040bbe64e00",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/osl/lib/liboslexec.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "50cb60084e697b448be6c964a55c6fd5d1eea034c0755af19e9639b18d4b04bc",
+      "size": 53318672,
+      "wheelPath": "bpy/lib/liboslexec.dylib"
+    },
+    {
+      "family": "Open Shading Language",
+      "officialLibraryPath": "osl/lib/liboslnoise.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:bd2bbf59dc98673a758e46e3d3d0278dd3987937046b0ab390925a6196d8e39d\nsize 69232\n",
+      "pointerSHA256": "6212c52013cddaaea0bf2781cbe31a0e2816fa57f9155cf521dce8cbae140892",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/osl/lib/liboslnoise.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "bd2bbf59dc98673a758e46e3d3d0278dd3987937046b0ab390925a6196d8e39d",
+      "size": 69232,
+      "wheelPath": "bpy/lib/liboslnoise.dylib"
+    },
+    {
+      "family": "Open Shading Language",
+      "officialLibraryPath": "osl/lib/liboslquery.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:cef0e1f44fc111b7fb82c52161fa44f1fe65d070b5cb64795566cd4f42fc54f8\nsize 233040\n",
+      "pointerSHA256": "d4d4bcac28b802df018aeddf8105957f308a4e87acbae8ab46126a271e2caae9",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/osl/lib/liboslquery.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "cef0e1f44fc111b7fb82c52161fa44f1fe65d070b5cb64795566cd4f42fc54f8",
+      "size": 233040,
+      "wheelPath": "bpy/lib/liboslquery.dylib"
+    },
+    {
+      "family": "oneTBB",
+      "officialLibraryPath": "tbb/lib/libtbb.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:7456f0a8cc6930453abc5d4baab78a117349bac191600aa1489c3e230ac8a409\nsize 367648\n",
+      "pointerSHA256": "c49b16a1d7af3a67e98f9517b1f8cf565f4e6edc179e14249b72d307d94067e4",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/tbb/lib/libtbb.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "7456f0a8cc6930453abc5d4baab78a117349bac191600aa1489c3e230ac8a409",
+      "size": 367648,
+      "wheelPath": "bpy/lib/libtbb.dylib"
+    },
+    {
+      "family": "oneTBB",
+      "officialLibraryPath": "tbb/lib/libtbbmalloc.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:1292538ce63e5ac7b65e9515bd37bba4f44f99d3577b9794296f66e8093de436\nsize 108416\n",
+      "pointerSHA256": "cb930003c08702c1e6d7b65bc2c1b2151a9ebf4cdaa18f29c6ff931133fecb28",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/tbb/lib/libtbbmalloc.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "1292538ce63e5ac7b65e9515bd37bba4f44f99d3577b9794296f66e8093de436",
+      "size": 108416,
+      "wheelPath": "bpy/lib/libtbbmalloc.dylib"
+    },
+    {
+      "family": "oneTBB",
+      "officialLibraryPath": "tbb/lib/libtbbmalloc_proxy.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:425aca7b86c4d75a2bb9718cc2986d107ad7b3bdd0df24a6e2fe2427d0bbe902\nsize 53608\n",
+      "pointerSHA256": "e2dc73b45a87f4f18324ca828d811cdf6680358dda4c1530f854c3b561e96e3e",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/tbb/lib/libtbbmalloc_proxy.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "425aca7b86c4d75a2bb9718cc2986d107ad7b3bdd0df24a6e2fe2427d0bbe902",
+      "size": 53608,
+      "wheelPath": "bpy/lib/libtbbmalloc_proxy.dylib"
+    },
+    {
+      "family": "OpenUSD",
+      "officialLibraryPath": "usd/lib/libusd_ms.dylib",
+      "pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:c2d4d56b9fc2d9845d735a025d4b75331daa986462e0575b7c6b97cbbcce8a70\nsize 74342912\n",
+      "pointerSHA256": "2a481dfd562204807818249c618659b288ba4f929fa4f3705bccc7985ba68de0",
+      "pointerURL": "https://projects.blender.org/api/v1/repos/blender/lib-macos_arm64/contents/usd/lib/libusd_ms.dylib?ref=a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+      "sha256": "c2d4d56b9fc2d9845d735a025d4b75331daa986462e0575b7c6b97cbbcce8a70",
+      "size": 74342912,
+      "wheelPath": "bpy/lib/libusd_ms.dylib"
+    }
+  ],
+  "libraryCommit": "a76ef917b4849ba2b1b1deb1a643e131a884a63b",
+  "libraryRepository": "https://projects.blender.org/blender/lib-macos_arm64",
+  "officialReleaseCommit": "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+  "releaseSubmoduleResponseSHA256": "ea1635a27e9358c8858e0ef2c3d226a8d97d6439d44bb8717a9ee6ff9d5bbbc3",
+  "releaseSubmoduleURL": "https://api.github.com/repos/blender/blender/contents/lib/macos_arm64?ref=d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+  "schema": "nexgenvideo/bpy-official-library-correspondence/1",
+  "scope": "Exact bytes of all 43 shipped native libraries match the official release submodule. The dependency manifest identifies source versions; the Blender source archive supplies recipes and patches. This does not assert that every platform dependency candidate was linked or that native runtime acceptance passed.",
+  "wheelSHA256": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+  "wheelSize": 245172189
+}

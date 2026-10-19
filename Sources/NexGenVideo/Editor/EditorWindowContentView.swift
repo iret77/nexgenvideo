@@ -12,13 +12,55 @@ struct EditorWindowContentView: View {
         VStack(spacing: AppTheme.Spacing.none) {
             if !editor.theaterActive {
                 TitleBarView()
+                    .disabled(editor.isProjectEditingPaused)
             }
             if let broken = editor.packWiringBroken {
                 PackWiringBanner(result: broken)
             }
+            if let problem = editor.unresolvedEffectResourceProblems.first {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                    Text("LUT unavailable: \(problem.name). Relink or remove it before saving or exporting.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .reviewAcceptanceProbe("editor.lut.offline", text: problem.name)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Button("Review LUT") { editor.inspectEffectResourceProblem(problem) }
+                        .disabled(editor.isProjectEditingPaused)
+                        .buttonStyle(.capsule(.secondary))
+                        .reviewAcceptanceProbe("editor.lut.review")
+                }
+                .padding(AppTheme.Spacing.md)
+                .background(AppTheme.Background.raisedColor)
+            }
+            if editor.workspaceFocus == .production, let toast = editor.mediaPanelToast {
+                ProductionFeedbackBanner(toast: toast)
+            }
+            if let message = PipelineLedgerWriter.restoreMessage(editor: editor) {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    ProgressView().controlSize(.small)
+                    Text(message)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Button("Show Agent") { editor.agentPanelVisible = true }
+                        .buttonStyle(.capsule(.secondary))
+                        .reviewAcceptanceProbe("ledger.restore.show-agent")
+                }
+                .padding(AppTheme.Spacing.md)
+                .background(AppTheme.Background.raisedColor)
+                .reviewAcceptanceProbe("ledger.restore.pending", text: message)
+            }
             GeometryReader { geometry in
-                EditorView()
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                Group {
+                    if editor.isProjectEditingPaused {
+                        SavedProjectReloadView()
+                    } else {
+                        EditorView()
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .background {
                 if WorkspaceUIAcceptance.isRequested {
@@ -27,7 +69,7 @@ struct EditorWindowContentView: View {
                         .allowsHitTesting(false)
                 }
             }
-            if !editor.theaterActive { WorkbenchStatusBar() }
+            if !editor.theaterActive { WorkbenchStatusBar().disabled(editor.isProjectEditingPaused) }
         }
         .sheet(isPresented: $editor.showExportDialog) {
             ExportView().environment(editor)
@@ -35,18 +77,49 @@ struct EditorWindowContentView: View {
         .sheet(item: $editor.pendingSettingsMismatch) { mismatch in
             ProjectSettingsMismatchView(mismatch: mismatch).environment(editor)
         }
-        .alert("Recover unsaved work?", isPresented: $editor.recoveredUnsavedWork) {
-            Button("Keep") { editor.keepRecoveredWork() }
-            Button("Discard", role: .destructive) { editor.discardRecoveredWork() }
+        .alert(editor.needsSavedProjectReload ? "Reload saved project?" : "Recover unsaved work?", isPresented: $editor.recoveredUnsavedWork) {
+            if editor.needsSavedProjectReload {
+                Button("Retry reload") { editor.discardRecoveredWork() }
+                Button("Cancel", role: .cancel) {}
+            } else {
+                Button("Keep") { editor.keepRecoveredWork() }
+                Button("Discard", role: .destructive) { editor.discardRecoveredWork() }
+            }
         } message: {
-            Text("NexGenVideo found unsaved changes from a session that didn't close normally. Keep them, or discard and open the last saved version.")
+            Text(editor.needsSavedProjectReload
+                ? "The saved project could not be loaded into the editor. Saving is paused to protect it. Retry reload, or close and reopen the project."
+                : "NexGenVideo found unsaved changes from a session that didn't close normally. Keep them, or discard and open the last saved version.")
         }
-        .overlay { TheaterOverlayView() }
-        .overlay { TourOverlay() }
+        .overlay { if !editor.isProjectEditingPaused { TheaterOverlayView() } }
+        .overlay { if !editor.isProjectEditingPaused { TourOverlay() } }
         // The whole editor window takes on the ACTIVE PACK's accent (reactive, overriding the static
         // host-controller tint) — so a musicvideo project actually feels like Music Video mode, not a
         // generic window. Falls back to the app accent for generic projects.
         .interfaceStyle(palette: editor.projectPalette)
+    }
+}
+
+private struct SavedProjectReloadView: View {
+    @Environment(EditorViewModel.self) private var editor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            Text(editor.recoveryDiscardInProgress ? "Reloading saved project…" : "Saved project could not be loaded")
+                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
+            Text(editor.recoveryDiscardInProgress
+                ? "Editing and saving will resume when the saved project finishes loading."
+                : "Editing and saving are paused to protect your saved project. Retry reload, or close and reopen this project.")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            if editor.recoveryDiscardInProgress { ProgressView() }
+            Button("Retry reload") { editor.discardRecoveredWork() }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .disabled(editor.recoveryDiscardInProgress)
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+        .padding(AppTheme.Spacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .background(AppTheme.Background.baseColor)
     }
 }
 

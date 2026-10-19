@@ -38,13 +38,15 @@ final class AgentService {
         runtimeHostContextOverride: (@MainActor () throws -> AgentRuntimeHostContext)? = nil,
         modelCatalogDefaults: UserDefaults = .standard,
         modelDiscoveryTransport: @escaping AnthropicModelsAPI.Transport = AnthropicModelsAPI.liveTransport,
-        apiKeyLoader: @escaping @Sendable () async -> String? = { AnthropicKeychain.load() }
+        apiKeyLoader: @escaping @Sendable () async -> String? = { AnthropicKeychain.load() },
+        toolExecutorFactory: (@MainActor (EditorViewModel) -> ToolExecutor)? = nil
     ) {
         self.backend = backend
         let store = AnthropicModelCatalogStore(defaults: modelCatalogDefaults)
         self.modelCatalogStore = store
         self.modelDiscoveryTransport = modelDiscoveryTransport
         self.apiKeyLoader = apiKeyLoader
+        self.toolExecutorFactory = toolExecutorFactory
         self.availableModels = store.cachedModels()
         self.model = store.storedModelID
         self.modelFamily = store.storedFamily
@@ -487,6 +489,7 @@ final class AgentService {
         }
         let saved = sessions.first { $0.id == currentSessionId }?.decision
         activeIntakeDraftKey = intakeKey
+        dialogSubmissionError = nil
         dialogOrigins[dialog.id] = origin
         dialogActivities[dialog.id] = taskActivity(from: origin)
         suspendToolCalls(from: origin)
@@ -595,6 +598,45 @@ final class AgentService {
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        if dialog.purpose == .captionRevision {
+            guard let plan = dialog.captionRevision, let editor else { return }
+            let session = currentSessionId
+            submittingDialogID = dialog.id
+            Task { [weak self, weak editor] in
+                guard let self, let editor else { return }
+                defer { if self.submittingDialogID == dialog.id { self.submittingDialogID = nil } }
+                do {
+                    let count = try await plan.apply(selected: result.selectedOptionIDs["caption-revision"] ?? [], editor: editor) {
+                        self.pendingDialog?.id == dialog.id && self.submittingDialogID == dialog.id
+                            && self.currentSessionId == session && self.editor === editor
+                    }
+                    self.dialogSubmissionError = nil
+                    self.pendingDialog = nil
+                    if self.dialogOrigins[dialog.id] == .direct {
+                        self.dialogOrigins.removeValue(forKey: dialog.id)
+                        self.dialogActivities.removeValue(forKey: dialog.id)
+                        editor.toast = plan.wordRemoval == nil ? "Applied \(count) selected caption changes." : "Applied speech cuts and updated affected captions."
+                        return
+                    }
+                    self.sendDialogResponse(dialog, result: result,
+                        agentContext: "The host applied exactly \(count) selected changes in one undoable operation. This caption revision task is complete; do not apply or propose further changes.")
+                } catch {
+                    if self.pendingDialog?.id == dialog.id { self.dialogSubmissionError = error.localizedDescription }
+                }
+            }
+            return
+        }
+        if dialog.purpose == .mediaOrganization {
+            guard let plan = dialog.mediaOrganization, let editor else { return }
+            do {
+                let count = try plan.apply(selected: result.selectedOptionIDs["organization"] ?? [], editor: editor)
+                dialogSubmissionError = nil
+                pendingDialog = nil
+                sendDialogResponse(dialog, result: result,
+                    agentContext: "The host applied exactly \(count) selected media changes in one undoable operation. The organization task is complete; do not apply further changes.")
+            } catch { dialogSubmissionError = error.localizedDescription }
+            return
+        }
         if dialog.purpose == .workflowIntake,
            let role = dialog.fileIntake?.attachAs,
            let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
@@ -672,7 +714,7 @@ final class AgentService {
                     agentContext: imported.failureContext
                 )
             }
-        case .generationIntent:
+        case .generationIntent, .mediaOrganization, .captionRevision:
             break
         case .workflowIntake:
             completeWorkflowIntake(
@@ -684,8 +726,8 @@ final class AgentService {
     }
 
     private func submitGenerationIntent(_ dialog: AgentDialog, result: AgentDialogResult) {
-        guard let sink = onGenerationDialogIntent else { return }
-        sink(Self.intentLine(from: dialog, result: result))
+        guard let sink = onGenerationDialogIntent, sink.dialogID == dialog.id else { return }
+        sink.handle(Self.intentLine(from: dialog, result: result))
     }
 
     func completeDialog(_ dialog: AgentDialog) {
@@ -694,6 +736,11 @@ final class AgentService {
               dialog.purpose == .workflowIntake,
               dialog.fileIntake?.required != true,
               dialog.fileIntake?.completionLabel != nil else { return }
+        guard dialog.permitsCompletion(hasFiles: !dialogDraft.fileURLs.isEmpty,
+                                       direction: dialogDraft.direction, isSubmitting: false) else {
+            dialogSubmissionError = "Attach or clear the current item before continuing."
+            return
+        }
         dialogSubmissionError = nil
         completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
     }
@@ -726,8 +773,8 @@ final class AgentService {
             }
             content = text
         } else {
-            let pasted = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !pasted.isEmpty else {
+            let pasted = result.direction
+            guard !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 sendDialogResponse(
                     dialog,
                     result: result,
@@ -744,11 +791,19 @@ final class AgentService {
         }
         let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
-            if let key = editor.openWorkingCopyKey {
-                try ProjectWorkingCopy.markDirty(key: key)
+            if kind == "script", editor.usesProductionPlanningV2, dialog.purpose == .workflowIntake {
+                if let source = result.fileURLs.first {
+                    try PipelineStorySourceWriter.confirmImportedSource(from: source, editor: editor)
+                } else {
+                    try PipelineStorySourceWriter.confirmPastedSource(text: content, editor: editor)
+                }
+            } else {
+                if let key = editor.openWorkingCopyKey {
+                    try ProjectWorkingCopy.markDirty(key: key)
+                }
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
             }
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         } catch {
             sendDialogFailure(
                 dialog,
@@ -1170,7 +1225,11 @@ final class AgentService {
     }
 
     /// Surface-owned generation sink; stale deliveries are discarded instead of entering agent chat.
-    var onGenerationDialogIntent: (@MainActor (String) -> Void)?
+    struct GenerationDialogIntentSink {
+        let dialogID: String
+        let handle: @MainActor (String) -> Void
+    }
+    var onGenerationDialogIntent: GenerationDialogIntentSink?
 
     struct DialogResponse: Equatable {
         let agentText: String
@@ -1293,12 +1352,15 @@ final class AgentService {
             return value
         }.joined(separator: "\n\nHost result: ")
         let origin = dialogOrigins.removeValue(forKey: dialog.id) ?? .direct
+        var activity = dialogActivities.removeValue(forKey: dialog.id)
+        if dialog.purpose == .mediaOrganization { activity?.mediaOrganizationFinished = true }
+        if dialog.purpose == .captionRevision { activity?.captionRevisionFinished = true }
         sendDialogTurn(
             text: text,
             mentions: attached,
             presentation: response.presentation,
             origin: origin,
-            taskActivity: dialogActivities.removeValue(forKey: dialog.id)
+            taskActivity: activity
         )
     }
 
@@ -1382,6 +1444,19 @@ final class AgentService {
         let phase = editor.pipelineAgentHarness.workflowIntakePhase(
             dialogID: dialog.id
         )
+        if editor.usesProductionPlanningV2, phase == "brief", dialog.fileIntake?.attachAs == "script", !didProvideMaterial {
+            do {
+                try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
+                try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
+            } catch {
+                activeIntakeDraftKey = preservedIntakeKey
+                pendingDialog = dialog
+                dialogDraft = preservedDraft
+                dialogChoiceSelections = preservedSelections
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,
@@ -1523,6 +1598,45 @@ final class AgentService {
         return reference
     }
 
+    func reviewModelEvidence(origin: ToolCallOrigin, toolUseID: String, expectedTool: ToolName,
+                             arguments: [String: Any]) async throws -> HostAgentReviewEvidence {
+        guard !Task.isCancelled, let turn = captureHostTurnReference(origin: origin),
+              currentSessionId == turn.chatSessionID, runtimeGenerationID == turn.runtimeGenerationID,
+              let adapter = runtimeAdapter,
+              adapter.state == .running(sessionID: turn.chatSessionID, turnID: turn.logicalTurnID) else {
+            throw ToolError("The review response has no active originating host turn.")
+        }
+        let response = await adapter.awaitModelResponseEvidence(toolUseID: toolUseID,
+            sessionID: turn.chatSessionID, turnID: turn.logicalTurnID)
+        guard !Task.isCancelled, runtimeAdapter === adapter,
+              currentSessionId == turn.chatSessionID, runtimeGenerationID == turn.runtimeGenerationID,
+              captureHostTurnReference(origin: origin) == turn,
+              adapter.state == .running(sessionID: turn.chatSessionID, turnID: turn.logicalTurnID),
+              let response else {
+            throw ToolError("The review response has no verified model in its active host turn. Run the review again.")
+        }
+        try response.requireHostCall(tool: expectedTool.rawValue, origin: origin, turn: turn,
+            toolUseID: toolUseID, arguments: arguments)
+        return HostAgentReviewEvidence(projectGenerationID: turn.projectGenerationID,
+            chatSessionID: turn.chatSessionID, runtimeGenerationID: turn.runtimeGenerationID,
+            logicalTurnID: turn.logicalTurnID, inputMessageID: turn.inputMessageID, response: response)
+    }
+
+    func requireCurrentReviewEvidence(_ evidence: HostAgentReviewEvidence) throws {
+        let origin = ToolCallOrigin.embeddedRuntime(chatSessionID: evidence.chatSessionID,
+            runtimeGenerationID: evidence.runtimeGenerationID)
+        let expected = AgentHostTurnReference(projectGenerationID: evidence.projectGenerationID,
+            chatSessionID: evidence.chatSessionID, runtimeGenerationID: evidence.runtimeGenerationID,
+            logicalTurnID: evidence.logicalTurnID, inputMessageID: evidence.inputMessageID)
+        guard !Task.isCancelled, currentSessionId == evidence.chatSessionID,
+              runtimeGenerationID == evidence.runtimeGenerationID,
+              captureHostTurnReference(origin: origin) == expected,
+              runtimeAdapter?.state == .running(sessionID: evidence.chatSessionID, turnID: evidence.logicalTurnID),
+              runtimeAdapter?.modelResponseEvidence(toolUseID: evidence.response.toolUseID) == evidence.response else {
+            throw ToolError("The model review's originating host turn changed. Run the review again.")
+        }
+    }
+
     private func verifiedHostTurnReference(
         _ reference: AgentHostTurnReference?,
         origin: ToolCallOrigin
@@ -1631,7 +1745,15 @@ final class AgentService {
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
     /// direction, comma-joined (matches the music tab's original composition).
     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
-        var parts = result.allLabels + result.customValues.values.sorted()
+        var parts: [String] = []
+        for section in dialog.sections {
+            if case .choices(let options, _) = section.kind, let ids = result.selectedOptionIDs[section.id] {
+                parts += options.filter { ids.contains($0.id) }.map(\.label)
+            } else { parts += result.labels(section.id) }
+            if let custom = result.customValues[section.id]?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+                parts.append(custom)
+            }
+        }
         if !result.direction.isEmpty { parts.append(result.direction) }
         return parts.joined(separator: ", ")
     }
@@ -1646,11 +1768,19 @@ final class AgentService {
             return
         }
         let origin = dialog.flatMap { dialogOrigins.removeValue(forKey: $0.id) } ?? .direct
-        let activity = dialog.flatMap { dialogActivities.removeValue(forKey: $0.id) }
+        var activity = dialog.flatMap { dialogActivities.removeValue(forKey: $0.id) }
+        if dialog?.purpose == .mediaOrganization { activity?.mediaOrganizationFinished = true }
+        if dialog?.purpose == .captionRevision { activity?.captionRevisionFinished = true }
+        dialogSubmissionError = nil
         pendingDialog = nil
-        if let dialog, dialog.purpose == .chatClarification {
+        if dialog?.purpose == .captionRevision, origin == .direct { return }
+        if let dialog, [.chatClarification, .mediaOrganization, .captionRevision].contains(dialog.purpose) {
             sendDialogTurn(
-                text: "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
+                text: dialog.purpose == .mediaOrganization
+                    ? "The user dismissed the media organization proposal. Do not propose it again unless the user asks."
+                    : dialog.purpose == .captionRevision
+                    ? "The user dismissed the caption revision proposal. This task is complete; do not change the timeline or propose again unless asked."
+                    : "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
                 mentions: [],
                 hidden: true,
                 origin: origin,
@@ -2590,6 +2720,28 @@ final class AgentService {
             + "Do not run more tools from it; wait for the host follow-up or start a fresh MCP session."
     }
 
+    func mediaOrganizationRefusal(tool: ToolName, origin: ToolCallOrigin) -> String? {
+        guard let activity = taskActivity(from: origin), activity.mediaOrganizationScope != nil else { return nil }
+        let readOnly: Set<ToolName> = [.getMedia, .listFolders, .inspectMedia, .getTranscript, .searchMedia, .getTimeline, .inspectTimeline]
+        if readOnly.contains(tool) || (tool == .proposeMediaOrganization && !activity.mediaOrganizationFinished) { return nil }
+        return "This organization task may inspect media and, before its decision, propose_media_organization only. Native approval applies selected changes; direct mutation is unavailable. Do not repeat a completed or dismissed proposal."
+    }
+
+    func captionRevisionRefusal(tool: ToolName, origin: ToolCallOrigin) -> String? {
+        guard let activity = taskActivity(from: origin), activity.captionRevisionScope != nil else { return nil }
+        let readOnly: Set<ToolName> = [.getMedia, .inspectMedia, .getTranscript, .getTimeline, .inspectTimeline]
+        if readOnly.contains(tool) || (tool == .proposeCaptionRevision && !activity.captionRevisionFinished) { return nil }
+        return "This caption revision task may inspect and propose_caption_revision only. Native approval applies selected changes; direct mutation is unavailable. Do not repeat a completed or dismissed proposal."
+    }
+
+    func captionRevisionScope(from origin: ToolCallOrigin) -> CaptionRevisionScope? {
+        taskActivity(from: origin)?.captionRevisionScope
+    }
+
+    func mediaOrganizationScope(from origin: ToolCallOrigin) -> MediaOrganizationScope? {
+        taskActivity(from: origin)?.mediaOrganizationScope
+    }
+
     private func taskActivity(from origin: ToolCallOrigin) -> AgentTurnActivity? {
         guard origin.chatSessionID == currentSessionId, origin.chatSessionID != nil else { return nil }
         return currentTaskActivity
@@ -2639,6 +2791,15 @@ final class AgentService {
         _ approval: GateApproval,
         origin: ToolCallOrigin = .direct
     ) throws -> GateApprovalRequest {
+        if let root = approval.dataRoot, let editor {
+            guard let home = editor.workingRoot, DataRootResolver.dataRoot(of: home) == root,
+                  editor.declaredPluginName == approval.declaredPack,
+                  editor.declaredPluginBinding == approval.declaredBinding,
+                  editor.declaredProductionContract == approval.declaredProductionContract else {
+                throw ToolError("The approval belongs to a different project or production workflow. Request it again from the current project.",
+                                kind: .reviewChangedSource)
+            }
+        }
         var scoped = approval.scoped(to: origin.chatSessionID)
         scoped.priorApproval = GateApproval.priorApproval(
             phase: approval.phase,
@@ -2661,7 +2822,7 @@ final class AgentService {
               pendingSpendApproval == nil,
               pendingSpendOperation == nil,
               editor?.generationBatchCoordinator.pending == nil,
-              nativeGateMutationID == nil else {
+              nativeGateMutationID == nil, !gateApprovalIsWriting else {
             throw ToolError(
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
             )
@@ -2685,9 +2846,11 @@ final class AgentService {
 
     /// Applies the decision locally and resumes its originating in-app turn when possible.
     @discardableResult
-    func resolveGate(_ decision: GateDecision) async -> ToolResult? {
-        guard let approval = pendingGateApproval else { return nil }
+    func resolveGate(_ decision: GateDecision, approvalID: String) async -> ToolResult? {
+        guard let approval = pendingGateApproval, approval.id == approvalID,
+              !gateApprovalIsWriting else { return nil }
         let origin = pendingGateOrigin ?? .direct
+        let requestProjectGenerationID = projectGenerationID
         switch decision {
         case .declined:
             pendingGateApproval = nil
@@ -2726,16 +2889,19 @@ final class AgentService {
                 return recordGateApprovalFailure(
                     "The gate writer is unavailable. The approval request remains open.",
                     kind: .hostBusy,
-                    approval: approval
+                    approval: approval, origin: origin
                 )
             }
             gateApprovalIsWriting = true
             defer { gateApprovalIsWriting = false }
             do {
                 let payload = try await toolExecutor.commitGateApproval(approval)
-                pendingGateApproval = nil
-                pendingGateOrigin = nil
-                gateApprovalError = nil
+                guard projectGenerationID == requestProjectGenerationID else { return .ok(payload) }
+                if pendingGateApproval?.id == approval.id {
+                    pendingGateApproval = nil
+                    pendingGateOrigin = nil
+                    gateApprovalError = nil
+                }
                 recordApprovalEvidence(Self.evidence(for: approval), sessionID: approval.sessionId)
                 if approval.sessionId != nil {
                     recordHostState(
@@ -2768,16 +2934,18 @@ final class AgentService {
                 }
                 return .ok(payload)
             } catch let error as ToolError {
+                guard projectGenerationID == requestProjectGenerationID else { return .error(error.message) }
                 return recordGateApprovalFailure(
                     error.message,
                     kind: error.kind,
-                    approval: approval
+                    approval: approval, origin: origin
                 )
             } catch {
+                guard projectGenerationID == requestProjectGenerationID else { return .error(error.localizedDescription) }
                 return recordGateApprovalFailure(
                     error.localizedDescription,
                     kind: .agentCorrection,
-                    approval: approval
+                    approval: approval, origin: origin
                 )
             }
         }
@@ -2786,17 +2954,19 @@ final class AgentService {
     private func recordGateApprovalFailure(
         _ reason: String,
         kind: ToolFailureKind,
-        approval: GateApproval
+        approval: GateApproval,
+        origin: ToolCallOrigin
     ) -> ToolResult {
         let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
-        gateApprovalError = message
-        let origin = pendingGateOrigin ?? .direct
-        if kind == .approvalStructure
-            || kind == .reviewChangedSource
-            || kind == .agentCorrection
-            || kind == .phaseRecordRepair {
-            pendingGateApproval = nil
-            pendingGateOrigin = nil
+        if pendingGateApproval?.id == approval.id {
+            gateApprovalError = message
+            if kind == .approvalStructure
+                || kind == .reviewChangedSource
+                || kind == .agentCorrection
+                || kind == .phaseRecordRepair {
+                pendingGateApproval = nil
+                pendingGateOrigin = nil
+            }
         }
         recordHostState(
             AgentHostStateRecord(
@@ -2817,9 +2987,9 @@ final class AgentService {
         )
         enqueueGateFollowUp(
             "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
-                + (pendingGateApproval == nil
-                    ? "Correct the stated cause before requesting approval again. "
-                    : "The approval card remains open. Address the stated cause before retrying. ")
+                + (pendingGateApproval?.id == approval.id
+                    ? "The approval card remains open. Address the stated cause before retrying. "
+                    : "Correct the stated cause before requesting approval again. ")
                 + "Do not claim approval, invent a support team, or ask the user to restart the app.",
             origin: origin
         )
@@ -2940,15 +3110,7 @@ final class AgentService {
         guard !isStreaming, !isComposerBlocked else { return false }
         var staged = task
         if staged.originContext == nil, let editor {
-            let target: String
-            if editor.activePreviewTab == .timeline && editor.selectedClipIds.count > 1 {
-                target = "Task-origin clip IDs: " + editor.selectedClipIds.sorted().joined(separator: ", ")
-            } else {
-                target = editor.inspectedObject.map { "Task-origin object: " + $0.taskTarget }
-                    ?? "No object target was selected."
-            }
-            staged.originContext = Self.selectionHint(editor: editor)
-                .map { $0 + " " + target + " Task-origin timeline frame: \(editor.currentFrame). This is the context captured when the task was chosen; later workspace selections and get_timeline playheads do not replace its target or frame." }
+            staged.originContext = AgentTaskSelectionContext.capture(editor: editor).hint
         }
         editor?.agentPanelVisible = true
         pendingFunction = staged
@@ -3118,7 +3280,7 @@ final class AgentService {
     }
 
     weak var editor: EditorViewModel? {
-        didSet { toolExecutor = editor.map { ToolExecutor(editor: $0) } }
+        didSet { toolExecutor = editor.map { toolExecutorFactory?($0) ?? ToolExecutor(editor: $0) } }
     }
     private var toolExecutor: ToolExecutor?
     private var currentTask: Task<Void, Never>?
@@ -3144,7 +3306,7 @@ final class AgentService {
         if let runtimeAdapter { return runtimeAdapter.descriptor }
         let toolNames: Set<String> = toolExecutor == nil
             ? []
-            : Set(ToolDefinitions.all.map { $0.name.rawValue })
+            : Set(ToolDefinitions.all.filter { $0.name != .writeRenderReview }.map { $0.name.rawValue })
         let pluginDirectories = backend == .claudeCode ? configuredPluginDirectories() : []
         let externalMCPServers = backend == .claudeCode
             ? ClaudeCodeRuntime.externalMcpServers()
@@ -3490,7 +3652,9 @@ final class AgentService {
             prompt = function.prompt
         }
         return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
-            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
+            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext,
+            taskActivity: .init(title: function.title, phase: function.phase,
+                mediaOrganizationScope: function.mediaOrganizationScope, captionRevisionScope: function.captionRevisionScope))
     }
 
     var currentTaskPhase: String? {
@@ -3532,19 +3696,16 @@ final class AgentService {
     /// Grounds scoped prose ("make this warmer") in the user's current selection — the app tells the
     /// agent what "this" is, instead of the agent guessing (docs/UI_UX_CONCEPT.md §4).
     private static func selectionHint(editor: EditorViewModel?) -> String? {
-        let pluginLine: String
-        if let active = editor?.activePluginName {
-            pluginLine = "Active format plugin for this project: \(active)."
-        } else {
-            pluginLine = "No format plugin is active \u{2014} this project uses the generic production workflow."
-        }
-        guard let description = editor?.selectionContextHint else { return pluginLine }
-        return pluginLine + " The user is currently inspecting \(description); unscoped references like \u{201C}this\u{201D} refer to it."
+        guard let editor else { return nil }
+        let context = AgentTaskSelectionContext.capture(editor: editor)
+        guard context.target != nil else { return nil }
+        return context.hint(frozenTask: false)
     }
 
     func cancel() {
         // Gate approval remains open because its tool call has already returned.
         abandonSpendApproval()
+        if let runtimeGenerationID { hostTurnReferences.removeValue(forKey: runtimeGenerationID) }
         let wasStreaming = isStreaming
         stoppedAgent = wasStreaming
         if wasStreaming, backend == .anthropicAPI,
@@ -3638,30 +3799,58 @@ final class AgentService {
         )
     }
 
-    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+    private func runtimeHostContext() async throws -> AgentRuntimeHostContext {
         if let runtimeHostContextOverride {
             return try runtimeHostContextOverride()
         }
         let language = AgentInterfaceLanguage.current
         guard let editor,
               let workingRoot = editor.workingRoot else {
-            if editor?.declaredPluginName != nil {
+            if editor?.declaredPluginName != nil || editor?.declaredProductionContract != nil {
                 throw ToolError("The format-pack project context is unavailable. Reopen the project.")
             }
             return .hostOwned(interfaceLanguage: language, tools: toolExecutor == nil ? [] : ToolDefinitions.all)
         }
         let resolved: PipelineAgentHarness.RuntimeContext
         if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            let timeline = editor.timeline
+            let resolver = editor.mediaResolver.snapshot()
+            let prepared: PipelineProductionRuntimeContext.Prepared?
+            if editor.declaredProductionContract != nil
+                || editor.declaredPluginBinding?.projectSchema == HostWorkflowKey.musicvideoV2Schema {
+                let sessionID = currentSessionId
+                let context: PipelineProductionAssemblyWriter.Context
+                do { context = try PipelineProductionAssemblyWriter.Context(editor: editor) }
+                catch { throw ToolError("The production project context is unavailable. Reopen the project before continuing.") }
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try PipelineProductionRuntimeContext.prepare(dataRoot: dataRoot,
+                        declaration: context.declaration, timeline: timeline, resolver: resolver)
+                }
+                prepared = try await withTaskCancellationHandler {
+                    try await preparation.value
+                } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard currentSessionId == sessionID, self.editor === editor else {
+                    throw ToolError("The agent session changed while its production context was being prepared.")
+                }
+                do { try context.requireCurrent(editor: editor) }
+                catch { throw ToolError("The project or timeline changed while its production context was being prepared. Continue from the current phase.") }
+            } else { prepared = nil }
             resolved = try editor.pipelineAgentHarness.runtimeContext(
                 dataRoot: dataRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract,
+                timeline: timeline,
+                resolver: resolver,
+                preparedProduction: prepared
             )
         } else {
             let packID = try ProjectPackGate.requireLiveMutation(
                 projectURL: workingRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract
             )
             resolved = .init(packID: packID, currentPhase: nil, instructions: nil)
         }
@@ -3804,6 +3993,7 @@ final class AgentService {
     }
 
     private func rotateRuntime() {
+        if let runtimeGenerationID { hostTurnReferences.removeValue(forKey: runtimeGenerationID) }
         if let runtimeSessionID {
             runtimeAdapter?.end(sessionID: runtimeSessionID)
         }
@@ -3962,22 +4152,27 @@ final class AgentService {
         let boundSessionID = currentSessionId
         pendingProviderPrefixDigest = nil
         currentTask = Task { [weak self] in
-            await self?.runRuntimeTurn(sessionID: boundSessionID)
+            var completedNormally = false
+            await self?.runRuntimeTurn(sessionID: boundSessionID, didComplete: { completedNormally = true })
             guard !Task.isCancelled,
                   let self,
                   self.currentSessionId == boundSessionID else { return }
             self.isStreaming = false
             self.syncMessagesIntoCurrentSession()
             self.onSessionsChanged?()
+            if completedNormally, self.streamError == nil, let editor = self.editor {
+                editor.renderReviewRun.startIfCovered(editor: editor)
+            }
         }
     }
 
-    private func runRuntimeTurn(sessionID: UUID?) async {
+    private func runRuntimeTurn(sessionID: UUID?, didComplete: @MainActor () -> Void = {}) async {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
-            hostContext = try runtimeHostContext()
+            hostContext = try await runtimeHostContext()
         } catch {
+            guard !Task.isCancelled, currentSessionId == sessionID else { return }
             streamError = .upstream(error.localizedDescription)
             return
         }
@@ -4020,6 +4215,12 @@ final class AgentService {
             logicalTurnID: turnID,
             inputMessageID: inputMessage.id
         )
+        defer {
+            if Task.isCancelled, hostTurnReferences[runtimeGenerationID]?.logicalTurnID == turnID {
+                hostTurnReferences.removeValue(forKey: runtimeGenerationID)
+                adapter.cancel(sessionID: sessionID)
+            }
+        }
         var fence = AgentRuntimeEventFence()
         fence.begin(sessionID: sessionID, turnID: turnID)
         do {
@@ -4033,11 +4234,15 @@ final class AgentService {
             var messageIDs: [String: UUID] = [:]
             var defaultAssistantID: UUID?
             var usageMeter = AgentRequestUsageMeter()
+            var completedNormally = false
             for await envelope in stream {
                 guard !Task.isCancelled,
                       currentSessionId == sessionID,
                       fence.accepts(envelope) else { continue }
                 recordActivity()
+                if envelope.event == .terminal(.completed(.endTurn)) || envelope.event == .terminal(.completed(.toolUse)) {
+                    completedNormally = true
+                }
                 if let finished = usageMeter.observe(envelope.event) {
                     addTokenUsage(finished, sessionID: sessionID)
                 }
@@ -4056,6 +4261,7 @@ final class AgentService {
                 streamError = .upstream("The agent runtime ended without a terminal state.")
                 return
             }
+            if completedNormally, !Task.isCancelled { didComplete() }
         } catch is CancellationError {
             adapter.cancel(sessionID: sessionID)
         } catch {
@@ -4264,11 +4470,18 @@ final class AgentService {
     private func restoreDecision(for id: UUID) {
         guard pendingDialog == nil,
               let saved = sessions.first(where: { $0.id == id })?.decision,
-              saved.belongs(to: id), saved.dialog.purpose == .chatClarification else { return }
+              saved.belongs(to: id), [.chatClarification, .mediaOrganization, .captionRevision].contains(saved.dialog.purpose) else { return }
         let wasRestoring = isRestoringComposer
         isRestoringComposer = true
         defer { isRestoringComposer = wasRestoring }
         dialogOrigins[saved.dialog.id] = saved.origin
+        if let plan = saved.dialog.mediaOrganization {
+            dialogActivities[saved.dialog.id] = .init(title: "Organize media", phase: nil, mediaOrganizationScope: plan.scope)
+        }
+        if let plan = saved.dialog.captionRevision {
+            dialogActivities[saved.dialog.id] = .init(title: "Revise captions", phase: nil, captionRevisionScope: plan.scope)
+        }
+        dialogSubmissionError = nil
         suspendToolCalls(from: saved.origin)
         pendingDialog = saved.dialog
         dialogDraft = saved.draft
@@ -4524,6 +4737,104 @@ final class AgentService {
         didSet { persistDecisionDraft() }
     }
     private var activeIntakeDraftKey: WorkflowIntakeDraftKey?
+    private let toolExecutorFactory: (@MainActor (EditorViewModel) -> ToolExecutor)?
+
+    var reviewParentIdleReason: String? {
+        guard !isStreaming, !hostFollowUpStartInProgress else {
+            return "Wait for the agent turn to finish before starting the review."
+        }
+        switch runtimeAdapter?.state {
+        case .running, .cancelling:
+            return "Wait for the agent runtime to finish before starting the review."
+        default: return nil
+        }
+    }
+
+    func requireReviewParentIdle() throws {
+        if let reason = reviewParentIdleReason { throw ToolError(reason) }
+    }
+
+    func reviewChildBinding(leaseID: UUID) throws -> AgentReviewChildBinding {
+        guard let currentSessionId, let editor, let home = editor.workingRoot,
+              let root = DataRootResolver.dataRoot(of: home),
+              let projectID = editor.projectId, let key = editor.openWorkingCopyKey,
+              let generation = editor.openWorkingCopyGeneration,
+              let workflow = try PipelineProductionPromptCompiler.workflow(editor: editor), workflow.isProductionV2,
+              editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: leaseID) else {
+            throw ToolError("The review has no current production project or owned phase job.")
+        }
+        return .init(originalChatID: currentSessionId, projectID: projectID,
+            projectGenerationID: projectGenerationID, workingCopyKey: key, workingCopyGeneration: generation,
+            projectRoot: home, dataRoot: root,
+            trustedDeclaration: .init(packName: editor.declaredPluginName, binding: editor.declaredPluginBinding,
+                productionContract: editor.declaredProductionContract), workflow: workflow, mutationLeaseID: leaseID)
+    }
+
+    func requireReviewChildBinding(_ expected: AgentReviewChildBinding) throws {
+        let actual = try reviewChildBinding(leaseID: expected.mutationLeaseID)
+        guard actual.projectID == expected.projectID, actual.projectGenerationID == expected.projectGenerationID,
+              actual.workingCopyKey == expected.workingCopyKey, actual.workingCopyGeneration == expected.workingCopyGeneration,
+              actual.projectRoot == expected.projectRoot, actual.dataRoot == expected.dataRoot,
+              actual.trustedDeclaration == expected.trustedDeclaration, actual.workflow == expected.workflow,
+              sessions.contains(where: { $0.id == expected.originalChatID }) else {
+            throw ToolError("The review's production project changed. Start the review again.")
+        }
+    }
+
+    func reviewChildHostContext(tools: [AgentRuntimeToolSchema]) async throws -> AgentRuntimeHostContext {
+        guard let editor, let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+              let workflow = try PipelineProductionPromptCompiler.workflow(editor: editor), workflow.isProductionV2 else {
+            throw ToolError("Open the current production project before starting the review.")
+        }
+        let projectGeneration = projectGenerationID
+        let generation = editor.openWorkingCopyGeneration
+        let language = AgentInterfaceLanguage.current
+        let preparation = Task.detached(priority: .userInitiated) {
+            let contract = try PhaseContractRuntime.contract(workflow: workflow)
+            let state = try ProjectStateBuilder.buildSnapshot(dataRoot: root, order: contract.order)
+            guard state.nextPhase == "render_review" else { throw ToolError("Reach Render Review before starting the review.") }
+            return try contract.instructions(for: "render_review")
+        }
+        let instructions = try await withTaskCancellationHandler {
+            try await preparation.value
+        } onCancel: { preparation.cancel() }
+        try Task.checkCancellation()
+        guard self.editor === editor, projectGenerationID == projectGeneration,
+              editor.openWorkingCopyGeneration == generation,
+              editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == root,
+              try PipelineProductionPromptCompiler.workflow(editor: editor) == workflow else {
+            throw ToolError("The production project changed while preparing the review context.")
+        }
+        let pack = editor.declaredPluginBinding.map {
+            AgentRuntimePackContext(id: $0.id, version: $0.version,
+                projectSchema: $0.projectSchema, currentPhase: "render_review")
+        }
+        return .init(interfaceLanguage: language,
+            baseInstructions: "You are reviewing one host-bound production context. Use only the two supplied review tools. Do not request detail tools or access project files.\n\n" + language.instruction,
+            pack: pack, phaseInstructions: instructions, toolSchemas: tools, authority: [.toolSchemas, .toolExecution])
+    }
+
+    var reviewChildModelID: String? { backend == .anthropicAPI ? effectiveModel?.id : nil }
+    var reviewChildRegistry: AgentReviewChildRegistry { ownedReviewChildRegistry }
+
+    @ObservationIgnored
+    private lazy var ownedReviewChildRegistry = AgentReviewChildRegistry { [weak self] request in
+        guard let self, self.backend == request.backend else { throw ToolError("The review backend changed.") }
+        if let factory = self.reviewChildRuntimeFactory { return try factory(request) }
+        return AgentReviewChildRuntime(apiClient: self.selectClient() as? AnthropicClient,
+            cliPreflight: { [weak self] executable, directory in
+                guard let preflight = self?.reviewChildCLIPreflight else {
+                    throw ToolError("Claude Code review isolation could not verify the active managed policy. Ordinary chat remains available.")
+                }
+                try await preflight(executable, directory)
+            })
+    }
+    @ObservationIgnored
+    var reviewChildCLIPreflight: AgentReviewChildRuntime.CLIPreflight = { executable, directory in
+        try await AgentReviewChildCLIIsolation.preflight(executable: executable, workingDirectory: directory)
+    }
+    @ObservationIgnored
+    var reviewChildRuntimeFactory: AgentReviewChildRegistry.RuntimeFactory?
 
 }
 

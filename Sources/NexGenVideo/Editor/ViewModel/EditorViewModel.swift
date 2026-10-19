@@ -9,8 +9,13 @@ final class PreviewPlayheadState {
 }
 
 struct PendingPanelSeed {
+    let id = UUID()
     let asset: MediaAsset
     let stored: GenerationInput
+    let context: GenerationPanelSeed.Context
+    let replacementClipID: String?
+    let trimmedSource: TrimmedSource?
+    let audioPlacement: PendingAudioPlacement?
 }
 
 struct PendingAudioPlacement {
@@ -40,7 +45,7 @@ final class EditorViewModel {
     // MARK: - Panel focus
 
     enum FocusedPanel: String {
-        case media, preview, inspector, timeline, agent, mediaFolders
+        case media, preview, inspector, timeline, agent, mediaFolders, exports
         /// The Project cockpit when it is the center work surface.
         case project
 
@@ -204,18 +209,11 @@ final class EditorViewModel {
     }
 
     var selectedObjectRevisionTask: AgentTask? {
-        guard let label = selectionContextHint else { return nil }
-        let target: String
-        if activePreviewTab == .timeline && selectedClipIds.count > 1 {
-            target = "timeline clip IDs " + selectedClipIds.sorted().joined(separator: ", ")
-        } else if let object = inspectedObject {
-            target = object.taskTarget
-        } else {
-            return nil
-        }
+        let context = AgentTaskSelectionContext.capture(editor: self)
+        guard let label = context.label, let target = context.target else { return nil }
         return AgentTask(title: "Revise: " + label, systemImage: "pencil",
             prompt: "Revise only this selected target: " + target + ". Apply the supplied correction through the existing project tools and respect phase gates.",
-            requiresDirection: true)
+            requiresDirection: true, originContext: context.hint)
     }
 
     /// Agent grounding: one line describing what the user is currently inspecting/selecting, so scoped
@@ -359,7 +357,11 @@ final class EditorViewModel {
     /// key is unchanged — used to tell "re-pointed at my own live copy" apart from "opened a project",
     /// so a move never re-reads the session's edits as crash-recovered.
     private var activeWorkingCopyKey: String?
-    private var activeWorkingCopyGeneration: UUID?
+    private var activeWorkingCopyGeneration: UUID? {
+        didSet {
+            if activeWorkingCopyGeneration != oldValue { pendingReplacements.removeAll() }
+        }
+    }
     private var preopenedWorkingCopy: (
         packageURL: URL,
         key: String,
@@ -378,6 +380,35 @@ final class EditorViewModel {
 
     /// The key of the working copy this session actually opened and has been writing into.
     var openWorkingCopyKey: String? { activeWorkingCopyKey }
+    var openWorkingCopyGeneration: UUID? { activeWorkingCopyGeneration }
+
+    var needsSavedProjectReload: Bool {
+        workingCopyReloadGeneration != nil && workingCopyReloadGeneration == activeWorkingCopyGeneration
+    }
+
+    var workingCopyWriteBlockReason: String? {
+        if recoveryDiscardTask != nil { return "Wait for the saved project to finish reloading before saving." }
+        if needsSavedProjectReload { return "The saved project could not be reloaded. Retry reload or close and reopen the project before saving." }
+        return nil
+    }
+
+    private func resetNativePlanningHistory() {
+        PipelineStoryboardEditor.resetHistory(editor: self)
+        PipelineShotPlanningEditor.resetHistory(editor: self)
+        PipelineBibleEditor.resetHistory(editor: self)
+        PipelineProductionPlanWriter.resetNativeHistory(editor: self)
+        storyDraftsByProject.removeAll()
+        renderReviewDraftsByProject.removeAll()
+        nativePlanningDraftRevision &+= 1
+        productionSelectedPhase = nil
+        storyboardSelection = nil
+        storyboardPlanningSelection = nil
+        productionPlanSelection = nil
+        cockpitPackSurfaceID = nil
+        acknowledgedReviewRequests.removeAll()
+        projectStateLoadToken &+= 1
+        engineArtifactsLoadToken &+= 1
+    }
 
     func adoptWorkingCopy(
         _ result: ProjectWorkingCopy.OpenResult,
@@ -394,8 +425,10 @@ final class EditorViewModel {
 
     /// Materialize the complete package into Recovery, or adopt a crash-surviving dirty copy.
     private func prepareWorkingCopy() {
-        recoveredUnsavedWork = false
         guard let projectURL else {
+            recoveredUnsavedWork = false
+            preopenedWorkingCopy = nil
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -406,6 +439,7 @@ final class EditorViewModel {
            preopenedWorkingCopy.packageURL.standardizedFileURL
             == projectURL.standardizedFileURL {
             self.preopenedWorkingCopy = nil
+            resetNativePlanningHistory()
             workingCopyHome = preopenedWorkingCopy.result.home
             activeWorkingCopyKey = preopenedWorkingCopy.key
             activeWorkingCopyGeneration = preopenedWorkingCopy.result.generation
@@ -417,6 +451,8 @@ final class EditorViewModel {
             return
         }
         guard let key = workingCopyKey else {
+            recoveredUnsavedWork = false
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -433,10 +469,12 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
+        recoveredUnsavedWork = false
         let result: ProjectWorkingCopy.OpenResult
         do {
             result = try ProjectWorkingCopy.open(key: key, packageURL: projectURL)
         } catch {
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -444,6 +482,7 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
+        resetNativePlanningHistory()
         workingCopyHome = result.home
         activeWorkingCopyKey = key
         activeWorkingCopyGeneration = result.generation
@@ -478,6 +517,11 @@ final class EditorViewModel {
     /// Keep the recovered working copy (it's already the live editing state) and mark the document
     /// edited so a save persists it back into the package.
     func keepRecoveredWork() {
+        if let reason = workingCopyWriteBlockReason {
+            mediaPanelToast = MediaPanelToast(message: reason)
+            recoveredUnsavedWork = true
+            return
+        }
         recoveredUnsavedWork = false
         onPipelineChanged?()
         generationBatchCoordinator.resume(editor: self)
@@ -488,46 +532,105 @@ final class EditorViewModel {
     }
 
     /// Throw away the recovered working copy and start from the last saved project state.
-    func discardRecoveredWork() {
-        guard let projectURL, let key = activeWorkingCopyKey else { return }
-        recoveredUnsavedWork = false
-        Task { [weak self] in
-            let result = await Task.detached {
-                Result {
-                    try ProjectWorkingCopy.rematerialize(
-                        key: key,
-                        packageURL: projectURL
-                    )
+    @discardableResult
+    func discardRecoveredWork(
+        beforeInstall: (@MainActor @Sendable () async throws -> Void)? = nil
+    ) -> Task<Void, Never>? {
+        guard recoveryDiscardTask == nil, let projectURL, let key = activeWorkingCopyKey,
+              let generation = activeWorkingCopyGeneration, let home = workingCopyHome else { return nil }
+        let root = DataRootResolver.dataRoot(of: home) ?? home
+        let coordinator = pipelinePhaseRunCoordinator
+        guard let lease = coordinator.beginMutation(projectRoot: root, label: "Discard recovered work") else {
+            mediaPanelToast = MediaPanelToast(message: "Wait for the current project action before discarding recovered work.")
+            recoveredUnsavedWork = true
+            return nil
+        }
+        let id = UUID()
+        recoveryDiscardInProgress = true; recoveredUnsavedWork = false
+        let task = Task { @MainActor [weak self] in
+            defer { coordinator.endMutation(projectRoot: root, id: lease) }
+            guard let self else { return }
+            defer { if self.recoveryDiscardTask?.id == id { self.recoveryDiscardTask = nil; self.recoveryDiscardInProgress = false } }
+            func isCurrent() -> Bool {
+                self.projectURL == projectURL && self.workingCopyHome == home
+                    && self.activeWorkingCopyKey == key && self.activeWorkingCopyGeneration == generation
+            }
+            do {
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try ProjectWorkingCopy.prepareRematerialization(key: key, packageURL: projectURL,
+                        expectedGeneration: generation, validate: VideoProject.validateEditableContents)
                 }
-            }.value
-            guard let self, self.projectURL == projectURL else { return }
-            guard case .success(let home) = result else {
-                if case .failure(let error) = result {
+                let prepared = try await withTaskCancellationHandler {
+                    try await preparation.value
+                } onCancel: { preparation.cancel() }
+                let installed: ProjectWorkingCopy.OpenResult
+                do {
+                    try await beforeInstall?()
+                    installed = try prepared.commit {
+                        try Task.checkCancellation()
+                        guard isCurrent(), coordinator.holdsMutation(projectRoot: root, id: lease) else {
+                            throw ProjectWorkingCopy.PersistError.workingCopyChanged
+                        }
+                    }
+                } catch {
+                    await Task.detached(priority: .utility) { prepared.discard() }.value
+                    throw error
+                }
+                self.resetNativePlanningHistory()
+                self.workingCopyHome = installed.home
+                self.activeWorkingCopyGeneration = installed.generation
+                self.workingCopyReloadGeneration = installed.generation
+                await Task.detached(priority: .utility) { prepared.discard() }.value
+                guard !Task.isCancelled, self.projectURL == projectURL, self.activeWorkingCopyKey == key,
+                      self.activeWorkingCopyGeneration == installed.generation else { return }
+                self.capturePluginDeclaration(from: projectURL)
+                if let reload = self.onWorkingCopyReset {
+                    guard await reload(installed.home) else {
+                        if !Task.isCancelled, self.projectURL == projectURL, self.activeWorkingCopyKey == key,
+                           self.activeWorkingCopyGeneration == installed.generation {
+                            self.mediaPanelToast = MediaPanelToast(message: "The saved project could not be reloaded. Retry reload or close and reopen the project.")
+                            self.recoveredUnsavedWork = true
+                        }
+                        return
+                    }
+                }
+                guard !Task.isCancelled, self.projectURL == projectURL, self.workingCopyHome == installed.home,
+                      self.activeWorkingCopyKey == key, self.activeWorkingCopyGeneration == installed.generation else { return }
+                self.workingCopyReloadGeneration = nil
+                self.rebindProjectMediaURLs()
+                self.refreshProductionPipelineMarker()
+                self.verifyPackWiring()
+                coordinator.endMutation(projectRoot: root, id: lease)
+                await self.refreshEngineState()
+            } catch {
+                if !Task.isCancelled, isCurrent() {
                     Log.project.error(
                         "discard recovery failed: \(error.localizedDescription)"
                     )
-                    self.mediaPanelToast = MediaPanelToast(
-                        message: error.localizedDescription
-                    )
+                    self.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+                    self.recoveredUnsavedWork = true
                 }
-                self.recoveredUnsavedWork = true
-                return
             }
-            self.workingCopyHome = home
-            self.capturePluginDeclaration(from: projectURL)
-            if let reload = self.onWorkingCopyReset {
-                guard await reload(home) else { return }
-            }
-            guard self.projectURL == projectURL, self.workingCopyHome == home else { return }
-            self.rebindProjectMediaURLs()
-            self.refreshProductionPipelineMarker()
-            self.verifyPackWiring()
-            await self.refreshEngineState()
         }
+        recoveryDiscardTask = (id, task)
+        return task
     }
 
     /// Discard the working copy on a clean close (so no false crash-recovery prompt next time).
-    func releaseWorkingCopy() {
+    func releaseWorkingCopy(afterGenerationRestoration restoration: Task<Void, Never>? = nil) {
+        let recoveryStop = recoveryDiscardTask?.task
+        recoveryStop?.cancel()
+        let startupStop = cancelProductionStartupForClose()
+        let generationWasRunning = generationBatchCoordinator.hasCloseWork
+        let generationStop = generationBatchCoordinator.cancelForClose()
+        let reviewRegistry = agentService.reviewChildRegistry
+        let reviewRun = renderReviewRun
+        let reviewWasRunning = reviewRegistry.activeRunID != nil
+            || reviewRun.state == .running || reviewRun.state == .preparing || reviewRun.state == .stopping
+        let reviewStop = Task { @MainActor in
+            await reviewRun.cancel()
+            await reviewRegistry.cancelAll()
+        }
         guard let key = activeWorkingCopyKey,
               let generation = activeWorkingCopyGeneration
         else { return }
@@ -549,12 +652,18 @@ final class EditorViewModel {
         if exportIsRunning {
             ExportQueue.shared.cancelAll(ownerKey: key)
         }
+        resetNativePlanningHistory()
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if importTail != nil || extractionTask != nil || phaseIsRunning || exportIsRunning {
+        if restoration != nil || recoveryStop != nil || startupStop != nil || importTail != nil || extractionTask != nil || phaseIsRunning || exportIsRunning || reviewWasRunning || generationWasRunning {
 
             Task { @MainActor [phaseCoordinator] in
+                await recoveryStop?.value
+                await startupStop?.value
+                await generationStop.value
+                await restoration?.value
+                await reviewStop.value
                 _ = await importTail?.value
                 _ = await extractionTask?.value
                 if let dataRoot, phaseIsRunning {
@@ -588,8 +697,13 @@ final class EditorViewModel {
     private(set) var declaredPluginName: String?
     /// Exact trusted pack identity captured independently from the mutable working copy.
     private(set) var declaredPluginBinding: ProjectPackBinding?
+    private(set) var declaredProductionContract: HostProductionContractBinding?
+    var storyboardAnimaticPlayback: StoryboardAnimaticController?
 
     private func capturePluginDeclaration(from projectURL: URL?) {
+        if case .bound(let contract) = ProjectPluginSettings.productionContractResolution(projectURL: projectURL) {
+            declaredProductionContract = contract
+        } else { declaredProductionContract = nil }
         switch ProjectPluginSettings.bindingResolution(projectURL: projectURL) {
         case .absent:
             activePluginName = nil
@@ -689,72 +803,137 @@ final class EditorViewModel {
     private(set) var productionStarting = false
     @ObservationIgnored private var workflowHandoffPending = false
 
+    func didStartProductionTurn() {
+        workflowHandoffPending = false
+    }
+
     /// Whether every production-start affordance must be disabled.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
     func startProduction() {
-        guard let url = projectURL, let key = openWorkingCopyKey,
-              !productionStarting, !hasProductionPipeline else { return }
-        // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The
-        // cockpit reads the working copy via `workingRoot`, so it finds the freshly-created pipeline.
+        guard AppState.shared.permitsNewProjectWork,
+              let url = projectURL, let key = openWorkingCopyKey, let generation = openWorkingCopyGeneration,
+              !productionStarting, productionStartupTask == nil, !hasProductionPipeline,
+              !agentService.isStreaming, !agentService.isComposerBlocked else { return }
+        if declaredPluginName == nil, declaredProductionContract == nil {
+            guard AppState.shared.activeProject?.editorViewModel === self else { return }
+            AppState.shared.enrollActiveProjectInProduction(expectedEditor: self)
+            return
+        }
         let home = ProjectWorkingCopy.home(key)
-        workingCopyHome = home
+        let root = home.appendingPathComponent(DataRootResolver.pipelineDirname)
+        let declaration = ProjectPackGate.MutationDeclaration(packName: declaredPluginName,
+            binding: declaredPluginBinding, productionContract: declaredProductionContract)
+        let projectID = projectId
+        let coordinator = pipelinePhaseRunCoordinator
+        guard workingRoot == home,
+              let lease = coordinator.beginMutation(projectRoot: root, label: "Start production") else { return }
         let name = url.deletingPathExtension().lastPathComponent
-        let trustedPack = declaredPluginName
-        let trustedBinding = declaredPluginBinding
+        let extraDirs = PackCatalog.projectDirs(activePack: declaration.packName)
         do {
-            _ = try ProjectPackGate.requireLiveMutation(
-                projectURL: home,
-                declaredPack: trustedPack,
-                declaredBinding: trustedBinding
-            )
+            _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: declaration.packName,
+                declaredBinding: declaration.binding, declaredProductionContract: declaration.productionContract)
+            try ProjectWorkingCopy.markDirty(key: key)
+            _ = try ProjectLocalFile.ensureDirectory(DataRootResolver.pipelineDirname, dataRoot: home)
         } catch {
+            coordinator.endMutation(projectRoot: root, id: lease)
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return
         }
-        let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
+        resetNativePlanningHistory()
         productionStarting = true
         workflowHandoffPending = true
-        do {
-            try ProjectWorkingCopy.markDirty(key: key)
-        } catch {
-            productionStarting = false
-            workflowHandoffPending = false
-            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
-            return
-        }
         setWorkspaceFocus(.production)
         showsAgentActivity = false
-        Task { [weak self] in
-            // Scaffold directly via the in-process engine — no venv, no subprocess, no agent round-trip.
-            // Already-initialized is benign (the pipeline exists → brief drafting is still right);
-            // any OTHER scaffold failure must NOT masquerade as success.
-            let scaffoldError: (any Error)? = await Task.detached {
-                do {
-                    _ = try ProjectPackGate.requireMutation(
-                        projectURL: home,
-                        declaredPack: trustedPack,
-                        declaredBinding: trustedBinding
-                    )
-                    try ProjectScaffold.initProject(home: home, name: name, extraDirs: extraDirs)
-                    return nil
-                }
-                catch ProjectScaffold.ScaffoldError.alreadyAProject { return nil }
-                catch { return error }
-            }.value
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            var holdsLease = true
+            var committed = false
+            defer { if holdsLease { coordinator.endMutation(projectRoot: root, id: lease) } }
             guard let self else { return }
-            if let scaffoldError {
-                self.productionStarting = false
-                self.workflowHandoffPending = false
-                self.mediaPanelToast = MediaPanelToast(
-                    message: "Couldn't set up the production pipeline: \(scaffoldError.localizedDescription)")
-                return
+            defer {
+                if self.productionStartupTask?.id == id {
+                    self.productionStartupTask = nil
+                    self.productionStarting = false
+                    if !committed { self.workflowHandoffPending = false }
+                }
             }
-            await self.refreshEngineState()
-            // The pipeline now exists in the working copy — mark the document edited so a save persists
-            // it into the `.ngv` package (and the user is warned before closing without saving).
-            self.onPipelineChanged?()
+            func requireCurrent() throws {
+                try Task.checkCancellation()
+                guard self.projectURL == url, self.projectId == projectID, self.workingRoot == home,
+                      self.openWorkingCopyKey == key, self.openWorkingCopyGeneration == generation,
+                      self.declaredPluginName == declaration.packName, self.declaredPluginBinding == declaration.binding,
+                      self.declaredProductionContract == declaration.productionContract,
+                      !self.agentService.isStreaming, !self.agentService.isComposerBlocked,
+                      coordinator.holdsMutation(projectRoot: root, id: lease) else {
+                    throw GateBlocked("The project changed while starting production. Start again in the current project.")
+                }
+                _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding, declaredProductionContract: declaration.productionContract)
+            }
+            do {
+                try requireCurrent()
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try Task.checkCancellation()
+                    _ = try ProjectPackGate.requireMutation(projectURL: home, declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding, declaredProductionContract: declaration.productionContract)
+                    let fence = try PipelineSpatialSceneAuthority.SourceFence.capture(dataRoot: root)
+                    let transaction = try ProjectWorkingCopy.preparePipelineTransaction(at: root) { staging in
+                        try Task.checkCancellation()
+                        let stagingHome = FrameInventory.projectHome(of: staging)
+                        do {
+                            try ProjectScaffold.initProject(home: stagingHome, name: name,
+                                mode: declaration.productionContract == .current ? .generic : .beat, extraDirs: extraDirs)
+                        } catch ProjectScaffold.ScaffoldError.alreadyAProject {}
+                        try Task.checkCancellation()
+                        guard let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: staging,
+                            expectedPack: declaration.binding, expectedProductionContract: declaration.productionContract) else {
+                            throw GateBlocked("The new production workflow could not be read.")
+                        }
+                        if workflow.isProductionV2 {
+                            try PhaseContractRuntime.initializeWorkflowStateIfNeeded(dataRoot: staging, workflow: workflow)
+                        }
+                        return true
+                    }
+                    do { try fence.requireUnchanged(); return (transaction, fence) }
+                    catch { transaction.discard(); throw error }
+                }
+                let prepared = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+                do {
+                    try requireCurrent()
+                    try await self.productionStartupPreparationBarrier?()
+                    try requireCurrent()
+                    _ = try prepared.0.commit { _ in
+                        try requireCurrent()
+                        try prepared.1.requireCanonicalRootsUnchanged()
+                    }
+                    committed = true
+                } catch {
+                    await Task.detached(priority: .utility) { prepared.0.discard() }.value
+                    throw error
+                }
+                await Task.detached(priority: .utility) { prepared.0.discard() }.value
+                coordinator.endMutation(projectRoot: root, id: lease)
+                holdsLease = false
+                self.onPipelineChanged?()
+                await self.refreshEngineState()
+            } catch {
+                guard !Task.isCancelled, self.projectId == projectID, self.workingRoot == home,
+                      self.openWorkingCopyKey == key, self.openWorkingCopyGeneration == generation else { return }
+                self.mediaPanelToast = MediaPanelToast(message: "Couldn't set up the production pipeline: \(error.localizedDescription)")
+            }
         }
+        productionStartupTask = (id, task)
+    }
+
+    @discardableResult
+    func cancelProductionStartupForClose() -> Task<Void, Never>? {
+        productionStartupTask?.task.cancel()
+        return productionStartupTask?.task
+    }
+
+    func waitForProductionStartup() async {
+        await productionStartupTask?.task.value
     }
 
     func runActivePackStarter() {
@@ -775,14 +954,15 @@ final class EditorViewModel {
                 return
             }
             guard !agentService.isComposerBlocked, !agentService.isStreaming else { return }
-            workflowHandoffPending = false
             let prompt = reconciliation.agentPrompt
                 ?? "Continue from the next unapproved production phase."
             let phase = projectState?.nextPhaseName
-            agentService.sendWorkOrder(
+            if agentService.sendWorkOrder(
                 .init(title: phase.map { "Continue \(PhaseDisplay.label($0))" } ?? "Continue production",
                       systemImage: "play", prompt: prompt, phase: phase),
-                direction: "", mentions: [])
+                direction: "", mentions: []) {
+                workflowHandoffPending = false
+            }
         } else {
             startProduction()
         }
@@ -819,6 +999,7 @@ final class EditorViewModel {
     let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
     let generationBatchCoordinator = GenerationBatchCoordinator()
     let phaseSpendApproval = PhaseSpendApprovalController()
+    let renderReviewRun = PipelineRenderReviewRun()
 
     var agentPanelVisible: Bool {
         get { showsAgentActivity }
@@ -857,7 +1038,7 @@ final class EditorViewModel {
 
     var isSidebarPresented: Bool {
         guard !theaterActive else { return false }
-        if let maximizedPanel {
+        if let maximizedPanel = presentedMaximizedPanel {
             return maximizedPanel == sidebarPanel
         }
         return mediaPanelVisible
@@ -865,10 +1046,10 @@ final class EditorViewModel {
 
     var isInspectorPresented: Bool {
         guard !theaterActive else { return false }
-        if let maximizedPanel {
+        if let maximizedPanel = presentedMaximizedPanel {
             return maximizedPanel == .inspector
         }
-        return inspectorPanelVisible
+        return presentedInspectorVisible
     }
 
     func toggleSidebarPresentation() {
@@ -876,7 +1057,7 @@ final class EditorViewModel {
             theaterActive = false
             maximizedPanel = nil
             mediaPanelVisible = true
-        } else if let maximizedPanel {
+        } else if let maximizedPanel = presentedMaximizedPanel {
             self.maximizedPanel = nil
             mediaPanelVisible = maximizedPanel != sidebarPanel
         } else {
@@ -885,7 +1066,10 @@ final class EditorViewModel {
     }
 
     func toggleInspectorPresentation() {
-        if theaterActive {
+        if productionActivityVisible {
+            showsAgentActivity = false
+            inspectorPanelVisible = false
+        } else if theaterActive {
             theaterActive = false
             maximizedPanel = nil
             inspectorPanelVisible = true
@@ -933,16 +1117,36 @@ final class EditorViewModel {
     /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
     var productionSelectedPhase: String?
     var storyboardSelection: StoryboardShotSelection?
-    var showsAgentActivity = false
+    var showsAgentActivity = false {
+        didSet { if showsAgentActivity, workspaceFocus == .production { theaterActive = false } }
+    }
+
+    var productionActivityVisible: Bool { workspaceFocus == .production && showsAgentActivity && !theaterActive }
+    var presentedInspectorVisible: Bool { inspectorPanelVisible || productionActivityVisible }
+    var presentedMaximizedPanel: FocusedPanel? {
+        theaterActive ? .preview : productionActivityVisible ? nil : maximizedPanel
+    }
     var cockpitTab: CockpitTab = .pipeline
+    var storyboardPlanningSelection: StoryboardPlanningSelection?
+    var productionPlanSelection: ProductionPlanSelection?
     var acknowledgedReviewRequests: Set<String> = []
-    private var storyDraftsByProject: [URL: StoryPanelDrafts] = [:]
+    @ObservationIgnored private var storyDraftsByProject: [URL: StoryPanelDrafts] = [:]
     var storyPanelDrafts: StoryPanelDrafts {
+        _ = nativePlanningDraftRevision
         let key = workingRoot ?? URL(fileURLWithPath: "/")
         if let drafts = storyDraftsByProject[key] { return drafts }
         let drafts = StoryPanelDrafts()
         storyDraftsByProject[key] = drafts
         return drafts
+    }
+    @ObservationIgnored private var renderReviewDraftsByProject: [URL: ProductionRenderReviewDraft] = [:]
+    var renderReviewDraft: ProductionRenderReviewDraft {
+        _ = nativePlanningDraftRevision
+        let key = workingRoot ?? URL(fileURLWithPath: "/")
+        if let draft = renderReviewDraftsByProject[key] { return draft }
+        let draft = ProductionRenderReviewDraft()
+        renderReviewDraftsByProject[key] = draft
+        return draft
     }
 
     /// When non-nil, a pack-contributed cockpit surface (by id) is the active cockpit view, overriding
@@ -955,7 +1159,10 @@ final class EditorViewModel {
         case .story: productionSelectedPhase = "brief"
         case .productionDesign: productionSelectedPhase = "production_design"
         case .treatment: productionSelectedPhase = "treatment"
+        case .script: productionSelectedPhase = "script"
         case .storyboard: productionSelectedPhase = "storyboard"
+        case .shotPlanning: productionSelectedPhase = "shot_planning"
+        case .renderReview: productionSelectedPhase = "render_review"
         case .bible: productionSelectedPhase = "bible"
         case .shotlist: productionSelectedPhase = "shotlist"
         case .project: productionSelectedPhase = "project_init"
@@ -973,6 +1180,7 @@ final class EditorViewModel {
     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
+        if workspaceFocus == .production { showsAgentActivity = false }
         rememberSourcePosition()
         mediaBrowserState(for: workspaceFocus).sourceRanges = sourcePreviewStates
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
@@ -1085,8 +1293,10 @@ final class EditorViewModel {
         }
         projectStateLoadToken += 1
         let token = projectStateLoadToken
-        let result = await CockpitDataService.projectState(projectDir: dir)
-        guard token == projectStateLoadToken else { return }
+        let declaration = ProjectPackGate.MutationDeclaration(packName: declaredPluginName,
+            binding: declaredPluginBinding, productionContract: declaredProductionContract)
+        let result = await CockpitDataService.projectState(projectDir: dir, declaration: declaration)
+        guard token == projectStateLoadToken, workingRoot == dir else { return }
         let previousPhase = projectState?.nextPhaseName
         projectState = (try? result.get()) ?? nil
         if let nextPhase = projectState?.nextPhaseName, nextPhase != previousPhase,
@@ -1116,6 +1326,29 @@ final class EditorViewModel {
     func resetWorkflowForSessionReload() {
         pipelineAgentHarness.reset()
         workflowHandoffPending = false
+    }
+
+    func reloadProductionWorkflowDeclaration(ownedMutation: UUID? = nil) throws {
+        guard declaredPluginName == nil, declaredPluginBinding == nil, declaredProductionContract == nil,
+              let home = workingRoot, let root = DataRootResolver.dataRoot(of: home) else {
+            throw GateBlocked("The project changed before its production upgrade could be activated. Reopen it.")
+        }
+        let ownsMutation = ownedMutation.map { pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: $0) } ?? false
+        guard pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil || ownsMutation else {
+            throw GateBlocked("The project changed before its production upgrade could be activated. Reopen it.")
+        }
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: home)
+        guard declaration.packName == nil, declaration.binding == nil, declaration.productionContract == .current else {
+            throw GateBlocked("The upgraded project has an unexpected production workflow. Reopen it.")
+        }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: nil, declaredBinding: nil,
+            declaredProductionContract: declaration.productionContract)
+        declaredProductionContract = declaration.productionContract
+        pipelineAgentHarness.reset()
+        resetNativePlanningHistory()
+        workflowHandoffPending = true
+        onPipelineChanged?()
+        setWorkspaceFocus(.production)
     }
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
@@ -1202,10 +1435,12 @@ final class EditorViewModel {
         async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
         async let ledgerResult = CockpitDataService.ledger(projectDir: dir)
         async let briefResult = CockpitDataService.brief(projectDir: dir)
-        async let contractResult = CockpitDataService.contract(projectDir: dir)
+        let declaration = ProjectPackGate.MutationDeclaration(packName: declaredPluginName,
+            binding: declaredPluginBinding, productionContract: declaredProductionContract)
+        async let contractResult = CockpitDataService.contract(projectDir: dir, declaration: declaration)
         async let stateRefresh: Void = refreshProjectState()
         let (b, s, l, br, ct, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, contractResult, stateRefresh)
-        guard token == engineArtifactsLoadToken else { return }
+        guard token == engineArtifactsLoadToken, workingRoot == dir else { return }
         bible = (try? b.get()) ?? nil
         shotlist = (try? s.get()) ?? nil
         ledger = (try? l.get()) ?? nil
@@ -1239,11 +1474,12 @@ final class EditorViewModel {
             return
         }
         guard workflowHandoffPending else { return }
-        workflowHandoffPending = false
         let kickoff = reconciliation.agentPrompt
             ?? "The production pipeline is initialized. Continue from the next unapproved phase."
-        agentService.send(text: kickoff, mentions: [], hidden: true,
-            taskActivity: .init(title: "Continue production", phase: projectState?.nextPhaseName))
+        if agentService.send(text: kickoff, mentions: [], hidden: true,
+            taskActivity: .init(title: "Continue production", phase: projectState?.nextPhaseName)) {
+            workflowHandoffPending = false
+        }
     }
 
     var keyframesPanelVisible: Bool = {
@@ -1323,7 +1559,12 @@ final class EditorViewModel {
         self.agentService = agentService
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
-            projectURL: { [weak self] in self?.workingCopyHome }
+            projectURL: { [weak self] in self?.workingCopyHome },
+            productionDeclaration: { [weak self] in
+                guard let self else { return nil }
+                return .init(packName: self.declaredPluginName, binding: self.declaredPluginBinding,
+                    productionContract: self.declaredProductionContract)
+            }
         )
         agentService.editor = self
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
@@ -1590,8 +1831,12 @@ final class EditorViewModel {
     }
 
     func clipDurationFrames(for asset: MediaAsset, segment: ClosedRange<Double>?) -> Int {
-        let seconds = segment.map { $0.upperBound - $0.lowerBound } ?? asset.duration
-        return max(1, secondsToFrame(seconds: seconds, fps: timeline.fps))
+        if let segment {
+            let start = secondsToFrame(seconds: segment.lowerBound, fps: timeline.fps)
+            let end = secondsToFrame(seconds: segment.upperBound, fps: timeline.fps)
+            return max(1, end - start)
+        }
+        return max(1, secondsToFrame(seconds: asset.duration, fps: timeline.fps))
     }
 
     func findClip(id: String) -> ClipLocation? {
@@ -1680,5 +1925,22 @@ final class EditorViewModel {
     var mediaFolderNavigationRequest: MediaFolderNavigationRequest?
     @ObservationIgnored var mediaPickerStates: [MediaPickerPurpose: MediaPickerState] = [:]
     @ObservationIgnored var mediaBrowserStates: [WorkspaceFocus: MediaBrowserState] = [:]
+
+    var effectResourceProblems: [ProjectEffectResources.Problem] = []
+    var requestedLUTClipID: String?
+
+    @ObservationIgnored var captionTranscriptionClient = CaptionTranscriptionClient.live
+    var generationPanelServicesOverride: GenerationPanelServices?
+    @ObservationIgnored var mediaPanelSelectionAnchor: String?
+
+    @ObservationIgnored private var productionStartupTask: (id: UUID, task: Task<Void, Never>)?
+    @ObservationIgnored var productionStartupPreparationBarrier: (@MainActor @Sendable () async throws -> Void)?
+
+    private var nativePlanningDraftRevision: UInt64 = 0
+    @ObservationIgnored private var recoveryDiscardTask: (id: UUID, task: Task<Void, Never>)?
+    private var workingCopyReloadGeneration: UUID?
+    private(set) var recoveryDiscardInProgress = false
+
+    var isProjectEditingPaused: Bool { recoveryDiscardInProgress || needsSavedProjectReload }
 
 }

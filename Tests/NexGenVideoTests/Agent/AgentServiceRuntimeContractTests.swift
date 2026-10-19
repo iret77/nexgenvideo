@@ -6,6 +6,63 @@ import Testing
 @MainActor
 @Suite("AgentService runtime contract")
 struct AgentServiceRuntimeContractTests {
+    @Test("Core enrollment keeps its handoff through an unavailable runtime and starts only once",
+        arguments: [false, true], [false, true])
+    func enrolledCoreRetriesRefusedHandoff(hasExistingPipeline: Bool, nativeContinue: Bool) async throws {
+        let package = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent(UUID().uuidString + ".ngv")
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? FileManager.default.removeItem(at: package) }
+        if hasExistingPipeline {
+            _ = try ProjectScaffold.initProject(home: package, name: "Existing production", mode: .generic)
+        }
+        let runtime = FakeRuntimeAdapter(backend: .claudeCode)
+        var readinessFailure: AgentStreamError? = .upstream("Sign in before continuing production.")
+        let service = AgentService(backend: .claudeCode, refreshBackendStatusOnInit: false,
+            runtimeAdapterFactory: { _ in runtime }, runtimeReadinessOverride: { readinessFailure },
+            runtimeHostContextOverride: { .hostOwned(tools: []) })
+        service.loadSessions(from: nil)
+        let editor = EditorViewModel(agentService: service)
+        defer { service.cancel(); editor.releaseWorkingCopy() }
+        editor.projectURL = package
+        let home = try #require(editor.workingRoot)
+        let key = try #require(editor.openWorkingCopyKey)
+        let leaseRoot = DataRootResolver.dataRoot(of: home) ?? home
+        let coordinator = editor.pipelinePhaseRunCoordinator
+        let lease = try #require(coordinator.beginMutation(projectRoot: leaseRoot, label: "Production workflow upgrade"))
+        defer { coordinator.endMutation(projectRoot: leaseRoot, id: lease) }
+        let intent = try ProductionWorkflowRecoveryMigration.preview(projectURL: package, sourceRoot: home,
+            source: .core, target: .core)
+        try ProjectPackMigration.migrateCoreWorkingCopy(projectURL: package, workingCopyKey: key, intent: intent)
+        var declarationChanged = false
+        editor.onPipelineChanged = { declarationChanged = true }
+        try editor.reloadProductionWorkflowDeclaration(ownedMutation: lease)
+        #expect(editor.declaredProductionContract == .current)
+        #expect(declarationChanged)
+        #expect(service.messages.isEmpty)
+        #expect(runtime.sendRequests.isEmpty)
+        coordinator.endMutation(projectRoot: leaseRoot, id: lease)
+        await editor.refreshEngineState()
+        #expect(service.streamError?.localizedDescription == readinessFailure?.localizedDescription)
+        #expect(service.messages.isEmpty)
+        #expect(runtime.sendRequests.isEmpty)
+        readinessFailure = nil
+        if nativeContinue { #expect(editor.continueProductionPhase("project_init")) }
+        else { await editor.refreshEngineState() }
+        await waitUntil { runtime.sendRequests.count == 1 }
+        let turn = try #require(runtime.sendRequests.first)
+        #expect(service.messages.filter { $0.role == .user }.count == 1)
+        #expect(service.messages.last?.hidden == true)
+        #expect(service.currentTaskPhase == "project_init")
+        #expect(!coordinator.hasRunningJobs)
+        runtime.emit(.terminal(.completed(.endTurn)), for: turn)
+        runtime.finish(turn)
+        await waitUntil { !service.isStreaming }
+        await editor.refreshEngineState()
+        #expect(runtime.sendRequests.count == 1)
+        #expect(service.messages.filter { $0.role == .user }.count == 1)
+    }
+
     @Test("Gate continuation uses its new phase without inventing a user task or borrowing history")
     func gateContinuationReplacesHistoricalTaskPhase() async throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -34,7 +91,7 @@ struct AgentServiceRuntimeContractTests {
         service.isStreaming = true
         let origin = ToolCallOrigin.inAppChat(sessionID: try #require(service.currentSessionId))
         _ = try service.requestGateApproval(GateApproval(phase: "bible", dataRoot: liveRoot), origin: origin)
-        let result = await service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
         #expect(result?.isError == false)
         #expect(try YAMLArtifactStore(dataRoot: liveRoot).load(Gates.self, at: PipelineLayout.gatesFile).get("bible").approved)
         await editor.refreshProjectState()
@@ -371,8 +428,9 @@ struct AgentServiceRuntimeContractTests {
 
     @Test("runtime descriptor keeps host capabilities before startup and after rotation")
     func runtimeDescriptorIsStableWithoutAnActiveAdapter() async throws {
-        let toolNames = Set(ToolDefinitions.all.map { $0.name.rawValue })
+        let toolNames = Set(ToolDefinitions.all.filter { $0.name != .writeRenderReview }.map { $0.name.rawValue })
         let context = AgentRuntimeHostContext.hostOwned(tools: ToolDefinitions.all)
+        #expect(!context.toolSchemas.contains { $0.name == "write_render_review" })
 
         for backend in AgentBackend.allCases {
             let extensions = configuredProviderExtensions(for: backend)
@@ -1236,6 +1294,23 @@ struct AgentServiceRuntimeContractTests {
         #expect(service.messages.flatMap(\.hostStateRecords).isEmpty)
         #expect(service.sessions.flatMap(\.messages)
             .flatMap(\.hostStateRecords).isEmpty)
+    }
+
+    @Test("cancel closes fresh host attribution without discarding captured completions")
+    func cancellationInvalidatesNewHostTurnCaptures() async throws {
+        let adapter = FakeRuntimeAdapter(backend: .claudeCode)
+        let service = makeService(backend: .claudeCode, adapter: adapter)
+        #expect(service.send(text: "Project-scoped request", mentions: []))
+        await waitUntil { adapter.sendRequests.count == 1 }
+        let turn = try #require(adapter.sendRequests.first)
+        let runtime = try #require(adapter.startRequests.first)
+        let origin = ToolCallOrigin.embeddedRuntime(chatSessionID: turn.sessionID, runtimeGenerationID: runtime.runtimeGenerationID)
+        let reference = try #require(service.captureHostTurnReference(origin: origin))
+        service.cancel()
+        #expect(service.captureHostTurnReference(origin: origin) == nil)
+        let record = hostRecord(state: .persisted, suffix: "completed-before-cancel")
+        service.recordHostState(record, origin: origin, turnReference: reference)
+        #expect(service.messages.flatMap(\.hostStateRecords).contains { $0.id == record.id })
     }
 
     @Test("a reloaded embedded draft rejects its old project-generation completion")

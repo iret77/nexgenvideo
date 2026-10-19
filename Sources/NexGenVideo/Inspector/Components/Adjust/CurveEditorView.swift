@@ -35,6 +35,7 @@ struct CurveEditorView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .reviewAcceptanceProbe("inspector.curve.channel", text: channel.rawValue)
 
             GeometryReader { geo in
                 let size = CGSize(width: geo.size.width, height: AppTheme.Curve.editorHeight)
@@ -89,6 +90,7 @@ struct CurveEditorView: View {
                 }
             }
             .frame(height: AppTheme.Curve.editorHeight)
+            .reviewAcceptanceProbe("inspector.curve.canvas", text: channel.rawValue)
 
             Text("Drag to add or shape a point · double-click to remove")
                 .interfaceFont(size: AppTheme.Typography.metadata)

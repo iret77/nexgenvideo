@@ -51,6 +51,7 @@ enum MainMenuBuilder {
         let importItem = NSMenuItem(title: "Import Media…", action: #selector(EditorActions.importMedia(_:)), keyEquivalent: "i")
         importItem.keyEquivalentModifierMask = [.command]
         menu.addItem(importItem)
+        menu.addItem(withTitle: "Import from FilmFlow…", action: #selector(EditorActions.importFilmFlow(_:)), keyEquivalent: "")
 
         menu.addItem(.separator())
 
