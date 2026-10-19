@@ -53,7 +53,7 @@ struct ToolbarView: View {
                     isDisabled: editor.zoomScale <= editor.minZoomScale,
                     action: zoomOut
                 )
-                .reviewAcceptanceProbe("timeline.zoom.out", enabledState: editor.zoomScale > editor.minZoomScale)
+                .reviewAcceptanceProbe("timeline.zoom.out", state: editor.zoomScale > editor.minZoomScale)
                 // Log-mapped so slider travel is uniform per zoom factor
                 let zoomBinding = Binding(
                     get: { log(editor.zoomScale) },
@@ -70,7 +70,7 @@ struct ToolbarView: View {
                     isDisabled: editor.zoomScale >= Zoom.max,
                     action: zoomIn
                 )
-                .reviewAcceptanceProbe("timeline.zoom.in", enabledState: editor.zoomScale < Zoom.max)
+                .reviewAcceptanceProbe("timeline.zoom.in", state: editor.zoomScale < Zoom.max)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.md)

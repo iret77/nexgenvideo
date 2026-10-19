@@ -30,7 +30,7 @@ struct SourceRangeInspector: View {
                             .buttonStyle(.inlineAction())
                             .disabled(editor.sourcePreviewStates[asset.id]?.inSeconds == nil
                                       && editor.sourcePreviewStates[asset.id]?.outSeconds == nil)
-                            .reviewAcceptanceProbe("source.clear.\(asset.id)", enabledState: editor.sourcePreviewStates[asset.id]?.inSeconds != nil || editor.sourcePreviewStates[asset.id]?.outSeconds != nil)
+                            .reviewAcceptanceProbe("source.clear.\(asset.id)", state: editor.sourcePreviewStates[asset.id]?.inSeconds != nil || editor.sourcePreviewStates[asset.id]?.outSeconds != nil)
                     }
                 }
             }
@@ -56,10 +56,10 @@ struct SourceRangeInspector: View {
             WrapLayout(spacing: AppTheme.Spacing.md) {
                 Button("Insert") { place(.insert) }
                     .buttonStyle(.capsule(.prominent, size: .regular))
-                    .reviewAcceptanceProbe("source.insert.\(asset.id)", enabledState: editor.sourceEditUnavailableReason(for: asset) == nil)
+                    .reviewAcceptanceProbe("source.insert.\(asset.id)", state: editor.sourceEditUnavailableReason(for: asset) == nil)
                 Button("Overwrite") { place(.overwrite) }
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .reviewAcceptanceProbe("source.overwrite.\(asset.id)", enabledState: editor.sourceEditUnavailableReason(for: asset) == nil)
+                    .reviewAcceptanceProbe("source.overwrite.\(asset.id)", state: editor.sourceEditUnavailableReason(for: asset) == nil)
             }
             .disabled(editor.sourceEditUnavailableReason(for: asset) != nil)
             if let reason = editor.sourceEditUnavailableReason(for: asset) {
