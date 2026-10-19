@@ -3,6 +3,8 @@ import Foundation
 public typealias BiblePlanningEvidenceReferences = @Sendable (Bible, URL) throws -> [CanonicalArtifactReferenceV1]
 
 public enum ProductionPlanningLineageV2 {
+    private static let affectProfilePath = "analysis/affect.json"
+
     public static let phases = ["project_init", "brief", "production_design", "treatment", "script", "storyboard",
                                 "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render"]
 
@@ -50,7 +52,7 @@ public enum ProductionPlanningLineageV2 {
             paths = [PipelineLayout.briefFile, StorySourceV1.currentPath] + source.header.inputs.map(\.path)
                 + [source.source, source.declineReceipt].compactMap { $0?.path }
                 + source.sourceDecisions.map(\.confirmationReceipt.path)
-                + optional([PlaybackRangeV1.currentPath, AffectProfile.file], dataRoot: dataRoot)
+                + optional([PlaybackRangeV1.currentPath, affectProfilePath], dataRoot: dataRoot)
         case "production_design":
             let design = try YAMLArtifactStore(dataRoot: dataRoot).load(ProductionDesign.self, at: PipelineLayout.productionDesignFile)
             try design.validate()

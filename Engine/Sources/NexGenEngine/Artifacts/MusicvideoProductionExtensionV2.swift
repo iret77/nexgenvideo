@@ -299,8 +299,8 @@ public enum MusicvideoProductionExtensionStoreV2 {
             guard section.end > timing.timebase.seconds(for: timing.rangeStartTicks),
                   section.start < timing.timebase.seconds(for: planEnd) else { return nil }
             let shotIDs = try timing.shots.filter { shot in
-                shot.startTicks < planEnd && timing.timebase.seconds(for: try shot.endTicks()) > section.start
-                    && timing.timebase.seconds(for: shot.startTicks) < section.end
+                try (shot.startTicks < planEnd && timing.timebase.seconds(for: shot.endTicks()) > section.start
+                    && timing.timebase.seconds(for: shot.startTicks) < section.end)
             }.map(\.id)
             return MusicvideoSongSectionV2(id: "section-" + String(section.index), startSeconds: section.start,
                 endSeconds: section.end, shotIDs: shotIDs)
