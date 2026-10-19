@@ -155,13 +155,13 @@ final class VideoEngine {
             } catch {
                 if !Task.isCancelled {
                     Log.preview.error("rebuild failed: \(error.localizedDescription)")
+                    rebuildTask = nil
                 }
-                rebuildTask = nil
                 return
             }
 
-            rebuildTask = nil
             guard !Task.isCancelled else { return }
+            rebuildTask = nil
 
             trackMappings = result.trackMappings
             clipNaturalSizes = result.clipNaturalSizes

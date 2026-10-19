@@ -253,7 +253,7 @@ struct ProductionObjectLinksView: View {
                 switch target {
                 case .shot:
                     editor.setWorkspaceFocus(.edit)
-                    editor.activePreviewTab = .timeline
+                    editor.selectPreviewTab(id: PreviewTab.timeline.id)
                     editor.selectedTimelineRange = nil
                     editor.selectedClipIds = [link.clipID]
                     editor.inspectedObject = .clip(link.clipID)

@@ -12,7 +12,7 @@ struct AgentTaskSelectionContextTests {
             Clip(id: "inside", mediaRef: "source", startFrame: 0, durationFrames: 90, trimStartFrame: 12),
             Clip(id: "outside", mediaRef: "other", startFrame: 100, durationFrames: 90),
         ])])
-        editor.activePreviewTab = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         editor.selectedTimelineRange = .init(startFrame: 15, endFrame: 45)
         editor.currentFrame = 22
         editor.inspectedObject = .shot("old-shot")
@@ -40,7 +40,7 @@ struct AgentTaskSelectionContextTests {
         editor.mediaAssets = [source]
         editor.timeline.fps = 30
         editor.setWorkspaceFocus(.edit)
-        editor.activePreviewTab = .mediaAsset(id: source.id, name: source.name, type: source.type)
+        editor.openPreviewTab(for: source)
         editor.sourcePreviewStates[source.id] = .init(positionSeconds: 1, inSeconds: 0.5, outSeconds: 1.5, targetTrackID: "target")
         editor.sourcePlayheadFrame = 24
         editor.inspectedObject = .shot("hidden-shot")
@@ -61,7 +61,7 @@ struct AgentTaskSelectionContextTests {
         let editor = EditorViewModel(agentService: AgentService(refreshBackendStatusOnInit: false))
         editor.setWorkspaceFocus(.production)
         editor.revealCockpit(.review)
-        editor.activePreviewTab = .timeline
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         editor.selectedTimelineRange = .init(startFrame: 15, endFrame: 45)
         editor.inspectedObject = .shot("selected-production-shot")
         let value = AgentTaskSelectionContext.capture(editor: editor)
