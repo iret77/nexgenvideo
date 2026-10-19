@@ -346,7 +346,7 @@ extension EditorWindowController: EditorActions {
         editorViewModel.showExportDialog = true
     }
 
-    @objc func selectAll(_ sender: Any?) {
+    @objc override func selectAll(_ sender: Any?) {
         if canHandleMediaShortcut() {
             editorViewModel.selectAllMediaPanelItems()
         } else if canHandleTimelineEditShortcut() {
