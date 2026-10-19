@@ -2,6 +2,7 @@ import AppKit
 import BpyRuntimeProtocol
 import Darwin
 import Foundation
+import NexGenEngine
 
 private final class BpySelfTestBox: @unchecked Sendable {
     private let lock = NSLock()

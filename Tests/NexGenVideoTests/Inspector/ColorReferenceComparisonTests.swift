@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 

@@ -26,7 +26,7 @@ actor ManualAudioGenerationTransport: MCPStatusClient {
                     "type": .string("object"), "properties": .object([
                         "blob": string, "contentType": .object(["type": .string("string"), "enum": .array([.string("audio/wav")])])
                     ]), "required": .array([.string("blob"), .string("contentType")])])
-            ])]))
+            ])])]))
     }
 
     nonisolated static var tools: [MCPProviderClient.DiscoveredTool] {

@@ -1,4 +1,5 @@
 import SwiftUI
+import NexGenEngine
 
 struct PatternRecommendationsView: View {
     @Environment(EditorViewModel.self) private var editor
