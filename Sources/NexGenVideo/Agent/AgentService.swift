@@ -615,7 +615,10 @@ final class AgentService {
                     if self.dialogOrigins[dialog.id] == .direct {
                         self.dialogOrigins.removeValue(forKey: dialog.id)
                         self.dialogActivities.removeValue(forKey: dialog.id)
-                        editor.toast = plan.wordRemoval == nil ? "Applied \(count) selected caption changes." : "Applied speech cuts and updated affected captions."
+                        editor.mediaPanelToast = MediaPanelToast(
+                            message: plan.wordRemoval == nil ? "Applied \(count) selected caption changes." : "Applied speech cuts and updated affected captions.",
+                            kind: .success
+                        )
                         return
                     }
                     self.sendDialogResponse(dialog, result: result,
