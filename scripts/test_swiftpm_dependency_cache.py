@@ -50,6 +50,7 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
                 "recorded-hang-replay.yml",
                 "workspace-ui-acceptance.yml",
                 "codex-app-server-acceptance.yml",
+                "agent-backend-live-acceptance.yml",
             },
         )
 

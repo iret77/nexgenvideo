@@ -279,7 +279,8 @@ class RoleEvidenceTests(unittest.TestCase):
             fixture(directory)
             row = json.loads((directory / "performance-role-evidence.json").read_bytes())
             row.update(event="production-performance-roles", scale=1.0, evidenceDirectory=directory.name)
-            process = SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, [row,
+            started = dict(event="started", case="performanceroles", scale=1.0, restorationIgnored=True)
+            process = SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, [started, row,
                 dict(event="completed", case="performanceroles", scale=1.0)])))
             with patch("workspace_ui_acceptance.subprocess.run", return_value=process), \
                     patch("workspace_ui_acceptance.performance_role_evidence", wraps=workspace.performance_role_evidence) as consume:
@@ -295,6 +296,9 @@ class RoleEvidenceTests(unittest.TestCase):
                 self.assertEqual(route.call_count, 1)
             from workspace_native_case import timeout_for
             self.assertEqual(timeout_for("performanceroles"), 600)
+            missing_start = SimpleNamespace(returncode=0, stdout="\n".join(process.stdout.splitlines()[1:]))
+            with patch("workspace_ui_acceptance.subprocess.run", return_value=missing_start):
+                self.assertFalse(workspace.run_scale("isolated-fixture-app", output, 1.0, "performanceroles")["completed"])
             (directory / "role-source.wav").write_bytes(b"changed")
             self.assertFalse(validate_case("performanceroles", [row, dict(event="completed", case="performanceroles", scale=1.0)], output, 1.0)[0])
             with patch.dict(workspace.ACCEPTANCE_SCOPES, {"all": ("performanceroles",)}), \

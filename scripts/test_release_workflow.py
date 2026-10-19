@@ -65,7 +65,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(single_line_run(by_name[build_name]), build)
         self.assertEqual(single_line_run(by_name[stage_name]), stage)
         self.assertEqual(matching_shell_lines(by_name[test_name], "swift test "), [test])
-        self.assertEqual(single_line_run(by_name[bundle_name]), bundle)
+        self.assertEqual(matching_shell_lines(by_name[bundle_name], "scripts/bundle.sh "), [bundle])
+        bundle_verification = "scripts/verify_bpy_bundle.sh .build/NexGenVideo.app --distribution"
+        self.assertEqual(
+            matching_shell_lines(by_name[bundle_name], "scripts/verify_bpy_bundle.sh "),
+            [bundle_verification],
+        )
+        self.assertLess(by_name[bundle_name].index(bundle), by_name[bundle_name].index(bundle_verification))
         self.assertEqual(
             matching_shell_lines(by_name[pack_name], "scripts/assemble_ngvpack.sh "),
             [pack],

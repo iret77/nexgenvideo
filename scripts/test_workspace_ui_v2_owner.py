@@ -38,7 +38,8 @@ def owner_fixture(output, scale=1.0, kind="musicvideo"):
             "artifactSHA256": "a" * 64, "packagedInstructions": following != "complete",
             "handoffInstructionsSHA256": None if following == "complete" else "d" * 64,
             "handoffTurnID": f"00000000-0000-4000-8000-{index:012d}",
-            "screenshots": [phase + suffix + ".png" for suffix in ("-blocked", "-ready", "-approved")]})
+            "screenshots": [("startup/" if kind == "musicvideo" and phase in phases[:5] else "")
+                + phase + suffix + ".png" for suffix in ("-blocked", "-ready", "-approved")]})
     controls = ["script.scene.apply", "storyboard.edit.apply", "storyboard.undo", "storyboard.redo",
                 "storyboard.native-sketch.confirm", "animatic.play", "storyboard.view", "render-review.record-native", "generation-batch.approve",
                 "take.record-pass", "take.save", "take.use", "take.range.play", "take.range.save", "take.range.add",
@@ -79,6 +80,7 @@ def owner_fixture(output, scale=1.0, kind="musicvideo"):
     interactions += [{"kind": "save-panel", "exactURLVerified": True}, {"kind": "visible-group", "frames": [[0, 0, 100, 50]]}]
     images = ["actual-window.png", "animatic-left-stopped.png"]
     for image in images + [image for gate in gates for image in gate["screenshots"]]:
+        (directory / image).parent.mkdir(parents=True, exist_ok=True)
         (directory / image).write_bytes(b"\x89PNG\r\n\x1a\n" + b"unit-image" * 200)
     movie = b"unit-test-movie" * 200
     poster = b"\x89PNG\r\n\x1a\n" + b"unit-poster" * 200
@@ -106,6 +108,11 @@ def owner_fixture(output, scale=1.0, kind="musicvideo"):
     if kind == "musicvideo":
         from test_native_new_musicvideo_evidence import new_musicvideo_fixture
         startup.update(new_musicvideo_fixture(directory / "startup", scale)[0])
+        from test_playback_reanalysis_evidence import fixture as playback_fixture
+        analysis_index = next(index for index, gate in enumerate(gates) if gate["phase"] == "analysis")
+        _, current_analysis = playback_fixture(directory / "startup", scale, analysis_gate=gates[analysis_index])
+        gates[analysis_index] = {**current_analysis[0],
+            "screenshots": ["startup/" + image for image in current_analysis[0]["screenshots"]]}
     if kind == "musicvideo":
         pattern_directory = directory / "patterns"
         pattern_directory.mkdir(exist_ok=True)
@@ -199,9 +206,26 @@ class V2OwnerEvidenceTests(unittest.TestCase):
                     self.assertFalse(owner_evidence(changed, self.output, scale, kind)[0])
 
     def test_real_intake_is_required_for_musicvideo_owner_acceptance(self):
-        rows = owner_fixture(self.output)
-        rows[0]["startup"] = {"nativeIntakeEvidence": []}
-        self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
+        for fault in ("intake", "reanalysis", "current-analysis-gate", "missing-prefix", "foreign-prefix", "traversal", "wrong-image"):
+            with self.subTest(fault=fault):
+                rows = owner_fixture(self.output)
+                original_gates = copy.deepcopy(rows[0]["nativeGateApprovals"])
+                self.assertTrue(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
+                self.assertEqual(rows[0]["nativeGateApprovals"], original_gates)
+                if fault == "intake":
+                    rows[0]["startup"] = {"nativeIntakeEvidence": []}
+                elif fault == "reanalysis":
+                    directory = self.output / rows[0]["evidenceDirectory"] / "startup"
+                    (directory / "playback-reanalysis-result.json").write_text("{}")
+                elif fault == "current-analysis-gate":
+                    gate = next(gate for gate in rows[0]["nativeGateApprovals"] if gate["phase"] == "analysis")
+                    gate["artifactSHA256"] = "f" * 64
+                else:
+                    gate = next(gate for gate in rows[0]["nativeGateApprovals"] if gate["phase"] == "analysis")
+                    basename = gate["screenshots"][0].removeprefix("startup/")
+                    gate["screenshots"][0] = {"missing-prefix": basename, "foreign-prefix": "other/" + basename,
+                        "traversal": "startup/../" + basename, "wrong-image": "startup/other.png"}[fault]
+                self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_programmatic_musicvideo_scaffold_is_not_native_new(self):
         rows = owner_fixture(self.output)

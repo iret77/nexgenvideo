@@ -65,7 +65,7 @@ class MediaBrowserOwnerEvidenceTests(unittest.TestCase):
             ("media.selection-surface", "marquee"), ("media.asset.a", "Selected folder"),
             ("media.moment.a.1.0", "timeline frame 0"), ("media.spoken.c.0.5", "timeline frame 45"))]
         interactions += [{"kind": "keyboard", "characters": key, "modifiers": (1 << 20) | ((1 << 17) if key == "Z" else 0)}
-                         for key in ("a", "z", "z", "Z", "s")]
+                         for key in ("z", "z", "Z", "s")]
         interactions += [{"kind": "text", "field": {"id": identifier, "actual": value, "expected": value, "editorText": value,
             "commitInput": "Tab", "fontPointSize": 19.5, "stage": "commit-requested", "owner": "NSTextField",
             "ownsEditor": False, "focusLeftTarget": True, "requiresFocusExit": identifier.startswith("media.folder-rename.")}} for identifier, value in (("media.search", "harbor"), ("media.folder-rename.selected", "Selected"))]
@@ -216,7 +216,7 @@ class MediaBrowserOwnerEvidenceTests(unittest.TestCase):
         self.persist(changed)
         self.assertFalse(validate(changed, self.output, 1.5))
 
-        for mutation in ("reversed-clicks", "command-click", "foreign-click", "late-select-all", "missing-image-filter", "missing-command-a"):
+        for mutation in ("reversed-clicks", "command-click", "foreign-click", "late-select-all", "missing-image-filter", "early-command-a", "missing-command-a"):
             changed = copy.deepcopy(self.row)
             rows = changed["interactions"]
             shift = next(i for i, row in enumerate(rows) if row.get("kind") == "modified-pointer" and row.get("id") == "media.asset.a" and row.get("shift") is True)
@@ -232,6 +232,10 @@ class MediaBrowserOwnerEvidenceTests(unittest.TestCase):
                 rows[before], rows[after] = rows[after], rows[before]
             elif mutation == "missing-image-filter":
                 rows[:] = [row for row in rows if row.get("item") != "Image"]
+            elif mutation == "early-command-a":
+                command = next(i for i, row in enumerate(rows) if row.get("kind") == "keyboard" and row.get("characters") == "a")
+                before_filter = next(i for i, row in enumerate(rows) if row.get("kind") == "menu" and row.get("item") == "Image")
+                rows.insert(before_filter, rows.pop(command))
             else:
                 rows[:] = [row for row in rows if not (row.get("kind") == "keyboard" and row.get("characters") == "a")]
             self.persist(changed)

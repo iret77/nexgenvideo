@@ -136,7 +136,7 @@ jobs:
   cleanup-cache:
     needs: [cold, layout]
     if: ${{ always() && needs.layout.result == 'success' && needs.cold.outputs.cache_key != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

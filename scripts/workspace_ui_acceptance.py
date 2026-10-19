@@ -1304,7 +1304,22 @@ def owner_evidence(rows, output, scale, kind, performance=False):
             intake_images = ["startup/" + image for image in validate_new_musicvideo(directory / "startup", row.get("startup", {}), scale)]
             intake_images += ["startup/" + image for image in validate_intake(directory / "startup", row.get("startup", {}))]
             from playback_reanalysis_evidence import validate as validate_playback_reanalysis
-            intake_images += ["startup/" + image for image in validate_playback_reanalysis(directory / "startup", row.get("nativeGateApprovals", []), scale)]
+            analysis_gates = [dict(gate) for gate in row.get("nativeGateApprovals", []) if gate.get("phase") == "analysis"]
+            if len(analysis_gates) != 1:
+                return False, []
+            gate_images = analysis_gates[0].get("screenshots")
+            if not isinstance(gate_images, list) or len(gate_images) != 3:
+                return False, []
+            local_images = []
+            for image in gate_images:
+                if not isinstance(image, str) or not image.startswith("startup/"):
+                    return False, []
+                local = image.removeprefix("startup/")
+                if not local or Path(local).name != local or local in (".", "..") or "\\" in local:
+                    return False, []
+                local_images.append(local)
+            analysis_gates[0]["screenshots"] = local_images
+            intake_images += ["startup/" + image for image in validate_playback_reanalysis(directory / "startup", analysis_gates, scale)]
         except (KeyError, TypeError, ValueError, OSError, AttributeError):
             return False, []
         from pattern_recommendations_evidence import validate as validate_patterns

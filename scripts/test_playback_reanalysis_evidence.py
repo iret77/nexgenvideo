@@ -8,13 +8,16 @@ import unittest
 from playback_reanalysis_evidence import validate
 
 
-def fixture(root, scale=1):
+def fixture(root, scale=1, analysis_gate=None):
     def put(name, value):
         raw = json.dumps(value, sort_keys=True).encode(); (root / name).write_bytes(raw)
         return {'path': name, 'retained': name, 'sha256': hashlib.sha256(raw).hexdigest()}
-    track = b'controlled parser-only audio'; (root / 'intake-track-assigned.bin').write_bytes(track)
-    sha = hashlib.sha256(track).hexdigest(); key = '00000000-0000-4000-8000-000000000001'
-    put('native-new-project-ngv.json', {'id': key})
+    track_path = root / 'intake-track-assigned.bin'
+    if not track_path.exists(): track_path.write_bytes(b'controlled parser-only audio')
+    sha = hashlib.sha256(track_path.read_bytes()).hexdigest()
+    settings_path = root / 'native-new-project-ngv.json'
+    if not settings_path.exists(): put(settings_path.name, {'id': '00000000-0000-4000-8000-000000000001'})
+    key = json.loads(settings_path.read_bytes())['id']
     old_analysis = put('old-analysis.json', dict(project='Native Music Video', song_sha256=sha, generated='before'))
     new_analysis = put('new-analysis.json', dict(project='Native Music Video', song_sha256=sha, generated='after'))
     clock = dict(ticksPerSecond=30, fpsNumerator=30, fpsDenominator=1)
@@ -34,7 +37,8 @@ def fixture(root, scale=1):
     for name in images + historical: (root / name).write_bytes(b'\x89PNG\r\n\x1a\n' + b'only unit data' * 100)
     first = dict(phase='analysis', artifactSHA256=old_analysis['sha256'], handoffTurnID='first', screenshots=historical,
         blockedBeforeApproval=True, readyBeforeClick=True, approvedPersisted=True)
-    second = dict(phase='analysis', nextPhase='brief', artifactSHA256=new_analysis['sha256'], handoffTurnID='second',
+    second = dict(analysis_gate or {}, phase='analysis', nextPhase='brief', artifactSHA256=new_analysis['sha256'],
+        handoffTurnID=analysis_gate['handoffTurnID'] if analysis_gate else 'second',
         screenshots=images[1:4], gatesAfterSHA256=gates['approved']['sha256'], handoffPhase='brief', handoffHidden=True,
         blockedBeforeApproval=True, readyBeforeClick=True, approvedPersisted=True)
     observation = dict(projectKey=key, viewport=dict(width=960, height=640, textScale=scale), sameSourceSHA256=sha,
@@ -63,9 +67,24 @@ def write_result(root, result):
 
 class PlaybackReanalysisEvidenceTests(unittest.TestCase):
     def test_complete_controlled_oracle_fixture(self):
-        with TemporaryDirectory() as temp:
-            root = Path(temp); _, gates = fixture(root)
-            self.assertEqual(len(validate(root, gates, 1)), 6)
+        for reuse_intake in (False, True):
+            with self.subTest(reuse_intake=reuse_intake), TemporaryDirectory() as temp:
+                root = Path(temp)
+                template = None
+                if reuse_intake:
+                    track = b'previously assigned intake audio'
+                    settings = json.dumps({'id': '00000000-0000-4000-8000-000000000009',
+                                           'activePlugin': 'musicvideo'}).encode()
+                    (root / 'intake-track-assigned.bin').write_bytes(track)
+                    (root / 'native-new-project-ngv.json').write_bytes(settings)
+                    template = {'handoffTurnID': '00000000-0000-4000-8000-000000000010',
+                                'surface': 'production', 'packagedInstructions': True}
+                _, gates = fixture(root, analysis_gate=template)
+                self.assertEqual(len(validate(root, gates, 1)), 6)
+                if reuse_intake:
+                    self.assertEqual((root / 'intake-track-assigned.bin').read_bytes(), track)
+                    self.assertEqual((root / 'native-new-project-ngv.json').read_bytes(), settings)
+                    self.assertTrue(all(gates[0][key] == value for key, value in template.items()))
 
     def test_explicit_apply_and_current_gate_join_required(self):
         for fault in ('missing-apply', 'apply-before-reapproval', 'old-gate', 'wrong-scale', 'late-keyboard', 'early-observation', 'wrong-viewport'):
