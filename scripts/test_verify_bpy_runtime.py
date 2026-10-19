@@ -24,7 +24,7 @@ class BpyRuntimeLockTests(unittest.TestCase):
     def test_bpy_hash_drift_is_rejected(self):
         bpy = next(item for item in self.lock["wheels"] if item["name"] == "bpy")
         bpy["sha256"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "bpy version/hash drift"):
+        with self.assertRaisesRegex(ValueError, "official library release linkage changed"):
             MODULE.validate(self.lock)
 
     def test_missing_transitive_wheel_is_rejected(self):
