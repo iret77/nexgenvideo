@@ -676,5 +676,9 @@
   "distributionBlockers": [
     "Record the exact wheel bpy.app build identity and exposed library versions in Actions. Preserve the committed byte-exact official-library correspondence for all 43 dylibs in the source closure. Complete the source/notice archive and its independently validated publication pins; the official-library evidence does not assert that all conservative dependency candidates were linked.",
     "Run the SHA-bound source/notice candidate workflow, independently validate the archive against the pinned wheel METADATA and RECORD, replace every NOTICE-CANDIDATE entry with verified notice coverage, then commit the final archive/manifest SHA-256 and size pins plus binary/source correspondence and notice evidence. Public distribution remains blocked until those concrete facts are complete and the Corresponding Source archive and manifest are published beside every binary artifact."
-  ]
+  ],
+  "sourceCompanions": {
+    "path": "Runtime/bpy/compliance/source-companions.json",
+    "sha256": "1f150fde8c448f38600807fd4443eef221c461cdd23e6a4415392036a766774e"
+  }
 }

@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 
 from assemble_bpy_source_closure import blender_dependencies
 from verify_bpy_library_evidence import validate_library_evidence
+from bpy_source_companions import EVIDENCE_PATH, bind_dependencies, companion_sources, load_companions, validate_archived_companions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -197,6 +198,8 @@ def validate(archive_path, manifest_path, require_distributable=False):
             or release_manifest.get("sha256") != plan["releaseBuildManifestSHA256"]:
         fail("exact Blender release build manifest is missing")
     dependencies = blender_dependencies(versions_data.decode("utf-8"))
+    companions = load_companions(lock, ROOT)
+    bind_dependencies(companions, dependencies)
 
     expected_sources = {
         "python-build-standalone": {
@@ -238,6 +241,7 @@ def validate(archive_path, manifest_path, require_distributable=False):
         }
         for item in dependencies
     })
+    expected_sources.update(companion_sources(companions))
     expected_components = set(expected_sources)
     sources = manifest.get("sources", [])
     components = [item.get("component") for item in sources]
@@ -260,6 +264,7 @@ def validate(archive_path, manifest_path, require_distributable=False):
         if not notice_paths or any(path not in members.names for path in notice_paths):
             fail(f"source notice coverage missing: {source.get('component')}")
 
+    validate_archived_companions(members, manifest, lock, companions)
     notices = manifest.get("notices", [])
     notice_paths = [item.get("path") for item in notices]
     if len(notice_paths) != len(set(notice_paths)):
@@ -337,6 +342,7 @@ def validate(archive_path, manifest_path, require_distributable=False):
             fail("binary/source correspondence status remains unresolved")
     expected_members = {
         "manifest.json",
+        EVIDENCE_PATH,
         versions_path,
         binary.get("metadataPath"),
         binary.get("recordPath"),

@@ -67,6 +67,14 @@ class BpyRuntimeLockTests(unittest.TestCase):
         self.assertEqual(plan["builder"], "scripts/assemble_bpy_source_closure.py")
         self.assertEqual(plan["validator"], "scripts/verify_bpy_source_closure.py")
 
+    def test_source_companion_reference_cannot_be_omitted_or_rehashed(self):
+        original = self.lock.pop("sourceCompanions")
+        with self.assertRaisesRegex(ValueError, "source companion"):
+            MODULE.validate(self.lock)
+        self.lock["sourceCompanions"] = dict(original, sha256="0" * 64)
+        with self.assertRaisesRegex(ValueError, "source companion.*hash mismatch"):
+            MODULE.validate(self.lock)
+
 
 
 if __name__ == "__main__":

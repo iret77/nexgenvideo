@@ -6,6 +6,7 @@ import re
 import sys
 from pathlib import Path
 from verify_bpy_library_evidence import validate_library_evidence
+from bpy_source_companions import load_companions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -254,6 +255,7 @@ def validate(lock):
         if not item.get("license"):
             fail(f"CPython input {item.get('name')}: missing license")
 
+    load_companions(lock, ROOT)
     blockers = lock.get("distributionBlockers", [])
     status = lock.get("distributionStatus")
     if status == "ready" and blockers:

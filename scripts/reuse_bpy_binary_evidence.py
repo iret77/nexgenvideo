@@ -6,13 +6,18 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
+import tarfile
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 
 from verify_bpy_binary_evidence import validate
+from assemble_bpy_source_closure import SourceDownloads
+from verify_bpy_source_closure import validate as validate_source_closure
 
 
 REPOSITORY = "iret77/nexgenvideo"
@@ -21,6 +26,7 @@ BATCH_WORKFLOW = ".github/workflows/ci-batch.yml"
 BATCH_BINARY_JOB = "bpy-qualification / binary-evidence"
 COMMIT = re.compile(r"[0-9a-f]{40}")
 LIMIT = 2 * 1024 * 1024
+SOURCE_LIMIT = 32 * 1024 * 1024 * 1024
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -98,7 +104,7 @@ def require_producer(run_id, run, artifacts, jobs):
     return artifact, latest
 
 
-def download(artifact):
+def download(artifact, destination=None):
     opener = urllib.request.build_opener(NoRedirect())
     try:
         response = opener.open(request(f"/actions/artifacts/{artifact['id']}/zip"), timeout=30)
@@ -117,11 +123,204 @@ def download(artifact):
             raise ValueError("The exact binary-evidence download failed") from None
     except urllib.error.URLError:
         raise ValueError("GitHub did not provide the exact binary-evidence artifact") from None
+    if destination is not None:
+        value = hashlib.sha256()
+        size = 0
+        with response, destination.open("wb") as output:
+            for block in iter(lambda: response.read(1024 * 1024), b""):
+                size += len(block)
+                if size > artifact["size_in_bytes"] or size > SOURCE_LIMIT:
+                    raise ValueError("Source artifact exceeds its bound")
+                value.update(block)
+                output.write(block)
+        if size != artifact["size_in_bytes"] or "sha256:" + value.hexdigest() != artifact["digest"]:
+            raise ValueError("Source artifact digest mismatch")
+        return destination
     with response:
         data = response.read(LIMIT + 1)
     if len(data) > LIMIT or "sha256:" + hashlib.sha256(data).hexdigest() != artifact["digest"]:
         raise ValueError("Binary-evidence archive digest mismatch")
     return data
+
+
+def require_source_producer(run_id, run, artifacts, jobs):
+    original_sha = run.get("head_sha", "")
+    if (run.get("id") != run_id or not COMMIT.fullmatch(original_sha)
+        or run.get("repository", {}).get("full_name") != REPOSITORY
+        or run.get("head_repository", {}).get("full_name") != REPOSITORY
+        or run.get("path") not in (WORKFLOW, BATCH_WORKFLOW)
+        or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"):
+        raise ValueError("Source reuse requires the exact completed qualification run")
+    name = "source" if run["path"] == WORKFLOW else "bpy-qualification / source"
+    candidates = [item for item in jobs if item.get("name") == name]
+    if not candidates:
+        raise ValueError("The requested run has no qualification source job")
+    job = max(candidates, key=lambda item: (item["run_attempt"], item["id"]))
+    if (job.get("run_id") != run_id or job.get("head_sha") != original_sha
+        or job.get("status") != "completed"
+        or job.get("conclusion") not in {"success", "failure", "cancelled", "timed_out"}
+        or "ubuntu-24.04" not in job.get("labels", [])):
+        raise ValueError("The latest qualification source job is not a completed source producer")
+    matches = [item for item in artifacts if item.get("name") == "managed-bpy-source-" + original_sha]
+    if len(matches) != 1:
+        raise ValueError("The exact source artifact is missing or ambiguous")
+    artifact = matches[0]
+    origin = artifact.get("workflow_run", {})
+    if (type(artifact.get("id")) is not int or artifact["id"] <= 0
+        or artifact.get("expired") is not False or origin.get("id") != run_id
+        or origin.get("head_sha") != original_sha
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))
+        or type(artifact.get("size_in_bytes")) is not int
+        or not 0 < artifact["size_in_bytes"] <= SOURCE_LIMIT
+        or not instant(job["started_at"]) <= instant(artifact["created_at"]) <= instant(job["completed_at"])
+        or not instant(job["started_at"]) <= instant(artifact["updated_at"]) <= instant(job["completed_at"])):
+        raise ValueError("The source artifact does not belong to the latest source attempt")
+    return artifact, job
+
+
+def stage_sources(archive_path, stage, source_sha):
+    with zipfile.ZipFile(archive_path) as archive:
+        members = {}
+        for item in archive.infolist():
+            parts = item.filename.split("/")
+            if (item.filename in members or item.filename.startswith("/")
+                or ".." in parts or "\\" in item.filename
+                or stat.S_IFMT(item.external_attr >> 16) not in {0, stat.S_IFREG, stat.S_IFDIR}):
+                raise ValueError("Source artifact has unsafe or duplicate members")
+            members[item.filename] = item
+
+        def metadata(name):
+            if name not in members or not 0 < members[name].file_size <= LIMIT:
+                raise ValueError("Source artifact metadata is missing or exceeds its bound")
+            return archive.read(name)
+
+        def preserve(item, source):
+            nonlocal retained_size
+            algorithm = item.get("upstreamHashType", "").upper()
+            expected = item.get("upstreamHash", "")
+            length = {"SHA256": 64, "SHA1": 40, "MD5": 32}.get(algorithm)
+            if (length is None or not re.fullmatch(r"[0-9a-f]{%d}" % length, expected)
+                or not re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", ""))
+                or type(item.get("size")) is not int or not 0 < item["size"] <= SOURCE_LIMIT):
+                raise ValueError("Retained source has invalid original pins")
+            retained_size += item["size"]
+            if retained_size > SOURCE_LIMIT:
+                raise ValueError("Retained source subset exceeds its total bound")
+            relative = SourceDownloads.relative_path(item["component"], item["url"], expected,
+                                                     algorithm, Path(item["path"]).name[65:])
+            if relative != item["path"] or relative in retained:
+                raise ValueError("Retained source identity/path differs from its pins")
+            path = stage / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            value = hashlib.sha256()
+            upstream = hashlib.new(algorithm.lower())
+            size = 0
+            with source, path.open("wb") as output:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    size += len(block)
+                    if size > item["size"]:
+                        raise ValueError("Retained source exceeds its recorded size")
+                    value.update(block)
+                    upstream.update(block)
+                    output.write(block)
+            if (size != item["size"] or value.hexdigest() != item["sha256"]
+                or upstream.hexdigest() != expected):
+                raise ValueError("Retained source archive bytes differ from their original pins")
+            retained[relative] = item
+
+        retained = {}
+        retained_size = 0
+        if "verified-sources.json" in members:
+            record = json.loads(metadata("verified-sources.json"))
+            if (record.get("schema") != "nexgenvideo/bpy-verified-source-downloads/1"
+                or record.get("sourceSHA") != source_sha
+                or record.get("classification") != "verified-subset-only"
+                or record.get("sourceClosureComplete") is not False
+                or record.get("publicDistributionAuthorized") is not False
+                or not isinstance(record.get("downloads"), list)
+                or not 0 < len(record["downloads"]) <= 10000):
+                raise ValueError("Partial source artifact has no bound verified subset")
+            for item in record["downloads"]:
+                member = members.get(item["path"])
+                if member is None or member.is_dir() or member.file_size != item["size"]:
+                    raise ValueError("Partial source artifact is missing recorded bytes")
+                preserve(item, archive.open(member))
+        else:
+            tar_name = "NexGenVideo-bpy-5.2.2-corresponding-source.tar"
+            manifest_name = "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+            manifest_path = stage / "input.manifest.json"
+            manifest_data = metadata(manifest_name)
+            manifest_path.write_bytes(manifest_data)
+            if tar_name not in members or not 0 < members[tar_name].file_size <= SOURCE_LIMIT:
+                raise ValueError("Complete source artifact has no bounded source tar")
+            tar_path = stage / "input.tar"
+            with archive.open(tar_name) as source, tar_path.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            evidence = json.loads(metadata("evidence.json"))
+            if (evidence.get("schema") != "nexgenvideo/bpy-source-evidence/1"
+                or evidence.get("sourceSHA") != source_sha):
+                raise ValueError("Complete source evidence differs from its producer")
+            for name, path in ((tar_name, tar_path), (manifest_name, manifest_path)):
+                pins = [item for item in evidence.get("artifacts", []) if item.get("filename") == name]
+                value = hashlib.sha256()
+                with path.open("rb") as source:
+                    for block in iter(lambda: source.read(1024 * 1024), b""):
+                        value.update(block)
+                if (len(pins) != 1 or pins[0].get("sha256") != value.hexdigest()
+                    or pins[0].get("size") != path.stat().st_size):
+                    raise ValueError("Complete source tar/manifest differs from its producer evidence")
+            manifest = validate_source_closure(tar_path, manifest_path)
+            with tarfile.open(tar_path, "r:") as source_tar:
+                for source in manifest["sources"]:
+                    item = {key: source[key] for key in (
+                        "component", "url", "upstreamHash", "upstreamHashType", "sha256", "size")}
+                    item["upstreamHash"] = item["upstreamHash"].lower()
+                    item["retrievalURL"] = source.get("retrievalURL", source["url"])
+                    item["path"] = SourceDownloads.relative_path(
+                        item["component"], item["url"], item["upstreamHash"],
+                        item["upstreamHashType"], Path(source["archivePath"]).name)
+                    preserve(item, source_tar.extractfile(source["archivePath"]))
+        record = {"schema": "nexgenvideo/bpy-verified-source-downloads/1", "sourceSHA": source_sha,
+                  "classification": "verified-subset-only", "publicDistributionAuthorized": False,
+                  "sourceClosureComplete": False,
+                  "downloads": list(retained.values())}
+        (stage / "verified-sources.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        return record
+
+
+def reuse_sources(run_id, current_sha, output):
+    if run_id <= 0 or not COMMIT.fullmatch(current_sha):
+        raise ValueError("Explicit source run ID and current source SHA are required")
+    run = api(f"/actions/runs/{run_id}")
+    artifact, job = require_source_producer(run_id, run,
+        pages(f"/actions/runs/{run_id}/artifacts", "artifacts"),
+        pages(f"/actions/runs/{run_id}/jobs?filter=all", "jobs"))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="bpy-source-reuse-", dir=output.parent) as temporary:
+        stage = Path(temporary)
+        archive_path = download(artifact, stage / "artifact.zip")
+        record = stage_sources(archive_path, stage, run["head_sha"])
+        final_artifact, final_job = require_source_producer(run_id, api(f"/actions/runs/{run_id}"),
+            pages(f"/actions/runs/{run_id}/artifacts", "artifacts"),
+            pages(f"/actions/runs/{run_id}/jobs?filter=all", "jobs"))
+        if (final_job["id"] != job["id"] or final_artifact["id"] != artifact["id"]
+            or final_artifact["digest"] != artifact["digest"]):
+            raise ValueError("Source artifact changed during reuse")
+        output.mkdir(parents=True, exist_ok=True)
+        for item in record["downloads"]:
+            target = output / item["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink():
+                raise ValueError("Retained source destination must not be a symlink")
+            shutil.copyfile(stage / item["path"], target)
+        shutil.copyfile(stage / "verified-sources.json", output / "verified-sources.json")
+        receipt = {"schema": "nexgenvideo/bpy-source-reuse/1", "publicDistributionAuthorized": False,
+                   "sourceSHA": current_sha, "originalSourceSHA": run["head_sha"],
+                   "originalRunID": run_id, "originalJobID": job["id"],
+                   "originalJobAttempt": job["run_attempt"], "originalArtifactID": artifact["id"],
+                   "originalArtifactDigest": artifact["digest"], "verifiedDownloadCount": len(record["downloads"]),
+                   "currentOriginalPinValidation": "required when assembler consumes each retained entry"}
+        (output / "source-reuse.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 
 
 def read_evidence(data):
@@ -166,15 +365,21 @@ def reuse(run_id, current_sha, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True, type=int)
+    parser.add_argument("--run-id", type=int)
+    parser.add_argument("--source-run-id", type=int)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--output-directory", required=True, type=Path)
     args = parser.parse_args()
-    reuse(args.run_id, args.source_sha, args.output_directory)
+    if args.run_id is None and args.source_run_id is None:
+        parser.error("An explicit binary or source run ID is required")
+    if args.run_id is not None:
+        reuse(args.run_id, args.source_sha, args.output_directory)
+    if args.source_run_id is not None:
+        reuse_sources(args.source_run_id, args.source_sha, args.output_directory)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile) as error:
+    except (KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile, tarfile.TarError) as error:
         raise SystemExit(f"binary evidence reuse refused: {error}")

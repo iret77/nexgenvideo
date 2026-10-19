@@ -11,6 +11,10 @@ on:
         description: Previous source-closure run with identical runtime inputs; required for source_only
         type: string
         default: ''
+      source_evidence_run_id:
+        description: Exact prior qualification run with verified full or partial source downloads
+        type: string
+        default: ''
   workflow_call:
     inputs:
       distribution:
@@ -20,6 +24,9 @@ on:
         type: boolean
         default: false
       binary_evidence_run_id:
+        type: string
+        default: ''
+      source_evidence_run_id:
         type: string
         default: ''
 
@@ -42,6 +49,7 @@ jobs:
           DISTRIBUTION: ${{ inputs.distribution || false }}
           SOURCE_ONLY: ${{ inputs.source_only || false }}
           BINARY_RUN_ID: ${{ inputs.binary_evidence_run_id || '' }}
+          SOURCE_RUN_ID: ${{ inputs.source_evidence_run_id || '' }}
         run: |
           set -euo pipefail
           [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
@@ -51,6 +59,11 @@ jobs:
             [[ "$BINARY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           else
             [ -z "$BINARY_RUN_ID" ]
+          fi
+          if [ -n "$SOURCE_RUN_ID" ]; then
+            [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]
+            [ "$DISTRIBUTION" = false ]
+            [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           fi
           python3 scripts/verify_bpy_runtime.py
           if [ "$DISTRIBUTION" = true ]; then
@@ -70,6 +83,15 @@ jobs:
         run: |
           python3 scripts/reuse_bpy_binary_evidence.py \
             --run-id "$BINARY_RUN_ID" --source-sha "$GITHUB_SHA" \
+            --output-directory "$RUNNER_TEMP/bpy-source-closure"
+      - name: Bind retained verified source downloads
+        if: inputs.source_evidence_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_evidence_run_id }}
+        run: |
+          python3 scripts/reuse_bpy_binary_evidence.py \
+            --source-run-id "$SOURCE_RUN_ID" --source-sha "$GITHUB_SHA" \
             --output-directory "$RUNNER_TEMP/bpy-source-closure"
       - name: Assemble and independently verify exact source and notices
         env:
@@ -94,19 +116,34 @@ jobs:
                       h.update(block)
               return h.hexdigest()
           records = [{'filename': p.name, 'sha256': digest(p), 'size': p.stat().st_size}
-                     for p in sorted(root.iterdir()) if p.is_file()]
+                     for p in sorted(root.iterdir()) if p.is_file() and p.name != 'verified-sources.json']
           (root / 'evidence.json').write_text(json.dumps({
               'schema': 'nexgenvideo/bpy-source-evidence/1', 'sourceSHA': os.environ['GITHUB_SHA'],
               'distributionValidated': os.environ['DISTRIBUTION'] == 'true', 'artifacts': records,
           }, indent=2, sort_keys=True) + '\n')
           PYTHON
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: managed-bpy-source-${{ github.sha }}
           overwrite: true
-          path: ${{ runner.temp }}/bpy-source-closure/*
+          path: |
+            ${{ runner.temp }}/bpy-source-closure/*.tar
+            ${{ runner.temp }}/bpy-source-closure/*.json
+            !${{ runner.temp }}/bpy-source-closure/verified-sources.json
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          overwrite: true
+          path: |
+            ${{ runner.temp }}/bpy-source-closure/verified-sources/**
+            ${{ runner.temp }}/bpy-source-closure/*.json
+          if-no-files-found: warn
+          retention-days: 7
           compression-level: 0
       - uses: actions/upload-artifact@v4
         if: always()

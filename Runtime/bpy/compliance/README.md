@@ -27,8 +27,10 @@ The `source` job in `.github/workflows/bpy-source-closure.yml` can assemble and 
 on Ubuntu before the distribution gate is ready. Manual dispatch uses candidate mode; reusable
 release/build callers require `distribution: true`. A candidate never authorizes a binary for publication.
 Transient download errors retry only the failed download, at most twice, while verified sources remain
-in the current job. Missing sources, certificate errors, and checksum drift fail immediately. A separate
-progress artifact preserves the failed stage and all completed source hashes even when assembly fails.
+in the current job. Missing sources, certificate errors, and checksum drift remain failures; other
+declared sources are still attempted. An untrusted Blender source or dependency manifest stops the
+run immediately. Failed jobs retain verified source bytes and their inventory in the source artifact,
+alongside a separate progress artifact. Partial inventories never claim a complete source closure.
 
 The registered `CI Batch` entrypoint with `mode=qualification` measures the binary and assembles
 sources independently through this reusable workflow with `distribution: false`; no app is built.
@@ -43,6 +45,17 @@ producer/validator sources; notice-closure and publication pins are excluded. Th
 preserves the original measurement unchanged and records both commits and the exact reused job.
 Missing, expired, failed, changed or pre-fingerprint evidence is refused; it is never relabeled as a
 new measurement. Reusable distribution callers keep their existing gates and do not use this option.
+
+`qualification_source_run_id` is independent of the binary selection and forwards
+`source_evidence_run_id`. It selects an exact prior full or partial source artifact, with original
+repository, workflow/job, commit, latest attempt, timestamps and streamed artifact digest checked.
+Every retained file is rehashed against the current original URL/checksum before reuse; correspondence,
+notices and the final manifest are rebuilt from current metadata. A changed workflow still requires
+a fresh binary measurement. Successful artifacts keep the final tar rather than a duplicate full
+download cache; failed artifacts keep the verified subset for the next explicit continuation.
+Partial source artifacts are retained for seven days, successful evidence for 30 days.
+Cancellation or timeout may prevent upload; reuse requires an actually uploaded artifact,
+not progress metadata or the fact that files once existed in the terminated job.
 
 GHCR access is not needed for this bootstrap. The private song container belongs to the separate
 audio-analysis acceptance and does not gate source assembly or binary identity collection.

@@ -246,7 +246,8 @@ class CIWorkflowTests(unittest.TestCase):
         code = validation.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0]
         code = "\n".join(line[10:] for line in code.splitlines())
         defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
-                    "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": ""}
+                    "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": "",
+                    "NGV_SOURCE_RUN": ""}
         valid = [({}, "initial"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui",
                    "NGV_RUNTIME_RUN": "123", "NGV_INTERFACE_SCALE": "1.25"}, "followup"),
@@ -255,7 +256,10 @@ class CIWorkflowTests(unittest.TestCase):
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "smartsearch",
                    "NGV_RUNTIME_RUN": "123"}, "followup"),
                  ({"NGV_MODE": "qualification"}, "qualification"),
-                 ({"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": "123"}, "qualification")]
+                 ({"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": "123"}, "qualification"),
+                 ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456"}, "qualification"),
+                 ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456",
+                   "NGV_QUALIFICATION_RUN": "123"}, "qualification")]
         followup = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui", "NGV_RUNTIME_RUN": "123"}
         invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
                    {"NGV_RUNTIME_RUN": "123"}, {"NGV_FOLLOWUP": "settings"},
@@ -268,7 +272,10 @@ class CIWorkflowTests(unittest.TestCase):
                    {**followup, "NGV_FOLLOWUP": "smartsearch", "NGV_SETTINGS_SCOPE": "settings"},
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "unknown"},
                    {"NGV_QUALIFICATION_RUN": "123"}, {**followup, "NGV_QUALIFICATION_RUN": "123"},
+                   {"NGV_SOURCE_RUN": "456"}, {**followup, "NGV_SOURCE_RUN": "456"},
                    *[{"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": value}
+                     for value in ("0", "-1", " 123", "abc", "1.5")],
+                   *[{"NGV_MODE": "qualification", "NGV_SOURCE_RUN": value}
                      for value in ("0", "-1", " 123", "abc", "1.5")],
                    {"NGV_MODE": "qualification", "NGV_FOLLOWUP": "externalgui"},
                    {"NGV_MODE": "qualification", "NGV_RUNTIME_RUN": "123"},

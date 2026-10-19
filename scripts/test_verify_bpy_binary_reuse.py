@@ -196,5 +196,130 @@ class BinaryReuseTests(unittest.TestCase):
             self.assertEqual(list(output.iterdir()), [])
 
 
+class SourceReuseTests(unittest.TestCase):
+    def setUp(self):
+        self.sha = "a" * 40
+        self.run = {"id": 42, "repository": {"full_name": reuse.REPOSITORY},
+                    "head_repository": {"full_name": reuse.REPOSITORY}, "head_sha": self.sha,
+                    "path": reuse.BATCH_WORKFLOW, "event": "workflow_dispatch", "status": "completed"}
+        self.job = {"id": 7, "run_id": 42, "run_attempt": 1, "name": "bpy-qualification / source",
+                    "head_sha": self.sha, "status": "completed", "conclusion": "failure",
+                    "labels": ["ubuntu-24.04"], "started_at": "2026-10-19T10:00:00Z",
+                    "completed_at": "2026-10-19T10:01:00Z"}
+        self.artifact = {"id": 9, "name": "managed-bpy-source-" + self.sha,
+                         "workflow_run": {"id": 42, "head_sha": self.sha}, "expired": False,
+                         "digest": "sha256:" + "b" * 64, "size_in_bytes": 1000,
+                         "created_at": "2026-10-19T10:00:30Z", "updated_at": "2026-10-19T10:00:30Z"}
+        self.data = b"verified original source"
+        digest = hashlib.sha256(self.data).hexdigest()
+        self.item = {"component": "component", "url": "https://example.test/source", "upstreamHash": digest,
+                     "upstreamHashType": "SHA256", "sha256": digest, "size": len(self.data)}
+        self.item["path"] = reuse.SourceDownloads.relative_path(
+            "component", self.item["url"], digest, "SHA256", "source.tar")
+
+    def producer(self):
+        return reuse.require_source_producer(42, self.run, [self.artifact], [self.job])
+
+    def archive(self, data=None, item=None, source_sha=None):
+        item = self.item if item is None else item
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("verified-sources.json", json.dumps({
+                "schema": "nexgenvideo/bpy-verified-source-downloads/1", "sourceSHA": source_sha or self.sha,
+                "classification": "verified-subset-only", "sourceClosureComplete": False,
+                "publicDistributionAuthorized": False, "downloads": [item]}))
+            archive.writestr(item["path"], self.data if data is None else data)
+        return stream.getvalue()
+
+    def test_failed_partial_and_successful_exact_source_producers_are_accepted(self):
+        for conclusion in ("failure", "success", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                self.job["conclusion"] = conclusion
+                self.assertEqual(self.producer(), (self.artifact, self.job))
+        self.run["path"] = reuse.WORKFLOW
+        self.job["name"] = "source"
+        self.assertEqual(self.producer(), (self.artifact, self.job))
+
+    def test_failed_or_timed_out_job_without_uploaded_bytes_is_not_reusable(self):
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                self.job["conclusion"] = conclusion
+                with self.assertRaisesRegex(ValueError, "source artifact is missing"):
+                    reuse.require_source_producer(42, self.run, [], [self.job])
+
+    def test_other_workflow_job_or_stale_attempt_cannot_supply_partial_sources(self):
+        for workflow, name in ((reuse.WORKFLOW, "bpy-qualification / source"),
+                               (reuse.BATCH_WORKFLOW, "source"),
+                               (".github/workflows/other.yml", "bpy-qualification / source")):
+            with self.subTest(workflow=workflow, name=name):
+                self.run["path"] = workflow
+                self.job["name"] = name
+                with self.assertRaises(ValueError):
+                    self.producer()
+        self.run["path"] = reuse.BATCH_WORKFLOW
+        self.job.update(name="bpy-qualification / source", run_attempt=2,
+                        started_at="2026-10-19T11:00:00Z", completed_at="2026-10-19T11:01:00Z")
+        with self.assertRaisesRegex(ValueError, "latest source attempt"):
+            self.producer()
+
+    def test_partial_zip_bytes_provenance_and_paths_are_independently_checked(self):
+        for data in (self.archive(data=b"substituted bytes"),
+                     self.archive(source_sha="b" * 40),
+                     self.archive(item={**self.item, "path": "../escape"}),
+                     self.archive(item={**self.item, "upstreamHash": "0" * 64})):
+            with self.subTest(digest=hashlib.sha256(data).hexdigest()), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / "artifact.zip"
+                archive.write_bytes(data)
+                with self.assertRaises(ValueError):
+                    reuse.stage_sources(archive, root, self.sha)
+
+    def test_source_stream_requires_exact_size_and_archive_digest(self):
+        data = self.archive()
+        valid = {**self.artifact, "size_in_bytes": len(data),
+                 "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", GH_TOKEN="test"), \
+                patch.object(reuse.urllib.request, "build_opener") as opener:
+            target = Path(directory) / "artifact.zip"
+            for bad in ({**valid, "size_in_bytes": len(data) - 1},
+                        {**valid, "digest": "sha256:" + "0" * 64}):
+                opener.return_value.open.return_value = io.BytesIO(data)
+                with self.assertRaises(ValueError):
+                    reuse.download(bad, target)
+            opener.return_value.open.return_value = io.BytesIO(data)
+            reuse.download(valid, target)
+            self.assertEqual(target.read_bytes(), data)
+
+    def test_reuse_keeps_failed_partial_bytes_without_a_completeness_claim(self):
+        data = self.archive()
+        def download(artifact, target):
+            target.write_bytes(data)
+            return target
+        with tempfile.TemporaryDirectory() as directory, patch.object(reuse, "api", return_value=self.run), \
+                patch.object(reuse, "pages", side_effect=[[self.artifact], [self.job], [self.artifact], [self.job]]), \
+                patch.object(reuse, "download", side_effect=download):
+            output = Path(directory) / "output"
+            reuse.reuse_sources(42, "f" * 40, output)
+            self.assertEqual((output / self.item["path"]).read_bytes(), self.data)
+            manifest = json.loads((output / "verified-sources.json").read_text())
+            self.assertFalse(manifest["sourceClosureComplete"])
+            receipt = json.loads((output / "source-reuse.json").read_text())
+            self.assertFalse(receipt["publicDistributionAuthorized"])
+            self.assertEqual(receipt["originalSourceSHA"], self.sha)
+
+    def test_source_rerun_during_download_prevents_retained_publication(self):
+        def download(artifact, target):
+            target.write_bytes(self.archive())
+            return target
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(reuse, "api", side_effect=[self.run, {**self.run, "status": "in_progress"}]), \
+                patch.object(reuse, "pages", side_effect=[[self.artifact], [self.job], [self.artifact], [self.job]]), \
+                patch.object(reuse, "download", side_effect=download):
+            output = Path(directory) / "output"
+            with self.assertRaises(ValueError):
+                reuse.reuse_sources(42, "f" * 40, output)
+            self.assertFalse(output.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

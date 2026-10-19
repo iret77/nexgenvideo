@@ -53,6 +53,18 @@ measurement is reused after the existing repository, workflow/job, attempt, time
 artifact-digest and runtime-input checks. The registered batch calls the reusable
 workflow without requiring its standalone dispatch to be registered on main.
 
+`qualification_source_run_id` separately selects retained source bytes from one
+exact completed qualification, including a failed source job with a verified
+partial inventory. Every reused file is checked again against its current original
+pin. Download failures are collected while other declared sources are attempted;
+the job remains failed and uploads its verified subset. A successful job uploads
+the assembled tar without a second full cache copy. Changes to the source workflow
+still change the binary fingerprint: leave `qualification_binary_run_id` empty
+once to obtain a fresh measurement after such a change.
+Partial source artifacts expire after seven days; successful evidence remains for
+30 days. Cancellation or job timeout does not guarantee an upload: only an actual
+uploaded, provenance-checked partial artifact can be reused.
+
 Use the actual candidate artifacts to complete binary/source correspondence,
 source-archive pins and notice text/coverage. A source-only qualification then
 produces the complete archive and manifest; pin their exact hashes and archive

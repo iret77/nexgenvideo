@@ -22,6 +22,10 @@ on:
         description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
         default: ''
+      qualification_source_run_id:
+        description: Optional exact qualification run with retained verified source downloads, including a failed partial run
+        type: string
+        default: ''
       settings_scope:
         description: Settings or Recovery cases for a settings followup
         type: choice
@@ -84,6 +88,7 @@ jobs:
           NGV_FOLLOWUP: ${{ inputs.followup_workflow }}
           NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
           NGV_QUALIFICATION_RUN: ${{ inputs.qualification_binary_run_id }}
+          NGV_SOURCE_RUN: ${{ inputs.qualification_source_run_id }}
           NGV_SETTINGS_SCOPE: ${{ inputs.settings_scope }}
           NGV_INTERFACE_SCALE: ${{ inputs.interface_scale }}
         run: |
@@ -93,6 +98,7 @@ jobs:
           followup = os.environ['NGV_FOLLOWUP']
           run_id = os.environ['NGV_RUNTIME_RUN']
           binary_run_id = os.environ['NGV_QUALIFICATION_RUN']
+          source_run_id = os.environ['NGV_SOURCE_RUN']
           settings = os.environ['NGV_SETTINGS_SCOPE']
           scale = os.environ['NGV_INTERFACE_SCALE']
           scopes = {'all', 'settings', 'settings100', 'settings125', 'settings150',
@@ -101,13 +107,15 @@ jobs:
               raise SystemExit('Select initial, followup or qualification mode.')
           if settings not in scopes or scale not in {'all', '1', '1.25', '1.5'}:
               raise SystemExit('Select a supported Settings case and interface scale.')
-          if mode != 'qualification' and binary_run_id:
-              raise SystemExit('qualification_binary_run_id applies only to qualification mode.')
+          if mode != 'qualification' and (binary_run_id or source_run_id):
+              raise SystemExit('Qualification run IDs apply only to qualification mode.')
           if mode == 'qualification':
               if followup != 'none' or run_id or settings != 'all' or scale != 'all':
                   raise SystemExit('Qualification requires no app followup/run ID and default acceptance selectors.')
               if binary_run_id and not re.fullmatch(r'[1-9][0-9]*', binary_run_id):
                   raise SystemExit('qualification_binary_run_id must identify a positive prior producer run.')
+              if source_run_id and not re.fullmatch(r'[1-9][0-9]*', source_run_id):
+                  raise SystemExit('qualification_source_run_id must identify a positive prior source run.')
           elif mode == 'initial':
               if followup != 'none' or run_id or settings != 'all' or scale != 'all':
                   raise SystemExit('Initial mode requires no followup/run ID and default acceptance selectors.')
@@ -143,6 +151,7 @@ jobs:
       distribution: false
       source_only: ${{ inputs.qualification_binary_run_id != '' }}
       binary_evidence_run_id: ${{ inputs.qualification_binary_run_id }}
+      source_evidence_run_id: ${{ inputs.qualification_source_run_id }}
 
   ci:
     needs: validate

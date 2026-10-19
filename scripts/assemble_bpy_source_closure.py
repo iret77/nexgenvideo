@@ -12,7 +12,6 @@ import shutil
 import socket
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +20,7 @@ import zipfile
 from pathlib import Path
 
 from verify_bpy_library_evidence import validate_library_evidence
+from bpy_source_companions import EVIDENCE_PATH, NOTICE_PREFIX, bind_dependencies, load_companions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,14 @@ LOCK_PATH = ROOT / "Runtime/bpy/runtime-lock.json"
 NOTICE_NAME = re.compile(r"^(license|licence|copying|copyright|notice)([._-].*)?$", re.I)
 SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 SOURCE_USER_AGENT = "NexGenVideo-source-closure/1 (+https://github.com/iret77/nexgenvideo)"
+SOURCE_MIRRORS = {
+    "https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz":
+        "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+}
+
+
+def source_download_url(url):
+    return SOURCE_MIRRORS.get(url, url)
 
 
 def digest(path, algorithm="sha256"):
@@ -41,7 +49,7 @@ def digest(path, algorithm="sha256"):
 def fetch(url, destination, expected=None, algorithm="sha256"):
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(destination.name + ".partial")
-    request = urllib.request.Request(url, headers={"User-Agent": SOURCE_USER_AGENT})
+    request = urllib.request.Request(source_download_url(url), headers={"User-Agent": SOURCE_USER_AGENT})
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as output:
@@ -95,6 +103,85 @@ class AssemblyProgress:
     def __exit__(self, kind, error, traceback):
         self.update(status="failed" if kind is not None else "assembled",
                     failure=str(error) if kind is not None else None)
+
+
+class SourceDownloads:
+    def __init__(self, output, lock_data):
+        self.output = output
+        self.path = output / "verified-sources.json"
+        self.value = {
+            "schema": "nexgenvideo/bpy-verified-source-downloads/1",
+            "sourceSHA": os.environ.get("GITHUB_SHA"),
+            "runtimeLockSHA256": hashlib.sha256(lock_data).hexdigest(),
+            "runtimeLockSHA256Scope": "current-producer-context-only",
+            "classification": "verified-subset-only",
+            "publicDistributionAuthorized": False,
+            "sourceClosureComplete": False,
+            "downloads": [],
+        }
+        self.previous = {}
+        if self.path.exists():
+            old = json.loads(self.path.read_text())
+            if old.get("schema") != self.value["schema"]:
+                raise ValueError("Unrecognized retained source downloads")
+            for item in old.get("downloads", []):
+                if item["path"] in self.previous:
+                    raise ValueError("Duplicate retained source download")
+                self.previous[item["path"]] = item
+        self.current = dict(self.previous)
+        self.validated = set()
+
+    def save(self):
+        self.value["downloads"] = list(self.current.values())
+        self.value["currentPinValidatedPaths"] = sorted(self.validated)
+        self.value["carriedOverCandidatePaths"] = sorted(self.current.keys() - self.validated)
+        temporary = self.path.with_suffix(".pending")
+        temporary.write_text(json.dumps(self.value, indent=2, sort_keys=True) + "\n")
+        temporary.replace(self.path)
+
+    @staticmethod
+    def relative_path(component, url, expected, algorithm, filename):
+        identity = [component, url, expected.lower(), algorithm.upper()]
+        key = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+        return "verified-sources/" + key + "-" + SAFE.sub("-", Path(filename).name)
+
+    def get(self, component, url, expected, algorithm, filename, expected_size=None):
+        algorithm = algorithm.upper()
+        if algorithm not in {"SHA256", "SHA1", "MD5"} or not expected:
+            raise ValueError("Source download requires an original upstream checksum")
+        identity = [component, url, expected.lower(), algorithm]
+        relative = self.relative_path(component, url, expected, algorithm, filename)
+        destination = self.output / relative
+        old = self.previous.get(relative)
+        if old is not None:
+            if ([old.get("component"), old.get("url"), old.get("upstreamHash"),
+                 old.get("upstreamHashType")] != identity
+                or destination.is_symlink() or not destination.is_file()
+                or not destination.resolve().is_relative_to(self.output.resolve())
+                or destination.stat().st_size != old.get("size")
+                or digest(destination) != old.get("sha256")
+                or digest(destination, algorithm.lower()) != expected.lower()):
+                self.current.pop(relative, None)
+                self.validated.discard(relative)
+                self.save()
+                raise ValueError("Retained source bytes differ from the current original pin")
+            facts = {"sha256": old["sha256"], "size": old["size"]}
+            retrieval_url = old.get("retrievalURL", url)
+        else:
+            facts = fetch(url, destination, expected, algorithm)
+            retrieval_url = source_download_url(url)
+        if expected_size is not None and facts["size"] != expected_size:
+            self.current.pop(relative, None)
+            self.validated.discard(relative)
+            self.save()
+            raise ValueError("Source size differs from its current original pin")
+        item = {"component": component, "url": url, "retrievalURL": retrieval_url,
+                "upstreamHash": expected.lower(), "upstreamHashType": algorithm,
+                "path": relative, **facts}
+        self.current[relative] = item
+        self.validated.add(relative)
+        self.save()
+        return destination, item
 
 
 def cmake_sets(text):
@@ -281,20 +368,32 @@ def main():
     args = parser.parse_args()
     lock_data = LOCK_PATH.read_bytes()
     lock = json.loads(lock_data)
+    companions = load_companions(lock, ROOT)
     output = args.output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    downloads = SourceDownloads(output, lock_data)
 
-    with AssemblyProgress(output, lock_data) as progress, tempfile.TemporaryDirectory(prefix="ngv-bpy-source-") as temporary:
-        work = Path(temporary)
+    with AssemblyProgress(output, lock_data) as progress:
         artifacts = {}
         sources = []
         notices = {}
+        failures = []
 
-        def add_source(component, name, version, url, expected, hash_type, filename, license_name=None):
+        def add_source(component, name, version, url, expected, hash_type, filename,
+                       license_name=None, expected_size=None):
             safe_component = SAFE.sub("-", component).strip("-")
-            destination = work / "downloads" / safe_component / Path(filename).name
-            progress.update(stage="download-source", component=component, url=url)
-            facts = fetch(url, destination, expected, hash_type)
+            progress.update(stage="download-source", component=component, url=url,
+                            retrievalURL=source_download_url(url))
+            try:
+                destination, facts = downloads.get(component, url, expected, hash_type, filename,
+                                                    expected_size=expected_size)
+            except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as error:
+                if component == "wheel:bpy":
+                    raise
+                failures.append({"component": component, "url": url,
+                                 "retrievalURL": source_download_url(url), "failure": str(error)})
+                progress.update(failedSources=failures)
+                return None
             archive_path = f"sources/{safe_component}/{Path(filename).name}"
             artifacts[archive_path] = destination
             notice_entries = notice_payloads(destination, component)
@@ -305,6 +404,7 @@ def main():
                 "name": name,
                 "version": version,
                 "url": url,
+                "retrievalURL": facts["retrievalURL"],
                 "upstreamHash": expected,
                 "upstreamHashType": hash_type.upper(),
                 "sha256": facts["sha256"],
@@ -318,14 +418,15 @@ def main():
                 payload = json.dumps({
                     "component": component,
                     "declaredLicense": license_name,
-                    "sourceArchive": destination.name,
+                    "sourceArchive": Path(filename).name,
                     "status": "candidate-only; replace with required upstream notice text before distribution",
                 }, sort_keys=True, indent=2).encode() + b"\n"
                 notices[candidate_path] = payload
                 source["noticePaths"] = [candidate_path]
                 source["noticeCandidateOnly"] = True
             sources.append(source)
-            progress.update(stage="source-verified", completedSources=sources)
+            progress.update(stage="source-verified", completedSources=sources,
+                            failedSources=failures)
             return destination
 
         bpy = next(item for item in lock["wheels"] if item["name"] == "bpy")
@@ -341,8 +442,11 @@ def main():
         if hashlib.sha256(versions_data).hexdigest() != expected_versions:
             raise ValueError("Blender release dependency manifest drift")
         artifacts["evidence/blender-5.2.2-versions.cmake"] = versions_data
+        dependencies = blender_dependencies(versions_data.decode("utf-8"))
+        bind_dependencies(companions, dependencies)
+        artifacts[EVIDENCE_PATH] = (ROOT / lock["sourceCompanions"]["path"]).read_bytes()
 
-        for dependency in blender_dependencies(versions_data.decode("utf-8")):
+        for dependency in dependencies:
             component = f"blender-release-dependency:{dependency['key']}"
             archive = add_source(
                 component,
@@ -354,6 +458,8 @@ def main():
                 dependency["filename"],
                 dependency["license"],
             )
+            if archive is None:
+                continue
             sources[-1]["buildTimeOnly"] = dependency["buildTimeOnly"]
             sources[-1]["homepage"] = dependency["homepage"]
             if sources[-1].get("noticeCandidateOnly"):
@@ -363,17 +469,29 @@ def main():
                     "declaredLicense": dependency["license"],
                     "declaredCopyright": dependency["copyright"],
                     "homepage": dependency["homepage"],
-                    "sourceArchive": archive.name,
+                    "sourceArchive": Path(dependency["filename"]).name,
                     "status": "candidate-only; replace with required upstream notice text before distribution",
                 }, sort_keys=True, indent=2).encode() + b"\n"
 
+        for companion in companions:
+            source = companion["source"]
+            archive = add_source(
+                companion["component"], companion["name"], companion["version"], source["url"],
+                source["sha256"], "SHA256", source["filename"],
+                "GPL-3.0-or-later AND BSD-3-Clause", expected_size=source["size"])
+            if archive is not None:
+                sources[-1]["sourceRevision"] = companion["commit"]
+            for pin in companion["notices"]:
+                notices[NOTICE_PREFIX + Path(pin["path"]).name] = (ROOT / pin["path"]).read_bytes()
+
         runtime = lock["runtime"]
-        add_source(
+        runtime_archive = add_source(
             "python-build-standalone", runtime["name"], runtime["version"],
             runtime["source"]["url"], runtime["source"]["sha256"], "SHA256",
             "python-build-standalone-20260901.tar.gz", runtime["source"]["license"],
         )
-        sources[-1]["sourceRevision"] = runtime["sourceCommit"]
+        if runtime_archive is not None:
+            sources[-1]["sourceRevision"] = runtime["sourceCommit"]
         for item in lock["pythonBuildInputs"]:
             add_source(
                 f"python-build-input:{item['name']}", item["name"], item["version"],
@@ -388,15 +506,20 @@ def main():
                     Path(urllib.parse.urlparse(item["source"]["url"]).path).name, item["license"],
                 )
 
+        if failures:
+            progress.update(stage="incomplete-source-downloads", failedSources=failures,
+                            completedSources=sources)
+            raise ValueError("Source downloads incomplete: " + "; ".join(
+                item["component"] + ": " + item["failure"] for item in failures))
+
         progress.update(stage="wheel-evidence", component="wheel:bpy", url=bpy["url"])
-        wheel_path = work / bpy["filename"]
-        wheel_facts = fetch(bpy["url"], wheel_path, bpy["sha256"], "SHA256")
-        if wheel_facts["size"] != bpy["size"]:
-            raise ValueError("pinned bpy wheel size drift")
-        metadata_path = work / (bpy["filename"] + ".metadata")
-        metadata_facts = fetch(
-            bpy["metadata"]["url"], metadata_path, bpy["metadata"]["sha256"], "SHA256"
-        )
+        wheel_path, wheel_facts = downloads.get(
+            "binary-wheel:bpy", bpy["url"], bpy["sha256"], "SHA256", bpy["filename"],
+            expected_size=bpy["size"])
+        metadata_name = bpy["filename"] + ".metadata"
+        metadata_path, metadata_facts = downloads.get(
+            "wheel-metadata:bpy", bpy["metadata"]["url"], bpy["metadata"]["sha256"], "SHA256",
+            metadata_name)
         metadata_text = metadata_path.read_text(encoding="utf-8")
         expected_metadata = [
             f"Name: {bpy['name']}",
@@ -408,7 +531,7 @@ def main():
                 or any(url not in metadata_text for url in bpy["metadata"]["sourceCodeURLs"]):
             raise ValueError("pinned bpy metadata no longer links the declared release source")
         record_evidence, record_data = verify_bpy_wheel(wheel_path, lock)
-        metadata_evidence_path = f"evidence/{metadata_path.name}"
+        metadata_evidence_path = f"evidence/{metadata_name}"
         record_evidence_path = f"evidence/{Path(bpy['metadata']['url']).name}.RECORD.csv"
         artifacts[metadata_evidence_path] = metadata_path
         artifacts[record_evidence_path] = record_data
@@ -513,6 +636,7 @@ def main():
             artifacts[path] = payload
         manifest = {
             "schema": "nexgenvideo/bpy-source-closure/1",
+            "sourceCompanionsEvidence": EVIDENCE_PATH,
             "release": "bpy-5.2.2-cp313-macos-arm64",
             "binaryCorrespondence": {
                 "wheelFilename": bpy["filename"],

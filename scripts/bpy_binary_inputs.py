@@ -13,6 +13,7 @@ PRODUCER_FILES = (
     "scripts/verify_bpy_binary_evidence.py",
     "scripts/verify_bpy_runtime.py",
     "scripts/verify_bpy_library_evidence.py",
+    "scripts/bpy_source_companions.py",
     "scripts/bpy_binary_inputs.py",
 )
 
