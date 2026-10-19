@@ -17,6 +17,22 @@ class Response(io.BytesIO):
 
 
 class SourceDownloadTests(unittest.TestCase):
+    def test_public_source_request_identifies_client_without_changing_url(self):
+        url = "https://download.blender.org/source/blender-5.2.2.tar.xz"
+        data = b"pinned source bytes"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "source.tar"
+            with patch("assemble_bpy_source_closure.urllib.request.urlopen", return_value=Response(data)) as download:
+                fetch(url, destination, hashlib.sha256(data).hexdigest())
+            request = download.call_args.args[0]
+            self.assertEqual(request.full_url, url)
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.get_header("User-agent"),
+                             "NexGenVideo-source-closure/1 (+https://github.com/iret77/nexgenvideo)")
+            self.assertIsNone(request.data)
+            self.assertEqual(download.call_args.kwargs, {"timeout": 120})
+            self.assertEqual(destination.read_bytes(), data)
+
     def test_only_transient_failure_retries_before_verified_publish(self):
         data = b"actual pinned source"
         digest = hashlib.sha256(data).hexdigest()

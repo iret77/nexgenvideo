@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "Runtime/bpy/runtime-lock.json"
 NOTICE_NAME = re.compile(r"^(license|licence|copying|copyright|notice)([._-].*)?$", re.I)
 SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+SOURCE_USER_AGENT = "NexGenVideo-source-closure/1 (+https://github.com/iret77/nexgenvideo)"
 
 
 def digest(path, algorithm="sha256"):
@@ -40,9 +41,10 @@ def digest(path, algorithm="sha256"):
 def fetch(url, destination, expected=None, algorithm="sha256"):
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(destination.name + ".partial")
+    request = urllib.request.Request(url, headers={"User-Agent": SOURCE_USER_AGENT})
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as output:
+            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as output:
                 shutil.copyfileobj(response, output)
                 expected_size = response.headers.get("Content-Length")
             if expected_size is not None and partial.stat().st_size != int(expected_size):
