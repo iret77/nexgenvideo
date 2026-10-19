@@ -4,6 +4,30 @@ name: CI Batch
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Initial verification or one acceptance followup using an existing exact app
+        type: choice
+        options: [initial, followup]
+        default: initial
+      followup_workflow:
+        description: Only this acceptance runs in followup mode; initial mode requires none
+        type: choice
+        options: [none, externalgui, settings, smartsearch]
+        default: none
+      runtime_run_id:
+        description: Same-source producer run required in followup mode
+        type: string
+        default: ''
+      settings_scope:
+        description: Settings or Recovery cases for a settings followup
+        type: choice
+        options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150]
+        default: all
+      interface_scale:
+        description: Text size for an externalgui followup
+        type: choice
+        options: [all, '1', '1.25', '1.5']
+        default: all
       hang_replays:
         description: Run the chat and recorded hang replays
         type: boolean
@@ -42,49 +66,119 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate initial or exact-artifact followup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.inputs.outputs.mode }}
+    steps:
+      - name: Reject incomplete or incompatible dispatch inputs
+        id: inputs
+        env:
+          NGV_MODE: ${{ inputs.mode }}
+          NGV_FOLLOWUP: ${{ inputs.followup_workflow }}
+          NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
+          NGV_SETTINGS_SCOPE: ${{ inputs.settings_scope }}
+          NGV_INTERFACE_SCALE: ${{ inputs.interface_scale }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, re
+          mode = os.environ['NGV_MODE']
+          followup = os.environ['NGV_FOLLOWUP']
+          run_id = os.environ['NGV_RUNTIME_RUN']
+          settings = os.environ['NGV_SETTINGS_SCOPE']
+          scale = os.environ['NGV_INTERFACE_SCALE']
+          scopes = {'all', 'settings', 'settings100', 'settings125', 'settings150',
+                    'packrecovery', 'packrecovery100', 'packrecovery125', 'packrecovery150'}
+          if mode not in {'initial', 'followup'}:
+              raise SystemExit('Select initial or followup mode.')
+          if settings not in scopes or scale not in {'all', '1', '1.25', '1.5'}:
+              raise SystemExit('Select a supported Settings case and interface scale.')
+          if mode == 'initial':
+              if followup != 'none' or run_id or settings != 'all' or scale != 'all':
+                  raise SystemExit('Initial mode requires no followup/run ID and default acceptance selectors.')
+          else:
+              if followup not in {'externalgui', 'settings', 'smartsearch'}:
+                  raise SystemExit('Followup mode requires externalgui, settings or smartsearch.')
+              if not re.fullmatch(r'[1-9][0-9]*', run_id):
+                  raise SystemExit('Followup mode requires a positive producer runtime_run_id.')
+              if followup != 'settings' and settings != 'all':
+                  raise SystemExit('settings_scope applies only to a settings followup.')
+              if followup != 'externalgui' and scale != 'all':
+                  raise SystemExit('interface_scale applies only to an externalgui followup.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mode=' + mode + '\n')
+          PYTHON
+      - uses: actions/checkout@v4
+        if: inputs.mode == 'followup'
+      - name: Require an existing exact same-source app before allocating Mac jobs
+        if: inputs.mode == 'followup'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
+        run: |
+          python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
+            --artifact workspace-ui-app --identity "$RUNNER_TEMP/followup-runtime-identity.json"
+
   ci:
+    needs: validate
+    if: needs.validate.outputs.mode == 'initial'
     name: Compile, unit tests, app and native bpy acceptance
     uses: ./.github/workflows/ci.yml
 
   chat-hang-replay:
-    needs: workspace-ui-acceptance
-    if: ${{ !cancelled() && inputs.hang_replays }}
+    needs: [validate, workspace-ui-acceptance]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.hang_replays }}
     uses: ./.github/workflows/chat-hang-replay.yml
     with:
       runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
 
   recorded-hang-replay:
-    if: inputs.hang_replays && inputs.recorded_hang_replay
+    needs: validate
+    if: needs.validate.outputs.mode == 'initial' && inputs.hang_replays && inputs.recorded_hang_replay
     uses: ./.github/workflows/recorded-hang-replay.yml
     secrets: inherit
 
   signing-preflight:
-    if: inputs.signing_preflight
+    needs: validate
+    if: needs.validate.outputs.mode == 'initial' && inputs.signing_preflight
     uses: ./.github/workflows/signing-preflight.yml
     secrets: inherit
 
   workspace-ui-acceptance:
-    needs: ci
-    if: inputs.workspace_ui_acceptance
+    needs: [validate, ci]
+    if: needs.validate.outputs.mode == 'initial' && inputs.workspace_ui_acceptance
     uses: ./.github/workflows/workspace-ui-acceptance.yml
     with:
       runtime_artifact: workspace-ui-app
 
   external-gui-acceptance:
-    needs: ci
-    if: inputs.workspace_ui_acceptance
+    needs: [validate, ci]
+    if: >-
+      ${{ !cancelled() && needs.validate.result == 'success' &&
+          ((needs.validate.outputs.mode == 'initial' && needs.ci.result == 'success' && inputs.workspace_ui_acceptance) ||
+           (needs.validate.outputs.mode == 'followup' && needs.ci.result == 'skipped' && inputs.followup_workflow == 'externalgui')) }}
     uses: ./.github/workflows/external-gui-acceptance.yml
+    with:
+      runtime_run_id: ${{ inputs.runtime_run_id }}
+      interface_scale: ${{ inputs.interface_scale }}
 
   settings-owner-acceptance:
-    needs: ci
-    if: inputs.settings_owner_acceptance
+    needs: [validate, ci]
+    if: >-
+      ${{ !cancelled() && needs.validate.result == 'success' &&
+          ((needs.validate.outputs.mode == 'initial' && needs.ci.result == 'success' && inputs.settings_owner_acceptance) ||
+           (needs.validate.outputs.mode == 'followup' && needs.ci.result == 'skipped' && inputs.followup_workflow == 'settings')) }}
     uses: ./.github/workflows/settings-owner-acceptance.yml
     with:
       runtime_artifact: workspace-ui-app
+      runtime_run_id: ${{ inputs.runtime_run_id }}
+      acceptance_scope: ${{ inputs.settings_scope }}
 
   musicvideo-analysis-acceptance:
-    needs: workspace-ui-acceptance
-    if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance }}
+    needs: [validate, workspace-ui-acceptance]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}
     uses: ./.github/workflows/private-example-analysis.yml
     with:
       runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}
@@ -92,9 +186,14 @@ jobs:
       NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
 
   smart-search-owner-acceptance:
-    needs: ci
-    if: inputs.smart_search_owner_acceptance
+    needs: [validate, ci]
+    if: >-
+      ${{ !cancelled() && needs.validate.result == 'success' &&
+          ((needs.validate.outputs.mode == 'initial' && needs.ci.result == 'success' && inputs.smart_search_owner_acceptance) ||
+           (needs.validate.outputs.mode == 'followup' && needs.ci.result == 'skipped' && inputs.followup_workflow == 'smartsearch')) }}
     permissions:
       contents: read
       actions: write
     uses: ./.github/workflows/smart-search-owner-acceptance.yml
+    with:
+      runtime_run_id: ${{ inputs.runtime_run_id }}

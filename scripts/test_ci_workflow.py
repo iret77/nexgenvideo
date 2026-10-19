@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -224,15 +225,15 @@ class CIWorkflowTests(unittest.TestCase):
             set(called),
             {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
              "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml",
-             "settings-owner-acceptance.yml", "smart-search-owner-acceptance.yml"},
+             "external-gui-acceptance.yml", "settings-owner-acceptance.yml", "smart-search-owner-acceptance.yml"},
         )
         for name in called:
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))
         analysis = text.split("  musicvideo-analysis-acceptance:\n", 1)[1]
-        self.assertIn("needs: workspace-ui-acceptance", analysis)
+        self.assertIn("needs: [validate, workspace-ui-acceptance]", analysis)
         self.assertIn(
-            "if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance }}",
+            "if: ${{ !cancelled() && needs.validate.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}",
             analysis,
         )
         self.assertIn(
@@ -240,6 +241,46 @@ class CIWorkflowTests(unittest.TestCase):
             analysis,
         )
         self.assertIn("NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}", analysis)
+        validation = text.split("  validate:\n", 1)[1].split("  ci:\n", 1)[0]
+        code = validation.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0]
+        code = "\n".join(line[10:] for line in code.splitlines())
+        defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
+                    "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all"}
+        valid = [({}, "initial"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui",
+                   "NGV_RUNTIME_RUN": "123", "NGV_INTERFACE_SCALE": "1.25"}, "followup"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings",
+                   "NGV_RUNTIME_RUN": "123", "NGV_SETTINGS_SCOPE": "packrecovery100"}, "followup"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "smartsearch",
+                   "NGV_RUNTIME_RUN": "123"}, "followup")]
+        followup = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui", "NGV_RUNTIME_RUN": "123"}
+        invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
+                   {"NGV_RUNTIME_RUN": "123"}, {"NGV_FOLLOWUP": "settings"},
+                   {"NGV_SETTINGS_SCOPE": "settings125"}, {"NGV_INTERFACE_SCALE": "1"},
+                   *[{**followup, "NGV_RUNTIME_RUN": value} for value in ("", "0", "-1", " 123", "abc", "1.5")],
+                   {**followup, "NGV_FOLLOWUP": "unknown"},
+                   {**followup, "NGV_SETTINGS_SCOPE": "settings100"},
+                   {**followup, "NGV_INTERFACE_SCALE": "2"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_INTERFACE_SCALE": "1"},
+                   {**followup, "NGV_FOLLOWUP": "smartsearch", "NGV_SETTINGS_SCOPE": "settings"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "unknown"}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            for values, mode in valid:
+                with self.subTest(valid=values):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, **defaults, **values, "GITHUB_OUTPUT": str(output)})
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    self.assertEqual(output.read_text(), "mode=" + mode + "\n")
+            for values in invalid:
+                with self.subTest(invalid=values):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, **defaults, **values, "GITHUB_OUTPUT": str(output)})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue(result.stderr.strip())
+                    self.assertEqual(output.read_text(), "")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,27 @@ passing evidence. `ci.yml`'s first job carries the same name,
 `Light Checks`, so a dispatched run (for example the release metadata flow) also
 satisfies the required check.
 
+### Existing-artifact followups
+
+Use the registered `CI Batch` entrypoint on the exact producer commit with
+`mode=followup`, its `runtime_run_id`, and exactly one `followup_workflow`:
+`externalgui`, `settings`, or `smartsearch`. This calls the reusable workflow from
+that commit even before its standalone dispatch is registered on the default branch.
+Followups skip Core compilation, workspace acceptance, signing, replays and private
+analysis regardless of the initial-mode checkbox defaults. Linux validation rejects
+missing or incompatible selectors and requires one unexpired, source-matching
+`workspace-ui-app` from the named producer before allocating any Mac job. Existing
+consumer archive, source and app checks remain in force.
+
+For `externalgui`, `interface_scale` selects `all`, `1`, `1.25`, or `1.5`. For
+`settings`, `settings_scope` selects all cases, the Settings or Recovery family,
+or one existing case such as `settings125` or `packrecovery100`. Smart Search keeps
+its existing cold-download and warm-layout sequence. Unrelated selectors must stay
+at `all`. Initial mode remains the default and keeps the existing checkbox behavior;
+it rejects supplied followup selectors or a producer run ID. Workspace cases retain
+their separate registered `Workspace UI Acceptance` entrypoint and artifact-reuse
+inputs. Followup success proves only the selected surface and cases.
+
 `external-gui-acceptance.yml` reuses the same-source `workspace-ui-app` artifact
 and builds only its external XCTest driver. Separate macrunner jobs exercise the
 normal installed app at 100/125/150%; a failed size can be selected independently.
