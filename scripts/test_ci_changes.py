@@ -27,6 +27,8 @@ class CIChangesTests(unittest.TestCase):
     def test_build_graph_and_diagnostics_always_exercise_the_bundle(self):
         for path in ("Package.swift", "Engine/Sources/A.swift", "Sources/HangDiagnostics/A.swift",
                      "Sources/HangStackSampler/A.c", "Sources/NexGenVideoDiagnostics/main.swift",
+                     "Sources/BpySupervisorPOSIX/BpySupervisorPOSIX.c",
+                     "Sources/BpySupervisorPOSIX/include/BpySupervisorPOSIX.h",
                      "scripts/bundle.sh", ".github/workflows/ci.yml", ".github/workflows/bundle.yml"):
             with self.subTest(path=path):
                 self.assertTrue(classify([path])["bundle_required"])

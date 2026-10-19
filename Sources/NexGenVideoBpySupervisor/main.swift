@@ -1,3 +1,4 @@
+import BpySupervisorPOSIX
 import Darwin
 import Foundation
 
@@ -369,17 +370,10 @@ private func boundaryChild(arguments: [String]) throws -> Never {
         outsideErrno = errno
     }
 
-    errno = 0
-    let forked = Darwin.fork()
-    let forkErrno: Int32
-    if forked == 0 {
-        Darwin._exit(0)
-    } else if forked > 0 {
-        var status: Int32 = 0
-        _ = Darwin.waitpid(forked, &status, 0)
-        forkErrno = 0
-    } else {
-        forkErrno = errno
+    var forkErrno: Int32 = 0
+    let forkProbeError = ngv_bpy_probe_fork(&forkErrno)
+    guard forkProbeError == 0 else {
+        throw POSIXError(.init(rawValue: forkProbeError) ?? .EIO)
     }
 
     errno = 0

@@ -12,6 +12,7 @@ BUNDLE_PATHS = (
     'Metal/**',
     'Runtime/bpy/**',
     'Sources/BpyRuntimeProtocol/**',
+    'Sources/BpySupervisorPOSIX/**',
     'Sources/NexGenVideoBpy*/**',
     'Sources/NexGenVideo/ThreeD/**',
     '.github/workflows/bpy-*.yml',

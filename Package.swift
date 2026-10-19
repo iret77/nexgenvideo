@@ -63,12 +63,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
+        .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX"),
         .executableTarget(
             name: "NexGenVideoBpyService", dependencies: ["BpyRuntimeProtocol"],
             path: "Sources/NexGenVideoBpyService", linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
         ),
         .executableTarget(
-            name: "NexGenVideoBpySupervisor", path: "Sources/NexGenVideoBpySupervisor",
+            name: "NexGenVideoBpySupervisor", dependencies: ["BpySupervisorPOSIX"], path: "Sources/NexGenVideoBpySupervisor",
             linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
         ),
         .executableTarget(
@@ -140,6 +141,7 @@ let package = Package(
             name: "NexGenVideoTests",
             dependencies: [
                 "BpyRuntimeProtocol",
+                "BpySupervisorPOSIX",
                 "HangDiagnostics",
                 "NexGenVideo",
                 .product(name: "NexGenEngine", package: "Engine"),
