@@ -3004,7 +3004,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
     func closeSession(_ data: Data, owner: UUID, withReply reply: @escaping (Data) -> Void) {
         do {
             let request = try JSONDecoder().decode(BpySessionReference.self, from: data)
-            let session = try lock.access {
+            let session: ServiceSession? = try lock.access {
                 if connectionOwners[request.sessionID] == nil,
                    sessions[request.sessionID] == nil, retiringSessions[request.sessionID] == nil { return nil }
                 guard connectionOwners[request.sessionID] == owner else { throw CocoaError(.fileWriteNoPermission) }

@@ -137,38 +137,9 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
-          # macOS-runner SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
-          # environment: an integer-overflow trap in BICStructure (t - Int.min) and a slow lazy-global init
-          # (PackKnowledge.packRoot) that starved the pool under concurrent first-touch — both fixed in the
-          # sources. The "CoreData: Failed to create NSXPCConnection" line the retry keys on is benign noise
-          # (present in passing runs too), NOT the cause. Retry + backtrace stay as a cheap backstop (exits
-          # on first success, costs nothing when green) for the runner's rarer genuine XPC flake and to pin
-          # any future trap. Full coverage is kept — nothing is skipped.
+          set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::swift test (attempt $i/$attempts)"
-            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build 2>&1 | tee "test-attempt-$i.log"
-            code=${PIPESTATUS[0]}
-            echo "::endgroup::"
-            if [ "$code" -eq 0 ]; then
-              echo "swift test passed on attempt $i"
-              exit 0
-            fi
-            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "test-attempt-$i.log"; then
-              echo "::error::Real test failure on attempt $i — not retrying"
-              exit "$code"
-            fi
-            if grep -q "unexpected signal code" "test-attempt-$i.log"; then
-              echo "::warning::Environmental test-process crash on attempt $i — retrying"
-              continue
-            fi
-            echo "::error::Real test failure on attempt $i (exit $code); not an environmental crash — not retrying"
-            exit "$code"
-          done
-          echo "::error::swift test hit the environmental crash on all $attempts attempts"
-          exit 1
+          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build 2>&1 | tee test.log
 
       - name: HDR export QC
         env:

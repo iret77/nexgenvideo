@@ -20,7 +20,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        path="$RUNNER_TEMP/swiftpm-cache-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"
+        path="$RUNNER_TEMP/swiftpm-dependency-cache"
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "NGV_SWIFTPM_CACHE_PATH=$path" >> "$GITHUB_ENV"
 

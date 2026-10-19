@@ -475,28 +475,11 @@ jobs:
         run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
 
       - name: Test the exact release configuration
+        shell: bash
         run: |
-          set +e
+          set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee "release-test-attempt-$i.log"
-            code=${PIPESTATUS[0]}
-            if [ "$code" -eq 0 ]; then
-              exit 0
-            fi
-            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "release-test-attempt-$i.log"; then
-              echo "::error::Release tests failed on attempt $i"
-              exit "$code"
-            fi
-            if grep -q "unexpected signal code" "release-test-attempt-$i.log"; then
-              echo "::warning::SwiftPM test runner crashed on attempt $i — retrying"
-              continue
-            fi
-            exit "$code"
-          done
-          echo "::error::SwiftPM test runner crashed on all $attempts attempts"
-          exit 1
+          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee release-test.log
 
       - name: Verify release tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist

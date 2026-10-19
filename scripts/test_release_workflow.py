@@ -53,7 +53,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             'swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
             '--scratch-path "$RUNNER_TEMP/release-tests" '
             '--skip-build -Xswiftc -enable-testing 2>&1 | tee '
-            '"release-test-attempt-$i.log"'
+            'release-test.log'
         )
         bundle = "scripts/bundle.sh release --sign"
         pack = 'scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"'

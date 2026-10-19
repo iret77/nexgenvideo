@@ -111,6 +111,13 @@ incremental build. Real external pack loads, historical compatibility checks and
 relaunch checks still run. Normal-startup acceptance consumes the zipped app on
 `macos-26`. Build directories are never cached or restored across jobs.
 
+SwiftPM dependency caches use a stable directory inside `RUNNER_TEMP`;
+the key includes the platform, toolchain and package manifests. Run IDs are absent
+from the cache path because [GitHub's cache version also hashes that path](https://github.com/actions/cache/blob/v4/README.md#cache-version).
+The cache contains no compiled products. A failed job does not save a new cache.
+Debug and release test steps each execute once with pipeline failure propagation;
+a test-process crash cannot become successful evidence through an automatic retry.
+
 Agent UI specification rendering runs in a separate Linux job for changes to its
 inputs or CI wiring. A documentation-only UI specification edit now produces
 render evidence without allocating a macOS runner. Runtime Markdown in source
