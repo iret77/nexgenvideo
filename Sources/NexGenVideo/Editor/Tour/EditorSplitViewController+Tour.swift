@@ -19,6 +19,8 @@ extension EditorSplitViewController {
 
     private func tourFrame(for target: TourTarget) -> CGRect? {
         switch target {
+        case .panel(.agent):
+            return flippedFrame(of: leafItem(for: .inspector)?.viewController.view)
         case .panel(let panel):
             return flippedFrame(of: leafItem(for: panel)?.viewController.view)
         case .element(.timelineRuler):
@@ -30,11 +32,15 @@ extension EditorSplitViewController {
         }
     }
 
-    /// A view's frame in this controller's view coords, flipped to top-left origin.
+    /// Convert directly into the overlay's measured drawing surface.
     private func flippedFrame(of source: NSView?) -> CGRect? {
-        guard let source, source.window != nil,
+        guard let source, let window = source.window,
+              let overlay = editor.tour.overlayCoordinateView, overlay.window === window,
+              overlay.bounds.width > 1, overlay.bounds.height > 1,
               source.bounds.width > 1, source.bounds.height > 1 else { return nil }
-        let r = source.convert(source.bounds, to: view)
-        return CGRect(x: r.minX, y: view.bounds.height - r.maxY, width: r.width, height: r.height)
+        let r = source.convert(source.bounds, to: overlay)
+        return CGRect(x: r.minX - overlay.bounds.minX,
+                      y: overlay.isFlipped ? r.minY - overlay.bounds.minY : overlay.bounds.maxY - r.maxY,
+                      width: r.width, height: r.height)
     }
 }

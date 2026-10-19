@@ -33,6 +33,7 @@ struct TourOverlay: View {
                             RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
                                 .strokeBorder(AppTheme.Accent.spotlightGradient, lineWidth: AppTheme.BorderWidth.thick)
                                 .frame(width: frame.width, height: frame.height)
+                                .reviewAcceptanceProbe("tour.highlight")
                                 .offset(x: frame.minX, y: frame.minY)
                                 .shadow(AppTheme.Shadow.spotlight)
                                 .allowsHitTesting(false)
@@ -42,7 +43,8 @@ struct TourOverlay: View {
                             .position(calloutPosition(for: frame, in: geo.size))
                     }
                 }
-                .ignoresSafeArea()
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .background(TourOverlayCoordinateRegistrar().allowsHitTesting(false))
             }
             .transition(.opacity)
         }
@@ -236,6 +238,23 @@ extension View {
     /// controller can highlight it. Pair with a `TourStep` targeting `.element(id)`.
     func tourAnchor(_ id: TourAnchorID) -> some View {
         background(TourAnchorRegistrar(id: id))
+    }
+}
+
+private struct TourOverlayCoordinateRegistrar: NSViewRepresentable {
+    @Environment(EditorViewModel.self) private var editor
+
+    func makeNSView(context: Context) -> TourAnchorNSView {
+        let view = TourAnchorNSView()
+        view.onLayout = { [weak editor] in
+            DispatchQueue.main.async { editor?.tour.anchorDidLayout() }
+        }
+        editor.tour.overlayCoordinateView = view
+        return view
+    }
+
+    func updateNSView(_ nsView: TourAnchorNSView, context: Context) {
+        editor.tour.overlayCoordinateView = nsView
     }
 }
 
