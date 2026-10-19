@@ -456,7 +456,7 @@ enum CaptionRevisionAcceptance {
             state = .running(sessionID: request.sessionID, turnID: request.turnID)
             task = Task { @MainActor in
                 guard let execute else { failure = "The actual tool executor is unavailable."; pair.continuation.finish(); return }
-                func call(_ label: String, _ tool: String, _ args: [String: Any]) async throws -> ToolResult {
+                @MainActor func call(_ label: String, _ tool: String, _ args: [String: Any]) async throws -> ToolResult {
                     let bytes = try JSONSerialization.data(withJSONObject: args, options: [.sortedKeys])
                     let result = await execute(UUID().uuidString, tool, String(decoding: bytes, as: UTF8.self))
                     let text = result.content.compactMap { if case .text(let value) = $0 { value } else { nil } }.joined(separator: "\n")

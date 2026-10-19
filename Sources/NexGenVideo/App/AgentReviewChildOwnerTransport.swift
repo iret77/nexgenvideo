@@ -116,7 +116,7 @@ final class AgentReviewChildOwnerTransport {
             let relay = AgentRuntimeEventRelay(sessionID: sessionID, turnID: turnID)
             task = Task { @MainActor in
                 do {
-                    func call(_ tool: String, input: String) async throws -> ToolResult {
+                    @MainActor func call(_ tool: String, input: String) async throws -> ToolResult {
                         try await Task.sleep(for: .milliseconds(150)); try revalidate()
                         let id = UUID().uuidString, message = UUID().uuidString
                         let object: [String: Any] = ["type": "assistant", "message": ["id": message,
