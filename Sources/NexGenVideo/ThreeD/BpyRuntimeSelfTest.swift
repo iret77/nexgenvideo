@@ -7,10 +7,12 @@ import NexGenEngine
 private final class BpySelfTestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<BpyRuntimeJobResult, Error>?
+    private var completedAt: ContinuousClock.Instant?
 
     func store(_ value: Result<BpyRuntimeJobResult, Error>) {
         lock.lock()
         result = value
+        completedAt = ContinuousClock.now
         lock.unlock()
     }
 
@@ -18,6 +20,26 @@ private final class BpySelfTestBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return result
+    }
+
+    func wait(timeout: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while true {
+            if let completedAt = completionTime() { return completedAt <= deadline }
+            guard clock.now < deadline else {
+                return completionTime().map { $0 <= deadline } ?? false
+            }
+            do {
+                try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(10))))
+            } catch { return false }
+        }
+    }
+
+    private func completionTime() -> ContinuousClock.Instant? {
+        lock.lock()
+        defer { lock.unlock() }
+        return completedAt
     }
 }
 
@@ -275,18 +297,16 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The close-before-open lifecycle could not reserve a slot.")
         }
         let earlyCloseBox = BpySelfTestBox()
-        let earlyCloseFinished = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
             earlyCloseBox.store(Result {
                 let response = try earlyCloseSession.ready()
                 return BpyRuntimeJobResult(response: response, stagedOutputs: [:])
             })
-            earlyCloseFinished.signal()
         }
         try await Task.sleep(for: .milliseconds(10))
         earlyCloseProject.close()
         try waitUntilReleased(earlyCloseSession)
-        guard earlyCloseFinished.wait(timeout: .now() + 10) == .success,
+        guard await earlyCloseBox.wait(timeout: .seconds(10)),
               earlyCloseBox.load() != nil else {
             throw BpyRuntimeError.invalidOutput("Close-before-open did not settle the client call.")
         }
@@ -459,18 +479,17 @@ enum BpyRuntimeSelfTest {
         guard mkfifo(fifo.path, 0o600) == 0 else { throw BpyRuntimeError.invalidInput("The FIFO rejection fixture could not be created.") }
         defer { try? FileManager.default.removeItem(at: fifo) }
         let fifoInput = try BpyApprovedInputCopy(approvedDirectory: approvedDirectory, filename: "fifo.json")
-        let fifoResult = BpySelfTestBox(), fifoFinished = DispatchSemaphore(value: 0)
+        let fifoResult = BpySelfTestBox()
         DispatchQueue.global(qos: .userInitiated).async {
             fifoResult.store(Result {
                 try sessionA.runJob(id: UUID(), expectedRevision: "warm-probe",
                     source: "raise RuntimeError('A FIFO must never reach the worker')", inputs: [fifoInput])
             })
-            fifoFinished.signal()
         }
-        let rejectedBeforeWriter = fifoFinished.wait(timeout: .now() + 5) == .success
+        let rejectedBeforeWriter = await fifoResult.wait(timeout: .seconds(5))
         let fifoWriter = Darwin.open(fifo.path, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
         if fifoWriter >= 0 { Darwin.close(fifoWriter) }
-        if !rejectedBeforeWriter { _ = fifoFinished.wait(timeout: .now() + 5) }
+        if !rejectedBeforeWriter { _ = await fifoResult.wait(timeout: .seconds(5)) }
         guard rejectedBeforeWriter, let rejected = fifoResult.load() else {
             throw BpyRuntimeError.invalidOutput("Approved input blocked while opening a FIFO without a writer.")
         }
@@ -550,7 +569,6 @@ enum BpyRuntimeSelfTest {
 
         let cancelID = UUID()
         let cancelBox = BpySelfTestBox()
-        let cancelled = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
             cancelBox.store(Result {
                 try sessionA.runJob(
@@ -560,11 +578,10 @@ enum BpyRuntimeSelfTest {
                     timeoutSeconds: 30
                 )
             })
-            cancelled.signal()
         }
         try waitUntilRunning(sessionA, jobID: cancelID)
         _ = try sessionA.cancel(jobID: cancelID)
-        guard cancelled.wait(timeout: .now() + 10) == .success,
+        guard await cancelBox.wait(timeout: .seconds(10)),
               let cancelOutcome = cancelBox.load(),
               case .success(let cancelResult) = cancelOutcome,
               cancelResult.response.state == .cancelled else {
@@ -754,7 +771,6 @@ enum BpyRuntimeSelfTest {
         os.execv(sys.executable, [sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
         """
         let parentDeathBox = BpySelfTestBox()
-        let parentDeathFinished = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
             parentDeathBox.store(Result {
                 try sessionA.runJob(
@@ -764,12 +780,11 @@ enum BpyRuntimeSelfTest {
                     timeoutSeconds: 30
                 )
             })
-            parentDeathFinished.signal()
         }
         try waitUntilRunning(sessionA, jobID: parentDeathID)
         guard let servicePID = readyA.runtime?.serviceProcessIdentifier,
               servicePID > 1, Darwin.kill(servicePID, SIGKILL) == 0,
-              parentDeathFinished.wait(timeout: .now() + 10) == .success,
+              await parentDeathBox.wait(timeout: .seconds(10)),
               let parentDeathOutcome = parentDeathBox.load(),
               case .failure = parentDeathOutcome else {
             throw BpyRuntimeError.invalidOutput("The service-kill recovery probe could not start.")

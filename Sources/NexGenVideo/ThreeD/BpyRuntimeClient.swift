@@ -36,7 +36,7 @@ private func processStartAbsoluteTime(_ processIdentifier: pid_t) -> UInt64? {
 }
 
 private func processExecutable(_ processIdentifier: pid_t) -> String? {
-    var bytes = [UInt8](repeating: 0, count: Int(PROC_PIDPATHINFO_MAXSIZE))
+    var bytes = [UInt8](repeating: 0, count: 4 * Int(MAXPATHLEN))
     let count = bytes.withUnsafeMutableBytes {
         guard let base = $0.baseAddress else { return Int32(0) }
         return procPIDPath(processIdentifier, base, UInt32($0.count))
@@ -1123,8 +1123,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         defer { Darwin.close(directoryFD) }
         var resolvedDirectory = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        let directoryPathResult = resolvedDirectory.withUnsafeMutableBufferPointer {
-            fcntl(directoryFD, F_GETPATH, $0.baseAddress)
+        let directoryPathResult = resolvedDirectory.withUnsafeMutableBytes { buffer -> Int32 in
+            guard let base = buffer.baseAddress else { return -1 }
+            return Darwin.fcntl(directoryFD, F_GETPATH, base)
         }
         guard directoryPathResult == 0,
               String(cString: resolvedDirectory) == input.approvedDirectory.path else {
@@ -1146,8 +1147,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let handle = FileHandle(fileDescriptor: fileFD, closeOnDealloc: true)
         var resolvedFile = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         let expectedFile = input.approvedDirectory.appendingPathComponent(input.filename).path
-        let filePathResult = resolvedFile.withUnsafeMutableBufferPointer {
-            fcntl(fileFD, F_GETPATH, $0.baseAddress)
+        let filePathResult = resolvedFile.withUnsafeMutableBytes { buffer -> Int32 in
+            guard let base = buffer.baseAddress else { return -1 }
+            return Darwin.fcntl(fileFD, F_GETPATH, base)
         }
         guard filePathResult == 0,
               String(cString: resolvedFile) == expectedFile else {

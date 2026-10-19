@@ -230,7 +230,7 @@ struct SpatialSceneView: View {
     private func updateInspector() {
         guard let object = session.selectedObject else { return }
         let matrix = SpatialSceneViewport.matrix(object.matrixWorld)
-        let transform = Transform(matrix: matrix)
+        let transform = RealityKit.Transform(matrix: matrix)
         position = SIMD3<Double>(transform.translation)
         scale = SIMD3<Double>(transform.scale)
         let rotationMatrix = simd_float3x3(transform.rotation)
@@ -312,7 +312,7 @@ private struct SpatialSceneViewport: View {
                                               roughness: 0.8, isMetallic: false)
                 let entity = ModelEntity(mesh: resource, materials: [material])
                 entity.name = mesh.objectID
-                entity.transform = Transform(matrix: Self.matrix(mesh.matrixWorld))
+                entity.transform = RealityKit.Transform(matrix: Self.matrix(mesh.matrixWorld))
                 entity.components.set(InputTargetComponent())
                 entity.generateCollisionShapes(recursive: false)
                 root.addChild(entity)
@@ -330,7 +330,7 @@ private struct SpatialSceneViewport: View {
                 )]
             }
             if let selected = session.selectedCamera {
-                camera.transform = Transform(matrix: Self.matrix(selected.matrixWorld))
+                camera.transform = RealityKit.Transform(matrix: Self.matrix(selected.matrixWorld))
                 var projection = Self.matrix(selected.projection)
                 for column in 0..<4 { projection[column][2] = (projection[column][3] - projection[column][2]) * 0.5 }
                 camera.components.remove(PerspectiveCameraComponent.self)
