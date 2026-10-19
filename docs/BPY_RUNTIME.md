@@ -203,7 +203,8 @@ Component IDs are `python-build-standalone`, `wheel:<lock name>`,
 `python-build-input:<lock name>`, and `bpy-native:<candidate-family name>`. The remaining closure
 keys are `wheelBinaryCorrespondence`, `noticeCoverage`, and nonempty `noticeFiles` entries (`path`,
 `sha256`), plus `publicSourceAsset` (`filename`, `manifestFilename`, `sha256`, `size`,
-`manifestSHA256`). Evidence paths live under `Runtime/bpy/compliance/`.
+`manifestSHA256`, the fixed original `releaseTag`, and the exact original Actions `producer`
+identity). Evidence paths live under `Runtime/bpy/compliance/`.
 
 The deterministic source builder additionally preserves every dependency in the exact Blender 5.2.2
 release manifest, including static/transitive candidates, the complete release build recipe/patch
@@ -236,7 +237,10 @@ self-declared completion flags cannot authorize distribution. Committed correspo
 can enrich a candidate while the lock remains blocked, so the final archive can be assembled and
 hash-pinned before declaring readiness; adding its public pin does not change archive contents.
 
-`ci.yml` and `ci-batch.yml` reuse that source artifact. The app is compiled and tested once on
+`ci.yml` and `ci-batch.yml` consume the exact qualified source pair through
+`bpy-qualified-source.yml` and `prepare-bpy-source`. Before publication they retrieve the pinned
+successful Actions artifact; afterward they retrieve the same bytes from the fixed original release
+tag. Every consumer rechecks the current hashes and independent distribution gate. The app is compiled and tested once on
 `macrunner`; native bpy and workspace acceptance consume its exact transferred artifact on
 `macos-26`. Standalone workspace acceptance can build its own artifact through the same source gate.
 The workspace scopes include `all`, `filmreview`, `activity` and `planning`.
@@ -249,8 +253,12 @@ original acceptance marker, checks its source/DMG binding, then downloads and in
 the release's corresponding-source assets before advertising that binary again. A failed acceptance
 job is resumed in its original run; publication recovery cannot manufacture acceptance.
 
-All uploaded full-runtime app/DMG artifacts carry the corresponding-source tar and manifest. The
-release tag supplies NexGenVideo's own exact source. No local execution substitutes for acceptance.
+Actions app, DMG and diagnostic artifacts carry a small source receipt binding the original producer,
+public source pins and consuming commit. Workspace qualification validates the full source once on
+Linux before native workers consume the bound app; it does not copy the source tar into every test
+artifact. Each public binary release carries the exact corresponding-source tar and manifest beside
+its binaries. The release tag supplies NexGenVideo's own exact source. No local execution substitutes
+for acceptance.
 
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also

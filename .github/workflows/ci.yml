@@ -106,9 +106,7 @@ jobs:
   bpy-source:
     needs: source_gate
     if: needs.source_gate.outputs.bundle_required == 'true'
-    uses: ./.github/workflows/bpy-source-closure.yml
-    with:
-      distribution: true
+    uses: ./.github/workflows/bpy-qualified-source.yml
 
   build_test:
     name: Build & Test
@@ -202,8 +200,13 @@ jobs:
       - uses: actions/download-artifact@v4
         if: needs.source_gate.outputs.bundle_required == 'true'
         with:
-          name: managed-bpy-source-${{ github.sha }}
+          name: managed-bpy-source-receipt-${{ github.sha }}
           path: .build/bpy-source
+      - uses: ./.github/actions/prepare-bpy-source
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Stage the verified bpy runtime
         if: needs.source_gate.outputs.bundle_required == 'true'
@@ -347,8 +350,7 @@ jobs:
           name: NexGenVideo-app
           path: |
             .build/NexGenVideo.zip
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+            .build/bpy-source/bpy-source-receipt.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -371,7 +373,7 @@ jobs:
                      'archiveSHA256': digest.hexdigest(), 'appTreeSHA256': os.environ['NGV_WORKSPACE_APP_TREE_SHA256']}
           (root / 'workspace-ui-input.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
           PY
-          cp .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.* "$RUNNER_TEMP/workspace-transfer/"
+          cp .build/bpy-source/bpy-source-receipt.json "$RUNNER_TEMP/workspace-transfer/"
       - uses: actions/upload-artifact@v4
         if: needs.source_gate.outputs.bundle_required == 'true'
         with:

@@ -1,0 +1,22 @@
+name: Prepare original qualified bpy source
+description: Fetch the pinned original source pair and validate current distribution pins without republishing its bytes.
+inputs:
+  directory:
+    description: Local output directory without a source pair; an input receipt may already exist
+    required: true
+  receipt:
+    description: Optional exact same-source upstream handoff receipt
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SOURCE_DIRECTORY: ${{ inputs.directory }}
+        SOURCE_RECEIPT: ${{ inputs.receipt }}
+      run: |
+        set -euo pipefail
+        args=(--output-directory "$SOURCE_DIRECTORY" --source-sha "$GITHUB_SHA")
+        if [ -n "$SOURCE_RECEIPT" ]; then args+=(--receipt "$SOURCE_RECEIPT"); fi
+        python3 scripts/consume_bpy_distributable_source.py "${args[@]}"

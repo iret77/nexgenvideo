@@ -36,13 +36,17 @@ jobs:
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/search-runtime
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: ${{ runner.temp }}/search-runtime/qualified-source
+          receipt: ${{ runner.temp }}/search-runtime/bpy-source-receipt.json
       - name: Require the actual same-source app distribution
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
           python3 scripts/verify_bpy_distributable_source.py \
-            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
-            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+            "$RUNNER_TEMP/search-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/search-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
           tar -xzf "$RUNNER_TEMP/search-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/search-runtime"
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
       - name: Exercise actual HTTP failure, Retry, checksum, CoreML, indexing and Storage
@@ -89,6 +93,10 @@ jobs:
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/search-runtime
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: ${{ runner.temp }}/search-runtime/qualified-source
+          receipt: ${{ runner.temp }}/search-runtime/bpy-source-receipt.json
       - uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/search-model-cache
@@ -99,8 +107,8 @@ jobs:
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
           python3 scripts/verify_bpy_distributable_source.py \
-            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
-            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+            "$RUNNER_TEMP/search-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/search-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
           tar -xzf "$RUNNER_TEMP/search-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/search-runtime"
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
       - name: Verify real installed bytes and load them through the actual native layout

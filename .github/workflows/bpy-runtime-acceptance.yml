@@ -30,8 +30,12 @@ jobs:
           path: ${{ runner.temp }}/download
       - uses: actions/download-artifact@v4
         with:
-          name: managed-bpy-source-${{ github.sha }}
+          name: managed-bpy-source-receipt-${{ github.sha }}
           path: ${{ runner.temp }}/source
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: ${{ runner.temp }}/source
+          receipt: ${{ runner.temp }}/source/bpy-source-receipt.json
       - name: Relocate the exact app and prepare denied resources
         env:
           APP_ZIP: ${{ inputs.app_zip }}

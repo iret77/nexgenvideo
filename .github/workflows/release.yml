@@ -334,9 +334,7 @@ jobs:
       actions: read
     needs: release-gate
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
-    uses: ./.github/workflows/bpy-source-closure.yml
-    with:
-      distribution: true
+    uses: ./.github/workflows/bpy-qualified-source.yml
 
   release:
     needs: [release-gate, bpy-source]
@@ -348,6 +346,7 @@ jobs:
       dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -504,8 +503,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: managed-bpy-source-${{ github.sha }}
+          name: managed-bpy-source-receipt-${{ github.sha }}
           path: .build/bpy-source
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Stage the exact distributable bpy runtime
         run: |
@@ -878,8 +881,7 @@ jobs:
           path: |
             .build/NexGenVideo.dmg
             .build/plugins/*.ngvpack.zip
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+            .build/bpy-source/bpy-source-receipt.json
           if-no-files-found: error
           retention-days: 7
 
@@ -902,8 +904,7 @@ jobs:
           path: |
             .build/diagnostic-app.zip
             .build/diagnostic-symbols.zip
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+            .build/bpy-source/bpy-source-receipt.json
           retention-days: 90
           if-no-files-found: error
 

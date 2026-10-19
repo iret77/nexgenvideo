@@ -159,8 +159,7 @@ def download_runtime(identity_file, directory):
     archive = directory.parent / 'native-runtime-transfer.zip'
     download_artifact(identity['runtimeArtifactID'], identity['runtimeArtifactDigest'], archive)
     extract_transfer(archive, directory, {'workspace-ui.tar.gz', 'workspace-ui-input.json',
-                                        'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
-                                        'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json'})
+                                        'bpy-source-receipt.json'})
     runtime_receipt(directory, identity)
 
 
@@ -178,16 +177,17 @@ def runtime_receipt(directory, identity):
 
 
 def prepare(directory, identity_file):
-    from verify_bpy_distributable_source import validate
-    archive = directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.tar'
-    manifest = directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json'
-    validation = validate(archive, manifest)
+    from consume_bpy_distributable_source import consume
     identity = json.loads(identity_file.read_text())
+    qualified = consume(directory / 'qualified-source', identity['sourceSHA'], directory / 'bpy-source-receipt.json')
+    validation = qualified['validation']
     receipt = runtime_receipt(directory, identity)
     identity.update(planSHA256=sha(identity_file.parent / 'plan.json'),
                     archiveSHA256=receipt['archiveSHA256'], appTreeSHA256=receipt['appTreeSHA256'],
                     runtimeInputSHA256=sha(directory / 'workspace-ui-input.json'),
-                    sourceArchiveSHA256=sha(archive), sourceManifestSHA256=sha(manifest), sourceClosure=validation)
+                    sourceReceiptSHA256=sha(directory / 'bpy-source-receipt.json'),
+                    sourceArchiveSHA256=validation['archiveSHA256'],
+                    sourceManifestSHA256=validation['manifestSHA256'], sourceClosure=validation)
     atomic_json(identity_file, identity)
     outputs({'identity_sha256': sha(identity_file)})
 

@@ -72,6 +72,19 @@ size before setting the lock to `ready`. Normal CI retains `--distribution` and
 the distributable-source checks before any app build. Candidate success alone
 does not authorize distribution or supply missing evidence.
 
+Initial CI, standalone workspace builds and releases consume the exact qualified
+Corresponding Source pair through `bpy-qualified-source.yml` and
+`prepare-bpy-source`. Before publication it comes from the pinned successful
+Actions producer; after publication it comes from the fixed original
+`publicSourceAsset.releaseTag`. Both paths retain the current public hashes and
+independent distribution validation. The complete producer identity is pinned in
+the lock and in the small same-source `bpy-source-receipt.json` handoff.
+Release publication attaches the exact source pair beside the binaries; Actions
+app/test/diagnostic artifacts carry only the receipt. An expired unpublished source
+artifact requires an explicit qualification rebuild and reviewed replacement pins; consumers never
+rebuild, repin or fall back after a hash mismatch. Candidate/partial source reuse
+in qualification remains separate and cannot satisfy the distribution gate.
+
 `external-gui-acceptance.yml` reuses the same-source `workspace-ui-app` artifact
 and builds only its external XCTest driver. Separate macrunner jobs exercise the
 normal installed app at 100/125/150%; a failed size can be selected independently.

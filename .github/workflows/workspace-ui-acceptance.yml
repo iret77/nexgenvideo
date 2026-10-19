@@ -151,9 +151,7 @@ jobs:
   bpy-source:
     needs: source
     if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
-    uses: ./.github/workflows/bpy-source-closure.yml
-    with:
-      distribution: true
+    uses: ./.github/workflows/bpy-qualified-source.yml
 
   build:
     needs: [source, bpy-source]
@@ -169,8 +167,12 @@ jobs:
       - uses: ./.github/actions/cache-swiftpm-dependencies
       - uses: actions/download-artifact@v4
         with:
-          name: managed-bpy-source-${{ github.sha }}
+          name: managed-bpy-source-receipt-${{ github.sha }}
           path: .build/bpy-source
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
       - name: Stage verified runtime
         run: |
           python3 scripts/verify_bpy_distributable_source.py \
@@ -196,7 +198,7 @@ jobs:
                      'archiveSHA256': digest.hexdigest(), 'appTreeSHA256': os.environ['NGV_WORKSPACE_APP_TREE_SHA256']}
           (root / 'workspace-ui-input.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
           PY
-          cp .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.* "$RUNNER_TEMP/workspace-transfer/"
+          cp .build/bpy-source/bpy-source-receipt.json "$RUNNER_TEMP/workspace-transfer/"
       - name: Upload acceptance app
         id: upload_app
         uses: actions/upload-artifact@v4
@@ -248,6 +250,7 @@ jobs:
       - name: Verify source closure once and freeze runtime and plan fingerprints
         id: prepare
         env:
+          GH_TOKEN: ${{ github.token }}
           NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
           NGV_ACCEPTANCE_CASE: ${{ inputs.acceptance_case }}
           NGV_ACCEPTANCE_SCALE: ${{ inputs.acceptance_scale }}

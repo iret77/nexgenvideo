@@ -60,8 +60,7 @@ class NativeQualificationTests(unittest.TestCase):
     def runtime_zip(self):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w') as bundle:
-            for name in ('workspace-ui.tar.gz', 'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
-                         'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json'):
+            for name in ('workspace-ui.tar.gz', 'bpy-source-receipt.json'):
                 bundle.writestr(name, name.encode())
             receipt = {'schema': 'nexgenvideo/workspace-ui-input/1', 'sourceSHA': self.identity['sourceSHA'],
                        'archiveSHA256': hashlib.sha256(b'workspace-ui.tar.gz').hexdigest(),
@@ -101,8 +100,7 @@ class NativeQualificationTests(unittest.TestCase):
         destination = self.root / 'runtime'; destination.mkdir()
         ci.extract_transfer(io.BytesIO(payload), destination,
                             {'workspace-ui.tar.gz', 'workspace-ui-input.json',
-                             'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
-                             'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json'})
+                             'bpy-source-receipt.json'})
         receipt = ci.runtime_receipt(destination, self.identity)
         path = destination / 'workspace-ui-input.json'
         for changed in ({'schema': 'unknown'}, {'sourceSHA': 'e' * 40},
@@ -117,8 +115,7 @@ class NativeQualificationTests(unittest.TestCase):
 
     def test_runtime_transfer_rejects_missing_duplicate_extra_and_special_members(self):
         names = ['workspace-ui.tar.gz', 'workspace-ui-input.json',
-                 'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
-                 'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json']
+                 'bpy-source-receipt.json']
         for variant in (names[:-1], names + ['extra'], names[:-1] + [names[0]], names):
             stream = io.BytesIO()
             with zipfile.ZipFile(stream, 'w') as bundle:
