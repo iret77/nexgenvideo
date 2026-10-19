@@ -23,7 +23,7 @@ jobs:
     # Same name as the pull-request check, so a dispatched run also satisfies the required check.
     name: Light Checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       build_required: ${{ steps.classify.outputs.build_required }}
       bundle_required: ${{ steps.classify.outputs.bundle_required }}

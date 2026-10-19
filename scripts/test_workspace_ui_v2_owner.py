@@ -56,7 +56,7 @@ def owner_fixture(output, scale=1.0, kind="musicvideo"):
               "native whole-take selection", "native reviewed range selected and inserted", "native production assembly",
               "complete native film playback", "complete native take playback", "complete compiled direction inspected",
               "native timeline style", "native delivery byte changes rejected", "actual exported movie and poster",
-              "native optional cover completed", "native additional Music Video audio", "native Music Video audio preserved by assembly",
+              "native additional Music Video audio", "native Music Video audio preserved by assembly",
               "original Music Video song occurs once", "actual Music Video visual arc compiled"]
     states = {label: {} for label in labels}
     states["two moments within one shot"] = {"playingWhenLeaving": True, "stoppedAfterLeaving": True, "playbackDetached": True, "stoppedTick": 600, "endTick": 1200}
@@ -96,9 +96,11 @@ def owner_fixture(output, scale=1.0, kind="musicvideo"):
                "sequence_review_sha256": hashlib.sha256(review_bytes).hexdigest()}
     (directory / "owner-v2-delivery.json").write_text(json.dumps(receipt))
     bible = bible_entity_fixture(directory)
-    interactions.extend(bible["interactions"])
     images.extend(bible["screenshots"])
-    auto_sketch_fixture(directory, interactions)
+    sketch_interactions = []
+    auto_sketch_fixture(directory, sketch_interactions)
+    render_approval = next(index for index, event in enumerate(interactions) if event.get("id") == "generation-batch.approve")
+    interactions[render_approval:render_approval] = sketch_interactions + bible["interactions"]
     from test_production_take_repair_evidence import repair_fixture
     repair_fixture(directory, {"interactions": interactions, "screenshots": images})
     if kind == "core":
@@ -199,11 +201,31 @@ class V2OwnerEvidenceTests(unittest.TestCase):
         for kind in ("core", "musicvideo"):
             for scale in (1.0, 1.25, 1.5):
                 rows = owner_fixture(self.output, scale, kind)
-                self.assertTrue(owner_evidence(rows, self.output, scale, kind)[0])
+                self.assertTrue(owner_evidence(rows, self.output, scale, kind)[0], (kind, scale))
                 for index in range(len(rows[0]["nativeGateApprovals"])):
                     changed = copy.deepcopy(rows)
                     changed[0]["nativeGateApprovals"].pop(index)
                     self.assertFalse(owner_evidence(changed, self.output, scale, kind)[0])
+
+    def test_sketch_approval_cannot_be_preceded_by_an_unrelated_generation(self):
+        for kind in ("core", "musicvideo"):
+            with self.subTest(kind=kind):
+                rows = owner_fixture(self.output, kind=kind)
+                self.assertTrue(owner_evidence(rows, self.output, 1.0, kind)[0])
+                native = rows[0]["nativeEvidence"]
+                native["interactions"].insert(0, {"kind": "pointer", "id": "generation-batch.approve"})
+                directory = self.output / rows[0]["evidenceDirectory"]
+                (directory / native["progress"]).write_text(json.dumps({**native, "failure": None}))
+                self.assertFalse(owner_evidence(rows, self.output, 1.0, kind)[0])
+
+    def test_cover_completion_cannot_include_an_empty_placeholder(self):
+        rows = owner_fixture(self.output)
+        self.assertTrue(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
+        native = rows[0]["nativeEvidence"]
+        native["interactions"].insert(0, {"kind": "verified-state", "label": "native optional cover completed", "evidence": {}})
+        directory = self.output / rows[0]["evidenceDirectory"]
+        (directory / native["progress"]).write_text(json.dumps({**native, "failure": None}))
+        self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_real_intake_is_required_for_musicvideo_owner_acceptance(self):
         for fault in ("intake", "reanalysis", "current-analysis-gate", "missing-prefix", "foreign-prefix", "traversal", "wrong-image"):
