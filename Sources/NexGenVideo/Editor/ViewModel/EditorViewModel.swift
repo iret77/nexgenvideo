@@ -551,7 +551,7 @@ final class EditorViewModel {
             defer { coordinator.endMutation(projectRoot: root, id: lease) }
             guard let self else { return }
             defer { if self.recoveryDiscardTask?.id == id { self.recoveryDiscardTask = nil; self.recoveryDiscardInProgress = false } }
-            func isCurrent() -> Bool {
+            @MainActor func isCurrent() -> Bool {
                 self.projectURL == projectURL && self.workingCopyHome == home
                     && self.activeWorkingCopyKey == key && self.activeWorkingCopyGeneration == generation
             }
@@ -858,7 +858,7 @@ final class EditorViewModel {
                     if !committed { self.workflowHandoffPending = false }
                 }
             }
-            func requireCurrent() throws {
+            @MainActor func requireCurrent() throws {
                 try Task.checkCancellation()
                 guard self.projectURL == url, self.projectId == projectID, self.workingRoot == home,
                       self.openWorkingCopyKey == key, self.openWorkingCopyGeneration == generation,
