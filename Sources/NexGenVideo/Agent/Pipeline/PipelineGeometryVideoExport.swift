@@ -24,7 +24,7 @@ enum PipelineGeometryVideoExport {
         guard CMTimeCompare(range.start, actual.start) >= 0, CMTimeCompare(range.end, actual.end) <= 0 else { throw invalid() }
         var coveredUntil = range.start
         for segment in try await sourceTrack.load(.segments) where !segment.isEmpty {
-            let covered = CMTimeRangeGetIntersection(segment.timeMapping.target, range)
+            let covered = CMTimeRangeGetIntersection(segment.timeMapping.target, otherRange: range)
             guard covered.isValid, CMTimeCompare(covered.duration, .zero) > 0 else { continue }
             guard CMTimeCompare(covered.start, coveredUntil) <= 0 else { throw invalid() }
             if CMTimeCompare(covered.end, coveredUntil) > 0 { coveredUntil = covered.end }

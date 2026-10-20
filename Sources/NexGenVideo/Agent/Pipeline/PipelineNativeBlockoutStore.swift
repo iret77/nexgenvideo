@@ -192,7 +192,7 @@ enum PipelineNativeBlockoutStore {
                     stateRefs.append(reference)
                     files.append((reference.path, bytes))
                 }
-                let clock = try SpatialClaySequenceRenderer.sequenceClock(.init(numerator: timing.durationTicks,
+                let clock = try SpatialClayRenderer.sequenceClock(.init(numerator: timing.durationTicks,
                     denominator: Int32(board.timing.timebase.ticksPerSecond)), numerator: context.scene.snapshot.timebaseNumerator,
                     denominator: context.scene.snapshot.timebaseDenominator, count: state.frames.count)
                 try NativeBlockoutExporter.export(width: defaultPovSize.width, height: defaultPovSize.height,
