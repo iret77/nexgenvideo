@@ -58,7 +58,7 @@ enum PipelineProductionPerformanceAlignment {
             let projection = try ProductionPlanningLineageV2.projection(dataRoot: access.root)
             guard let binding = try candidate(shotID: shotID, projection: projection, dataRoot: access.root),
                   let number = projection.shots.firstIndex(where: { $0.id == shotID }) else { return Optional<Snapshot>.none }
-            let fence = try sourceFence(binding, dataRoot: access.root)
+            let fence = try sourceFence(binding, projection: projection, dataRoot: access.root)
             let path = "Caches/PerformanceAlignment/" + UUID().uuidString + ".mov"
             _ = try ProjectLocalFile.ensureDirectory("Caches/PerformanceAlignment", dataRoot: access.home)
             let preview = access.home.appendingPathComponent(path)
@@ -104,12 +104,12 @@ enum PipelineProductionPerformanceAlignment {
             try snapshot.sourceFence.requireUnchanged()
             let projection = try ProductionPlanningLineageV2.projection(dataRoot: access.root)
             guard try candidate(shotID: binding.shotID, projection: projection, dataRoot: access.root) == binding else { throw changed() }
-            let fence = try sourceFence(binding, dataRoot: access.root)
+            let fence = try sourceFence(binding, projection: projection, dataRoot: access.root)
             let previewURL = try ProjectLocalFile.requireHash(snapshot.previewSHA256,
                 at: FrameInventory.relativePath(of: snapshot.previewURL, to: access.home), dataRoot: access.home)
             let previewFence = try PipelineNativeTakeSourceFence.capture([previewURL])
             let canonicalFence = try PipelineSpatialSceneAuthority.SourceFence.capture(dataRoot: access.root,
-                additionalCanonicalPaths: [ProductionPlanProjectionV1.currentPath, currentPath(binding.shotID),
+                additionalCanonicalPaths: [ProductionPlanProjectionV1.versionPath(projection.header.revision), currentPath(binding.shotID),
                     PipelineProductionRenderWriter.selectionPath(binding.shotID)])
             let bytes = try Data(contentsOf: previewURL)
             let transaction = try ProjectWorkingCopy.preparePipelineTransaction(at: access.root) { staging in
@@ -273,10 +273,11 @@ enum PipelineProductionPerformanceAlignment {
         _ = try await AVAssetImageGenerator(asset: actual).image(at: .zero)
     }
 
-    private static func sourceFence(_ binding: Binding, dataRoot: URL) throws -> PipelineNativeTakeSourceFence.Snapshot {
+    private static func sourceFence(_ binding: Binding, projection: ProductionPlanProjectionV1,
+                                    dataRoot: URL) throws -> PipelineNativeTakeSourceFence.Snapshot {
         let home = FrameInventory.projectHome(of: dataRoot)
         var urls = try binding.references.map { try ProjectLocalFile.resolve($0.path, dataRoot: dataRoot) }
-        for path in [ProductionPlanProjectionV1.currentPath, PipelineLayout.gatesFile,
+        for path in [ProductionPlanProjectionV1.versionPath(projection.header.revision), PipelineLayout.gatesFile,
                      PipelineProductionRenderWriter.selectionPath(binding.shotID),
                      PipelineProductionRenderWriter.currentPath(binding.shotID)] {
             if FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(path).path) {

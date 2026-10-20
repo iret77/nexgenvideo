@@ -698,7 +698,7 @@ enum PipelineRenderRecordWriter {
         let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: FrameInventory.projectHome(of: dataRoot))
         if try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
             expectedProductionContract: declaration.productionContract)?.isProductionV2 == true {
-            let planned = ShotDeliveryModeResolverV1.stillShotIDs(in: ProductionPlanningLineageV2.projection(dataRoot: dataRoot).executionPlan)
+            let planned = try ShotDeliveryModeResolverV1.stillShotIDs(in: ProductionPlanningLineageV2.projection(dataRoot: dataRoot).executionPlan)
             let rendered = try loadRenderManifest(dataRoot: dataRoot, phase: phase).entries.filter { $0.value.status == .rendered }
             return planned.intersection(Set(rendered.keys))
         }
