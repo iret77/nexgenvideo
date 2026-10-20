@@ -29,7 +29,10 @@ enum ProductionSanityOwnerAcceptance {
         try await ProductionV2PlanningAcceptance.selectPhase("shotlist", context: context, driver: driver)
         try await ProductionV2PlanningAcceptance.approve("shotlist", artifact: ProductionPlanProjectionV1.versionPath(invalid.header.revision),
             next: "sanity", context: context, driver: driver)
-        let run = await context.executor.execute(name: "run_phase", args: ["phase": "sanity"])
+        let run = await context.executor.execute(name: "run_sanity", args: [:])
+        guard !run.isError, run.turnDisposition == .continueTurn else {
+            throw GateBlocked("The actual Sanity audit did not complete: " + text(run))
+        }
         let report = try await audit(root)
         guard report.errors.count == 1, report.errors.first?.code == "BLOCKING_ANCHOR_MISSING",
               report.errors.first?.shotId == target.id else {
@@ -103,7 +106,7 @@ enum ProductionSanityOwnerAcceptance {
             "nativeApprovalRefused": refused, "gateBytesUnchangedOnRefusal": true,
             "wrongPhaseTool": "write_script", "wrongPhaseRefusal": refusal,
             "canonicalScriptUnchanged": scriptAfter == scriptBefore, "actualScopedCorrection": true,
-            "runtimeToolCalls": runtime.completedCalls, "sanityRunnerReportedError": run.isError,
+            "runtimeToolCalls": runtime.completedCalls, "sanityToolSucceeded": !run.isError && run.turnDisposition == .continueTurn,
             "repairedErrors": clean.errors.count, "nextPhase": editor.projectState?.nextPhaseName ?? "missing",
             "transport": "isolated deterministic response through actual host ToolExecutor", "semanticModelQualityClaim": false,
             "providerGenerations": 0]

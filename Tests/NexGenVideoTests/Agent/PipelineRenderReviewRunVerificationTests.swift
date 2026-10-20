@@ -10,12 +10,25 @@ final class PipelineRenderReviewRunVerificationTests: XCTestCase {
 
     @MainActor
     func testCanonicalGraphPreservesEveryPageReductionAndFinding() async throws {
+        ProductionPlanningAcceptanceFixture.beginDiagnostic("PipelineRenderReviewRunVerificationTests.testCanonicalGraphPreservesEveryPageReductionAndFinding")
+        defer { ProductionPlanningAcceptanceFixture.endDiagnostic() }
         let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
-        defer { context.document.close() }
+        ProductionPlanningAcceptanceFixture.diagnosticStage("factory.returned")
+        defer {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.before")
+            context.document.close()
+            ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.returned")
+        }
+        ProductionPlanningAcceptanceFixture.diagnosticStage("capture.before")
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
+        ProductionPlanningAcceptanceFixture.diagnosticStage("capture.after")
+        ProductionPlanningAcceptanceFixture.diagnosticStage("prepare.before")
         let prepared = try Manifest.prepare(snapshot: snapshot, dataRoot: context.dataRoot)
+        ProductionPlanningAcceptanceFixture.diagnosticStage("prepare.after")
         defer { prepared.discard() }
+        ProductionPlanningAcceptanceFixture.diagnosticStage("publish.before")
         try PipelineRenderReviewRunStore.publish(prepared, dataRoot: context.dataRoot)
+        ProductionPlanningAcceptanceFixture.diagnosticStage("publish.after")
         for backend in [AgentBackend.anthropicAPI, .claudeCode] {
             let fixture = try Fixture(manifest: prepared.manifest, root: context.dataRoot, backend: backend)
             let aggregate = try fixture.aggregate()

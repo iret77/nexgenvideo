@@ -141,7 +141,18 @@ jobs:
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build 2>&1 | tee test.log
+          python3 scripts/capture_render_review_test_diagnostic.py \
+            --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log -- \
+            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build
+
+      - name: Upload render review test diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-review-test-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/render-review-test-diagnostic
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: HDR export QC
         env:

@@ -5,6 +5,27 @@ import NexGenEngine
 
 @MainActor
 enum ProductionPlanningAcceptanceFixture {
+    private static var diagnosticTestName: String?
+
+    static func beginDiagnostic(_ test: String) {
+        guard ProcessInfo.processInfo.environment["NGV_RENDER_REVIEW_TEST_DIAGNOSTIC"] == "1" else { return }
+        diagnosticTestName = test
+        diagnosticStage("method.enter")
+    }
+
+    static func endDiagnostic() {
+        diagnosticStage("method.exit")
+        diagnosticTestName = nil
+    }
+
+    static func diagnosticStage(_ stage: String) {
+        guard let test = diagnosticTestName,
+              let data = try? JSONSerialization.data(withJSONObject: ["test": test, "stage": stage,
+                "pid": ProcessInfo.processInfo.processIdentifier, "uptime": ProcessInfo.processInfo.systemUptime], options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        FileHandle.standardError.write(Data(("[render-review-test-stage] " + text + "\n").utf8))
+    }
+
     static let projectName = "Light and shadow"
     static let timebase = RationalTimebaseV1(ticksPerSecond: 600, fpsNumerator: 30)
     static let actions = ["A red circle crosses a pale wall.", "A blue square fills the empty frame."]
@@ -19,21 +40,36 @@ enum ProductionPlanningAcceptanceFixture {
 
     static func makeScript(agentService: AgentService? = nil, beforeDesignApproval: (@MainActor (Context) async throws -> Void)? = nil,
                            beforeBriefApproval: (@MainActor (Context) async throws -> Void)? = nil) async throws -> Context {
+        diagnosticStage("makeScript.enter")
         let home = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("Production planning \(UUID().uuidString).ngv")
+        diagnosticStage("scaffold.before")
         let root = try ProjectScaffold.initProject(home: home, name: projectName, mode: .generic)
+        diagnosticStage("scaffold.after")
         try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
         try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
         try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
         _ = try ProjectIdentity.uuid(for: home)
         try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
         try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: HostWorkflowKey.core(.current))
+        diagnosticStage("load.before")
         let document = try await VideoProject.load(from: home, agentService: agentService)
+        diagnosticStage("load.after")
         var ready = false
-        defer { if !ready { document.close() } }
+        defer {
+            if !ready {
+                diagnosticStage("makeScript.failure-close.before")
+                document.close()
+                diagnosticStage("makeScript.failure-close.returned")
+            }
+        }
+        diagnosticStage("window.before")
         _ = NSApplication.shared
         document.makeWindowControllers()
+        diagnosticStage("window.after")
+        diagnosticStage("restoration.before")
         await document.generationRestorationTask?.value
+        diagnosticStage("restoration.after")
         let editor = document.editorViewModel
         editor.undoManager = document.undoManager
         guard let working = editor.workingRoot, let workingRoot = DataRootResolver.dataRoot(of: working),
@@ -317,7 +353,7 @@ enum ProductionPlanningAcceptanceFixture {
     }
 
     static func prepareImportedSanity(in context: Context) async throws {
-        try await run("run_phase", args: ["phase": "sanity"], in: context)
+        try await run("run_sanity", args: [:], in: context)
     }
 
     static func prepareEmptyFrames(in context: Context) async throws {
@@ -338,9 +374,17 @@ enum ProductionPlanningAcceptanceFixture {
 
     static func makeImportedAssembly(agentService: AgentService? = nil,
         beforeRenderReview: (@MainActor (Context) async throws -> Void)? = nil) async throws -> Context {
+        diagnosticStage("makeImportedAssembly.enter")
         let context = try await makeScript(agentService: agentService)
+        diagnosticStage("makeImportedAssembly.script-returned")
         var ready = false
-        defer { if !ready { context.document.close() } }
+        defer {
+            if !ready {
+                diagnosticStage("makeImportedAssembly.failure-close.before")
+                context.document.close()
+                diagnosticStage("makeImportedAssembly.failure-close.returned")
+            }
+        }
         try await approve("script", in: context)
         _ = try await writeStoryboard(in: context)
         _ = try await attachSketches(in: context)
@@ -519,7 +563,9 @@ enum ProductionPlanningAcceptanceFixture {
     }
 
     static func run(_ tool: String, args: [String: Any], in context: Context) async throws {
+        diagnosticStage("tool." + tool + ".before")
         let result = await context.executor.execute(name: tool, args: args)
+        diagnosticStage("tool." + tool + ".after")
         guard !result.isError, result.turnDisposition == .continueTurn else {
             let text = result.content.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined(separator: "\n")
             let diagnostic = "[acceptance] writer failed name=\(tool) content=\(text)\n"

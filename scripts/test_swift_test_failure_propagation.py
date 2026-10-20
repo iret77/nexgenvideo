@@ -46,6 +46,10 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                     root = Path(directory)
                     binary = root / "bin"
                     binary.mkdir()
+                    if filename == "ci.yml":
+                        observer = root / "scripts/capture_render_review_test_diagnostic.py"
+                        observer.parent.mkdir()
+                        observer.write_bytes((ROOT / "scripts/capture_render_review_test_diagnostic.py").read_bytes())
                     swift = binary / "swift"
                     swift.write_text(textwrap.dedent("""\
                         #!/bin/bash

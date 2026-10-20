@@ -168,10 +168,20 @@ final class PipelineRenderReviewManifestTests: XCTestCase {
 
     @MainActor
     func testActualCanonicalSnapshotPreparePublishAndVerify() async throws {
+        ProductionPlanningAcceptanceFixture.beginDiagnostic("PipelineRenderReviewManifestTests.testActualCanonicalSnapshotPreparePublishAndVerify")
+        defer { ProductionPlanningAcceptanceFixture.endDiagnostic() }
         let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
-        defer { fixture.document.close() }
+        ProductionPlanningAcceptanceFixture.diagnosticStage("factory.returned")
+        defer {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.before")
+            fixture.document.close()
+            ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.returned")
+        }
+        ProductionPlanningAcceptanceFixture.diagnosticStage("capture.before")
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: fixture.editor)
+        ProductionPlanningAcceptanceFixture.diagnosticStage("capture.after")
         let root = fixture.dataRoot
+        ProductionPlanningAcceptanceFixture.diagnosticStage("prepare-publish-verify.before")
         try await Task.detached {
             let prepared = try Manifest.prepare(snapshot: snapshot, dataRoot: root)
             defer { prepared.discard() }
@@ -184,6 +194,7 @@ final class PipelineRenderReviewManifestTests: XCTestCase {
             XCTAssertEqual(prepared.reference, repeated.reference)
             for page in loaded.pages { _ = try loaded.pageContent(pageID: page.id, dataRoot: root) }
         }.value
+        ProductionPlanningAcceptanceFixture.diagnosticStage("prepare-publish-verify.after")
     }
 
     func testActualPageBytesAndAllBudgetLimitsMatchPersistedDerivatives() throws {

@@ -19,6 +19,8 @@ def validate(directory):
     progress = json.loads(read(directory, "sanity-owner.json"))
     require(result["schema"] == "sanity-owner-acceptance/v1" and progress.get("failure") is None,
             "The native Sanity case failed")
+    require(result.get("sanityToolSucceeded") is True,
+            "The actual Sanity tool did not successfully produce the negative audit")
     shot = result["shotID"]
     before = read(directory, "blocked-gates.yaml")
     require(before == read(directory, "refused-gates.yaml") and gate(before, "shotlist") and not gate(before, "sanity"),
