@@ -26,7 +26,11 @@ class LedgerWorkspaceEvidenceTests(unittest.TestCase):
     def test_full_native_evidence_is_required_at_the_requested_scale(self):
         accepted, images = ledger_owner_evidence(self.rows, self.root, 1.25)
         self.assertTrue(accepted)
-        self.assertEqual(images, [self.name + "/native.png"])
+        self.assertEqual(images, [
+            self.name + "/native.png",
+            self.name + "/native-ledger-busy-waiting.png",
+            self.name + "/native-ledger-busy-agent-stop.png",
+        ])
         self.assertFalse(ledger_owner_evidence(self.rows, self.root, 1)[0])
 
     def test_incomplete_duplicate_and_failed_runs_are_rejected(self):
