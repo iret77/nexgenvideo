@@ -384,6 +384,15 @@ struct GenerationBatchTests {
         #expect(editor.generationLog.spendEvents.isEmpty && editor.mediaAssets.isEmpty)
     }
 
+    private func regularFiles(in root: URL) throws -> [URL] {
+        let files = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]))
+        var result: [URL] = []
+        for case let file as URL in files where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+            result.append(file)
+        }
+        return result
+    }
+
     @Test func closeCancelsAndDrainsAnActualPricingPreparationBeforePublication() async throws {
         let (root, editor, priced) = try await fixture()
         defer { cleanup(root) }
@@ -398,9 +407,9 @@ struct GenerationBatchTests {
         let coordinator = editor.generationBatchCoordinator, barrier = CancellationQuoteFixture()
         try coordinator.present(batch, recoveries: [item.id: GenerationBatchRecovery(options: []) { _, _ in package }])
         let home = try #require(editor.workingRoot)
-        let files = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
+        let files = try regularFiles(in: home)
         var before: [String: Data] = [:]
-        for case let file as URL in files where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+        for file in files {
             before[file.path] = try Data(contentsOf: file)
         }
         let preparation = Task { await coordinator.retryPricing(editor: editor, quoteLoader: { _, _ in try await barrier.quote() }) }
@@ -413,9 +422,9 @@ struct GenerationBatchTests {
         #expect(!coordinator.hasCloseWork && !coordinator.isRecovering)
         #expect(coordinator.pending == batch && coordinator.error == nil)
         for (path, bytes) in before { #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == bytes) }
-        let after = try #require(FileManager.default.enumerator(at: home, includingPropertiesForKeys: [.isRegularFileKey]))
+        let after = try regularFiles(in: home)
         var paths = Set<String>()
-        for case let file as URL in after where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { paths.insert(file.path) }
+        for file in after { paths.insert(file.path) }
         #expect(paths == Set(before.keys))
         #expect(editor.generationLog.spendEvents.isEmpty && editor.mediaAssets.isEmpty)
     }
