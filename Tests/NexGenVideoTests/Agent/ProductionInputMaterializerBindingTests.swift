@@ -114,7 +114,7 @@ struct ProductionInputMaterializerBindingTests {
         }
     }
 
-    private func reference(_ path: String, _ character: Character) -> CanonicalArtifactReferenceV1 {
+    private func reference(_ path: String, _ character: Swift.Character) -> CanonicalArtifactReferenceV1 {
         .init(id: "fixture-reference", role: "verified-output", path: path, sha256: String(repeating: String(character), count: 64))
     }
 
