@@ -407,23 +407,16 @@ enum GenerationBatchReviewSelfTest {
             let activeBefore = editor.generationBatchCoordinator.activeBatchID
             let authorizationBefore = editor.generationBatchCoordinator.autoApprovingPhase
             let menuReceipt = MenuReceipt()
-            let began = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
-                object: nil, queue: .main) { notification in
-                MainActor.assumeIsolated {
-                    guard let menu = notification.object as? NSMenu else { return }
-                    menuReceipt.menu = menu
-                    menuReceipt.titles = menu.items.map(\.title)
-                    menuReceipt.revisionEnabled = menu.items.first { $0.title == "Ask agent to revise" }?.isEnabled
-                    menuReceipt.phaseEnabled = menu.items.first { $0.title == "Allow all paid AI runs in Bible" }?.isEnabled
-                    do { try postKey(code: 53, characters: "\u{1b}", in: window) }
-                    catch { menuReceipt.keyFailure = error.localizedDescription }
-                }
+            let began = NativeOwnerMenuObserver(name: NSMenu.didBeginTrackingNotification) { menu in
+                menuReceipt.menu = menu
+                menuReceipt.titles = menu.items.map(\.title)
+                menuReceipt.revisionEnabled = menu.items.first { $0.title == "Ask agent to revise" }?.isEnabled
+                menuReceipt.phaseEnabled = menu.items.first { $0.title == "Allow all paid AI runs in Bible" }?.isEnabled
+                do { try postKey(code: 53, characters: "\u{1b}", in: window) }
+                catch { menuReceipt.keyFailure = error.localizedDescription }
             }
-            let ended = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification,
-                object: nil, queue: .main) { notification in
-                MainActor.assumeIsolated {
-                    if let menu = notification.object as? NSMenu, menu === menuReceipt.menu { menuReceipt.closed = true }
-                }
+            let ended = NativeOwnerMenuObserver(name: NSMenu.didEndTrackingNotification) { menu in
+                if menu === menuReceipt.menu { menuReceipt.closed = true }
             }
             defer {
                 NotificationCenter.default.removeObserver(began)

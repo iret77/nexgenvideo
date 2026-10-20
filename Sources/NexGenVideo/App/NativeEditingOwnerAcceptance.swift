@@ -326,29 +326,43 @@ enum NativeOwnerContextMenu {
                        open: () throws -> Void) async throws {
         @MainActor final class Tracking { var menu: NSMenu?; var titles: [String] = []; var closed = false; var error: String? }
         let tracking = Tracking()
-        let begin = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
-            MainActor.assumeIsolated {
-                guard tracking.menu == nil, let menu = note.object as? NSMenu else { return }
-                tracking.menu = menu
-                let items = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem && $0.isEnabled }
-                tracking.titles = items.map(\.title)
-                guard let index = items.firstIndex(where: { $0.title == title }) else {
-                    tracking.error = "The native clip menu has no enabled " + title; menu.cancelTracking(); return
-                }
-                do {
-                    try driver.pressKey(115, characters: "\u{f729}", in: window)
-                    for _ in 0..<index { try driver.pressKey(125, characters: "\u{f701}", in: window) }
-                    try driver.pressKey(36, characters: "\r", in: window)
-                } catch { tracking.error = error.localizedDescription; menu.cancelTracking() }
+        let begin = NativeOwnerMenuObserver(name: NSMenu.didBeginTrackingNotification) { menu in
+            guard tracking.menu == nil else { return }
+            tracking.menu = menu
+            let items = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem && $0.isEnabled }
+            tracking.titles = items.map(\.title)
+            guard let index = items.firstIndex(where: { $0.title == title }) else {
+                tracking.error = "The native clip menu has no enabled " + title; menu.cancelTracking(); return
             }
+            do {
+                try driver.pressKey(115, characters: "\u{f729}", in: window)
+                for _ in 0..<index { try driver.pressKey(125, characters: "\u{f701}", in: window) }
+                try driver.pressKey(36, characters: "\r", in: window)
+            } catch { tracking.error = error.localizedDescription; menu.cancelTracking() }
         }
-        let end = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { note in
-            MainActor.assumeIsolated { if let menu = note.object as? NSMenu, menu === tracking.menu { tracking.closed = true } }
+        let end = NativeOwnerMenuObserver(name: NSMenu.didEndTrackingNotification) { menu in
+            if menu === tracking.menu { tracking.closed = true }
         }
         defer { NotificationCenter.default.removeObserver(begin); NotificationCenter.default.removeObserver(end) }
         try open()
         try await driver.wait("actual clip menu " + title) { tracking.closed || tracking.error != nil }
         if let error = tracking.error { throw GateBlocked(error) }
         try driver.record("native-clip-menu", fields: ["item": title, "titles": tracking.titles, "closed": tracking.closed])
+    }
+}
+
+@MainActor
+final class NativeOwnerMenuObserver: NSObject {
+    private let handle: @MainActor (NSMenu) -> Void
+
+    init(name: Notification.Name, handle: @escaping @MainActor (NSMenu) -> Void) {
+        self.handle = handle
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(receive(_:)), name: name, object: nil)
+    }
+
+    @objc private func receive(_ notification: Notification) {
+        guard let menu = notification.object as? NSMenu else { return }
+        handle(menu)
     }
 }

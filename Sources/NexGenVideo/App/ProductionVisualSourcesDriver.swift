@@ -318,36 +318,32 @@ final class ProductionVisualSourcesDriver {
             var expectedSubmenu: NSMenu?
         }
         let tracking = Tracking()
-        let begin = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
-            guard let menu = note.object as? NSMenu else { return }
-            MainActor.assumeIsolated {
-                guard tracking.root == nil || menu === tracking.expectedSubmenu else { return }
-                if tracking.root == nil { tracking.root = menu }
-                let depth = tracking.titles.count
-                guard depth < path.count else { return }
-                let title = path[depth]
-                tracking.titles.append(menu.items.map(\.title))
-                let selectable = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden && $0.isEnabled }
-                guard let index = selectable.firstIndex(where: { $0.title == title }) else {
-                    tracking.error = "The native menu does not contain an enabled item: " + title
-                    try? self.key(53, "\u{1b}", in: target); return
-                }
-                do {
-                    try self.key(115, "\u{f729}", in: target)
-                    for _ in 0..<index { try self.key(125, "\u{f701}", in: target) }
-                    if depth + 1 < path.count {
-                        guard let submenu = selectable[index].submenu else {
-                            throw GateBlocked("The native menu has no submenu: " + title)
-                        }
-                        tracking.expectedSubmenu = submenu
-                        try self.key(124, "\u{f703}", in: target)
-                    } else { try self.key(36, "\r", in: target) }
-                } catch { tracking.error = error.localizedDescription }
+        let begin = NativeOwnerMenuObserver(name: NSMenu.didBeginTrackingNotification) { menu in
+            guard tracking.root == nil || menu === tracking.expectedSubmenu else { return }
+            if tracking.root == nil { tracking.root = menu }
+            let depth = tracking.titles.count
+            guard depth < path.count else { return }
+            let title = path[depth]
+            tracking.titles.append(menu.items.map(\.title))
+            let selectable = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden && $0.isEnabled }
+            guard let index = selectable.firstIndex(where: { $0.title == title }) else {
+                tracking.error = "The native menu does not contain an enabled item: " + title
+                try? self.key(53, "\u{1b}", in: target); return
             }
+            do {
+                try self.key(115, "\u{f729}", in: target)
+                for _ in 0..<index { try self.key(125, "\u{f701}", in: target) }
+                if depth + 1 < path.count {
+                    guard let submenu = selectable[index].submenu else {
+                        throw GateBlocked("The native menu has no submenu: " + title)
+                    }
+                    tracking.expectedSubmenu = submenu
+                    try self.key(124, "\u{f703}", in: target)
+                } else { try self.key(36, "\r", in: target) }
+            } catch { tracking.error = error.localizedDescription }
         }
-        let end = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { note in
-            guard let menu = note.object as? NSMenu else { return }
-            MainActor.assumeIsolated { if menu === tracking.root { tracking.closed = true } }
+        let end = NativeOwnerMenuObserver(name: NSMenu.didEndTrackingNotification) { menu in
+            if menu === tracking.root { tracking.closed = true }
         }
         defer { NotificationCenter.default.removeObserver(begin); NotificationCenter.default.removeObserver(end) }
         if let open { try open() }

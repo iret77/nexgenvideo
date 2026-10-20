@@ -206,7 +206,8 @@ enum TimelineEditingOwnerAcceptance {
         }
         var released = false
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
-            MainActor.assumeIsolated { if event.windowNumber == window.windowNumber { released = true } }; return event
+            let eventWindow = event.windowNumber
+            MainActor.assumeIsolated { if eventWindow == window.windowNumber { released = true } }; return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         let steps = from == to ? [0, 9] : Array(0...9)
@@ -224,7 +225,8 @@ enum TimelineEditingOwnerAcceptance {
     private static func key(_ code: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = [], window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
         var delivered = false
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { event in
-            MainActor.assumeIsolated { if event.windowNumber == window.windowNumber, event.keyCode == code { delivered = true } }; return event
+            let eventWindow = event.windowNumber, eventKeyCode = event.keyCode
+            MainActor.assumeIsolated { if eventWindow == window.windowNumber, eventKeyCode == code { delivered = true } }; return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         try driver.pressKey(code, characters: characters, modifiers: modifiers, in: window)
@@ -340,8 +342,9 @@ enum TimelineEditingOwnerAcceptance {
         var releasedDelta: Int?
         var released = false
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
+            let eventWindow = event.windowNumber
             MainActor.assumeIsolated {
-                if event.windowNumber == window.windowNumber {
+                if eventWindow == window.windowNumber {
                     released = true
                     if case .moveClip(let drag) = view.inputController.dragState { releasedDelta = drag.deltaFrames }
                 }

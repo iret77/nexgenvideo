@@ -17,8 +17,10 @@ enum AppNativeMenuAcceptance {
         }
         let tracking = Tracking(); tracking.expected = root
         let begin = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
+            guard let menu = note.object as? NSMenu else { return }
+            let menuID = ObjectIdentifier(menu)
             MainActor.assumeIsolated {
-                guard let menu = note.object as? NSMenu, menu === tracking.expected else { return }
+                guard let menu = tracking.expected, ObjectIdentifier(menu) == menuID else { return }
                 let depth = tracking.observed.count + 1
                 guard depth < path.count else { return }
                 menu.update()
@@ -74,9 +76,14 @@ enum AppNativeMenuAcceptance {
         @MainActor final class State { var window: NSWindow?; var error: (any Error)? }
         let state = State()
         let timer = Timer(timeInterval: 0.05, repeats: true) { timer in
+            let modal: NSWindow? = MainActor.assumeIsolated {
+                guard state.window == nil, let modal = NSApp.modalWindow, modal !== parent, modal.isVisible, modal.isKeyWindow else { return nil }
+                state.window = modal
+                return modal
+            }
+            guard let modal else { return }
+            timer.invalidate()
             MainActor.assumeIsolated {
-                guard state.window == nil, let modal = NSApp.modalWindow, modal !== parent, modal.isVisible, modal.isKeyWindow else { return }
-                state.window = modal; timer.invalidate()
                 do { try action(modal) }
                 catch { state.error = error; try? driver.pressKey(53, characters: "\u{1b}", in: modal) }
             }

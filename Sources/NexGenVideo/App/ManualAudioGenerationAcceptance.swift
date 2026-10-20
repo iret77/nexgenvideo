@@ -277,22 +277,18 @@ enum ManualAudioGenerationAcceptance {
             var closed = false
         }
         let inspection = Inspection()
-        let begin = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
-            guard let menu = note.object as? NSMenu else { return }
-            MainActor.assumeIsolated {
-                guard inspection.menu == nil else { return }
-                inspection.menu = menu
-                menu.update()
-                for item in menu.items where ["Use Timeline Video", "Mood"].contains(item.title) {
-                    inspection.values[item.title] = item.isEnabled
-                }
-                try? driver.pressKey(53, characters: "\u{1b}", in: window)
-                menu.cancelTracking()
+        let begin = NativeOwnerMenuObserver(name: NSMenu.didBeginTrackingNotification) { menu in
+            guard inspection.menu == nil else { return }
+            inspection.menu = menu
+            menu.update()
+            for item in menu.items where ["Use Timeline Video", "Mood"].contains(item.title) {
+                inspection.values[item.title] = item.isEnabled
             }
+            try? driver.pressKey(53, characters: "\u{1b}", in: window)
+            menu.cancelTracking()
         }
-        let end = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { note in
-            let menu = note.object as? NSMenu
-            MainActor.assumeIsolated { if menu === inspection.menu { inspection.closed = true } }
+        let end = NativeOwnerMenuObserver(name: NSMenu.didEndTrackingNotification) { menu in
+            if menu === inspection.menu { inspection.closed = true }
         }
         defer { NotificationCenter.default.removeObserver(begin); NotificationCenter.default.removeObserver(end) }
         try await driver.click("music.actions", in: window)
