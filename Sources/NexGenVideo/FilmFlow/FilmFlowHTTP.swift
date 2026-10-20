@@ -81,14 +81,20 @@ enum FilmFlowHTTP {
 
 // The SDK's public transport takes a configuration, not a redirect-controlling URLSession.
 final class FilmFlowPinnedProtocol: URLProtocol, @unchecked Sendable {
-    private let lock = NSLock()
+    // Client callbacks can synchronously reenter stopLoading().
+    private let lock = NSRecursiveLock()
     private var requestTask: Task<Void, Never>?
     private var stopped = false
+    private var finished = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        _ = startLoading(fetch: { try await FilmFlowHTTP.data($0) })
+    }
+
+    func startLoading(fetch: @escaping @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)) -> Task<Void, Never>? {
         var request = request
         if request.httpBody == nil, let stream = request.httpBodyStream {
             stream.open()
@@ -98,8 +104,10 @@ final class FilmFlowPinnedProtocol: URLProtocol, @unchecked Sendable {
             while stream.hasBytesAvailable {
                 let count = stream.read(&buffer, maxLength: buffer.count)
                 guard count >= 0, body.count + count <= 1_024 * 1_024 else {
-                    client?.urlProtocol(self, didFailWithError: FilmFlowFailure.message("The FilmFlow request body is invalid or too large."))
-                    return
+                    notifyClient(terminal: true) {
+                        $0.urlProtocol(self, didFailWithError: FilmFlowFailure.message("The FilmFlow request body is invalid or too large."))
+                    }
+                    return nil
                 }
                 if count == 0 { break }
                 body.append(contentsOf: buffer.prefix(count))
@@ -107,23 +115,45 @@ final class FilmFlowPinnedProtocol: URLProtocol, @unchecked Sendable {
             request.httpBodyStream = nil; request.httpBody = body
         }
         let outgoing = request
-        let operation = Task { [self] in
+        let load: @Sendable () async -> Void = { [self, outgoing, fetch] in
             do {
                 guard let url = outgoing.url, FilmFlowHTTP.isResource(url) else {
                     throw FilmFlowFailure.message("The FilmFlow connection changed its resource address.")
                 }
-                let (data, response) = try await FilmFlowHTTP.data(outgoing)
-                guard !Task.isCancelled, lock.withLock({ !stopped }) else { return }
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: data)
-                client?.urlProtocolDidFinishLoading(self)
+                try Task.checkCancellation()
+                let (data, response) = try await fetch(outgoing)
+                notifyClient { $0.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
+                notifyClient { $0.urlProtocol(self, didLoad: data) }
+                notifyClient(terminal: true) { $0.urlProtocolDidFinishLoading(self) }
             } catch {
-                guard lock.withLock({ !stopped }) else { return }
-                client?.urlProtocol(self, didFailWithError: error)
+                notifyClient(terminal: true) { $0.urlProtocol(self, didFailWithError: error) }
             }
         }
-        lock.withLock { if stopped { operation.cancel() } else { requestTask = operation } }
+        let operation = Task(operation: load)
+        let shouldCancel = lock.withLock {
+            guard !stopped, !finished else { return true }
+            requestTask = operation
+            return false
+        }
+        if shouldCancel { operation.cancel() }
+        return operation
     }
 
-    override func stopLoading() { lock.withLock { stopped = true; requestTask?.cancel(); requestTask = nil } }
+    override func stopLoading() {
+        let operation = lock.withLock {
+            stopped = true
+            let operation = requestTask
+            requestTask = nil
+            return operation
+        }
+        operation?.cancel()
+    }
+
+    private func notifyClient(terminal: Bool = false, _ notify: (any URLProtocolClient) -> Void) {
+        lock.withLock {
+            guard !stopped, !finished, !Task.isCancelled, let client else { return }
+            if terminal { finished = true; requestTask = nil }
+            notify(client)
+        }
+    }
 }

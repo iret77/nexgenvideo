@@ -189,11 +189,11 @@ struct StoragePane: View {
         return ByteCountFormatter.string(fromByteCount: cacheBytes, countStyle: .file)
     }
 
-    private func clear() { perform(services.clearCache) }
+    private func clear() { perform { try await services.clearCache() } }
 
-    private func clearIndex() { perform(services.clearIndex) }
+    private func clearIndex() { perform { try await services.clearIndex() } }
 
-    private func removeModel() { perform(services.removeModel) }
+    private func removeModel() { perform { try await services.removeModel() } }
 
     private func perform(_ action: @escaping @MainActor () async throws -> Void) {
         guard !isClearing else { return }

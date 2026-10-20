@@ -218,8 +218,8 @@ private struct SettingsDetail: View {
                 switch tab {
                 case .general:
                     AppearancePane()
-                    NotificationsPane(enabled: services.general.notifications(), save: services.general.saveNotifications,
-                        configure: services.general.configureNotifications)
+                    NotificationsPane(enabled: services.general.notifications(), save: { services.general.saveNotifications($0) },
+                        configure: { services.general.configureNotifications() })
                     PrivacyPane(enabled: services.general.telemetry(), launchEnabled: services.general.launchTelemetry,
                         save: services.general.saveTelemetry)
                 case .models:

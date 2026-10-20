@@ -223,8 +223,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      artifact_id: ${{ steps.runtime_archive.outputs.artifact-id }}
-      runtime_run_id: ${{ github.run_id }}
+      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
+      runtime_run_id: ${{ steps.resolve.outputs.runtime_run_id }}
       identity_artifact_id: ${{ steps.identity.outputs.artifact-id }}
       identity_sha: ${{ steps.prepare.outputs.identity_sha256 }}
     steps:
@@ -258,15 +258,6 @@ jobs:
           python3 scripts/workspace_native_ci.py plan --scope "$NGV_ACCEPTANCE_SCOPE" \
             --case "$NGV_ACCEPTANCE_CASE" --scale "$NGV_ACCEPTANCE_SCALE" --output "$RUNNER_TEMP/native-identity/plan.json"
           python3 scripts/workspace_native_ci.py prepare "$RUNNER_TEMP/native-runtime" "$RUNNER_TEMP/native-identity/identity.json"
-      - name: Publish the unchanged app archive without repeating the source archive transfer
-        uses: actions/upload-artifact@v4
-        id: runtime_archive
-        with:
-          name: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/native-runtime/workspace-ui.tar.gz
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 14
       - uses: actions/upload-artifact@v4
         id: identity
         with:

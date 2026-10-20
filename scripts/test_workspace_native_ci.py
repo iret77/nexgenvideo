@@ -71,6 +71,37 @@ class NativeQualificationTests(unittest.TestCase):
         self.identity_file.write_text(json.dumps(self.identity))
         return payload
 
+    def test_resolve_and_transfer_keep_the_original_producer_run(self):
+        payload = self.runtime_zip()
+        for producer_run in (77, 55):
+            with self.subTest(producer_run=producer_run):
+                run = {'id': producer_run, 'repository': {'full_name': 'iret77/nexgenvideo'},
+                       'head_sha': 'a' * 40, 'event': 'workflow_dispatch', 'path': '.github/workflows/ci-batch.yml'}
+                artifact = {'id': 8, 'name': 'workspace-ui-app', 'expired': False,
+                            'digest': 'sha256:' + hashlib.sha256(payload).hexdigest(),
+                            'workflow_run': {'id': producer_run, 'head_sha': 'a' * 40}}
+                with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40}), \
+                     patch.object(ci, 'api', side_effect=[run, artifact]) as api, \
+                     patch.object(ci, 'outputs') as outputs:
+                    ci.resolve(producer_run, 'workspace-ui-app', 8, self.identity_file)
+                self.assertEqual([call.args[0] for call in api.call_args_list],
+                                 [f'/actions/runs/{producer_run}', '/actions/artifacts/8'])
+                outputs.assert_called_once_with({'artifact_id': '8', 'runtime_run_id': str(producer_run)})
+                identity = json.loads(self.identity_file.read_text())
+                self.assertEqual(identity['runtimeRunID'], producer_run)
+                self.assertEqual(identity['runtimeArtifactID'], 8)
+                self.assertEqual(identity['runtimeArtifactDigest'], artifact['digest'])
+                self.assertEqual(identity['sourceSHA'], 'a' * 40)
+                destination = self.root / f'producer-{producer_run}'
+                with patch.object(ci, 'download_artifact') as download:
+                    download.side_effect = lambda _, __, path: path.write_bytes(payload)
+                    ci.download_runtime(self.identity_file, destination)
+                download.assert_called_once_with(8, artifact['digest'],
+                                                 self.root / 'native-runtime-transfer.zip')
+                self.assertEqual({path.name for path in destination.iterdir()},
+                                 {'workspace-ui.tar.gz', 'workspace-ui-input.json', 'bpy-source-receipt.json'})
+                self.assertEqual((destination / 'workspace-ui.tar.gz').read_bytes(), b'workspace-ui.tar.gz')
+
     def test_runtime_transfer_requires_server_digest_before_extracting(self):
         payload = self.runtime_zip()
         with patch.dict(os.environ, {'GH_TOKEN': 'fixture-token'}), patch.object(ci.urllib.request, 'build_opener') as opener:
