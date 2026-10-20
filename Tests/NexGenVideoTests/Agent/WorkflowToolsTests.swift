@@ -3668,7 +3668,8 @@ struct WorkflowToolsTests {
         for shot in projection.shots {
             let demands = try PipelineShotPlanningPromotionStore.plannedDemands(for: shot.id, promotion: promotion, dataRoot: context.dataRoot)
             #expect(demands.demands.map(\.assetID) == [project.assetID])
-            #expect(demands.demands.allSatisfy(\.isRequired))
+            let allDemandsAreRequired = demands.demands.allSatisfy(\.isRequired)
+            #expect(allDemandsAreRequired)
             let route = try PipelineShotPlanningPromotionStore.route(for: shot.id, promotion: promotion, dataRoot: context.dataRoot)
             #expect(project.candidates(project.activation).contains {
                 $0.candidate.capabilities.offering == route.offering && $0.target != nil
