@@ -108,7 +108,7 @@ final class ProductionMigrationPreflight: NSObject {
                 }
             }
             if let completionObserver {
-                CFRunLoopAddObserver(CFRunLoopGetMain(), completionObserver, RunLoop.Mode.modalPanel.rawValue as CFString)
+                CFRunLoopAddObserver(CFRunLoopGetMain(), completionObserver, CFRunLoopMode(rawValue: RunLoop.Mode.modalPanel.rawValue as CFString))
             }
             DispatchQueue.global(qos: .userInitiated).async { [weak view] in
                 completion.set(Result { try operation(control) })

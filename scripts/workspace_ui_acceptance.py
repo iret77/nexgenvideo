@@ -1546,12 +1546,54 @@ def activity_evidence(rows, output, scale):
         ax, ay, aw, ah = area
         if any(ax < x + w and x < ax + aw and ay < y + h and y < ay + ah for x, y, w, h in controls):
             return False, []
+    navigation = row.get("activityNavigation", [])
+    if (not isinstance(navigation, list)
+        or [item.get("sourceWorkspace") for item in navigation if isinstance(item, dict)]
+            != ["media", "edit", "postproduction", "export"]
+        or len(navigation) != 4):
+        return False, []
+    decision_id = navigation[0].get("decisionBeforeID")
+    if not isinstance(decision_id, str) or not decision_id:
+        return False, []
+    document_window = navigation[0].get("documentWindowNumber")
+    navigation_images = []
+    for item in navigation:
+        if (item.get("destinationWorkspace") != "production" or item.get("phase") != "brief"
+            or item.get("controlID") != "agent.open-production"
+            or item.get("decisionBeforeID") != decision_id or item.get("decisionAfterID") != decision_id
+            or not all(item.get(key) is True for key in ("popoverClosed", "approveEnabled", "declineEnabled"))
+            or not all(type(item.get(key)) is int for key in
+                ("documentWindowNumber", "popoverWindowNumber", "clickWindowNumber"))
+            or item["documentWindowNumber"] != document_window
+            or item["popoverWindowNumber"] == item["documentWindowNumber"]
+            or item["clickWindowNumber"] != item["popoverWindowNumber"]
+            or item.get("gatesBeforeSHA256") != decisions[0]["gatesBeforeSHA256"]
+            or item.get("gatesAfterSHA256") != item.get("gatesBeforeSHA256")
+            or rect(item.get("primaryFrame")) is None or rect(item.get("declineFrame")) is None):
+            return False, []
+        captures = item.get("screenshots", [])
+        if (not isinstance(captures, list) or len(captures) != 2
+            or any(not isinstance(name, str) for name in captures)):
+            return False, []
+        px, py, pw, ph = rect(item["primaryFrame"])
+        dx, dy, dw, dh = rect(item["declineFrame"])
+        if px < dx + dw and dx < px + pw and py < dy + dh and dy < py + ph:
+            return False, []
+        navigation_images.extend(captures)
+    if len(set(navigation_images)) != 8:
+        return False, []
     images = row.get("screenshots", [])
     valid = len(images) == 3 and len(set(images)) == 3 and all(
         isinstance(name, str) and Path(name).name == name and (output / name).is_file()
         and (output / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n") for name in images
     )
-    return valid, images
+    if not valid or any(name in images for name in navigation_images):
+        return False, []
+    valid_navigation_images = all(
+        isinstance(name, str) and Path(name).name == name and (output / name).is_file()
+        and (output / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n") for name in navigation_images
+    )
+    return (True, images + navigation_images) if valid_navigation_images else (False, [])
 
 
 def parse_events(text):

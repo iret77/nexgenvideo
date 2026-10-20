@@ -179,6 +179,22 @@ class ActivityEvidenceTests(unittest.TestCase):
                 "primaryFrame": {"x": 500, "y": 500, "width": 180, "height": 40},
                 "declineFrame": {"x": 250, "y": 500, "width": 100, "height": 40}})
 
+        self.row["activityNavigation"] = []
+        for workspace in ("media", "edit", "postproduction", "export"):
+            captures = [f"return-{workspace}-popover.png", f"return-{workspace}-production.png"]
+            for name in captures:
+                (self.output / name).write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+            self.row["activityNavigation"].append({
+                "sourceWorkspace": workspace, "destinationWorkspace": "production", "phase": "brief",
+                "decisionBeforeID": "pending-brief", "decisionAfterID": "pending-brief",
+                "controlID": "agent.open-production", "documentWindowNumber": 1,
+                "popoverWindowNumber": 2, "clickWindowNumber": 2, "popoverClosed": True,
+                "approveEnabled": True, "declineEnabled": True,
+                "primaryFrame": {"x": 500, "y": 500, "width": 180, "height": 40},
+                "declineFrame": {"x": 250, "y": 500, "width": 100, "height": 40},
+                "gatesBeforeSHA256": "a" * 64, "gatesAfterSHA256": "a" * 64,
+                "screenshots": captures})
+
     def test_native_decisions_need_disjoint_controls_and_matching_gate_changes(self):
         self.assertTrue(activity_evidence([self.row], self.output, 1.5)[0])
         for field, value in (("nativeClick", False), ("activityStayedOpen", False),
@@ -196,6 +212,47 @@ class ActivityEvidenceTests(unittest.TestCase):
         self.row["preferencesPreserved"] = True
         self.row["screenshots"][0] = "missing.png"
         self.assertFalse(activity_evidence([self.row], self.output, 1.5)[0])
+
+    def test_popover_return_requires_all_workspaces_same_decision_gates_and_native_window(self):
+        valid, images = activity_evidence([self.row], self.output, 1.5)
+        self.assertTrue(valid)
+        self.assertEqual(images, self.row["screenshots"] + [
+            f"return-{workspace}-{state}.png" for workspace in ("media", "edit", "postproduction", "export")
+            for state in ("popover", "production")])
+        for field, value in (("destinationWorkspace", "edit"), ("phase", "storyboard"),
+                             ("decisionAfterID", "different-request"), ("gatesAfterSHA256", "b" * 64),
+                             ("gatesBeforeSHA256", "c" * 64), ("popoverClosed", False),
+                             ("approveEnabled", False), ("declineEnabled", False),
+                             ("clickWindowNumber", 1), ("popoverWindowNumber", 1),
+                             ("primaryFrame", {"x": 250, "y": 500, "width": 180, "height": 40}),
+                             ("primaryFrame", {"x": 950, "y": 500, "width": 180, "height": 40}),
+                             ("screenshots", ["missing.png", "return-media-production.png"])):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(self.row)
+                changed["activityNavigation"][0][field] = value
+                self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        for workspace in ("media", "edit", "postproduction", "export"):
+            changed = copy.deepcopy(self.row)
+            changed["activityNavigation"] = [item for item in changed["activityNavigation"]
+                if item["sourceWorkspace"] != workspace]
+            self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        changed = copy.deepcopy(self.row)
+        changed["activityNavigation"].reverse()
+        self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        changed = copy.deepcopy(self.row)
+        changed["activityNavigation"][1]["decisionBeforeID"] = "other-request"
+        changed["activityNavigation"][1]["decisionAfterID"] = "other-request"
+        self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        changed = copy.deepcopy(self.row)
+        changed["activityNavigation"][0]["gatesBeforeSHA256"] = "c" * 64
+        changed["activityNavigation"][0]["gatesAfterSHA256"] = "c" * 64
+        self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        changed = copy.deepcopy(self.row)
+        changed["activityNavigation"][1]["documentWindowNumber"] = 3
+        self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+        changed = copy.deepcopy(self.row)
+        del changed["activityNavigation"]
+        self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
 
 
 class FilmReviewEvidenceTests(unittest.TestCase):

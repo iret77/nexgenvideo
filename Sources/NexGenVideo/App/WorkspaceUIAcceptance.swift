@@ -3186,15 +3186,18 @@ extension WorkspaceUIAcceptance {
             throw ToolError("The activity fixture has no selected Storyboard shot to restore.")
         }
         let originalInspector = editor.inspectorPanelVisible
+        let originalSidebar = editor.mediaPanelVisible
         let originalMaximized = editor.maximizedPanel
         defer {
             editor.showsAgentActivity = false
             editor.inspectorPanelVisible = originalInspector
+            editor.mediaPanelVisible = originalSidebar
             editor.maximizedPanel = originalMaximized
             window.orderOut(nil)
         }
         var screenshots: [String] = []
         var decisions: [[String: Any]] = []
+        var activityNavigation: [[String: Any]] = []
         func uniqueDecision(_ identifier: String) -> NSView? {
             let matches = probes(in: host, identifier: identifier).filter {
                 !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 0 && $0.bounds.height > 0
@@ -3243,6 +3246,90 @@ extension WorkspaceUIAcceptance {
             _ = try service.requestGateApproval(GateApproval(phase: phase, dataRoot: root, action: action,
                 declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding))
             editor.selectProductionPhase(phase)
+            if operation == "decline" {
+                guard let decisionID = service.pendingGateApproval?.id else {
+                    throw ToolError("Activity navigation needs the existing pending gate decision.")
+                }
+                for workspace in [EditorViewModel.WorkspaceFocus.media, .edit, .postproduction, .export] {
+                    editor.mediaPanelVisible = false
+                    editor.maximizedPanel = .inspector
+                    window.makeKeyAndOrderFront(nil)
+                    try await activate("editor.workspace.\(workspace.rawValue)")
+                    guard await waitUntil(timeout: .seconds(5), {
+                        editor.workspaceFocus == workspace && !editor.showsAgentActivity
+                            && probeState(identifier: "editor.workspace.\(workspace.rawValue)", in: window) == true
+                    }), service.pendingGateApproval?.id == decisionID else {
+                        throw ToolError("Activity navigation lost its source workspace or pending decision.")
+                    }
+                    let navigationBefore = try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+                    guard navigationBefore == before else {
+                        throw ToolError("Changing workspace altered gates before Activity navigation.")
+                    }
+                    try await activate("production.ai")
+                    guard await waitUntil(timeout: .seconds(5), {
+                        NSApp.windows.contains { $0 !== window && $0.isVisible
+                            && probeState(identifier: "agent.open-production", in: $0) == true }
+                    }) else { throw ToolError("Activity has no native return action in its popover.") }
+                    let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible
+                        && probeState(identifier: "agent.open-production", in: $0) == true }
+                    guard popovers.count == 1, let popover = popovers.first,
+                          let popoverHost = popover.contentView,
+                          editor.workspaceFocus == workspace, editor.showsAgentActivity else {
+                        throw ToolError("The Activity return action does not belong to one external popover.")
+                    }
+                    popover.makeKeyAndOrderFront(nil)
+                    guard await revealProbe("agent.open-production", in: popover),
+                          visibleProbe(identifier: "agent.open-production", in: popover,
+                            containedBy: popoverHost.bounds, requiredState: true) else {
+                        throw ToolError("The Activity return action is not fully visible in the popover.")
+                    }
+                    let sourceScreenshot = "scale-\(scaleLabel(scale))-activity-return-\(workspace.rawValue)-popover.png"
+                    let destinationScreenshot = "scale-\(scaleLabel(scale))-activity-return-\(workspace.rawValue)-production.png"
+                    let sourceWorkspace = editor.workspaceFocus.rawValue
+                    let popoverWindowNumber = popover.windowNumber
+                    guard sourceWorkspace == workspace.rawValue, service.pendingGateApproval?.id == decisionID,
+                          try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root)) == navigationBefore,
+                          snapshot(popoverHost, at: evidenceURL.appendingPathComponent(sourceScreenshot)),
+                          click(identifier: "agent.open-production", in: popover) == nil else {
+                        throw ToolError("The native Activity return action could not be captured and clicked.")
+                    }
+                    guard await waitUntil(timeout: .seconds(10), {
+                        editor.workspaceFocus == .production && editor.productionSelectedPhase == phase
+                            && !editor.showsAgentActivity && !popover.isVisible
+                            && editor.maximizedPanel == nil
+                            && service.pendingGateApproval?.id == decisionID
+                            && visibleProbe(identifier: "agent.gate.approve", in: window,
+                                containedBy: host.bounds, requiredState: true)
+                            && visibleProbe(identifier: "agent.gate.decline", in: window,
+                                containedBy: host.bounds, requiredState: true)
+                    }), let remainingDecisionID = service.pendingGateApproval?.id,
+                          let primary = shownProbe(in: host, identifier: "agent.gate.approve"),
+                          let decline = shownProbe(in: host, identifier: "agent.gate.decline"),
+                          window.attachedSheet == nil else {
+                        throw ToolError("Activity navigation did not reveal the unchanged central phase decision.")
+                    }
+                    let navigationAfter = try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+                    guard navigationAfter == navigationBefore,
+                          snapshot(host, at: evidenceURL.appendingPathComponent(destinationScreenshot)) else {
+                        throw ToolError("Activity navigation changed gates or has no Production capture.")
+                    }
+                    activityNavigation.append([
+                        "sourceWorkspace": sourceWorkspace, "destinationWorkspace": editor.workspaceFocus.rawValue,
+                        "phase": editor.productionSelectedPhase ?? "", "decisionBeforeID": decisionID,
+                        "decisionAfterID": remainingDecisionID, "controlID": "agent.open-production",
+                        "documentWindowNumber": window.windowNumber, "popoverWindowNumber": popoverWindowNumber,
+                        "clickWindowNumber": popoverWindowNumber, "popoverClosed": !popover.isVisible && !editor.showsAgentActivity,
+                        "approveEnabled": probeState(identifier: "agent.gate.approve", in: window) == true,
+                        "declineEnabled": probeState(identifier: "agent.gate.decline", in: window) == true,
+                        "primaryFrame": frameDescription(primary.convert(primary.bounds, to: host)),
+                        "declineFrame": frameDescription(decline.convert(decline.bounds, to: host)),
+                        "gatesBeforeSHA256": FileDigest.sha256(of: navigationBefore),
+                        "gatesAfterSHA256": FileDigest.sha256(of: navigationAfter),
+                        "screenshots": [sourceScreenshot, destinationScreenshot]])
+                }
+                editor.mediaPanelVisible = originalSidebar
+                window.makeKeyAndOrderFront(nil)
+            }
             editor.inspectorPanelVisible = false
             editor.maximizedPanel = .project
             editor.showsAgentActivity = false
@@ -3311,7 +3398,7 @@ extension WorkspaceUIAcceptance {
         }) else { throw ToolError("Entering Production dismissed activity instead of docking it.") }
         editor.setWorkspaceFocus(.edit)
         guard !editor.showsAgentActivity else { throw ToolError("Leaving Production reopened an activity popover.") }
-        emit("production-activity", scale: scale, fields: ["decisions": decisions,
+        emit("production-activity", scale: scale, fields: ["decisions": decisions, "activityNavigation": activityNavigation,
             "minimumViewport": frameDescription(host.bounds), "inspectorRestored": true,
             "preferencesPreserved": true, "workspaceTransitions": true, "screenshots": screenshots])
     }

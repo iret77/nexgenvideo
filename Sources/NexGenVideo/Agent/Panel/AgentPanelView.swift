@@ -102,8 +102,8 @@ struct AgentPanelView: View {
                         editor.generationBatchCoordinator.cancelRemaining(batchID: batchID, editor: editor)
                     } else { service.cancel() }
                 },
-                    onOpenPipeline: presentation == .tasks && editor.hasProductionPipeline
-                        ? { editor.revealCockpit(.pipeline) } : nil
+                    onOpenPipeline: editor.hasProductionPipeline || presentation == .activity
+                        ? { openProduction() } : nil
                 )
                 activityProgress
             }
@@ -238,7 +238,7 @@ struct AgentPanelView: View {
         case .approvalOutdated:
             return AgentLiveStatus(state: .waiting,
                 title: "Approval outdated: " + outdatedApprovalPhases.joined(separator: ", "),
-                detail: "An approved artifact no longer matches its approval. Check Pipeline for the next step.")
+                detail: "An approved artifact no longer matches its approval. Check Production for the next step.")
         case .spendRun:
             guard let run = service.currentSpendRun else {
                 return AgentLiveStatus(state: .working, title: "Generation in progress")
@@ -317,7 +317,7 @@ struct AgentPanelView: View {
             return AgentLiveStatus(state: .unavailable, title: "Agent unavailable")
         case .ready:
             return AgentLiveStatus(state: .ready, title: service.stoppedAgent ? "Agent stopped; submitted provider jobs may continue" : "No task running",
-                detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for the next step." : nil)
+                detail: editor.hasProductionPipeline ? "No approval request is open. Check Production for the next step." : nil)
         }
     }
 
@@ -330,8 +330,28 @@ struct AgentPanelView: View {
 
     private var decisionLocation: String {
         presentation == .activity
-            ? String(localized: "Respond in the phase dock.")
+            ? String(localized: "Respond in Production, below the current phase.")
             : String(localized: "Respond in the decision area.")
+    }
+
+    private func openProduction() {
+        let phase: String?
+        switch surfaceState.dockOwner {
+        case .gateApproval:
+            phase = service.pendingGateApproval?.phase
+        case .spendApproval:
+            phase = editor.generationBatchCoordinator.pending?.payload.phase ?? service.pendingSpendPhase
+        default:
+            phase = editor.projectState?.nextPhaseName
+        }
+        if let phase {
+            editor.revealReviewSurface(for: phase)
+        } else {
+            editor.revealCockpit(.pipeline)
+        }
+        editor.showsAgentActivity = false
+        editor.theaterActive = false
+        editor.maximizedPanel = nil
     }
 
     @ViewBuilder private var pipelineRepairRecovery: some View {
