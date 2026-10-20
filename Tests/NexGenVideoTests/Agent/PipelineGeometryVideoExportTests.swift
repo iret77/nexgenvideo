@@ -19,7 +19,15 @@ struct PipelineGeometryVideoExportTests {
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        return try await generator.image(at: time).image
+        defer { withExtendedLifetime(generator) {} }
+        let image: CGImage = try await withCheckedThrowingContinuation { continuation in
+            generator.generateCGImageAsynchronously(for: time) { image, _, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let image { continuation.resume(returning: image) }
+                else { continuation.resume(throwing: ToolError("The geometry frame could not be decoded.")) }
+            }
+        }
+        return image
     }
 
     private func pixels(_ image: CGImage) throws -> [UInt8] {
