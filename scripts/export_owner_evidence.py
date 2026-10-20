@@ -241,6 +241,106 @@ def interchange(directory):
                    for f in doc.findall('./resources/format')): raise ValueError('FCPXML lost portrait or FPS')
 
 
+def preparation_evidence(directory, result, actions, screenshots):
+    def require(value, message):
+        if not value: raise ValueError(message)
+    def observation(label):
+        rows = [(i, row['evidence']) for i, row in enumerate(actions)
+                if row.get('kind') == 'verified-state' and row.get('label') == label]
+        require(len(rows) == 1, 'Single actual preparation observation required: ' + label)
+        return rows[0]
+    def source(variant, moment, reported):
+        require(set(reported) == {'timeline', 'manifest', 'metadata'}, 'Complete adoption snapshot evidence required')
+        for field in reported:
+            require(reported[field] == sha(local(directory, 'preparation-' + variant + '-' + moment + '-' + field + '.json')),
+                    'Preparation source bytes differ')
+        return reported
+    def image(label):
+        require(sum(name.endswith('-' + label + '.png') for name in screenshots) == 1, 'Preparation screenshot missing: ' + label)
+    panel_index, panel = observation('preparation destination single panel')
+    require(type(panel.get('firstPanel')) is int and panel['firstPanel'] > 0
+            and panel['firstPanel'] == panel.get('afterSecondExportPanel') == result.get('destinationPanelID')
+            and panel.get('count') == 1 and panel.get('startEnabled') is False and result.get('nativeMetadataUI') is False,
+            'Second destination attempt was not blocked in the original panel')
+    before_index, shortcut = observation('preparation destination before second Export')
+    require(before_index < panel_index and shortcut.get('panel') == panel['firstPanel']
+            and shortcut.get('keyEquivalent') == 'e' and shortcut.get('modifiers') == 1 << 20
+            and type(shortcut.get('menuEnabled')) is bool
+            and panel.get('savePanelIDs') == [panel['firstPanel']] and panel.get('showExportDialog') is False
+            and panel.get('ownerHasAttachedSheet') is False and panel.get('runLoopCheckpoint') is True,
+            'Actual native shortcut or deferred second Export presentation evidence differs')
+    delivered = [row['evidence'] for row in actions[before_index + 1:panel_index]
+                 if row.get('label') == 'preparation native key delivered']
+    require(delivered == [{'code': 14, 'window': panel['firstPanel']}], 'Actual second Export key delivery missing')
+    keys = [row for row in actions[before_index + 1:panel_index] if row.get('kind') == 'keyboard' and row.get('window') == panel['firstPanel']]
+    require(len(keys) == 1 and keys[0].get('code') == 14 and keys[0].get('characters') == 'e'
+            and keys[0].get('modifiers') == 1 << 20, 'Second native Cmd-E attempt missing')
+    image('destination-owner-disabled'); image('destination-first-panel')
+    variants = ['cancel', 'timeline', 'manifest', 'metadata']
+    require([row.get('variant') for row in result.get('observations', [])] == variants, 'All four preparation subpaths required')
+    previous_index = panel_index
+    retry_ids = set()
+    for variant, row in zip(variants, result['observations']):
+        held_index, held = observation('preparation held ' + variant)
+        done_index, recorded = observation('preparation observation ' + variant)
+        require(previous_index < held_index < done_index and recorded == row, 'Actual preparation progress binding differs')
+        require(held.get('preparing') == 'Preparing export…' and held.get('startEnabled') is False
+                and held.get('jobIDs') == row.get('jobsBefore'), 'Preparation hold did not precede job registration')
+        before = source(variant, 'before', row['before']); current = source(variant, 'current', row['current'])
+        retry_source = source(variant, 'retry-source', row['retrySource'])
+        require(row.get('barrierExited') is True and row.get('output') == 'preparation-' + variant + '.mp4'
+                and row.get('outputExists') is False and not local(directory, row['output']).exists()
+                and row.get('jobsBefore') == row.get('jobsAfter') and row.get('deliveryBefore') == row.get('deliveryAfter'),
+                'Rejected preparation published a job, output or delivery revision')
+        require(exact_save(actions, row['output']), 'Real destination for rejected preparation missing')
+        changed = {field for field in before if before[field] != current[field]}
+        require(changed == (set() if variant == 'cancel' else {variant}), 'Wrong independent source dimension changed')
+        region = actions[held_index + 1:done_index]
+        pointers = [action.get('id') for action in region if action.get('kind') == 'pointer']
+        if variant == 'cancel':
+            require('export.cancel-preparation' in pointers and row.get('result') == 'Export cancelled.'
+                    and row.get('error') is None and retry_source == before, 'Native cancellation did not leave a retryable original source')
+            image('cancelling-preparation')
+        else:
+            require(row.get('error') == 'The project changed while preparing the export. Prepare the export again from the current edit.',
+                    'Snapshot mismatch did not explain the actual next step')
+            require(retry_source == (before if variant == 'metadata' else current), 'Retry did not bind the actual current edit')
+            if variant == 'timeline':
+                require('inspector.transform.arrow.left.and.right' in pointers, 'Actual native timeline correction missing')
+                before_timeline = load(directory, 'preparation-timeline-before-timeline.json')
+                current_timeline = load(directory, 'preparation-timeline-current-timeline.json')
+                # The actual fixture has one video clip; a different timeline hash alone is insufficient.
+                before_clip = before_timeline['tracks'][0]['clips'][0]
+                current_clip = current_timeline['tracks'][0]['clips'][0]
+                require(before_clip['id'] == current_clip['id'] == 'picture'
+                        and before_clip['transform'].get('flipHorizontal', False) is False
+                        and current_clip['transform']['flipHorizontal'] is True, 'Native Flip did not change the actual source picture')
+            elif variant == 'manifest':
+                require(any(action.get('label') == 'application-menu' and action.get('evidence', {}).get('path') == ['File', 'Import Media…'] for action in region),
+                        'Actual native Import Media command missing')
+                old = load(directory, 'preparation-manifest-before-manifest.json')['entries']
+                new = load(directory, 'preparation-manifest-current-manifest.json')['entries']
+                require(len(new) == len(old) + 1 and all(entry in new for entry in old), 'Import did not retain and extend the actual manifest')
+            else:
+                _, fault = observation('controlled metadata source mutation')
+                require(fault.get('nativeMetadataUI') is False and len(fault.get('originalSHA256', '')) == 64
+                        and fault.get('originalSHA256') == sha(local(directory, 'preparation-metadata-identity-before.json'))
+                        and fault.get('changedSHA256') == sha(local(directory, 'preparation-metadata-identity-current.json'))
+                        and fault['originalSHA256'] != fault['changedSHA256'],
+                        'Controlled metadata fault misrepresented as native UI or unchanged source')
+        image('preparing-' + variant); image('preparation-finished-' + variant)
+        retry_output = 'preparation-' + variant + '-retry.mp4'
+        require(row.get('retryOutput') == retry_output and exact_save(actions, retry_output), 'Real retry destination missing')
+        job = check_job(directory, 'preparation-' + variant + '-retry', 'master', 180, 320, 48, retry_output)
+        require(row.get('retryJobID') == job['id'] and row.get('retrySHA256') == sha(local(directory, retry_output))
+                and job['id'] not in row['jobsBefore'] and job['id'] not in retry_ids and native_qc(region, job['id'])
+                and job['attempt']['finished_timeline_sha256'] == retry_source['timeline'],
+                'Retry output or actual completed QC does not match a distinct fresh job')
+        require(load(directory, 'preparation-' + variant + '-finished.json')['timeline_sha256'] == retry_source['timeline'],
+                'Retry finished-film receipt targets a different timeline')
+        retry_ids.add(job['id']); previous_index = done_index
+
+
 def export_formats_evidence(rows, output, scale):
     try:
         records = [r for r in rows if r.get('event') == 'export-formats-owner']
@@ -263,6 +363,7 @@ def export_formats_evidence(rows, output, scale):
             proof = decode_proof(directory, name + '-decoded', filename, subtype, width, height, 48)
             job = check_job(directory, name, target, width, height, 48, filename)
             if item['jobID'] != job['id'] or item['sha256'] != proof['sha256'] or not native_qc(actions, job['id']): return False, []
+        preparation_evidence(directory, row['preparation'], actions, native['screenshots'])
         interchange(directory)
         for filename in ['handoff.xml', 'handoff-1.10.fcpxml', 'handoff-1.14.fcpxml', 'Portable copy.ngv']:
             if not exact_save(actions, filename): return False, []

@@ -350,6 +350,7 @@ struct ExportView: View {
 
             if let ngvResult {
                 Text(ngvResult)
+                    .reviewAcceptanceProbe("export.result", text: ngvResult)
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .padding(.top, AppTheme.Spacing.sm)

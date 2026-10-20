@@ -510,7 +510,7 @@ final class ToolExecutor {
                 let root = try resolveDataRoot(resolved, editor: editor)
                 let declaration = try mutationPackDeclaration(editor, dataRoot: root)
                 if mutationLease == nil {
-                    mutationLease = (root, try reservePipelineMutation(label: "Revise Intent Ledger", dataRoot: root, editor: editor))
+                    mutationLease = (root, try reservePipelineMutation(label: "Revise Attribute", dataRoot: root, editor: editor))
                 }
                 guard let mutationLease, mutationLease.root == root else { throw ToolError("The Ledger mutation lease changed.") }
                 ledgerTransaction = try PipelineLedgerWriter.ToolTransaction(editor: editor, dataRoot: root,

@@ -46,6 +46,8 @@ enum PipelineDeliveryStore {
         "\(attemptsDirectory)/\(attemptID).hdr-qc.v1.json"
     }
 
+    @MainActor static var nativeAcceptanceAfterAdoptionSnapshot: (@MainActor @Sendable () async -> Void)?
+
     @MainActor
     static func adoptCurrentTimeline(
         editor: EditorViewModel,
@@ -78,6 +80,7 @@ enum PipelineDeliveryStore {
         } onCancel: {
             cancellationFlag.cancel()
         }
+        if WorkspaceUIAcceptance.isRequested, let barrier = nativeAcceptanceAfterAdoptionSnapshot { await barrier() }
         try Task.checkCancellation()
         guard editor.openWorkingCopyKey == workingCopyKey,
               editor.workingRoot?.standardizedFileURL == home.standardizedFileURL,

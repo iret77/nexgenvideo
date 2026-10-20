@@ -4,12 +4,14 @@ import json
 import math
 from pathlib import Path
 import uuid
+from native_recovery_search_evidence import reload_retry
 
 
 ROOT_FLAGS = {
     "nativeNewCancelAndCreate", "nativeSaveAsIndependentIdentity", "nativeFileAndHomeOpen",
     "recentRemovalPreservesFile", "deleteCancelPreservesFile", "confirmedDeleteMovesExactCopyToTrash",
     "nativeRecentOpen", "finderExactProjectSelection", "projectSettingsAndFPSUndo", "genericWithoutPipeline", "nativeLayoutPanelDividerReopen",
+    "nativePersistentReloadRetry",
 }
 EDIT_FLAGS = {
     "sourceMemoryAndHistory", "nativeRangeInsertOverwrite", "nativeLinkedAudioAndLinkUndo",
@@ -40,6 +42,8 @@ CAPTURES = {
     "tutorial", "feedback-empty-not-sent", "update-check-no-install", "diagnostic-configure",
     "diagnostic-export-cancel", "diagnostic-delete-cancel", "portrait-export-qc", "file-open-original",
     "delete-confirmation", "recent-removed-file-preserved", "layout-before-close", "layout-after-reopen",
+    "reload-recovered-alert", "reload-failed-alert", "reload-persistent-paused", "reload-native-commands-blocked",
+    "reload-retry-loading", "reload-recovered-editor",
 }
 
 
@@ -215,6 +219,8 @@ def validate(row, output, scale):
         file = local(directory, movie["file"])
         if (not all(movie[key] == value for key, value in {"width": 720, "height": 1280, "fps": 30, "frames": 150, "qc": True}.items())
             or file is None or hashlib.sha256(file.read_bytes()).hexdigest() != movie["sha256"]):
+            return False
+        if not reload_retry(row["reload"], directory, interactions):
             return False
         return True
     except (KeyError, TypeError, ValueError, OSError, AttributeError):

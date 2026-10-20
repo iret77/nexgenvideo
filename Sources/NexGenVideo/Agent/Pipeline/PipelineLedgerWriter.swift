@@ -55,12 +55,12 @@ enum PipelineLedgerWriter {
     static func restoreMessage(editor: EditorViewModel) -> String? {
         guard isRestoring(editor: editor) else { return nil }
         if editor.agentService.isComposerBlocked {
-            return "Intent Ledger restore is waiting. Complete or dismiss the current agent decision; the queued restore will then run. Current values remain unchanged until it completes."
+            return "Waiting to restore attributes. Complete or dismiss the pending decision. Current attributes remain unchanged."
         }
         if editor.agentService.isStreaming {
-            return "Intent Ledger restore is waiting. Let the agent finish, or stop it in the Agent panel; the queued restore will then run. Current values remain unchanged until it completes."
+            return "Waiting for the agent. Let the agent finish, or choose Show Agent to stop it. Current attributes remain unchanged."
         }
-        return "Restoring Intent Ledger… Current values remain unchanged until the restore completes. Undo and Redo will then be available."
+        return "Restoring attributes… Undo and Redo will be available when this finishes."
     }
 
     @MainActor final class ToolTransaction {
@@ -112,7 +112,7 @@ enum PipelineLedgerWriter {
             publication = (before, after)
             guard before.ledger != after.ledger, let editor, editor.workingRoot == home,
                   editor.openWorkingCopyKey == key, editor.openWorkingCopyGeneration == generation else { return }
-            session.history.record(before: before, after: after, name: "Revise Intent Ledger")
+            session.history.record(before: before, after: after, name: "Revise Attribute")
         }
     }
 

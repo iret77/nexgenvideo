@@ -88,6 +88,7 @@ class AppNLEEvidenceTests(unittest.TestCase):
             "help": dict.fromkeys(HELP_FLAGS, True), "reopenedLayout": reopened_layout,
             "portraitExport": {"file": "film.mp4", "sha256": movie_sha, "width": 720, "height": 1280, "fps": 30, "frames": 150, "qc": True},
             "screenshots": screenshots, "interactions": interactions, "progress": self.name + ".json"}
+        self.add_reload_observation()
         self.persist(self.row)
 
     def persist(self, row):
@@ -223,4 +224,41 @@ class AppNLEEvidenceTests(unittest.TestCase):
         self.persist(self.row)
         screenshot = self.output / self.row["screenshots"][0]
         screenshot.write_bytes(b"not a screenshot")
+        self.assertFalse(validate(self.row, self.output, 1.5))
+
+
+    def add_reload_observation(self):
+        directory = self.output / self.name
+        original, recovery = directory / "Original portrait.ngv", directory / "Reload recovery.ngv"
+        original.mkdir(); recovery.mkdir()
+        identity = "30000000-0000-4000-8000-000000000001"
+        for package in (original, recovery):
+            (package / "project.json").write_text(json.dumps({"width": 720, "height": 1280, "fps": 30, "tracks": []}))
+            (package / "media.json").write_text(json.dumps({"version": 7, "entries": []}))
+            (package / "ngv.json").write_text(json.dumps({"id": identity if package == recovery else self.row["originalID"]}))
+        value = {"projectID": identity, "package": recovery.name,
+            "packageHashes": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in recovery.iterdir()},
+            "oldGeneration": "40000000-0000-4000-8000-000000000001", "newGeneration": "40000000-0000-4000-8000-000000000002",
+            "reloadAttempts": 2, "pausedTexts": ["Saved project could not be loaded",
+                "Editing and saving are paused to protect your saved project. Retry reload, or close and reopen this project."],
+            "blockedNativeKeys": ["s", "z", "Z", "i", "e"], "savedBytesPreserved": True, "realRetryRestoredSavedState": True,
+            "faultInjection": "The first installed working-copy timeline is deliberately unreadable; the saved package stays intact."}
+        self.row["reload"] = value
+        for code, text in ((1, "s"), (6, "z"), (6, "Z"), (34, "i"), (14, "e")):
+            self.row["interactions"].append({"kind": "verified-state", "label": "paused native command delivered",
+                "evidence": {"code": code, "characters": text, "modifiers": (1 << 20) | ((1 << 17) if text == "Z" else 0)}})
+        self.row["interactions"].append({"kind": "verified-state", "label": "persistent failed reload and native Retry", "evidence": value})
+
+    def test_persistent_reload_requires_retry_commands_and_saved_bytes(self):
+        for key, value in (("reloadAttempts", 1), ("realRetryRestoredSavedState", False),
+                           ("blockedNativeKeys", ["s"]), ("pausedTexts", [])):
+            changed = copy.deepcopy(self.row)
+            changed["reload"][key] = value
+            for item in changed["interactions"]:
+                if item.get("label") == "persistent failed reload and native Retry":
+                    item["evidence"] = changed["reload"]
+            self.persist(changed)
+            self.assertFalse(validate(changed, self.output, 1.5), key)
+        self.persist(self.row)
+        (self.output / self.name / "Reload recovery.ngv" / "project.json").write_bytes(b"saved bytes changed")
         self.assertFalse(validate(self.row, self.output, 1.5))

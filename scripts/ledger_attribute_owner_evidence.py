@@ -27,6 +27,41 @@ def local(root, name):
     return result
 
 
+def busy_undo_evidence(directory, result, actions):
+    def observed(label):
+        rows = [(i, row["evidence"]) for i, row in enumerate(actions)
+                if row.get("kind") == "verified-state" and row.get("label") == label]
+        require(len(rows) == 1, "complete single busy Ledger observation required: " + label)
+        return rows[0]
+    begin, held = observed("Ledger busy rapid begin")
+    end, after = observed("Ledger busy rapid end")
+    stop, released = observed("Ledger busy native Stop completed")
+    completed, _ = observed("native Ledger undo-relock")
+    first = [i for i, row in enumerate(actions[:begin]) if row.get("kind") == "keyboard" and row.get("code") == 6]
+    require(len(first) == 1 and begin < end < stop < completed, "busy interval must belong to the first actual Undo")
+    command, shift = 1 << 20, 1 << 17
+    keys = [(i, row) for i, row in enumerate(actions) if begin < i < end and row.get("kind") == "keyboard"]
+    require(len(keys) == 2 and [row.get("code") for _, row in keys] == [6, 6]
+            and [row.get("characters") for _, row in keys] == ["z", "Z"]
+            and [row.get("modifiers") for _, row in keys] == [command, command | shift], "rapid native Undo then Redo required")
+    before_sha = digest(directory / "ledger-busy-before.yaml")
+    after_sha = digest(directory / "ledger-busy-after.yaml")
+    require(before_sha == after_sha == digest(directory / "ledger-relock.yaml")
+            and held.get("ledgerSHA256") == before_sha and after.get("ledgerSHA256") == after_sha
+            and held.get("undoEnabled") is False and held.get("redoEnabled") is False and held.get("streaming") is True
+            and held.get("message") == "Waiting for the agent. Let the agent finish, or choose Show Agent to stop it. Current attributes remain unchanged."
+            and after.get("deliveredModifiers") == [command, command | shift], "busy Ledger value, explanation, menu state or real input delivery differs")
+    expected = {"beforeSHA256": before_sha, "afterRapidSHA256": after_sha,
+                "deliveredModifiers": [command, command | shift], "stopReleasedAgent": True}
+    require(released == result.get("busyUndo") == expected, "native Stop did not release held agent")
+    pointers = [(i, row.get("id")) for i, row in enumerate(actions) if end < i < stop and row.get("kind") == "pointer"]
+    require([name for _, name in pointers] == ["ledger.restore.show-agent", "agent.stop"], "real visible Show Agent then Stop missing")
+    screenshots = result.get("native", {}).get("screenshots", [])
+    for suffix in ("-ledger-busy-waiting.png", "-ledger-busy-agent-stop.png"):
+        require(sum(name.endswith(suffix) for name in screenshots) == 1, "actual busy Ledger screenshot required")
+    return {i for i, _ in keys}
+
+
 def validate(directory, expected_scale=None):
     directory = Path(directory)
     result = read(directory / "ledger-owner-result.json")
@@ -120,7 +155,8 @@ def validate(directory, expected_scale=None):
         actual_sha = digest(directory / ("ledger-" + name + ".yaml"))
         observed = [row.get("evidence") for row in actions if row.get("kind") == "verified-state" and row.get("label") == "native Ledger " + name]
         require(observed == [{"ledgerSHA256": actual_sha, "expectedRevisionSHA256": expected_sha}], "native Undo/Redo canonical bytes or expected revision differ")
-    keys = [(index, row) for index, row in enumerate(actions) if row.get("kind") == "keyboard" and row.get("code") == 6]
+    rapid_indices = busy_undo_evidence(directory, result, actions)
+    keys = [(index, row) for index, row in enumerate(actions) if row.get("kind") == "keyboard" and row.get("code") == 6 and index not in rapid_indices]
     command, shift = 1 << 20, 1 << 17
     require(len(keys) == 4 and [row.get("characters") for _, row in keys] == ["z", "z", "Z", "Z"]
             and [row.get("modifiers") for _, row in keys] == [command, command, command | shift, command | shift], "actual native Ledger Undo/Redo keys missing")
@@ -129,7 +165,7 @@ def validate(directory, expected_scale=None):
         observation = next(i for i, row in enumerate(actions) if row.get("label") == "native Ledger " + name)
         before = [(i, row.get("evidence", {})) for i, row in enumerate(actions)
                   if row.get("kind") == "verified-state" and row.get("label") == "before native Ledger " + name]
-        require(len(before) == 1 and before[0][1] == {"actionName": "Revise Intent Ledger", "redo": name.startswith("redo"),
+        require(len(before) == 1 and before[0][1] == {"actionName": "Revise Attribute", "redo": name.startswith("redo"),
                 "expectedRevisionSHA256": actions[observation]["evidence"]["expectedRevisionSHA256"], "documentOwnsUndo": True}
                 and last_step_index < before[0][0] < index < observation, "native Ledger Undo/Redo action identity or order differs")
         last_step_index = observation

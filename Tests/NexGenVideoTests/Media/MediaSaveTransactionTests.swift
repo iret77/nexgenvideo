@@ -26,7 +26,7 @@ struct MediaSaveTransactionTests {
         let other = directory.appendingPathComponent("Other.ngv")
         try Fixtures.prepareProjectPackage(at: other)
         let rendered = directory.appendingPathComponent("Rendered.mp4")
-        let task = try #require(editor.saveAsMedia(source: before, name: "Saved range", type: .video) { captured, resolver in
+        let pendingTask = editor.saveAsMedia(source: before, name: "Saved range", type: .video) { captured, resolver in
             #expect(captured == before)
             let frozen = try #require(resolver.resolveURL(for: asset.id))
             #expect(try (frozen != source && Data(contentsOf: frozen) == bytes))
@@ -39,7 +39,8 @@ struct MediaSaveTransactionTests {
             default: try Data("different source bytes".utf8).write(to: source)
             }
             return rendered
-        })
+        }
+        let task = try #require(pendingTask)
         let placeholder = try #require(editor.mediaAssets.first { $0.id != asset.id })
         await task.value
         #expect(!FileManager.default.fileExists(atPath: placeholder.url.path))

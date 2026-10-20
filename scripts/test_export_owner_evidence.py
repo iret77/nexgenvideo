@@ -8,7 +8,7 @@ import struct
 import tempfile
 import unittest
 
-from export_owner_evidence import check_job, decode_proof, restart_processes
+from export_owner_evidence import check_job, decode_proof, restart_processes, preparation_evidence
 
 
 class ExportEvidenceTests(unittest.TestCase):
@@ -42,6 +42,90 @@ class ExportEvidenceTests(unittest.TestCase):
         self.job = {'id': 'one', 'status': 'completed', 'kind': 'video', 'output': self.filename,
             'outputSHA256': self.proof['sha256'], 'attempt': {'id': 'one', 'status': 'succeeded',
             'output_sha256': self.proof['sha256'], 'spec': spec, 'probe_qc': qc}}
+
+    def preparation_fixture(self):
+        actions, screenshots, observations = [], [], []
+        def record(label, evidence):
+            actions.append({'kind': 'verified-state', 'label': label, 'evidence': copy.deepcopy(evidence)})
+        def image(label):
+            name = 'synthetic-' + label + '.png'; screenshots.append(name)
+            (self.root / name).write_bytes(b'\x89PNG\r\n\x1a\n' + b'synthetic parser fixture' * 64)
+        def put(name, value):
+            raw = json.dumps(value, sort_keys=True).encode(); (self.root / name).write_bytes(raw)
+            return hashlib.sha256(raw).hexdigest()
+        def source(variant, moment, changed):
+            timeline = {'tracks': [{'clips': [{'id': 'picture', 'transform': {'flipHorizontal': changed == 'timeline'}}]}]}
+            manifest = {'entries': [{'id': 'picture'}, {'id': 'sound'}] + ([{'id': 'new'}] if changed == 'manifest' else [])}
+            values = {'timeline': timeline, 'manifest': manifest, 'metadata': {'project': 'new' if changed == 'metadata' else 'original'}}
+            return {field: put('preparation-' + variant + '-' + moment + '-' + field + '.json', value) for field, value in values.items()}
+        record('preparation destination before second Export', {'panel': 7, 'keyEquivalent': 'e', 'modifiers': 1 << 20, 'menuEnabled': False})
+        actions.append({'kind': 'keyboard', 'code': 14, 'characters': 'e', 'modifiers': 1 << 20, 'window': 7})
+        record('preparation native key delivered', {'code': 14, 'window': 7})
+        record('preparation destination single panel', {'firstPanel': 7, 'afterSecondExportPanel': 7, 'count': 1, 'startEnabled': False, 'savePanelIDs': [7], 'showExportDialog': False, 'ownerHasAttachedSheet': False, 'runLoopCheckpoint': True})
+        image('destination-owner-disabled'); image('destination-first-panel')
+        for index, variant in enumerate(['cancel', 'timeline', 'manifest', 'metadata']):
+            before = source(variant, 'before', None); current = source(variant, 'current', None if variant == 'cancel' else variant)
+            retry_source = source(variant, 'retry-source', variant if variant in ('timeline', 'manifest') else None)
+            record('preparation held ' + variant, {'preparing': 'Preparing export…', 'startEnabled': False, 'jobIDs': ['old']})
+            if variant == 'cancel':
+                actions.append({'kind': 'pointer', 'id': 'export.cancel-preparation'}); image('cancelling-preparation')
+            elif variant == 'timeline': actions.append({'kind': 'pointer', 'id': 'inspector.transform.arrow.left.and.right'})
+            elif variant == 'manifest': record('application-menu', {'path': ['File', 'Import Media…']})
+            else:
+                old_identity = put('preparation-metadata-identity-before.json', {'id': 'original'})
+                new_identity = put('preparation-metadata-identity-current.json', {'id': 'new'})
+                record('controlled metadata source mutation', {'nativeMetadataUI': False, 'originalSHA256': old_identity, 'changedSHA256': new_identity})
+            output = 'preparation-' + variant + '.mp4'; retry = 'preparation-' + variant + '-retry.mp4'
+            for filename in (output, retry): actions.append({'kind': 'save-panel', 'filename': filename, 'exactURLVerified': True, 'nativeDirectoryAndFilenameTyped': True})
+            (self.root / retry).write_bytes(b'synthetic retry ' + variant.encode())
+            job = copy.deepcopy(self.job); job['id'] = 'retry-' + str(index); job['output'] = retry; job['outputSHA256'] = hashlib.sha256((self.root / retry).read_bytes()).hexdigest()
+            job['attempt']['id'] = job['id']; job['attempt']['output_sha256'] = job['outputSHA256']
+            job['attempt']['finished_timeline_sha256'] = retry_source['timeline']
+            for scope in ('spec', 'probe_qc'): job['attempt'][scope].update(width=180, height=320)
+            put('preparation-' + variant + '-retry-job.json', job)
+            put('preparation-' + variant + '-finished.json', {'timeline_sha256': retry_source['timeline']})
+            record('actual loaded export QC', {'jobID': job['id'], 'attemptID': job['id'], 'completed': True})
+            row = {'variant': variant, 'before': before, 'current': current, 'retrySource': retry_source,
+                'output': output, 'outputExists': False, 'jobsBefore': ['old'], 'jobsAfter': ['old'], 'deliveryBefore': {'old': 'a' * 64},
+                'deliveryAfter': {'old': 'a' * 64}, 'barrierExited': True, 'error': None if variant == 'cancel' else 'The project changed while preparing the export. Prepare the export again from the current edit.',
+                'result': 'Export cancelled.' if variant == 'cancel' else None, 'retryOutput': retry, 'retryJobID': job['id'], 'retrySHA256': job['outputSHA256']}
+            image('preparing-' + variant); image('preparation-finished-' + variant)
+            record('preparation observation ' + variant, row); observations.append(row)
+        return {'observations': observations, 'destinationPanelID': 7, 'nativeMetadataUI': False}, actions, screenshots
+
+    def test_preparation_required_independent_source_and_retry_shape(self):
+        result, actions, images = self.preparation_fixture()
+        preparation_evidence(self.root, result, actions, images)
+
+    def test_missing_preparation_subpath_or_image_is_rejected(self):
+        for missing in ('subpath', 'image', 'delivery'):
+            result, actions, images = self.preparation_fixture()
+            if missing == 'subpath': result['observations'].pop()
+            elif missing == 'image': images.remove('synthetic-cancelling-preparation.png')
+            else: actions[:] = [row for row in actions if row.get('label') != 'preparation native key delivered']
+            with self.assertRaises(ValueError): preparation_evidence(self.root, result, actions, images)
+
+    def test_wrong_source_dimension_or_retry_revision_is_rejected(self):
+        for fault in ('dimension', 'retry', 'late-output'):
+            result, actions, images = self.preparation_fixture()
+            if fault == 'dimension':
+                row = result['observations'][1]
+                for field in row['before']:
+                    (self.root / ('preparation-timeline-current-' + field + '.json')).write_bytes(
+                        (self.root / ('preparation-timeline-before-' + field + '.json')).read_bytes())
+                row['current'] = dict(row['before'])
+                next(action for action in actions if action.get('label') == 'preparation observation timeline')['evidence'] = copy.deepcopy(row)
+            elif fault == 'retry': (self.root / 'preparation-timeline-finished.json').write_text(json.dumps({'timeline_sha256': '0' * 64}))
+            else: (self.root / 'preparation-cancel.mp4').write_bytes(b'late publication')
+            with self.assertRaisesRegex(ValueError, 'Wrong independent source dimension' if fault == 'dimension' else 'Retry finished-film receipt|Rejected preparation published'):
+                preparation_evidence(self.root, result, actions, images)
+
+    def test_second_export_deferred_state_is_required(self):
+        for field, value in [('showExportDialog', True), ('ownerHasAttachedSheet', True), ('runLoopCheckpoint', False), ('savePanelIDs', [7, 8]), ('startEnabled', True)]:
+            with self.subTest(field=field):
+                result, actions, images = self.preparation_fixture()
+                next(action for action in actions if action.get('label') == 'preparation destination single panel')['evidence'][field] = value
+                with self.assertRaises(ValueError): preparation_evidence(self.root, result, actions, images)
 
     def decode(self):
         (self.root / 'decoded.json').write_text(json.dumps(self.proof))

@@ -5,14 +5,17 @@ import math
 from pathlib import Path
 import struct
 import uuid
+from native_recovery_search_evidence import search_overlap
 
 
 FLAGS = {
     "nativeSelection", "nativeFilteredSelection", "nativeFilteredSortedShiftRange", "nativeMarquee", "nativeFolderGroupDropUndo",
     "nativeThumbnailResize", "nativeMomentSourceAndDrop", "nativeSpokenSourceAndDrop", "nativeSegmentUndoRedoSave",
+    "nativeSearchSaveAsExternalOverlap",
 }
 CAPTURES = {"range-selection", "filtered-selection", "filtered-sorted-shift", "marquee-selection", "large-thumbnails",
-            "group-folder-drop", "moment-source", "spoken-source", "segment-timeline"}
+            "group-folder-drop", "moment-source", "spoken-source", "segment-timeline",
+            "search-before-save-as", "search-copy-old-complete-current-busy", "search-copy-current-results", "search-copy-reopened"}
 
 
 def local(root, relative, directory=False):
@@ -103,6 +106,8 @@ def validate(row, output, scale):
                 return False
         project = local(output, row["project"], directory=True)
         directory = project.parent
+        if not search_overlap(row["searchSaveAs"], directory, row["interactions"]):
+            return False
         if json.loads(local(project, "ngv.json").read_text()).get("id") != row["projectID"]:
             return False
         if project.name != "Browser.ngv" or directory.name != "media-browser-" + str(round(scale * 100)):
@@ -253,18 +258,18 @@ def validate(row, output, scale):
                for text, count in (("a", 1), ("z", 2), ("Z", 1), ("s", 1))):
             return False
         fields = [item["field"] for item in interactions if item.get("kind") == "text"]
-        for identifier, value in (("media.search", "harbor"), ("media.folder-rename." + moved["to"], "Selected")):
+        for identifier, values in (("media.search", ["harbor", "old-cut", "harbor"]), ("media.folder-rename." + moved["to"], ["Selected"])):
             matches = [field for field in fields if field.get("id") == identifier]
-            if len(matches) != 1:
+            if len(matches) != len(values):
                 return False
-            field = matches[0]
-            if (field.get("actual") != value or field.get("expected") != value
-                or field.get("stage") != "commit-requested" or field.get("owner") in (None, "none")
-                or not (field.get("ownsEditor") is True or field.get("focusLeftTarget") is True)
-                or (identifier.startswith("media.folder-rename.") and not (field.get("requiresFocusExit") is True and field.get("focusLeftTarget") is True))
-                or field.get("commitInput") != "Tab" or not number(field.get("fontPointSize"))
-                or abs(field["fontPointSize"] - 13 * scale) >= 0.5):
-                return False
+            for field, value in zip(matches, values):
+                if (field.get("actual") != value or field.get("expected") != value
+                    or field.get("stage") != "commit-requested" or field.get("owner") in (None, "none")
+                    or not (field.get("ownsEditor") is True or field.get("focusLeftTarget") is True)
+                    or (identifier.startswith("media.folder-rename.") and not (field.get("requiresFocusExit") is True and field.get("focusLeftTarget") is True))
+                    or field.get("commitInput") != "Tab" or not number(field.get("fontPointSize"))
+                    or abs(field["fontPointSize"] - 13 * scale) >= 0.5):
+                    return False
         visible = [item for item in interactions if item.get("kind") == "visible-group"]
         if not any(set(item.get("ids", [])) == {"media.menu.View", "media.menu.Sort", "media.menu.Filter"} for item in visible):
             return False

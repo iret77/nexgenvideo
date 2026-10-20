@@ -65,18 +65,37 @@ def ledger_fixture(directory, scale=1.0):
     put(directory / "ledger-reopened.json", state)
     for name in ("before-save", "reopened"):
         (directory / ("ledger-" + name + ".yaml")).write_bytes((directory / "ledger-relock.yaml").read_bytes())
+    busy = {}
     for name, source in [("undo-relock", "edit"), ("undo-edit", "unlock"), ("redo-edit", "edit"), ("redo-relock", "relock")]:
         put(directory / ("ledger-" + name + ".json"), json.loads((directory / ("ledger-" + source + ".json")).read_text()))
         actual_bytes = (directory / ("ledger-" + source + ".yaml")).read_bytes()
         actual_sha = hashlib.sha256(actual_bytes).hexdigest()
         (directory / ("ledger-" + name + ".yaml")).write_bytes(actual_bytes)
         actions.extend([{"kind": "verified-state", "label": "before native Ledger " + name, "evidence": {
-                            "actionName": "Revise Intent Ledger", "redo": name.startswith("redo"),
+                            "actionName": "Revise Attribute", "redo": name.startswith("redo"),
                             "expectedRevisionSHA256": actual_sha, "documentOwnsUndo": True}},
                         {"kind": "keyboard", "code": 6, "characters": "Z" if name.startswith("redo") else "z",
                          "modifiers": (1 << 20) | ((1 << 17) if name.startswith("redo") else 0)},
                         {"kind": "verified-state", "label": "native Ledger " + name, "evidence": {
                             "ledgerSHA256": actual_sha, "expectedRevisionSHA256": actual_sha}}])
+        if name == "undo-relock":
+            finish = actions.pop()
+            held = (directory / "ledger-relock.yaml").read_bytes()
+            (directory / "ledger-busy-before.yaml").write_bytes(held)
+            (directory / "ledger-busy-after.yaml").write_bytes(held)
+            held_sha = hashlib.sha256(held).hexdigest()
+            modifiers = [1 << 20, (1 << 20) | (1 << 17)]
+            busy = {"beforeSHA256": held_sha, "afterRapidSHA256": held_sha,
+                    "deliveredModifiers": modifiers, "stopReleasedAgent": True}
+            actions.extend([
+                {"kind": "verified-state", "label": "Ledger busy rapid begin", "evidence": {
+                    "ledgerSHA256": held_sha, "undoEnabled": False, "redoEnabled": False, "streaming": True,
+                    "message": "Waiting for the agent. Let the agent finish, or choose Show Agent to stop it. Current attributes remain unchanged."}},
+                {"kind": "keyboard", "code": 6, "characters": "z", "modifiers": modifiers[0]},
+                {"kind": "keyboard", "code": 6, "characters": "Z", "modifiers": modifiers[1]},
+                {"kind": "verified-state", "label": "Ledger busy rapid end", "evidence": {"ledgerSHA256": held_sha, "deliveredModifiers": modifiers}},
+                {"kind": "pointer", "id": "ledger.restore.show-agent"}, {"kind": "pointer", "id": "agent.stop"},
+                {"kind": "verified-state", "label": "Ledger busy native Stop completed", "evidence": busy}, finish])
     bible = {"locations": [{"id": identity, "name": "Ledger room"}]}
     put(directory / "bible-before.json", bible); put(directory / "bible-after.json", bible)
     for name in ("before", "after"): put(directory / ("bible-" + name + ".yaml"), bible)
@@ -86,10 +105,12 @@ def ledger_fixture(directory, scale=1.0):
                     {"kind": "pointer", "id": "ledger.attribute." + address + "." + key}, detail("reopened"),
                     {"kind": "verified-state", "label": "actual reopened Ledger details", "evidence": {"ledgerSHA256": previous_sha, "bibleSHA256": bible_sha}}])
     (directory / "native.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"Synthetic parser image fixture" * 40)
-    native = {"interactions": actions, "screenshots": ["native.png"], "progress": "native-ledger.json"}
+    images = ["native.png", "native-ledger-busy-waiting.png", "native-ledger-busy-agent-stop.png"]
+    for name in images[1:]: (directory / name).write_bytes((directory / "native.png").read_bytes())
+    native = {"interactions": actions, "screenshots": images, "progress": "native-ledger.json"}
     put(directory / native["progress"], {**native, "failure": None})
     result = {"objectKey": address, "attributeKey": key, "scale": scale, "viewport": [960, 640], "liveAgent": False,
-              "savedAndReopened": True, "nativeUndoRedo": True, "renderedFontPointSize": 13 * scale, "steps": steps, "native": native,
+              "savedAndReopened": True, "nativeUndoRedo": True, "busyUndo": busy, "renderedFontPointSize": 13 * scale, "steps": steps, "native": native,
               "bibleSHA256Before": bible_sha, "bibleSHA256After": bible_sha,
               "ledgerSHA256BeforeSave": previous_sha, "ledgerSHA256Reopened": previous_sha}
     put(directory / "ledger-owner-result.json", result)
@@ -121,6 +142,29 @@ class LedgerAttributeOwnerEvidenceTests(unittest.TestCase):
 
     def test_complete_synthetic_validator_fixture(self):
         self.assertEqual(validate(self.root, 1.0)["attributeKey"], "lighting")
+
+    def test_busy_native_sequence_is_required(self):
+        for fault in ("missing-stop", "menu-enabled", "delivery", "busy-bytes", "missing-image", "missing-subpath", "missing-begin-marker"):
+            with self.subTest(fault=fault):
+                result = ledger_fixture(self.root)
+                if fault == "busy-bytes": (self.root / "ledger-busy-after.yaml").write_bytes(b"another revision")
+                elif fault == "missing-image":
+                    result["native"]["screenshots"].remove("native-ledger-busy-waiting.png")
+                    put(self.root / result["native"]["progress"], {**result["native"], "failure": None})
+                    put(self.root / "ledger-owner-result.json", result)
+                elif fault == "missing-subpath":
+                    result.pop("busyUndo")
+                    put(self.root / result["native"]["progress"], {**result["native"], "failure": None})
+                    put(self.root / "ledger-owner-result.json", result)
+                elif fault == "missing-begin-marker":
+                    self.edit_actions(lambda rows: rows.__setitem__(slice(None), [row for row in rows if row.get("label") != "Ledger busy rapid begin"]))
+                elif fault == "missing-stop":
+                    self.edit_actions(lambda rows: rows.__setitem__(slice(None), [row for row in rows if row.get("id") != "agent.stop"]))
+                elif fault == "menu-enabled":
+                    self.edit_actions(lambda rows: next(row for row in rows if row.get("label") == "Ledger busy rapid begin")["evidence"].update(undoEnabled=True))
+                else:
+                    self.edit_actions(lambda rows: next(row for row in rows if row.get("label") == "Ledger busy rapid end")["evidence"].update(deliveredModifiers=[]))
+                with self.assertRaises(ValueError): validate(self.root)
 
     def test_wrong_outer_scale_rejected(self):
         with self.assertRaises(ValueError): validate(self.root, 1.5)

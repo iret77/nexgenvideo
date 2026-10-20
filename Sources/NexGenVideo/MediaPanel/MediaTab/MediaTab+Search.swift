@@ -307,7 +307,10 @@ extension MediaTab {
         let coordinator = editor.searchIndex
         let projectRoot = editor.workingRoot
         let projectGeneration = editor.openWorkingCopyGeneration
+        let taskID = UUID()
+        coordinator.momentQueryTaskObserver?(taskID, query, projectRoot, projectGeneration, false)
         momentSearchTask = Task {
+            defer { coordinator.momentQueryTaskObserver?(taskID, query, projectRoot, projectGeneration, true) }
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             async let documentMatches = DocumentContentSearch.search(query: query, sources: documents)
@@ -315,6 +318,7 @@ extension MediaTab {
             let visual = await coordinator.searchResult(query: query, within: eligibleIDs)
             let spoken = await spokenMatches
             let foundDocuments = await documentMatches
+            await coordinator.momentQueryPublicationBarrier?(taskID, query, projectRoot, projectGeneration, visual)
             guard !Task.isCancelled, editor.workingRoot == projectRoot,
                   editor.openWorkingCopyGeneration == projectGeneration else { return }
             visualHits = visual.hits

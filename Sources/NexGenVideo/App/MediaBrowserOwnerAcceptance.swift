@@ -182,6 +182,8 @@ enum MediaBrowserOwnerAcceptance {
             let saved = ["timelineSHA256": try FileDigest.sha256(of: package.appendingPathComponent(Project.timelineFilename)),
                          "manifestSHA256": try FileDigest.sha256(of: package.appendingPathComponent(Project.manifestFilename))]
             try driver.record("native browser save", fields: ["projectID": projectID, "clips": clipRows(editor.timeline), "hashes": saved])
+            let searchSaveAs = try await AppSearchSaveAsOwnerAcceptance.run(directory: directory, incoming: incoming,
+                parent: window, spec: spec, driver: driver)
             var result = driver.result()
             result.merge(["scale": scale, "effectiveScale": AppTheme.Typography.validatedScale(UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey)),
                           "viewport": [content.bounds.width, content.bounds.height], "backingScale": window.backingScaleFactor,
@@ -191,7 +193,8 @@ enum MediaBrowserOwnerAcceptance {
                           "nativeSelection": true, "nativeFilteredSelection": true, "nativeFilteredSortedShiftRange": true, "nativeMarquee": true,
                           "nativeFolderGroupDropUndo": true, "nativeThumbnailResize": true,
                           "nativeMomentSourceAndDrop": true, "nativeSpokenSourceAndDrop": true,
-                          "nativeSegmentUndoRedoSave": true]) { _, new in new }
+                          "nativeSegmentUndoRedoSave": true, "nativeSearchSaveAsExternalOverlap": true,
+                          "searchSaveAs": searchSaveAs]) { _, new in new }
             return result
         } catch { driver.failure(error); throw error }
     }

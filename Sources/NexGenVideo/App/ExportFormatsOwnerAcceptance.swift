@@ -72,13 +72,14 @@ enum ExportFormatsOwnerAcceptance {
                 deliveries.append(["name": name, "jobID": job.id, "codec": codec.rawValue, "resolution": resolution.rawValue,
                     "target": target, "width": width, "height": height, "output": destination.lastPathComponent, "sha256": probe.sha256])
             }
+            let preparation = try await ExportPreparationOwnerAcceptance.run(context)
             try await interchange(context)
             try await projectCopy(context, scale: scale)
             try await Support.save(context)
             guard !editor.hasProductionPipeline, editor.timeline == timeline else { throw Support.failed("Generic export changed the film or created production gates.") }
             try await negativeCopies(context, scale: scale)
             return ["directory": directory.lastPathComponent, "viewport": [bounds.width, bounds.height], "effectiveScale": scale,
-                "deliveries": deliveries, "interactions": driver.interactions, "screenshots": driver.screenshots]
+                "deliveries": deliveries, "preparation": preparation, "interactions": driver.interactions, "screenshots": driver.screenshots]
         } catch { driver.failure(error); throw error }
     }
 

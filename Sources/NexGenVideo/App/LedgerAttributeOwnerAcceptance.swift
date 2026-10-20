@@ -56,12 +56,13 @@ enum LedgerAttributeOwnerAcceptance {
             try await driver.click("ledger.done", in: try await details(driver))
             var steps: [[String: Any]] = []
             var values: [String: (Ledger, String)] = [:]
-            func revise(_ name: String, tool: String, arguments: [String: Any], direction: String, expectsError: Bool = false) async throws {
+            var busyUndo: [String: Any] = [:]
+            func revise(_ name: String, tool: String, arguments: [String: Any], direction: String, expectsError: Bool = false, holdAfterResult: Bool = false) async throws {
                 let previous = try await snapshot(root)
                 guard let attribute = previous.0.objects[address]?[ledgerKey] else { throw failed("The actual Ledger attribute disappeared.") }
                 try await showDetails(expected: attribute, address: address, key: ledgerKey, window: window, driver: driver)
                 let popover = try await details(driver)
-                try runtime.arm(tool: tool, arguments: arguments, direction: direction, objectID: identity, key: ledgerKey)
+                try runtime.arm(tool: tool, arguments: arguments, direction: direction, objectID: identity, key: ledgerKey, holdAfterResult: holdAfterResult)
                 try await driver.click("ledger.revise", in: popover)
                 try await driver.wait("Ledger detail closed after genuine task staging") { !popover.isVisible || WorkspaceUIAcceptance.probeFrame(identifier: "ledger.details", in: popover) == nil }
                 try await driver.wait("actual bounded Ledger task") { driver.text("agent.task.staged", in: window) == "Revise: " + ledgerKey }
@@ -69,7 +70,7 @@ enum LedgerAttributeOwnerAcceptance {
                     commitByClicking: "pipeline.overview.select.bible")
                 let count = runtime.results.count
                 try await driver.click("agent.task.run", in: window)
-                try await driver.wait("actual Ledger tool result " + name, seconds: 30) { !editor.agentService.isStreaming && runtime.results.count > count }
+                try await driver.wait("actual Ledger tool result " + name, seconds: 30) { runtime.results.count > count && (holdAfterResult ? runtime.isHolding && editor.agentService.isStreaming : !editor.agentService.isStreaming) }
                 guard let actual = runtime.results.last, actual.isError == expectsError,
                       editor.agentService.streamError == nil else { throw failed("The scoped Ledger tool did not produce its expected actual result.") }
                 let current = try await snapshot(root)
@@ -96,7 +97,7 @@ enum LedgerAttributeOwnerAcceptance {
             let newDirection = "Keep warm side light and a dark opposite wall."
             try await revise("edit", tool: "set_ledger_attribute", arguments: target.merging(["tag": "Warm side lighting", "directive": newDirection,
                 "source": newDirection, "locked": false]) { _, new in new }, direction: newDirection)
-            try await revise("relock", tool: "lock_ledger_attribute", arguments: target.merging(["locked": true]) { _, new in new }, direction: "Lock the revised warm lighting for subsequent generation.")
+            try await revise("relock", tool: "lock_ledger_attribute", arguments: target.merging(["locked": true]) { _, new in new }, direction: "Lock the revised warm lighting for subsequent generation.", holdAfterResult: true)
             let final = try await snapshot(root)
             guard final.0.objects[address]?.count == 1, let attribute = final.0.objects[address]?[ledgerKey],
                   attribute.tag == "Warm side lighting", attribute.directive == newDirection, attribute.source == newDirection, attribute.locked,
@@ -106,19 +107,64 @@ enum LedgerAttributeOwnerAcceptance {
             let finalDetails = try await details(driver)
             try driver.capture("reconciled-locked-attribute", target: finalDetails)
             try await driver.click("ledger.done", in: finalDetails)
-            func restore(_ expected: (Ledger, String), redo: Bool = false, name: String) async throws {
+            func restore(_ expected: (Ledger, String), redo: Bool = false, name: String, observeBusy: Bool = false) async throws {
                 try await driver.click("pipeline.overview.select.bible", in: window, enabled: false)
                 try await driver.wait("document owns native Ledger Undo") {
                     !(window.firstResponder is NSTextView) && window.firstResponder?.undoManager === editor.undoManager
                 }
                 guard let action = redo ? editor.undoManager?.redoActionName : editor.undoManager?.undoActionName,
-                      action == "Revise Intent Ledger" else {
+                      action == "Revise Attribute" else {
                     throw failed("The next native Undo/Redo action belongs to another edit.")
                 }
                 try driver.record("before native Ledger " + name, fields: ["actionName": action, "redo": redo,
                     "expectedRevisionSHA256": expected.1, "documentOwnsUndo": window.firstResponder?.undoManager === editor.undoManager])
                 let revision = editor.engineStateRevision
                 try driver.pressKey(6, characters: redo ? "Z" : "z", modifiers: redo ? [.command, .shift] : .command, in: window)
+                if observeBusy {
+                    try await driver.wait("visible Ledger restore waits for the actual held agent") {
+                        PipelineLedgerWriter.isRestoring(editor: editor) && editor.agentService.isStreaming
+                            && driver.text("ledger.restore.pending", in: window) == PipelineLedgerWriter.restoreMessage(editor: editor)
+                    }
+                    let held = try await snapshot(root)
+                    guard held.1 == final.1, runtime.isHolding else { throw failed("The waiting restore changed Ledger values.") }
+                    try held.2.write(to: output.appendingPathComponent("ledger-busy-before.yaml"))
+                    guard let editMenu = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "Edit" })?.submenu else { throw failed("The real Edit menu is missing.") }
+                    editMenu.update()
+                    guard let undo = editMenu.items.first(where: { $0.action == NSSelectorFromString("undo:") }),
+                          let redo = editMenu.items.first(where: { $0.action == NSSelectorFromString("redo:") }),
+                          !undo.isEnabled, !redo.isEnabled else { throw failed("Native Undo/Redo remains enabled during restore.") }
+                    try driver.capture("ledger-busy-waiting", target: window)
+                    try driver.record("Ledger busy rapid begin", fields: ["ledgerSHA256": held.1, "undoEnabled": undo.isEnabled,
+                        "redoEnabled": redo.isEnabled, "message": driver.text("ledger.restore.pending", in: window) ?? "", "streaming": editor.agentService.isStreaming])
+                    let delivery = KeyDelivery(), windowNumber = window.windowNumber
+                    let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { event in
+                        let number = event.windowNumber, code = event.keyCode, flags = event.modifierFlags.rawValue
+                        MainActor.assumeIsolated {
+                            if number == windowNumber && code == 6 { delivery.modifiers.append(flags) }
+                        }
+                        return event
+                    }
+                    defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+                    try driver.pressKey(6, characters: "z", modifiers: .command, in: window)
+                    try driver.pressKey(6, characters: "Z", modifiers: [.command, .shift], in: window)
+                    try await driver.wait("both rapid native Undo/Redo key-ups delivered") { delivery.modifiers.count == 2 }
+                    let afterRapid = try await snapshot(root)
+                    guard afterRapid.2 == held.2, runtime.isHolding, PipelineLedgerWriter.isRestoring(editor: editor),
+                          editor.agentService.isStreaming else { throw failed("Rapid Undo/Redo bypassed the pending restore.") }
+                    try afterRapid.2.write(to: output.appendingPathComponent("ledger-busy-after.yaml"))
+                    try driver.record("Ledger busy rapid end", fields: ["ledgerSHA256": afterRapid.1, "deliveredModifiers": delivery.modifiers])
+                    try await driver.click("ledger.restore.show-agent", in: window)
+                    try await driver.wait("actual Stop action in visible Agent") {
+                        NSApp.windows.contains { $0.isVisible && WorkspaceUIAcceptance.probeFrame(identifier: "agent.stop", in: $0) != nil }
+                    }
+                    guard let agentWindow = NSApp.windows.first(where: { $0.isVisible && WorkspaceUIAcceptance.probeFrame(identifier: "agent.stop", in: $0) != nil }) else { throw failed("The real Agent stop control did not appear.") }
+                    try driver.capture("ledger-busy-agent-stop", target: agentWindow)
+                    try await driver.click("agent.stop", in: agentWindow)
+                    try await driver.wait("native Stop releases the actual held agent") { !runtime.isHolding && !editor.agentService.isStreaming }
+                    busyUndo = ["beforeSHA256": held.1, "afterRapidSHA256": afterRapid.1,
+                        "deliveredModifiers": delivery.modifiers, "stopReleasedAgent": true]
+                    try driver.record("Ledger busy native Stop completed", fields: busyUndo)
+                }
                 try await driver.wait("actual Ledger " + name) { editor.engineStateRevision > revision }
                 guard try await PipelineLedgerWriter.waitForPendingNativeRestore(editor: editor) == expected.0 else {
                     throw failed("The actual native Ledger restore did not finish with its expected state.")
@@ -130,7 +176,7 @@ enum LedgerAttributeOwnerAcceptance {
                 try driver.record("native Ledger " + name, fields: ["ledgerSHA256": actual.1, "expectedRevisionSHA256": expected.1])
             }
             guard let unlockValue = values["unlock"], let editValue = values["edit"] else { throw failed("The actual Ledger revision values were not captured.") }
-            try await restore(editValue, name: "undo-relock")
+            try await restore(editValue, name: "undo-relock", observeBusy: true)
             try await restore(unlockValue, name: "undo-edit")
             try await restore(editValue, redo: true, name: "redo-edit")
             try await restore((final.0, final.1), redo: true, name: "redo-relock")
@@ -174,6 +220,7 @@ enum LedgerAttributeOwnerAcceptance {
             guard let field = driver.interactions.compactMap({ $0["field"] as? [String: Any] }).last(where: { $0["id"] as? String == "agent.composer.input" }),
                   let font = field["fontPointSize"] as? CGFloat, abs(font - AppTheme.Typography.ui * scale) < 0.5 else { throw failed("The actual native Ledger task typography did not use its requested scale.") }
             let result: [String: Any] = ["objectKey": address, "attributeKey": ledgerKey, "steps": steps, "savedAndReopened": true, "nativeUndoRedo": true,
+                "busyUndo": busyUndo,
                 "initialFixture": "Canonical Core planning writers, confirmed appearance fixture, one initially unlocked Location attribute and a distinct retained locked Look attribute; later lock/revision decisions use real native input.",
                 "bibleSHA256Before": bibleBefore.1, "bibleSHA256After": actualBible.1,
                 "ledgerSHA256BeforeSave": beforeSave.1, "ledgerSHA256Reopened": reopenedValue.1,
@@ -220,17 +267,21 @@ enum LedgerAttributeOwnerAcceptance {
     }
     nonisolated private static func failed(_ message: String) -> GateBlocked { GateBlocked("Native Ledger acceptance: " + message) }
 
+    @MainActor private final class KeyDelivery { var modifiers: [UInt] = [] }
+
     @MainActor private final class Runtime: AgentRuntimeAdapter {
         struct Result { let isError: Bool; let text: String; let context: String }
         let descriptor = AgentBackend.claudeCode.runtimeDescriptor(toolNames: ["set_ledger_attribute", "lock_ledger_attribute", "remove_ledger_attribute"], providerExtensions: [])
         private(set) var state: AgentRuntimeState = .idle
         private(set) var results: [Result] = []
         private var session: AgentRuntimeSessionRequest?
-        private var next: (tool: String, arguments: String, direction: String, objectID: String, key: String)?
+        private var next: (tool: String, arguments: String, direction: String, objectID: String, key: String, holdAfterResult: Bool)?
         private var task: Task<Void, Never>?
+        private var heldResult: CheckedContinuation<Void, Never>?
+        var isHolding: Bool { heldResult != nil }
         func service() -> AgentService { AgentService(backend: .claudeCode, refreshBackendStatusOnInit: false, runtimeAdapterFactory: { _ in self }, runtimeReadinessOverride: { nil }) }
-        func arm(tool: String, arguments: [String: Any], direction: String, objectID: String, key: String) throws {
-            next = (tool, String(decoding: try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]), as: UTF8.self), direction, objectID, key)
+        func arm(tool: String, arguments: [String: Any], direction: String, objectID: String, key: String, holdAfterResult: Bool = false) throws {
+            next = (tool, String(decoding: try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]), as: UTF8.self), direction, objectID, key, holdAfterResult)
         }
         func start(_ request: AgentRuntimeSessionRequest) throws {
             guard WorkspaceUIAcceptance.isRequested, request.hostContext.pack == nil else { throw failed("The runtime fixture is confined to the actual Core document.") }
@@ -257,11 +308,15 @@ enum LedgerAttributeOwnerAcceptance {
                     let text = result.content.compactMap { block -> String? in if case .text(let value) = block { value } else { nil } }.joined(separator: "\n")
                     results.append(.init(isError: result.isError, text: text, context: context))
                     emit(.toolResult(id: id, content: result.content, isError: result.isError))
+                    if next.holdAfterResult, !Task.isCancelled {
+                        await withCheckedContinuation { heldResult = $0 }
+                    }
+                    guard !Task.isCancelled else { continuation.finish(); return }
                     emit(.terminal(.completed(.endTurn))); state = .ready(sessionID: request.sessionID); continuation.finish()
                 }
             }
         }
-        func cancel(sessionID: UUID) { task?.cancel(); task = nil; state = .ready(sessionID: sessionID) }
-        func end(sessionID: UUID) { task?.cancel(); task = nil; session = nil; state = .ended(sessionID: sessionID) }
+        func cancel(sessionID: UUID) { task?.cancel(); let held = heldResult; heldResult = nil; held?.resume(); task = nil; state = .ready(sessionID: sessionID) }
+        func end(sessionID: UUID) { task?.cancel(); let held = heldResult; heldResult = nil; held?.resume(); task = nil; session = nil; state = .ended(sessionID: sessionID) }
     }
 }

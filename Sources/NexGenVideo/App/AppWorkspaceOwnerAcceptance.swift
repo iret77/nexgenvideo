@@ -84,6 +84,8 @@ enum AppWorkspaceOwnerAcceptance {
             let assets = try mediaHashes(editor)
             try await AppNativeMenuAcceptance.choose(["File", "Save"], in: window, driver: driver)
             try await driver.wait("native File Save", seconds: 30) { !document.isDocumentEdited && (try? readTimeline(package)) == savedTimeline }
+            let reload = try await AppReloadFailureOwnerAcceptance.run(savedPackage: package, directory: directory,
+                parent: window, driver: driver)
             let originalBytes = try FileDigest.sha256(of: package.appendingPathComponent(Project.timelineFilename))
             try await AppNativeMenuAcceptance.choose(["File", "Save As…"], in: window, driver: driver)
             try await driver.saveFile(copy, in: window)
@@ -174,7 +176,7 @@ enum AppWorkspaceOwnerAcceptance {
                 "originalID": originalID, "copyID": copyID,
                 "timelineSHA256": savedSHA, "mediaHashes": assets, "editing": editing, "viewing": viewing,
                 "help": help, "portraitExport": movie, "reopenedLayout": reopenedLayout,
-                "nativeLayoutPanelDividerReopen": true]) { _, new in new }
+                "nativeLayoutPanelDividerReopen": true, "nativePersistentReloadRetry": true, "reload": reload]) { _, new in new }
             return result
         } catch { driver.failure(error); throw error }
     }

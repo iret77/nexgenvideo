@@ -48,6 +48,9 @@ final class SearchIndexCoordinator {
         let failedAssetIDs: Set<String>
     }
 
+    @ObservationIgnored var momentQueryPublicationBarrier: (@MainActor (UUID, String, URL?, UUID?, SearchResult) async -> Void)?
+    @ObservationIgnored var momentQueryTaskObserver: (@MainActor (UUID, String, URL?, UUID?, Bool) -> Void)?
+
     @ObservationIgnored var queryEncoderOverride: QueryEncoder? {
         didSet {
             queryConfiguration += 1

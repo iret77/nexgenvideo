@@ -124,6 +124,7 @@ class MediaBrowserOwnerEvidenceTests(unittest.TestCase):
             "project": self.name + "/Browser.ngv", "saved": saved, "sources": self.sources, "searchCaches": self.caches,
             "clips": clips, "interactions": interactions, "screenshots": images, "progress": self.name + ".json"}
         self.row = json.loads(json.dumps(self.row))
+        self.add_search_overlap()
         self.persist(self.row)
 
     @staticmethod
@@ -263,4 +264,77 @@ class MediaBrowserOwnerEvidenceTests(unittest.TestCase):
         self.persist(changed); self.assertFalse(validate(self.row, self.output, 1.5))
         self.persist(self.row)
         (self.output / self.row["screenshots"][0]).write_bytes(b"not PNG")
+        self.assertFalse(validate(self.row, self.output, 1.5))
+
+
+    def add_search_overlap(self):
+        incoming = self.directory / "Incoming"
+        incoming.mkdir()
+        original, copied = self.directory / "Search original.ngv", self.directory / "Search copy.ngv"
+        original.mkdir(); copied.mkdir()
+        identities = ["10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"]
+        entries, hashes = [], {}
+        for identifier, filename in (("external-a", "A.mov"), ("external-b", "B.mov")):
+            source = incoming / filename
+            source.write_bytes(("independent external fixture " + filename).encode())
+            hashes[identifier] = self.digest(source)
+            entries.append({"id": identifier, "source": {"external": {"absolutePath": "/fixture/" + self.name + "/Incoming/" + filename}}})
+        for package, identity in zip((original, copied), identities):
+            self.write(package / "ngv.json", {"id": identity})
+            (package / "project.json").write_bytes((self.project / "project.json").read_bytes())
+            self.write(package / "media.json", {"entries": entries})
+        value = {"originalID": identities[0], "copyID": identities[1],
+            "oldGeneration": "20000000-0000-4000-8000-000000000001", "newGeneration": "20000000-0000-4000-8000-000000000002",
+            "originalHashes": {path.name: self.digest(path) for path in original.iterdir()}, "externalHashes": hashes,
+            "oldQueryCompletedWhileCurrentHeld": True, "currentOnlySettled": True,
+            "original": original.name, "copy": copied.name, "isolatedQueryEncoder": True, "liveSearchModel": False}
+        task_ids = ["30000000-0000-4000-8000-00000000000" + str(i) for i in range(1, 5)]
+        value["startedQueries"] = [{"taskID": identifier, "query": query, "generation": value[field]}
+            for identifier, query, field in ((task_ids[0], "old-cut", "oldGeneration"),
+                (task_ids[1], "old-cut", "oldGeneration"), (task_ids[2], "old-cut", "oldGeneration"),
+                (task_ids[3], "harbor", "newGeneration"))]
+        value["completedTaskIDs"] = task_ids
+        value["releasedOldTaskIDs"] = task_ids[1:3]
+        value["releasedCurrentTaskIDs"] = task_ids[3:]
+        value["completionCountBeforeRelease"] = 1
+        value["completionCountBeforeCurrentRelease"] = 3
+        value["preparedResults"] = [{**event, "ready": True, "hitIDs": ["external-a" if event["query"] == "harbor" else "external-b"]}
+            for event in value["startedQueries"][1:]]
+        self.row["searchSaveAs"] = value
+        field = next(item for item in self.row["interactions"] if item.get("kind") == "text" and item["field"]["id"] == "media.search")
+        for query in ("old-cut", "harbor"):
+            extra = copy.deepcopy(field)
+            extra["field"]["actual"] = extra["field"]["expected"] = query
+            self.row["interactions"].append(extra)
+        self.row["interactions"].append({"kind": "verified-state", "label": "search Save As external overlap", "evidence": value})
+
+    def test_search_overlap_rejects_wrong_task_and_early_completion_with_rebound_progress(self):
+        for mutation in ("wrong-task", "early-completion", "missing-held-rerun", "prebarrier-substitute"):
+            changed = copy.deepcopy(self.row)
+            value = changed["searchSaveAs"]
+            if mutation == "wrong-task":
+                value["completedTaskIDs"][1] = "30000000-0000-4000-8000-000000000099"
+            elif mutation == "early-completion":
+                value["completionCountBeforeRelease"] = 2
+            elif mutation == "missing-held-rerun":
+                value["releasedOldTaskIDs"].pop()
+            else:
+                value["completedTaskIDs"][0], value["completedTaskIDs"][1] = value["completedTaskIDs"][1], value["completedTaskIDs"][0]
+            next(item for item in changed["interactions"] if item.get("label") == "search Save As external overlap")["evidence"] = value
+            self.persist(changed)
+            self.assertFalse(validate(changed, self.output, 1.5), mutation)
+        self.persist(self.row)
+
+    def test_search_overlap_requires_old_completion_and_unchanged_external_bytes(self):
+        for key, value in (("completedTaskIDs", []), ("preparedResults", []), ("oldQueryCompletedWhileCurrentHeld", False),
+                           ("newGeneration", self.row["searchSaveAs"]["oldGeneration"])):
+            changed = copy.deepcopy(self.row)
+            changed["searchSaveAs"][key] = value
+            for item in changed["interactions"]:
+                if item.get("label") == "search Save As external overlap":
+                    item["evidence"] = changed["searchSaveAs"]
+            self.persist(changed)
+            self.assertFalse(validate(changed, self.output, 1.5), key)
+        self.persist(self.row)
+        (self.directory / "Incoming" / "A.mov").write_bytes(b"substituted external source")
         self.assertFalse(validate(self.row, self.output, 1.5))
