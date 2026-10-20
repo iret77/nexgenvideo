@@ -72,7 +72,7 @@ enum GenerationRecoveryOwnerAcceptance {
                 })
             editor.generationBatchCoordinator.catalogReadiness = {}
             editor.generationBatchCoordinator.modelCatalog = catalog
-            editor.generationBatchCoordinator.providerActivation = services.activation
+            editor.generationBatchCoordinator.providerActivation = { services.activation() }
             editor.generationBatchCoordinator.quoteLoader = services.quoteLoader
             editor.generationPanelServicesOverride = services
         })

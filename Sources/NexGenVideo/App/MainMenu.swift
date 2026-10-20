@@ -260,6 +260,7 @@ enum MainMenuBuilder {
     func showTimelineMarkers(_ sender: Any?)
     func deleteSelectedClips(_ sender: Any?)
     func importMedia(_ sender: Any?)
+    func importFilmFlow(_ sender: Any?)
     func playPause(_ sender: Any?)
     func stepFrameForward(_ sender: Any?)
     func stepFrameBackward(_ sender: Any?)

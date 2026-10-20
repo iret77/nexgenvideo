@@ -51,7 +51,7 @@ struct AudioBatchRecoveryTests {
         let authorization = GenerationBatchAuthorization(batchID: batch.id, itemID: itemID)
         editor.projectURL = nil; editor.projectURL = root
         editor.generationBatchCoordinator.modelCatalog = catalog
-        editor.generationBatchCoordinator.providerActivation = services.activation
+        editor.generationBatchCoordinator.providerActivation = { services.activation() }
         let spend = editor.generationLog.spendEvents
         let restored = try await GenerationController.restoreApprovedBatchItem(authorization, editor: editor)
         #expect(restored.reviewedPackage == package)
