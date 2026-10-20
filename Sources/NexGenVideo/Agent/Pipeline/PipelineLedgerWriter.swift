@@ -15,7 +15,7 @@ enum PipelineLedgerWriter {
         let phase: String
     }
 
-    @MainActor @Observable private final class Session {
+    @MainActor @Observable fileprivate final class Session {
         @ObservationIgnored weak var editor: EditorViewModel?
         let home: URL
         let key: String
@@ -37,7 +37,7 @@ enum PipelineLedgerWriter {
             self.editor = editor; self.home = home; self.key = key; self.generation = generation; self.manager = manager
         }
     }
-    @MainActor @Observable private final class Registry {
+    @MainActor @Observable fileprivate final class Registry {
         var sessions: [ObjectIdentifier: Session] = [:]
     }
     private static let registry = Registry()

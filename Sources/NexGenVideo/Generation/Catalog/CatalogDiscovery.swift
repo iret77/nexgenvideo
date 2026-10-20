@@ -131,7 +131,7 @@ enum CatalogDiscovery {
         }
     }
 
-    @Observable private final class Activity {
+    @Observable fileprivate final class Activity {
         var running = false
     }
     private static let activity = Activity()
