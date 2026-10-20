@@ -237,7 +237,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             Button("Run Task", action: onSend)
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canSend)
-                .background(ReviewAcceptanceProbe(id: "agent.task.run", state: canSend))
+                .reviewAcceptanceProbe("agent.task.run", state: canSend)
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")

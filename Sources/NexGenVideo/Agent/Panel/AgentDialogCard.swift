@@ -159,7 +159,7 @@ struct AgentDialogCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
-                    .background(ReviewAcceptanceProbe(id: "agent.dialog.error", text: submissionError))
+                    .reviewAcceptanceProbe("agent.dialog.error", text: submissionError)
             }
             ForEach(dialog.sections) { section in
                 sectionView(section)
