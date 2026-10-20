@@ -30,9 +30,18 @@ enum PipelineBibleWriter {
     }
 
     static func referencePaths(_ bible: Bible) -> [String] {
-        var paths = bible.characters.flatMap { $0.referenceImages + Array($0.sheets.values) }
-            + bible.ensembles.flatMap { $0.referenceImages + Array($0.sheets.values) }
-            + bible.props.flatMap { $0.referenceImages + Array($0.sheets.values) }
+        let characterPaths: [String] = bible.characters.flatMap { entity -> [String] in
+            entity.referenceImages + Array(entity.sheets.values)
+        }
+        let ensemblePaths: [String] = bible.ensembles.flatMap { entity -> [String] in
+            entity.referenceImages + Array(entity.sheets.values)
+        }
+        let propPaths: [String] = bible.props.flatMap { entity -> [String] in
+            entity.referenceImages + Array(entity.sheets.values)
+        }
+        var paths: [String] = characterPaths
+        paths.append(contentsOf: ensemblePaths)
+        paths.append(contentsOf: propPaths)
         for entity in bible.locations {
             paths += entity.referenceImages + Array(entity.sheets.values) + entity.zones.flatMap(\.bibleAssets)
             if !entity.floorplan.isEmpty { paths.append(entity.floorplan) }

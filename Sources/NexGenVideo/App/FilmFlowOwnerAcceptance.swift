@@ -24,7 +24,7 @@ enum FilmFlowOwnerAcceptance {
         } catch { scenario.driver?.failure(error); throw error }
     }
 
-    private final class Scenario {
+    @MainActor private final class Scenario {
         let output: URL
         let scale: Double
         let name: String

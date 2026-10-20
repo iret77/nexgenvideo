@@ -107,7 +107,7 @@ enum ProductionWorkflowRecoveryMigration {
         guard try inventory(root) == intent.files else { throw MigrationError.changedSource }
     }
 
-    static func initializeOutputNamespace(dataRoot: URL, workflow: HostWorkflowKey) throws {
+    nonisolated static func initializeOutputNamespace(dataRoot: URL, workflow: HostWorkflowKey) throws {
         guard workflow.isProductionV2 else { throw MigrationError.invalidSource }
         let home = FrameInventory.projectHome(of: dataRoot)
         let expectedPack = workflow.packID.flatMap { id in workflow.packVersion.flatMap {
@@ -130,7 +130,7 @@ enum ProductionWorkflowRecoveryMigration {
         return path
     }
 
-    static func requireOutputNamespace(dataRoot: URL) throws {
+    nonisolated static func requireOutputNamespace(dataRoot: URL) throws {
         _ = try outputNamespace(dataRoot: dataRoot)
     }
 
