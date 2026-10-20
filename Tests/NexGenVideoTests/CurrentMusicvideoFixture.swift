@@ -1,7 +1,7 @@
 import AVFoundation
 import CryptoKit
 import Foundation
-import MusicvideoPlugin
+@testable import MusicvideoPlugin
 import NexGenEngine
 import Testing
 @testable import NexGenVideo
