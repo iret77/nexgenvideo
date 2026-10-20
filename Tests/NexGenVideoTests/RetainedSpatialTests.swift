@@ -29,7 +29,7 @@ final class RetainedSpatialTests: XCTestCase {
         let value = try NativeBlockoutPlanProjection(snapshot: scene, snapshotData: SpatialSceneStore.encode(scene), state: state,
             geometry: geometry(state: state, centers: [0, 5]), locationID: "room")
         XCTAssertEqual(try value.frame(1).shapes[0].center.x - value.frame(0).shapes[0].center.x, 5, accuracy: 0.000001)
-        XCTAssertEqual(try value.frame(1).cameras[0].position, value.frame(0).cameras[0].position)
+        XCTAssertEqual(try value.frame(1).cameras[0].position, try value.frame(0).cameras[0].position)
         XCTAssertEqual(value.layout.widthMeters, 7, accuracy: 0.000001)
         XCTAssertTrue(try value.frame(0).metric)
         let baseline = try geometry(state: state, centers: [0, 5])
