@@ -303,7 +303,7 @@ final class ProductionVisualSourcesDriver {
         try await selectMenu(id, path: path, context: true, in: target)
     }
 
-    func contextMenu(path: [String], in target: NSWindow, open: () throws -> Void) async throws {
+    func contextMenu(path: [String], in target: NSWindow, open: @escaping () throws -> Void) async throws {
         try await selectMenu("timeline.context", path: path, context: true, in: target, open: open)
     }
 

@@ -28,8 +28,9 @@ enum ProductionV2AudioAcceptance {
             editor.mediaAssets.contains { !existing.contains($0.id) && $0.type == .audio && $0.userFacingFilename == url.lastPathComponent }
         }
         let imported = editor.mediaAssets.filter { !existing.contains($0.id) }
-        guard imported.count == 1, let asset = imported.first,
-              try await Task.detached(operation: { try FileDigest.sha256(of: asset.url) }).value == hash else {
+        let importedURL = imported.first?.url
+        guard imported.count == 1, let asset = imported.first, let importedURL,
+              try await Task.detached(operation: { try FileDigest.sha256(of: importedURL) }).value == hash else {
             throw GateBlocked("Native effect import did not preserve exactly one actual audio source.")
         }
         try await driver.click("editor.workspace.edit", in: window, enabled: false)

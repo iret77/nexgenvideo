@@ -154,7 +154,10 @@ enum ProductionTechnicalOwnerAcceptance {
         let directory = "technical-" + label, output = driver.output.appendingPathComponent(directory)
         let hashes = try await Task.detached {
             let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: snapshot.projection, dataRoot: root)
-            let references = try ProductionPlanFilesV1.unique(promotion.artifactReferences)
+            // requireCurrent already validates reference shape and rejects conflicting path hashes.
+            var seenPaths = Set<String>()
+            let references = promotion.artifactReferences.filter { seenPaths.insert($0.path).inserted }
+                .sorted { $0.path < $1.path }
             var files: [String: Data] = [:]
             for reference in references {
                 let url = try ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: root)
