@@ -13,9 +13,9 @@ enum ProductionExportBinding {
         guard let home = resolver.projectHome else { return nil }
         let trusted = resolver.trustedProductionDeclaration
         let urls = resolver.expectedURLMap(for: Set(timeline.tracks.flatMap(\.clips).map(\.mediaRef)))
-        return try await Task.detached(priority: .utility) { () throws -> Snapshot? in
+        return try await Task.detached(priority: .utility) { () async throws -> Snapshot? in
             if let trusted {
-                _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: trusted.packName,
+                _ = try await ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: trusted.packName,
                     declaredBinding: trusted.binding, declaredProductionContract: trusted.productionContract)
             }
             guard let root = DataRootResolver.dataRoot(of: home) else {

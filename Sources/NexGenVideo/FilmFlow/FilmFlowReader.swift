@@ -142,7 +142,7 @@ actor FilmFlowReader {
             let snapshot = FilmFlowSnapshot(schema: "ngv.filmflow-snapshot.v1", id: id, resource: FilmFlowHTTP.endpoint,
                 startedAt: started, finishedAt: Date(), project: selected, noActiveScript: detail.activeScriptVersion == nil,
                 responses: responses, images: images.values.sorted { $0.id < $1.id }, missingImages: missing.sorted { $0.pointer < $1.pointer })
-            let bytes = try FilmFlowSnapshot.encode(snapshot)
+            let bytes: Data = try FilmFlowSnapshot.encode(snapshot)
             try bytes.write(to: directory.appendingPathComponent("snapshot.v1.json"), options: .atomic)
             let hash = FileDigest.sha256(of: bytes)
             _ = try FilmFlowSnapshot.verify(directory: directory, expectedSHA256: hash)

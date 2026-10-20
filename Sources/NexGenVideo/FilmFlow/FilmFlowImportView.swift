@@ -84,9 +84,9 @@ struct FilmFlowImportView: View {
         .reviewAcceptanceProbe("filmflow.sheet")
         .task {
             home = editor.workingRoot; key = editor.openWorkingCopyKey; generation = editor.openWorkingCopyGeneration
-            configuredEndpoint = await Task.detached {
+            configuredEndpoint = await MainActor.run {
                 ExternalMcpServers.httpEndpointURLs().values.contains(where: FilmFlowHTTP.isResource)
-            }.value
+            }
             guard !Task.isCancelled else { return }
             run { try await reload() }
         }

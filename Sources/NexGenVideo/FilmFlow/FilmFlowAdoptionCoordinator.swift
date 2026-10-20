@@ -12,7 +12,7 @@ enum FilmFlowAdoptionCoordinator {
         let message: String?
     }
 
-    private final class NotesSession {
+    @MainActor private final class NotesSession {
         weak var editor: EditorViewModel?
         let home: URL?
         let key: String?

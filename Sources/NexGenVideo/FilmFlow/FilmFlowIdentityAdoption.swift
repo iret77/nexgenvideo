@@ -4,7 +4,7 @@ import NexGenEngine
 
 @MainActor
 enum FilmFlowIdentityAdoption {
-    private final class Session {
+    @MainActor private final class Session {
         weak var editor: EditorViewModel?
         let home: URL?
         let key: String?

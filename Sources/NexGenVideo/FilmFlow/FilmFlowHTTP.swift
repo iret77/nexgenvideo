@@ -82,7 +82,7 @@ enum FilmFlowHTTP {
 // The SDK's public transport takes a configuration, not a redirect-controlling URLSession.
 final class FilmFlowPinnedProtocol: URLProtocol, @unchecked Sendable {
     private let lock = NSLock()
-    private var task: Task<Void, Never>?
+    private var requestTask: Task<Void, Never>?
     private var stopped = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -122,8 +122,8 @@ final class FilmFlowPinnedProtocol: URLProtocol, @unchecked Sendable {
                 client?.urlProtocol(self, didFailWithError: error)
             }
         }
-        lock.withLock { if stopped { operation.cancel() } else { task = operation } }
+        lock.withLock { if stopped { operation.cancel() } else { requestTask = operation } }
     }
 
-    override func stopLoading() { lock.withLock { stopped = true; task?.cancel(); task = nil } }
+    override func stopLoading() { lock.withLock { stopped = true; requestTask?.cancel(); requestTask = nil } }
 }
