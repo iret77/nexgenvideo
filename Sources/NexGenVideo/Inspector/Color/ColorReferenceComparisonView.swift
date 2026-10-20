@@ -55,7 +55,7 @@ struct ColorReferenceComparisonView: View {
                         Button("Discard") { comparison.discard() }.buttonStyle(InlineActionButtonStyle()).disabled(!available)
                             .reviewAcceptanceProbe("color.reference.discard", state: available)
                         Button("Apply correction") { Task { await comparison.apply(editor: editor) } }
-                            .buttonStyle(.capsule(.primary, size: .regular)).disabled(!available)
+                            .buttonStyle(.capsule(.prominent, size: .regular)).disabled(!available)
                             .reviewAcceptanceProbe("color.reference.apply", state: available)
                     }
                 }

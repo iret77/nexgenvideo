@@ -143,7 +143,11 @@ final class ColorReferenceComparisonStore {
         } catch { self.error = error.localizedDescription }
     }
 
-    func discard() { awaitingProposal = false; proposal = nil; snapshot = nil; message = "Color proposal discarded. Measure again for a new comparison." }
+    func discard() {
+        let hadProposal = proposal != nil
+        awaitingProposal = false; proposal = nil; snapshot = nil
+        message = hadProposal ? "Color proposal discarded. Measure again for a new comparison." : nil
+    }
 
     func agentFinished(editor: EditorViewModel) {
         guard awaitingProposal, !editor.agentService.isStreaming else { return }

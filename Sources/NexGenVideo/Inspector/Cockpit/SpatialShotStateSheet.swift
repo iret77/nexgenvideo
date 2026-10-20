@@ -314,11 +314,11 @@ private struct SpatialShotPosePreview: View {
                 let entity = ModelEntity(mesh: try MeshResource.generate(from: [descriptor]), materials: [
                     SimpleMaterial(color: mesh.objectID == selectedObjectID ? AppTheme.Accent.primaryNSColor : AppTheme.Text.secondary,
                         roughness: 0.8, isMetallic: false)])
-                entity.transform = Transform(matrix: try floatMatrix(world))
+                entity.transform = .init(matrix: try floatMatrix(world))
                 root.addChild(entity)
             }
             guard let world = poses[camera.id] else { throw SpatialSceneError.changed }
-            viewCamera.transform = Transform(matrix: try floatMatrix(world))
+            viewCamera.transform = .init(matrix: try floatMatrix(world))
             var projection = try floatMatrix(camera.projection)
             let ratio = Float(tan(camera.verticalFieldOfView / 2) / tan(pose.cameraVerticalFieldOfView / 2))
             projection[0][0] *= ratio; projection[1][1] *= ratio
