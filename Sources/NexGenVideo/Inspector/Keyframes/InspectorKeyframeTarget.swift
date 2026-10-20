@@ -13,7 +13,7 @@ enum InspectorKeyframeTarget: Hashable {
 
     var label: String {
         switch self {
-        case .clip(let property): property.displayName
+        case .clip(let property): return property.displayName
         case .effect(let type, let key):
             let descriptor = EffectRegistry.descriptor(id: type)
             let parameter = descriptor?.params.first(where: { $0.key == key })?.label ?? key
