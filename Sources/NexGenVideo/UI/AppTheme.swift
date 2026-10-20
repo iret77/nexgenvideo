@@ -4,6 +4,9 @@ import SwiftUI
 enum AppTheme {
 
     enum Acceptance {
+        static let fixtureCircleColor = NSColor.systemRed
+        static let fixtureSquareColor = NSColor.systemBlue
+        static let fixtureShapeBackgroundColor = NSColor.white
         static let inspectorViewport = CGSize(width: 440, height: 650)
         static let musicvideoViewport = CGSize(width: 1380, height: 950)
         static let workbenchViewport = CGSize(width: 1470, height: 950)

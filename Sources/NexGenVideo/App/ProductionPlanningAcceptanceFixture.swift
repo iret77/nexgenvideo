@@ -537,8 +537,8 @@ enum ProductionPlanningAcceptanceFixture {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { throw CocoaError(.fileWriteUnknown) }
-        guard let foreground = (index == 0 ? NSColor.systemRed : NSColor.systemBlue).usingColorSpace(bitmap.colorSpace),
-              let background = NSColor.white.usingColorSpace(bitmap.colorSpace) else {
+        guard let foreground = (index == 0 ? AppTheme.Acceptance.fixtureCircleColor : AppTheme.Acceptance.fixtureSquareColor).usingColorSpace(bitmap.colorSpace),
+              let background = AppTheme.Acceptance.fixtureShapeBackgroundColor.usingColorSpace(bitmap.colorSpace) else {
             throw GateBlocked("The production fixture colors could not be converted to its bitmap color space.")
         }
         for y in 0..<180 {
