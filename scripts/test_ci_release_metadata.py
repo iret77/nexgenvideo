@@ -42,7 +42,7 @@ class CIReleaseMetadataTests(unittest.TestCase):
 
     def commit(self):
         self.git("add", ".")
-        self.git("commit", "-qm", "fixture")
+        self.git("-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false", "commit", "-qm", "fixture")
         return self.git("rev-parse", "HEAD")
 
     def verify(self):
