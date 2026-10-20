@@ -49,9 +49,8 @@ enum ProductionSourceVideoPreview {
         guard !sourceTracks.isEmpty else { throw ToolError("This input has no readable video track.") }
         let composition = AVMutableComposition()
         try await composition.insertTimeRange(interval, of: source, at: .zero)
-        for track in try await composition.loadTracks(withMediaType: .video) {
-            guard let mutable = track as? AVMutableCompositionTrack,
-                  let sourceID = mutable.segments.first(where: { !$0.isEmpty })?.sourceTrackID,
+        for mutable in composition.tracks(withMediaType: .video) {
+            guard let sourceID = mutable.segments.first(where: { !$0.isEmpty })?.sourceTrackID,
                   let original = sourceTracks.first(where: { $0.trackID == sourceID }) else {
                 throw ToolError("The source video's display orientation could not be preserved.")
             }
