@@ -29,7 +29,14 @@ struct ProductionSourceVideoPreviewTests {
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        let (image, _) = try await generator.image(at: .zero)
+        defer { withExtendedLifetime(generator) {} }
+        let image: CGImage = try await withCheckedThrowingContinuation { continuation in
+            generator.generateCGImageAsynchronously(for: .zero) { image, _, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let image { continuation.resume(returning: image) }
+                else { continuation.resume(throwing: ToolError("The preview frame could not be decoded.")) }
+            }
+        }
         let pixel = try rgb(image)
         #expect(pixel[2] > 200)
         #expect(pixel[0] < 50)
@@ -41,7 +48,7 @@ struct ProductionSourceVideoPreviewTests {
         let timebase = RationalTimebaseV1(ticksPerSecond: 600, fpsNumerator: 30)
         let tooLong = ProductionInputRange(timebase: timebase, startTicks: 300, durationTicks: 600)
         await #expect(throws: (any Error).self) {
-            try await ProductionSourceVideoPreview.asset(source: AVURLAsset(url: url), range: tooLong)
+            _ = try await ProductionSourceVideoPreview.asset(source: AVURLAsset(url: url), range: tooLong)
         }
         let hash = try FileDigest.sha256(of: url)
         let reference = CanonicalArtifactReferenceV1(id: "source", role: "core.source-footage", path: url.lastPathComponent, sha256: hash)
