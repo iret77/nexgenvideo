@@ -1,5 +1,7 @@
 import AVFoundation
 import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import BpyRuntimeProtocol
 import NexGenEngine
 import Testing
@@ -34,14 +36,32 @@ struct NativeBlockoutOrientationTests {
         try NativeBlockoutExporter.export(width: 640, height: 480, frameCount: positions.count,
             presentation: { CMTime(value: Int64($0), timescale: 24) }, duration: CMTime(value: Int64(positions.count), timescale: 24),
             to: url, frame: projection.frame)
+        let evidence = ProcessInfo.processInfo.environment["NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let evidence {
+            try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: url, to: evidence.appendingPathComponent("orientation.mov"))
+        }
         let asset = AVURLAsset(url: url)
         #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
-        var markers: [[CGPoint]] = []
+        var images: [CGImage] = []
         for index in positions.indices {
             let image = try await generator.image(at: CMTime(value: Int64(index), timescale: 24)).image
-            markers.append(try markerClusters(image))
+            images.append(image)
+            if let evidence {
+                let destination = try #require(CGImageDestinationCreateWithURL(
+                    evidence.appendingPathComponent("frame-\(index).png") as CFURL,
+                    UTType.png.identifier as CFString, 1, nil
+                ))
+                CGImageDestinationAddImage(destination, image, nil)
+                try #require(CGImageDestinationFinalize(destination))
+            }
+        }
+        var markers: [[CGPoint]] = []
+        for (index, image) in images.enumerated() {
+            markers.append(try markerClusters(image, index: index, evidence: evidence))
         }
         try #require(markers.allSatisfy { $0.count == 2 })
         for index in 0..<2 { #expect(markers[0][index].x > markers[1][index].x + 20) }
@@ -53,7 +73,7 @@ struct NativeBlockoutOrientationTests {
         #expect(abs(markers[4][plan].y - markers[5][plan].y) < 3)
     }
 
-    private func markerClusters(_ image: CGImage) throws -> [CGPoint] {
+    private func markerClusters(_ image: CGImage, index: Int, evidence: URL?) throws -> [CGPoint] {
         var pixels: [CGPoint] = []
         for y in stride(from: 0, to: image.height, by: 2) {
             for x in stride(from: 0, to: image.width, by: 2) {
@@ -76,6 +96,17 @@ struct NativeBlockoutOrientationTests {
         for pixel in pixels.sorted(by: { $0.y < $1.y }) {
             if let last = groups.last?.last, pixel.y - last.y <= 20 { groups[groups.count - 1].append(pixel) }
             else { groups.append([pixel]) }
+        }
+        if let evidence {
+            let record: [String: Any] = [
+                "frame": index, "width": image.width, "height": image.height,
+                "colorSpace": image.colorSpace?.name.map { $0 as String } ?? "unknown",
+                "groupCounts": groups.map(\.count),
+                "selectedPixels": pixels.map { [Double($0.x), Double($0.y)] },
+            ]
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(
+                to: evidence.appendingPathComponent("frame-\(index)-markers.json"), options: .atomic
+            )
         }
         try #require(groups.count == 2 && groups.allSatisfy { $0.count > 5 })
         return groups.map { group in

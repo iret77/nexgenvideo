@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -93,6 +95,99 @@ struct UpscalePackageTests {
         #expect(throws: (any Error).self) { try destination.requireCurrent(editor: editor) }
         editor.timeline.tracks[1].clips[0].volume = audio.volume
         try destination.requireCurrent(editor: editor)
+    }
+
+    @Test(arguments: [60.4, 10.0])
+    func legacyVideoRerunRequiresExactFullSourceEvidence(duration: Double) async throws {
+        let original = try await CompositorFixtures.patternVideoURL()
+        let originalDuration = try await AVURLAsset(url: original).load(.duration).seconds
+        let frames = Int((duration * 30).rounded())
+        let sourceURL = try await VideoTrimExtractor.extract(.init(sourceURL: original, trimStartFrame: 0,
+            trimEndFrame: Int((originalDuration * 30).rounded()) - frames, sourceFramesConsumed: frames, fps: 30))
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let measuredDuration = try await AVURLAsset(url: sourceURL).load(.duration).seconds
+        #expect(abs(measuredDuration - duration) < 0.1)
+        let source = MediaAsset(id: "legacy-source", url: sourceURL, type: .video,
+            name: "Original video", duration: measuredDuration)
+        source.sourceWidth = Int(CompositorFixtures.renderSize.width)
+        source.sourceHeight = Int(CompositorFixtures.renderSize.height)
+        let editor = EditorViewModel()
+        editor.mediaAssets = [source]
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        let suite = "legacy-upscale-range." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var quotes: [Double?] = []
+        let services = GenerationPanelServices(catalog: catalog, preferences: ModelPreferences(defaults: defaults),
+            activation: { .init(active: [.init(provider: .fal, transport: .api)]) }, quoteLoader: { _, pricing in
+                quotes.append(pricing.durationSeconds)
+                return GenerationPackageFixture.money()
+            })
+        var input = GenerationInput(prompt: "", model: "fal-ai/topaz/upscale/video",
+            duration: Int(measuredDuration.rounded()), aspectRatio: "")
+        input.sourceVideoAssetId = source.id
+        #expect(input.duration == Int(duration.rounded()))
+        let generated = MediaAsset(url: sourceURL.deletingLastPathComponent().appendingPathComponent("result.mp4"),
+            type: .video, name: "Prior upscale", duration: Double(input.duration), generationInput: input)
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("Equal or rounded durations cannot prove an unrecorded original range")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .unverifiedSourceRange = error else { Issue.record("Wrong refusal: \(error)"); return }
+        }
+        #expect(quotes.isEmpty)
+        let originalSHA256 = try FileDigest.sha256(of: sourceURL)
+        let wrongSHA256 = originalSHA256 == String(repeating: "a", count: 64)
+            ? String(repeating: "b", count: 64) : String(repeating: "a", count: 64)
+        input.referenceReceipts = [.init(assetID: source.id, displayName: source.name, type: "video",
+            sourceSHA256: wrongSHA256, submittedSHA256: wrongSHA256)]
+        generated.generationInput = input
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("Legacy full-source proof must match the actual prepared bytes before pricing")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .unverifiedSourceRange = error else { Issue.record("Wrong byte refusal: \(error)"); return }
+        }
+        #expect(quotes.isEmpty)
+        input.referenceReceipts = [.init(assetID: source.id, displayName: source.name, type: "video",
+            sourceSHA256: originalSHA256, submittedSHA256: originalSHA256)]
+        generated.generationInput = input
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("A proven full source must still require its actual review window")
+        } catch GenerationRequestError.gate(let message) {
+            #expect(message == "Open the project window and close its current sheet before reviewing generation.")
+        }
+        #expect(quotes == [Double(Int(measuredDuration.rounded(.up)))])
+        let model = try #require(catalog.upscale.first { $0.id == input.model })
+        let explicitRequest = try EditSubmitter.upscaleRequest(asset: source, model: model,
+            target: services.target(model.id))
+        guard case .preparedUpscale(let explicit) = explicitRequest.submission else {
+            Issue.record("Expected the actual current full-source writer")
+            return
+        }
+        #expect(explicit.genInput.sourceRange != nil)
+        #expect(explicit.genInput.sourceRange?.trim == nil)
+        generated.generationInput = explicit.genInput
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("Explicit full-source requests must still require review before dispatch")
+        } catch GenerationRequestError.gate(let message) {
+            #expect(message == "Open the project window and close its current sheet before reviewing generation.")
+        }
+        #expect(quotes.count == 2)
+        generated.generationInput = input
+        source.url = sourceURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".missing")
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("A missing file is distinct from missing range provenance")
+        } catch let error as EditSubmitter.RerunError {
+            guard case .unavailableSourceFile = error else { Issue.record("Wrong missing-file refusal: \(error)"); return }
+        }
+        #expect(quotes.count == 2)
+        #expect(editor.mediaAssets.count == 1)
+        #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
     @Test func aPreparedUpscaleCannotEmbedAnUnreviewedSourceURL() {

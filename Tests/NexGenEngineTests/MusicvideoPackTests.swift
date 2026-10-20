@@ -179,7 +179,7 @@ struct MusicvideoPackTests {
                 )
                 #expect((assembly.libraryEntryIDs + assembly.omittedLibraryEntryIDs).contains {
                     $0.hasPrefix("\(libraryID.rawValue)/")
-                })
+                }, "Missing phase-relevant entries: \(phase) / \(libraryID.rawValue)")
             }
         }
     }

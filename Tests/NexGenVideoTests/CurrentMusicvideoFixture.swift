@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CryptoKit
 import Foundation
@@ -7,6 +8,8 @@ import Testing
 @testable import NexGenVideo
 
 enum CurrentMusicvideoFixture {
+    private static let catalogRegistrationLock = NSLock()
+
     static let phases = [
         "project_init", "analysis", "brief", "production_design", "treatment", "script",
         "storyboard", "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render",
@@ -60,6 +63,8 @@ enum CurrentMusicvideoFixture {
         try PhaseContractRuntime.validateLockedMusicvideoIfNeeded(resolved, registry: registry)
         try #require(resolved.order == phases)
         _ = try HostWorkflowKey.resolve(binding: binding, contract: resolved)
+        catalogRegistrationLock.lock()
+        defer { catalogRegistrationLock.unlock() }
         let currentRegistered = PackCatalog.pack(named: pack.name).map {
             $0 is MusicvideoPack && $0.version == binding.version
         } ?? false
@@ -261,6 +266,11 @@ enum CurrentMusicvideoFixture {
         try activate(at: home)
         try seedAnalysis(root)
         let document = try await VideoProject.load(from: home)
+        var ready = false
+        defer { if !ready { document.close() } }
+        _ = NSApplication.shared
+        document.makeWindowControllers()
+        await document.generationRestorationTask?.value
         let editor = document.editorViewModel
         let working = try #require(editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
         let context = ProductionPlanningAcceptanceFixture.Context(document: document, packageURL: home,
@@ -281,7 +291,7 @@ enum CurrentMusicvideoFixture {
         editor.agentService.abandonDialog()
         editor.pipelineAgentHarness.reset()
         await editor.refreshEngineState()
-        if stopBeforeBrief { return context }
+        if stopBeforeBrief { ready = true; return context }
         try await ProductionPlanningAcceptanceFixture.run("record_affect", args: [
             "detected": [["tag": "meditative", "weight": 1.0]], "basis": "inferred",
             "rationale": "Deterministic test interpretation of the measured track.",
@@ -302,14 +312,18 @@ enum CurrentMusicvideoFixture {
         ], in: context)
         try await ProductionPlanningAcceptanceFixture.approve("production_design", in: context)
         try await ProductionPlanningAcceptanceFixture.writeTreatmentAndScript(in: context)
+        ready = true
         return context
     }
     @MainActor
     static func makeStoryboard() async throws -> ProductionPlanningAcceptanceFixture.Context {
         let context = try await makeScript()
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
         _ = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
+        ready = true
         return context
     }
 

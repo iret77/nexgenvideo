@@ -285,16 +285,16 @@ struct PreviousWorkflowMaterialTests {
             try image.write(to: root.appendingPathComponent("bible/additional-view.png"))
             references.append("bible/additional-view.png")
         }
-        var characters = [try Character(id: bindCharacter ? "lead_singer" : "legacy-hero", name: "Lead Singer",
+        var characters = [try Character(id: bindCharacter ? "lead_singer" : "legacy_hero", name: "Lead Singer",
             visualPrompt: "A singer", referenceImages: references)]
         if independentCharacter {
             try image.write(to: root.appendingPathComponent("bible/independent.png"))
-            characters.append(try Character(id: "independent-lead", name: "Lead Singer", visualPrompt: "Another singer",
+            characters.append(try Character(id: "independent_lead", name: "Lead Singer", visualPrompt: "Another singer",
                 referenceImages: ["bible/independent.png"]))
         }
         let bible = try Bible(project: "Fixture", generated: "fixture", generator: "fixture",
             characters: characters,
-            locations: [Location(id: "legacy-location", name: "Lead Singer", visualPrompt: "An empty courtyard", referenceImages: ["bible/location.png"])])
+            locations: [Location(id: "legacy_location", name: "Lead Singer", visualPrompt: "An empty courtyard", referenceImages: ["bible/location.png"])])
         try YAMLArtifactStore(dataRoot: root).save(bible, to: PipelineLayout.bibleFile)
         let history = try ProductionWorkflowRecoveryMigration.preview(projectURL: home, source: .core, target: .core)
         try ProductionWorkflowRecoveryMigration.archiveAndReset(history, staging: home)

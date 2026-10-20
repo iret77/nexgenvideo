@@ -347,7 +347,7 @@ struct PackSurfaceTests {
 
     @Test("native contract serializes the pack's declarative surface")
     func nativeContractSurface() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let data = try NativeCockpitReader.contractJSON(activePack: "musicvideo")
         let contract = try JSONDecoder().decode(ContractData.self, from: data)
         let surface = try #require(contract.cockpitSurfaces.first)

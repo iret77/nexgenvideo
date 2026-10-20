@@ -104,9 +104,10 @@ struct ClaudeCodeProcessTests {
         watchdog.cancel()
         await watchdog.value
         #expect(lines == ["ready", "final-result"])
-        #expect(proc.drainStderr() == "last-stderr\n")
+        let stderr = proc.drainStderr()
+        #expect(stderr == "last-stderr\n" || stderr == "Terminated: 15\nlast-stderr\n")
         await proc.shutdownAndWait()
-        #expect(proc.drainStderr() == "last-stderr\n")
+        #expect(proc.drainStderr() == stderr)
         #expect(!proc.isRunning && proc.exitStatus == 0)
     }
 

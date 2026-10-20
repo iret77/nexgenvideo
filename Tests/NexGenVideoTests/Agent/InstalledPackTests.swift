@@ -8,10 +8,10 @@ import MusicvideoPlugin
 @Suite("Installed native pack")
 struct InstalledPackTests {
 
-    @Test func musicvideoPackIsListed() {
+    @Test func musicvideoPackIsListed() throws {
         // Packs are loaded at runtime now (empty compiled-in list); register the
         // loadable pack the way the host's PluginLoader does before asserting.
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pack = InstalledPack.named("musicvideo")
         #expect(pack != nil)
         // Mirrors plugins/musicvideo.json.

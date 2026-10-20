@@ -3,13 +3,14 @@ import NexGenEngine
 
 enum ProductionPlanToolContract {
     private static var text: [String: Any] { ["type": "string", "minLength": 1] }
-    private static var integer: [String: Any] { ["type": "integer", "minimum": 0] }
+    private static var integer: [String: Any] { ["type": "integer", "minimum": 0, "maximum": Int64.max] }
+    private static var positiveInteger: [String: Any] { ["type": "integer", "minimum": 1, "maximum": Int64.max] }
     private static var number: [String: Any] { ["type": "number", "minimum": 0] }
     private static var boolean: [String: Any] { ["type": "boolean"] }
     private static var strings: [String: Any] { array(text) }
     private static var hash: [String: Any] { ["type": "string", "pattern": "^[a-f0-9]{64}$"] }
     private static var reference: [String: Any] { object(["id": text, "role": text, "path": text, "sha256": hash], required: ["id", "role", "path", "sha256"]) }
-    private static var timebase: [String: Any] { object(["ticksPerSecond": integer, "fpsNumerator": integer, "fpsDenominator": integer], required: ["ticksPerSecond", "fpsNumerator", "fpsDenominator"]) }
+    private static var timebase: [String: Any] { object(["ticksPerSecond": ["type": "integer", "minimum": 1, "maximum": Int32.max], "fpsNumerator": positiveInteger, "fpsDenominator": positiveInteger], required: ["ticksPerSecond", "fpsNumerator", "fpsDenominator"]) }
 
     static var prepareAssets: [String: Any] { object([
         "project_dir": text,
@@ -26,9 +27,9 @@ enum ProductionPlanToolContract {
             "expectedDraftFingerprint": hash, "expectedAssetGraphFingerprint": hash,
             "musicvideoPlan": PipelineArtifactWriteContract.musicvideoProductionPlan,
             "shots": array(object([
-                "execution": execution, "nativeDurationTicks": integer, "sourceInTicks": integer,
+                "execution": execution, "nativeDurationTicks": positiveInteger, "sourceInTicks": integer,
                 "sourceInputRange": object(["shotID": text, "source": reference, "timebase": timebase,
-                    "startTicks": integer, "durationTicks": integer], required: ["shotID", "source", "timebase", "startTicks", "durationTicks"]),
+                    "startTicks": integer, "durationTicks": positiveInteger], required: ["shotID", "source", "timebase", "startTicks", "durationTicks"]),
                 "coreInputs": coreInputs, "referenceDemands": array(demand), "selectedModelID": text,
                 "endFrameBoundary": object([
                     "characterCount": integer, "characterPositions": ["type": "string"], "gaze": ["type": "string"],

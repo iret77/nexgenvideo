@@ -28,8 +28,8 @@ struct SettingsIsolationTests {
         let corpus = try #require(CatalogCapabilityRuntime.corpus)
         let resolved = ModelCapabilityResearchIdentityPolicy.binding(profile: capability.intrinsic, offering: capability.offering, corpus: corpus)
         let request = ModelCapabilityResearchRequestV1(binding: resolved.value, scope: .intrinsic, trigger: .defensiveProfile,
-            fallbackResolution: .defensive, fallbackProfileID: "native-settings-test", allowedSourceHosts: ["example.com"])
-        let evidence = CapabilityEvidenceV1(sourceURL: "https://example.com/synthetic-settings-test",
+            fallbackResolution: .defensive, fallbackProfileID: "native-settings-test", allowedSourceHosts: ["fal.ai"])
+        let evidence = CapabilityEvidenceV1(sourceURL: "https://fal.ai/synthetic-settings-test",
             sourceTitle: "Synthetic isolated Settings regression", observedAt: request.observedAt, kind: .documentedAPI, confidence: 1)
         let fieldID = CapabilityFieldIDV1.imageVisibleCharacters
         let candidate = ModelCapabilityResearchCandidateV1(binding: request.binding, scope: .intrinsic,

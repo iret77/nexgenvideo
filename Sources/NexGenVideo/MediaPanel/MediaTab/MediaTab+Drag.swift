@@ -189,8 +189,8 @@ extension MediaTab {
         guard !assetIds.isEmpty || !folderIds.isEmpty else { return }
         editor.undoManager?.beginUndoGrouping()
         defer {
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Move Media")
+            editor.undoManager?.endUndoGrouping()
         }
         if !assetIds.isEmpty {
             editor.moveAssetsToFolder(assetIds: assetIds, folderId: destFolderId)

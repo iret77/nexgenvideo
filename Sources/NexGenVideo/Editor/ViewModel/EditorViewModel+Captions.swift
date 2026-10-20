@@ -439,8 +439,8 @@ extension EditorViewModel {
         for edit in edits {
             commitClipProperty(clipId: edit.id) { $0.textContent = edit.text }
         }
-        undoManager?.endUndoGrouping()
         undoManager?.setActionName("Remove Filler Words")
+        undoManager?.endUndoGrouping()
         return edits.count
     }
 }

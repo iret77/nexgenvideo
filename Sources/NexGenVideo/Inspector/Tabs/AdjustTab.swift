@@ -686,8 +686,8 @@ extension InspectorView {
             mutate(&effects)
             c.effects = effects.isEmpty ? nil : effects
         }
-        editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName(actionName)
+        editor.undoManager?.endUndoGrouping()
     }
 }
 

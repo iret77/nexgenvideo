@@ -9,14 +9,17 @@ extension PipelineArtifactWriteContract {
 
 enum ProductionPlanningToolContract {
     private static var text: [String: Any] { ["type": "string", "minLength": 1] }
-    private static var integer: [String: Any] { ["type": "integer"] }
+    private static var integer: [String: Any] { ["type": "integer", "minimum": 0, "maximum": Int64.max] }
+    private static var positiveInteger: [String: Any] { ["type": "integer", "minimum": 1, "maximum": Int64.max] }
+    private static var signedInteger: [String: Any] { ["type": "integer", "minimum": Int64.min, "maximum": Int64.max] }
     private static var boolean: [String: Any] { ["type": "boolean"] }
     private static var origins: [String: Any] { enumeration(["agentProposal", "agentRevision"]) }
     private static var reference: [String: Any] { object([
         "id": text, "role": text, "path": text, "sha256": ["type": "string", "pattern": "^[a-f0-9]{64}$"],
     ], required: ["id", "role", "path", "sha256"]) }
     private static var timebase: [String: Any] { object([
-        "ticksPerSecond": integer, "fpsNumerator": integer, "fpsDenominator": integer,
+        "ticksPerSecond": ["type": "integer", "minimum": 1, "maximum": Int32.max],
+        "fpsNumerator": positiveInteger, "fpsDenominator": positiveInteger,
     ], required: ["ticksPerSecond", "fpsNumerator", "fpsDenominator"]) }
     private static var framing: [String: Any] { object([
         "scale": text, "composition": text, "cameraView": text,
@@ -39,7 +42,7 @@ enum ProductionPlanningToolContract {
                 "id": text, "action": text, "dialogue": text,
                 "treatmentBeatIDs": array(text, minimum: 1),
                 "sourceAnchors": array(object([
-                    "sourceID": text, "startByte": integer, "endByte": integer,
+                    "sourceID": text, "startByte": integer, "endByte": positiveInteger,
                     "excerptSHA256": ["type": "string", "pattern": "^[a-f0-9]{64}$"],
                 ], required: ["sourceID", "startByte", "endByte", "excerptSHA256"])),
             ], required: ["id", "action", "treatmentBeatIDs", "sourceAnchors"]), minimum: 1),
@@ -58,12 +61,12 @@ enum ProductionPlanningToolContract {
                 "stepID": text, "beatIDs": array(text), "reason": text,
             ], required: ["stepID", "beatIDs", "reason"]), minimum: 1),
             "timebase": timebase, "mode": enumeration(["beat", "section", "multicam", "generic"]),
-            "rangeStartTicks": integer, "rangeDurationTicks": integer,
-            "audio": object(["source": reference, "offsetTicks": integer, "durationTicks": integer],
+            "rangeStartTicks": integer, "rangeDurationTicks": positiveInteger,
+            "audio": object(["source": reference, "offsetTicks": signedInteger, "durationTicks": positiveInteger],
                 required: ["source", "offsetTicks", "durationTicks"]),
             "shots": array(object([
                 "id": text, "primaryStepID": text, "additionalStepIDs": array(text),
-                "startTicks": integer, "durationTicks": integer, "cameraID": text, "framing": framing,
+                "startTicks": integer, "durationTicks": positiveInteger, "cameraID": text, "framing": framing,
                 "moments": array(object([
                     "id": text, "offsetTicks": integer, "intent": text,
                     "asset": object(["image": reference, "proof": reference], required: ["image", "proof"]),
@@ -78,7 +81,7 @@ enum ProductionPlanningToolContract {
             "shotID": text, "narrativeBeat": enumeration(NarrativeBeat.allCases.map(\.rawValue)), "sourceMode": enumeration(SourceMode.allCases.map(\.rawValue)),
             "source": reference, "sourceObligationID": text,
                 "sourceInputRange": object(["source": reference, "timebase": timebase,
-                    "startTicks": integer, "durationTicks": integer],
+                    "startTicks": integer, "durationTicks": positiveInteger],
                     required: ["source", "timebase", "startTicks", "durationTicks"]),
             "camera": object([
                 "framing": framing, "movement": enumeration(CameraMovement.allCases.map(\.rawValue)),

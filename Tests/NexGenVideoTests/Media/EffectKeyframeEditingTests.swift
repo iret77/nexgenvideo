@@ -84,6 +84,7 @@ struct EffectKeyframeEditingTests {
         let original = harness.editor.timeline
         harness.editor.setEffectParameter(clipIDs: [clip.id], type: type, key: key, value: defaultValue, commit: false, action: "Change Effect")
         harness.editor.setEffectParameter(clipIDs: [clip.id], type: type, key: key, value: defaultValue, commit: true, action: "Change Effect")
+        #expect(undo.undoActionName == "Change Effect")
         let reset = harness.editor.timeline
         let retained = try #require(harness.editor.clipFor(id: clip.id)?.effects?.first)
         #expect(retained.id == effect.id && retained.enabled)
@@ -94,7 +95,12 @@ struct EffectKeyframeEditingTests {
         #expect(harness.editor.timeline == original)
         undo.redo()
         #expect(harness.editor.timeline == reset)
+        undo.beginUndoGrouping()
         harness.editor.setEffectParameter(clipIDs: [clip.id], type: type, key: key, value: resetValue, commit: true, action: "Reset Effect")
+        #expect(undo.groupingLevel == 1)
+        undo.endUndoGrouping()
+        #expect(undo.groupingLevel == 0)
+        #expect(undo.undoActionName == "Reset Effect")
         let zero = harness.editor.timeline
         let neutral = try #require(harness.editor.clipFor(id: clip.id)?.effects?.first)
         #expect(neutral.id == effect.id && neutral.enabled)

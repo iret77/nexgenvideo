@@ -15,7 +15,13 @@ struct ProductionStylePromptTests {
             conceptType: .abstract, visualMedium: .liveActionRealistic,
             figures: .none, lyricsIntegration: .ignored, directorPattern: pattern)
         try YAMLArtifactStore(dataRoot: root).save(brief, to: PipelineLayout.briefFile)
-        if pattern != nil { try activatePatternLibrary(home: home) }
+        if let pattern {
+            let library = try activatePatternLibrary(home: home)
+            let returned = try library.get(id: pattern)
+            let data = try #require(returned)
+            let actual = try JSONDecoder().decode(Pattern.self, from: data)
+            #expect(actual.id == pattern)
+        }
         let design = try ProductionDesign(project: "style-test", generated: "2026-09-08", generator: "test",
                                          visualMedium: .liveActionRealistic, colorScript: ["opening": "amber"])
         let selection = ProductionStyleSelectionV1(
@@ -30,12 +36,15 @@ struct ProductionStylePromptTests {
         return home
     }
 
-    private func activatePatternLibrary(home: URL) throws {
+    private func activatePatternLibrary(home: URL) throws -> any PatternProviding {
         try Fixtures.prepareProjectPackage(at: home)
-        let pack = MusicvideoPack()
-        PackCatalog.register(pack)
-        let binding = try #require(ProjectPackBinding(id: pack.name, version: pack.version, projectSchema: "musicvideo/2.0.0"))
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
+        let binding = try CurrentMusicvideoFixture.activate(at: home, initialize: false)
+        let root = try #require(DataRootResolver.dataRoot(of: home))
+        let resolved = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+            expectedPack: binding, expectedProductionContract: nil)
+        let workflow = try #require(resolved)
+        #expect(workflow.isProductionV2)
+        return try #require(PackCatalog.registry(activePack: binding.id).patternProvider)
     }
 
     @Test func approvedBlueSkyNeverInheritsThePatternsSkyNegation() async throws {
@@ -56,10 +65,14 @@ struct ProductionStylePromptTests {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("pattern-prompt-\(UUID().uuidString)")
         let root = try ProjectScaffold.initProject(home: home, name: "style-test")
         defer { try? FileManager.default.removeItem(at: home) }
-        try activatePatternLibrary(home: home)
+        let library = try activatePatternLibrary(home: home)
         let patterns = try Patterns.loadAllPatterns()
         #expect(!patterns.isEmpty)
         for pattern in patterns {
+            let returned = try library.get(id: pattern.id)
+            let data = try #require(returned)
+            let actual = try JSONDecoder().decode(Pattern.self, from: data)
+            #expect(actual == pattern)
             let brief = try Brief(project: "style-test", generated: "2026-10-17", mission: .demo,
                 targetPlatform: "web", aspectRatio: .landscape16x9, projectMode: "beat",
                 conceptType: .abstract, visualMedium: .liveActionRealistic,

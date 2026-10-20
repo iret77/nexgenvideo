@@ -3238,6 +3238,8 @@ struct WorkflowToolsTests {
             ToolExecutor(editor: editor, providerActivation: { routing.activation },
                 productionRouteCandidates: routing.candidates, catalogReadiness: { true }, isModelEnabled: { _ in true })
         })
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
         let board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
@@ -3275,6 +3277,7 @@ struct WorkflowToolsTests {
         let music = try await ProductionPlanningAcceptanceFixture.musicvideoPlan(in: context)
         let proposal = try ProductionPlanningAcceptanceFixture.productionProposal(in: context,
             generatedShots: shots, musicvideoPlan: music)
+        ready = true
         return CurrentReferenceShotlistProject(context: context,
             harness: ToolHarness(editor: context.editor, executor: context.executor), proposal: proposal,
             candidates: routing.candidates, activation: routing.activation, assetID: asset.id)

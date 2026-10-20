@@ -1138,7 +1138,9 @@ struct HardStepIntakeTests {
         let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
         let registry = EngineRegistry()
         MusicvideoPack().register(registry)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let contract = try CurrentMusicvideoFixture.load()
+        let workflow = try HostWorkflowKey.resolve(binding: CurrentMusicvideoFixture.binding, contract: contract)
+        let order = try PhaseContractRuntime.order(workflow: workflow)
         #expect(Array(order.prefix(3)) == ["project_init", "analysis", "brief"])
 
         let package = FileManager.default.temporaryDirectory
@@ -1150,11 +1152,12 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: registry.projectDirs
         )
+        try CurrentMusicvideoFixture.activate(at: package)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
 
         var snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "project_init")
         var ledger = IntakeLedger()
@@ -1192,7 +1195,7 @@ struct HardStepIntakeTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
         snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "analysis")
         #expect(manifest.steps(for: "analysis").isEmpty)
@@ -1293,7 +1296,7 @@ struct HardStepIntakeTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
         snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "brief")
         visible = IntakePlanner.next(

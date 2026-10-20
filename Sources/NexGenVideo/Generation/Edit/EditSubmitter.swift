@@ -34,6 +34,7 @@ enum EditSubmitter {
         asset: MediaAsset, model: UpscaleModelConfig, targetResolution: String?, editor: EditorViewModel,
         trimmedSource: TrimmedSource?, origin: GenerationRequest.Origin, target: ResolvedGenerationTarget?,
         replacementTarget: GenerationClipReplacement.Snapshot?, services: GenerationPanelServices,
+        expectedOriginalSourceSHA256: String? = nil,
         onComplete: (@MainActor (MediaAsset) -> Void)?, onFailure: (@MainActor () -> Void)?
     ) async throws -> String? {
         let failure = FirstOnlyFlag()
@@ -41,6 +42,10 @@ enum EditSubmitter {
         do {
             try replacementTarget?.requireCurrent(editor: editor)
             let selectedTarget = target ?? services.target(model.id)
+            if expectedOriginalSourceSHA256 != nil,
+               (try? asset.url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) != true {
+                throw RerunError.unavailableSourceFile
+            }
             let request = try upscaleRequest(asset: asset, model: model, targetResolution: targetResolution,
                 trimmedSource: trimmedSource, origin: origin, target: selectedTarget,
                 placement: replacementTarget.map { .replaceClip(id: $0.clipID, resetTrim: $0.resetTrim) })
@@ -52,6 +57,14 @@ enum EditSubmitter {
                 }
                 catch { return error.localizedDescription }
             }).get()
+            if let expectedOriginalSourceSHA256 {
+                guard let receipts = generation.references?.receipts, receipts.count == 1,
+                      receipts[0].assetID == asset.id, receipts[0].type == ClipType.video.rawValue,
+                      receipts[0].sourceSHA256 == expectedOriginalSourceSHA256,
+                      receipts[0].submittedSHA256 == expectedOriginalSourceSHA256 else {
+                    throw RerunError.unverifiedSourceRange
+                }
+            }
             _ = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: services.quoteLoader)
             guard try await GenerationReviewSheet.confirm(generation: generation, title: "Review Upscale", editor: editor, services: services) else {
                 return nil
@@ -94,6 +107,8 @@ enum EditSubmitter {
         case notGenerated
         case unknownModel(String)
         case missingSource
+        case unverifiedSourceRange
+        case unavailableSourceFile
         case missingReference
         case invalid(String)
         case compileBlocked(code: String, message: String)
@@ -104,6 +119,8 @@ enum EditSubmitter {
             case .notGenerated: "This asset was not AI-generated"
             case .unknownModel(let id): "Model no longer available: \(id)"
             case .missingSource: "Cannot rerun: source not recorded"
+            case .unverifiedSourceRange: "The original video range cannot be verified. Select the source video and start a new Upscale request. For a timeline clip, check Use trimmed portion only, then review the request."
+            case .unavailableSourceFile: "The source video file is unavailable. Restore it, or select a source video and start a new Upscale request."
             case .missingReference: "Cannot rerun: a reference image is no longer in the project"
             case .invalid(let msg): msg
             case .compileBlocked(let code, let message): "Prompt lint failed (\(code)): \(message)"
@@ -434,6 +451,15 @@ enum EditSubmitter {
             guard let sourceID, let source = editor.mediaAssets.first(where: { $0.id == sourceID }) else {
                 throw RerunError.missingSource
             }
+            let expectedOriginalSourceSHA256: String?
+            if source.type == .video, gen.sourceRange == nil {
+                guard let receipts = gen.referenceReceipts, receipts.count == 1,
+                      receipts[0].assetID == source.id, receipts[0].type == ClipType.video.rawValue,
+                      receipts[0].sourceSHA256 == receipts[0].submittedSHA256 else {
+                    throw RerunError.unverifiedSourceRange
+                }
+                expectedOriginalSourceSHA256 = receipts[0].sourceSHA256
+            } else { expectedOriginalSourceSHA256 = nil }
             let target: ResolvedGenerationTarget?
             if let id = gen.generationPackageID, let home = editor.workingRoot {
                 let previous = try GenerationPackageV1.load(id: id, home: home).payload.target
@@ -441,7 +467,8 @@ enum EditSubmitter {
             } else { target = nil }
             return try await submitReviewedUpscale(asset: source, model: model, targetResolution: gen.resolution,
                 editor: editor, trimmedSource: restored.sourceTrim, origin: .rerun, target: target,
-                replacementTarget: replacementTarget, services: services, onComplete: onComplete, onFailure: onFailure)
+                replacementTarget: replacementTarget, services: services, expectedOriginalSourceSHA256: expectedOriginalSourceSHA256,
+                onComplete: onComplete, onFailure: onFailure)
         }
 
         throw RerunError.unknownModel(modelId)

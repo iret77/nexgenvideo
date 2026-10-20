@@ -122,7 +122,12 @@ struct SearchQueryIsolationTests {
         let gate = SearchQueryEncoderGate()
         defer { gate.release() }
         coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
-        let query = Task { await coordinator.searchResult(query: "local test") }
+        let query = Task {
+            gate.recordQueryEntered()
+            let result = await coordinator.searchResult(query: "local test")
+            gate.recordQueryOutcome("status=\(result.status), hits=\(result.hits.count), unavailable=\(result.unavailableAssetIDs.sorted()), failed=\(result.failedAssetIDs.sorted())")
+            return result
+        }
         try await gate.waitUntilStarted()
         try Data("different source bytes and length".utf8).write(to: fixture.source, options: .atomic)
         gate.release()
@@ -136,7 +141,12 @@ struct SearchQueryIsolationTests {
         let gate = SearchQueryEncoderGate()
         defer { gate.release() }
         coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
-        let query = Task { await coordinator.searchResult(query: "local test") }
+        let query = Task {
+            gate.recordQueryEntered()
+            let result = await coordinator.searchResult(query: "local test")
+            gate.recordQueryOutcome("status=\(result.status), hits=\(result.hits.count), unavailable=\(result.unavailableAssetIDs.sorted()), failed=\(result.failedAssetIDs.sorted())")
+            return result
+        }
         try await gate.waitUntilStarted()
         query.cancel()
         gate.release()
@@ -155,7 +165,12 @@ struct SearchQueryIsolationTests {
             defer { gate.release() }
             coordinator.assetsProvider = { [fixture.asset] }
             coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
-            let query = Task { await coordinator.searchResult(query: "local test") }
+            let query = Task {
+                gate.recordQueryEntered()
+                let result = await coordinator.searchResult(query: "local test")
+                gate.recordQueryOutcome("status=\(result.status), hits=\(result.hits.count), unavailable=\(result.unavailableAssetIDs.sorted()), failed=\(result.failedAssetIDs.sorted())")
+                return result
+            }
             try await gate.waitUntilStarted()
             if changeModel { coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in [0, 1] }) }
             else { coordinator.assetsProvider = { [] } }
@@ -172,6 +187,23 @@ private final class SearchQueryEncoderGate: @unchecked Sendable {
     private let condition = NSCondition()
     private var started = false
     private var released = false
+    private var queryEntered = false
+    private var queryOutcome: String?
+    func recordQueryEntered() {
+        condition.lock()
+        queryEntered = true
+        condition.unlock()
+    }
+    func recordQueryOutcome(_ value: String) {
+        condition.lock()
+        queryOutcome = value
+        condition.unlock()
+    }
+    private func startupObservation() -> (started: Bool, diagnostic: String) {
+        condition.lock()
+        defer { condition.unlock() }
+        return (started, "queryEntered=\(queryEntered), encoderEntered=\(started), outcome=\(queryOutcome ?? "pending")")
+    }
     private var hasStarted: Bool {
         condition.lock()
         defer { condition.unlock() }
@@ -197,6 +229,7 @@ private final class SearchQueryEncoderGate: @unchecked Sendable {
     func waitUntilStarted() async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(4))
         while !hasStarted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
-        try #require(hasStarted)
+        let observation = startupObservation()
+        try #require(observation.started, Testing.Comment(rawValue: observation.diagnostic))
     }
 }

@@ -84,43 +84,20 @@ struct Issue531ProjectStateTests {
         try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(current)
     }
 
-    @Test("host approval evidence uses the pack's exact current lineage")
-    func hostApprovalEvidenceUsesCurrentLineage() throws {
-        PackCatalog.register(MusicvideoPack())
-        let cleanup = FileManager.default.temporaryDirectory
-            .appendingPathComponent("issue-531-host-\(UUID().uuidString)")
-        let home = cleanup.appendingPathComponent("Project.ngv")
-        let root = try ProjectScaffold.initProject(
-            home: home,
-            name: "demo",
-            mode: .section,
-            extraDirs: ["import", "bible"]
-        )
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let binding = try #require(ProjectPackBinding(
-            id: "musicvideo",
-            version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
-        ))
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
-        try YAMLArtifactStore(dataRoot: root).save(
-            try Brief(
-                project: "demo",
-                generated: "2026-09-21T00:00:00Z",
-                mission: .demo,
-                targetPlatform: "YouTube",
-                aspectRatio: .landscape16x9,
-                projectMode: "section",
-                budgetEur: 50,
-                conceptType: .narrative,
-                visualMedium: .animation2d,
-                visualMediumNotes: "restrained hand-drawn animation",
-                tone: [.quiet],
-                figures: .none,
-                lyricsIntegration: .metaphorical
-            ),
-            to: PipelineLayout.briefFile
-        )
+    @Test("V2 approval evidence binds exact Brief bytes while alias recovery retains its version floor")
+    @MainActor
+    func hostApprovalEvidenceUsesCurrentLineage() async throws {
+        let context = try await CurrentMusicvideoFixture.makeScript(stopBeforeBrief: true)
+        defer {
+            context.document.close()
+            try? FileManager.default.removeItem(at: context.packageURL)
+        }
+        let home = try #require(context.editor.workingRoot)
+        let root = context.dataRoot
+        let binding = try CurrentMusicvideoFixture.binding
+        let resolvedWorkflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+            expectedPack: binding, expectedProductionContract: nil)
+        let workflow = try #require(resolvedWorkflow)
         let sourcePath = "import/characters/mouse/face.png"
         let targetPath = "bible/refs/mouse/face.png"
         let bytes = Data("confirmed-face-v1".utf8)
@@ -140,33 +117,33 @@ struct Issue531ProjectStateTests {
             dataRoot: root,
             confirmedAt: "2026-09-21T00:00:00Z"
         )
-        try PipelineLineageStore.record(
-            phase: "brief",
-            snapshot: try MusicvideoPipelineLineage.snapshot(
-                phase: "brief",
-                dataRoot: root
-            ),
-            dataRoot: root
-        )
-        let snapshot = ProjectStateBuilder.ProjectState(
-            project: "demo",
-            mode: "section",
-            budgetEur: 50,
-            budgetSpentEur: 0,
-            budgetRemainingEur: 50,
-            phases: [ProjectStateBuilder.PhaseStatus(
-                phase: "brief",
-                approved: true,
-                state: .approved,
-                notes: nil
-            )],
-            nextPhase: nil
-        )
-        #expect(NativeCockpitReader.phaseApprovalEvidence(
-            snapshot,
-            dataRoot: root,
-            activePack: "musicvideo"
-        )["brief"]?.current == true)
+        try await ProductionPlanningAcceptanceFixture.run("record_affect", args: [
+            "detected": [["tag": "meditative", "weight": 1.0]], "basis": "inferred",
+            "rationale": "Deterministic test interpretation of the measured track.",
+        ], in: context)
+        try await ProductionPlanningAcceptanceFixture.run("write_brief", args: [
+            "mission": "single_release", "target_platform": "YouTube", "aspect_ratio": "16:9",
+            "project_mode": "section", "concept_type": "abstract", "visual_medium": "live_action_realistic",
+            "figures": "none", "lyrics_integration": "metaphorical",
+        ], in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("brief", in: context)
+        let snapshot = try ProjectStateBuilder.buildSnapshot(dataRoot: root,
+            order: PhaseContractRuntime.order(workflow: workflow))
+        #expect(NativeCockpitReader.phaseApprovalEvidence(snapshot, dataRoot: root,
+            activePack: "musicvideo", workflow: workflow)["brief"]?.current == true)
+
+        let briefURL = root.appendingPathComponent(PipelineLayout.briefFile)
+        let originalBrief = try Data(contentsOf: briefURL)
+        var changedBrief = originalBrief
+        changedBrief.append(Data("\n".utf8))
+        try changedBrief.write(to: briefURL)
+        let stale = NativeCockpitReader.phaseApprovalEvidence(snapshot, dataRoot: root,
+            activePack: "musicvideo", workflow: workflow)["brief"]
+        #expect(stale?.current == false)
+        #expect(stale?.blocker?.isEmpty == false)
+        try originalBrief.write(to: briefURL)
+        #expect(NativeCockpitReader.phaseApprovalEvidence(snapshot, dataRoot: root,
+            activePack: "musicvideo", workflow: workflow)["brief"]?.current == true)
 
         let source = try #require(
             try ConfirmedIdentityAssetStoreV1.load(dataRoot: root)
@@ -191,13 +168,6 @@ struct Issue531ProjectStateTests {
             mixed,
             to: PipelineLayout.confirmedIdentityAssetsFile
         )
-        let stale = NativeCockpitReader.phaseApprovalEvidence(
-            snapshot,
-            dataRoot: root,
-            activePack: "musicvideo"
-        )["brief"]
-        #expect(stale?.current == false)
-        #expect(stale?.blocker?.isEmpty == false)
         let recovery = try #require(
             ConfirmedIdentityProvenanceRecovery.status(dataRoot: root)
         )

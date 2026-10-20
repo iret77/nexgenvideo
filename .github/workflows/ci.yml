@@ -137,6 +137,8 @@ jobs:
 
       - name: Test
         timeout-minutes: 30
+        env:
+          NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -151,6 +153,15 @@ jobs:
         with:
           name: render-review-test-diagnostic-${{ github.run_id }}
           path: ${{ runner.temp }}/render-review-test-diagnostic
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload blockout orientation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockout-orientation-evidence
+          path: ${{ runner.temp }}/blockout-orientation-evidence
           if-no-files-found: ignore
           retention-days: 7
 

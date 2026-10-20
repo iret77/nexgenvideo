@@ -126,7 +126,7 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             ProductionKnowledgePhaseSelectionV1(
                 phase: "shot_planning", knowledgePhase: "shotlist",
                 libraryIDs: ["musicvideo-performance-planning", "continuity-and-coverage", "film-craft-baseline", "film-production-renderability", "film-production-video-prompting"],
-                intentTags: ["music-performance", "visual-arc", "performance-coverage", "camera", "continuity", "coverage", "renderability", "video-prompting"]
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "craft", "camera", "continuity", "coverage", "renderability", "video-prompting"]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "bible",
@@ -188,7 +188,7 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             ProductionKnowledgePhaseSelectionV1(
                 phase: "render_review", knowledgePhase: "review",
                 libraryIDs: ["musicvideo-performance-planning", "film-craft-baseline", "film-production-renderability", "film-production-video-prompting", "film-production-post-audio-legal"],
-                intentTags: ["music-performance", "visual-arc", "performance-coverage", "quality-control", "renderability", "video-prompting", "post-audio-legal"]
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "craft", "editing", "quality-control", "renderability", "video-prompting", "post-audio-legal"]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "render",

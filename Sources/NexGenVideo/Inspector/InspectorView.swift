@@ -877,8 +877,8 @@ struct InspectorView: View {
     func commitToClips(_ clips: [Clip], actionName: String, _ commit: (Clip) -> Void) {
         editor.undoManager?.beginUndoGrouping()
         for c in clips { commit(c) }
-        editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName(actionName)
+        editor.undoManager?.endUndoGrouping()
     }
 
     // MARK: - Transform Section
@@ -1020,8 +1020,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitScale(clipId: c.id, newScale: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Scale")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 
@@ -1041,8 +1041,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitRotation(clipId: c.id, valueDeg: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Rotation")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 
@@ -1062,8 +1062,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitOpacity(clipId: c.id, value: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Opacity")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 

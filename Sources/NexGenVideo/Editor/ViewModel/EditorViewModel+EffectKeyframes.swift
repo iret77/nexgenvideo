@@ -13,8 +13,8 @@ extension EditorViewModel {
         if commit {
             undoManager?.beginUndoGrouping()
             commitClipProperties(clipIds: clipIDs, mutate)
-            undoManager?.endUndoGrouping()
             undoManager?.setActionName(action)
+            undoManager?.endUndoGrouping()
         } else {
             applyClipProperties(clipIds: clipIDs, mutate)
         }

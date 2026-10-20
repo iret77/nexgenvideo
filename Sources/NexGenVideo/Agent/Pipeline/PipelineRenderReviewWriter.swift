@@ -56,13 +56,17 @@ enum PipelineRenderReviewWriter {
 
     static func capture(editor: EditorViewModel,
                         revalidate: (@MainActor @Sendable () throws -> Void)? = nil) async throws -> Snapshot {
+        captureDiagnostic("capture.enter")
         try Task.checkCancellation()
         try revalidate?()
         guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
               let workflow = try PipelineProductionPromptCompiler.workflow(editor: editor), workflow.isProductionV2 else {
+            captureDiagnostic("capture.workflow.refused")
             throw GateBlocked("Open a production project first.")
         }
+        captureDiagnostic("capture.workflow.ready")
         let state = try ProjectStateBuilder.buildSnapshot(dataRoot: root, order: PhaseContractRuntime.order(workflow: workflow))
+        captureDiagnostic("capture.phase-state.ready")
         if state.nextPhase != "render_review" {
             let snapshot = try await background {
                 guard let review = try loadIfPresent(dataRoot: root) else { throw GateBlocked("Reach Render Review before preparing its inputs.") }
@@ -74,20 +78,31 @@ enum PipelineRenderReviewWriter {
                   editor.projectId == snapshot.projectKey else { throw GateBlocked("The active project changed while loading the review.") }
             return snapshot
         }
-        let access = try access(editor: editor)
+        let access: PipelinePlanningWriteAccess
+        do {
+            access = try Self.access(editor: editor)
+        } catch {
+            captureDiagnostic("capture.access.failed", error: error)
+            throw error
+        }
+        captureDiagnostic("capture.access.ready")
         var nativeLease: UUID?
         if revalidate == nil {
             guard let lease = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: "Prepare render review") else {
+                captureDiagnostic("capture.native-lease.acquire-refused")
                 throw GateBlocked("Wait for the current production job before preparing the review.")
             }
             nativeLease = lease
+            captureDiagnostic("capture.native-lease.acquired")
         }
         defer { if let nativeLease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: nativeLease) } }
         guard let projectKey = ProjectIdentity.existingUUID(for: FrameInventory.projectHome(of: root)),
               editor.projectId == projectKey, let workingCopyKey = editor.openWorkingCopyKey,
               let workingCopyGeneration = editor.openWorkingCopyGeneration else {
+            captureDiagnostic("capture.project-identity.refused")
             throw GateBlocked("The review has no current project identity.")
         }
+        captureDiagnostic("capture.project-identity.ready")
         let ownedNativeLease = nativeLease
         let validatePreparation: @MainActor @Sendable () throws -> Void = {
             try Task.checkCancellation()
@@ -96,20 +111,27 @@ enum PipelineRenderReviewWriter {
                   editor.projectId == projectKey,
                   editor.openWorkingCopyKey == workingCopyKey, editor.openWorkingCopyGeneration == workingCopyGeneration,
                   try PipelineProductionPromptCompiler.workflow(editor: editor) == workflow else {
+                captureDiagnostic("capture.working-scope.refused")
                 throw GateBlocked("The active project changed while preparing the review.")
             }
             if let ownedNativeLease,
                !editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: ownedNativeLease) {
+                captureDiagnostic("capture.native-lease.refused")
                 throw GateBlocked("The native review preparation is no longer active.")
             }
         }
         try validatePreparation()
         let preparation = Task.detached(priority: .userInitiated) {
             try requirePriorEvidence(access: access)
+            captureDiagnostic("capture.projection.before")
             let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            captureDiagnostic("capture.projection.after")
             let board = try PlanningWriterIO.storyboard(dataRoot: root)
+            captureDiagnostic("capture.storyboard.after")
             let frames = try ProductionPlanFramesV1.requireCurrent(projection: projection, dataRoot: root)
+            captureDiagnostic("capture.frames.after")
             _ = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: root)
+            captureDiagnostic("capture.promotion.after")
             let projectionRef = try reference(ProductionPlanProjectionV1.versionPath(projection.header.revision), root: root)
             let refs = try ProductionPlanFramesV1.artifactReferences(projection: projection, dataRoot: root)
                 + ProductionPlanAuditV1.artifactReferences(projection: projection, dataRoot: root)
@@ -606,9 +628,42 @@ enum PipelineRenderReviewWriter {
     nonisolated private static func requirePriorEvidence(access: PipelinePlanningWriteAccess) throws {
         let registry = PackCatalog.registry(activePack: access.workflow.packID)
         for phase in ["shotlist", "sanity", "frames"] {
-            try PipelineGateEvidenceValidator.requireCurrent(phase: phase, dataRoot: access.dataRoot,
-                requirement: PhaseContractRuntime.gateRequirement(workflow: access.workflow, phase: phase, registry: registry), workflow: access.workflow)
+            captureDiagnostic("capture.prior." + phase + ".before")
+            do {
+                try PipelineGateEvidenceValidator.requireCurrent(phase: phase, dataRoot: access.dataRoot,
+                    requirement: PhaseContractRuntime.gateRequirement(workflow: access.workflow, phase: phase, registry: registry), workflow: access.workflow)
+            } catch {
+                captureDiagnostic("capture.prior." + phase + ".failed", error: error, phase: phase)
+                throw error
+            }
+            captureDiagnostic("capture.prior." + phase + ".after")
         }
+    }
+
+    nonisolated private static func captureDiagnostic(_ stage: String, error: (any Swift.Error)? = nil, phase: String? = nil) {
+        guard ProcessInfo.processInfo.environment["NGV_RENDER_REVIEW_TEST_DIAGNOSTIC"] == "1" else { return }
+        var fields: [String: Any] = ["stage": stage, "pid": ProcessInfo.processInfo.processIdentifier,
+            "uptime": ProcessInfo.processInfo.systemUptime]
+        if let error {
+            let native = error as NSError
+            fields["errorType"] = String(reflecting: type(of: error))
+            fields["errorDomain"] = native.domain
+            fields["errorCode"] = native.code
+            var reason = "unclassified"
+            if let blocked = error as? GateBlocked, let phase {
+                let known = [
+                    "Can't approve \"\(phase)\": its artifact has no verified input lineage. Rebuild it through the phase's schema-validated tools.": "lineage.missing",
+                    "Can't approve \"\(phase)\": its input lineage belongs to another project.": "lineage.project",
+                    "Can't approve \"\(phase)\": an upstream input changed after this artifact was written. Rebuild the phase from the current pipeline state.": "lineage.inputs",
+                    "Can't approve \"\(phase)\": its persisted artifact changed outside the schema-validated phase writer. Rebuild the phase.": "lineage.artifact",
+                ]
+                reason = known[blocked.message] ?? "gate.unclassified"
+            }
+            fields["reason"] = reason
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        FileHandle.standardError.write(Data(("[render-review-capture-stage] " + text + "\n").utf8))
     }
 
     nonisolated static func requireSnapshot(_ value: Snapshot, root: URL) throws {

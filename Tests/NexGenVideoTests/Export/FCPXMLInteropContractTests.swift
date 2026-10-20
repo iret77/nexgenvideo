@@ -471,30 +471,44 @@ struct FCPXMLInteropContractTests {
             "//asset-clip[@name='Direct.mov']/adjust-transform/param[@name='position']/keyframeAnimation/keyframe/@time",
             in: xml
         )
-        #expect(directKeyframes == ["18023/15s", "36061/30s"])
+        #expect(directKeyframes == ["18023/15s", "36061/30s", "18053/15s"])
         #expect(try values("//video[@name='Still.png']/@start", in: xml) == ["61/6s"])
         let stillKeyframes = try values(
             "//video[@name='Still.png']/adjust-transform/param[@name='position']/keyframeAnimation/keyframe/@time",
             in: xml
         )
-        #expect(stillKeyframes == ["61/6s", "32/3s"])
+        #expect(stillKeyframes == ["61/6s", "32/3s", "73/6s"])
         #expect(try values("//ref-clip[@name='Compound.mov']/@start", in: xml) == ["2/5s"])
         let compoundKeyframes = try values(
             "//ref-clip[@name='Compound.mov']/adjust-transform/param[@name='position']/keyframeAnimation/keyframe/@time",
             in: xml
         )
-        #expect(compoundKeyframes == ["2/5s", "9/10s"])
+        #expect(compoundKeyframes == ["2/5s", "9/10s", "12/5s"])
         #expect(try values("//asset-clip[@name='Retimed.mov']/@start", in: xml) == ["1/3s"])
         let retimedKeyframes = try values(
             "//asset-clip[@name='Retimed.mov']/adjust-transform/param[@name='position']/keyframeAnimation/keyframe/@time",
             in: xml
         )
-        #expect(retimedKeyframes == ["1/3s", "5/6s"])
+        #expect(retimedKeyframes == ["1/3s", "5/6s", "7/3s"])
         #expect(try values("//title[@name='Local title']/@start", in: xml) == ["0s"])
         #expect(try values(
             "//title[@name='Local title']/adjust-blend/param[@name='amount']/keyframeAnimation/keyframe/@time",
             in: xml
-        ) == ["0s", "1/2s"])
+        ) == ["0s", "1/2s", "2s"])
+        #expect(try values(
+            "//title[@name='Local title']/adjust-blend/param[@name='amount']/keyframeAnimation/keyframe/@value",
+            in: xml
+        ) == ["1", "0.5", "0.5"])
+        for (element, name) in [("asset-clip", "Direct.mov"), ("video", "Still.png"),
+                                ("ref-clip", "Compound.mov"), ("asset-clip", "Retimed.mov")] {
+            let positions = try values(
+                "//\(element)[@name='\(name)']/adjust-transform/param[@name='position']/keyframeAnimation/keyframe/@value",
+                in: xml
+            )
+            try #require(positions.count == 3)
+            #expect(positions[0] != positions[1])
+            #expect(positions[1] == positions[2])
+        }
     }
 
     @Test func projectAliasesRelinkOnceWithStableReadableIdentity() async throws {

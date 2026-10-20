@@ -1461,8 +1461,8 @@ final class TimelineView: NSView {
                 insert(audioOnlyAssets, aIdx, nil)
             }
 
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Add Clips")
+            editor.undoManager?.endUndoGrouping()
         }
 
         editor.addClipsWithSettingsCheck(assets: placeableAssets, operation: operation)

@@ -84,8 +84,8 @@ struct MediaOrganizationPlan: Codable, Equatable, Sendable {
         editor.undoManager?.enableUndoRegistration()
         editor.undoManager?.beginUndoGrouping()
         editor.registerMediaOrganizationUndo(previous, removing: editor.folders.filter { !existingFolders.contains($0.id) })
-        editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName("Organize Media")
+        editor.undoManager?.endUndoGrouping()
         return accepted.count
     }
 
