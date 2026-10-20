@@ -83,7 +83,7 @@ enum ProductionSanityOwnerAcceptance {
         try await driver.wait("actual scoped plan correction", seconds: 45) {
             !editor.agentService.isStreaming && runtime.completedCalls == 1
         }
-        guard editor.agentService.streamError == nil else { throw GateBlocked(editor.agentService.streamError ?? "The native correction failed.") }
+        guard editor.agentService.streamError == nil else { throw GateBlocked(editor.agentService.streamError?.localizedDescription ?? "The native correction failed.") }
         let corrected = try await projection(root)
         guard corrected.header.revision > invalid.header.revision,
               corrected.shots.map(\.id) == invalid.shots.map(\.id), corrected.timings == invalid.timings,

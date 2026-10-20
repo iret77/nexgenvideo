@@ -46,6 +46,12 @@ public struct StoryCausalityDraftV1: Codable, Sendable, Equatable {
         public let question: ReviewQuestion
         public let verdict: Verdict
         public let explanation: String
+
+        public init(question: ReviewQuestion, verdict: Verdict, explanation: String) {
+            self.question = question
+            self.verdict = verdict
+            self.explanation = explanation
+        }
     }
     public struct ChangeReview: Codable, Sendable, Equatable {
         public let reviewer: String
@@ -53,6 +59,15 @@ public struct StoryCausalityDraftV1: Codable, Sendable, Equatable {
         public let downstreamConsequence: String
         public let affectedBeatIDs: [String]
         public let checks: [Check]
+
+        public init(reviewer: String, upstreamCause: String, downstreamConsequence: String,
+                    affectedBeatIDs: [String], checks: [Check]) {
+            self.reviewer = reviewer
+            self.upstreamCause = upstreamCause
+            self.downstreamConsequence = downstreamConsequence
+            self.affectedBeatIDs = affectedBeatIDs
+            self.checks = checks
+        }
     }
 
     public let mode: Mode
