@@ -70,7 +70,7 @@ struct ProductionFinalPromptCompilationTests {
 
         for _ in 0..<2 {
             let result = await executor.execute(name: "next_render_shot", args: ["phase": "final"])
-            try #require(!result.isError, ToolHarness.textOf(result))
+            try #require(!result.isError, Comment(rawValue: ToolHarness.textOf(result)))
             let value = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
             let text = try #require(value["compiled_prompt"] as? String)
             let token = try #require(value["compileToken"] as? String)

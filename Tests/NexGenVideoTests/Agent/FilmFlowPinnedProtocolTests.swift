@@ -10,7 +10,8 @@ struct FilmFlowPinnedProtocolTests {
         let payload = try makePayload()
         let client = Client()
         let adapter = makeAdapter(client: client)
-        let operation = try #require(adapter.startLoading(fetch: { _ in (payload.bytes, payload.response) }))
+        let pendingOperation = adapter.startLoading(fetch: { _ in (payload.bytes, payload.response) })
+        let operation = try #require(pendingOperation)
         await operation.value
         #expect(client.events == [.response, .data(payload.bytes), .finish])
     }
@@ -20,10 +21,11 @@ struct FilmFlowPinnedProtocolTests {
         let gate = FetchGate()
         let client = Client()
         let adapter = makeAdapter(client: client)
-        let operation = try #require(adapter.startLoading(fetch: { _ in
+        let pendingOperation = adapter.startLoading(fetch: { _ in
             let value = try await gate.load()
             return (value.bytes, value.response)
-        }))
+        })
+        let operation = try #require(pendingOperation)
         await gate.waitUntilEntered()
         adapter.stopLoading()
         await gate.resolve(.success(payload))
@@ -35,7 +37,8 @@ struct FilmFlowPinnedProtocolTests {
         let payload = try makePayload()
         let client = Client(onResponse: { $0.stopLoading() })
         let adapter = makeAdapter(client: client)
-        let operation = try #require(adapter.startLoading(fetch: { _ in (payload.bytes, payload.response) }))
+        let pendingOperation = adapter.startLoading(fetch: { _ in (payload.bytes, payload.response) })
+        let operation = try #require(pendingOperation)
         await operation.value
         #expect(client.events == [.response])
     }
@@ -44,10 +47,11 @@ struct FilmFlowPinnedProtocolTests {
         let gate = FetchGate()
         let client = Client()
         let adapter = makeAdapter(client: client)
-        let operation = try #require(adapter.startLoading(fetch: { _ in
+        let pendingOperation = adapter.startLoading(fetch: { _ in
             let value = try await gate.load()
             return (value.bytes, value.response)
-        }))
+        })
+        let operation = try #require(pendingOperation)
         await gate.waitUntilEntered()
         adapter.stopLoading()
         await gate.resolve(.failure(URLError(.cannotConnectToHost)))
@@ -58,7 +62,8 @@ struct FilmFlowPinnedProtocolTests {
     @Test func ordinaryFetchFailureIsReportedOnce() async throws {
         let client = Client()
         let adapter = makeAdapter(client: client)
-        let operation = try #require(adapter.startLoading(fetch: { _ in throw URLError(.cannotConnectToHost) }))
+        let pendingOperation = adapter.startLoading(fetch: { _ in throw URLError(.cannotConnectToHost) })
+        let operation = try #require(pendingOperation)
         await operation.value
         #expect(client.events == [.failure])
     }
@@ -68,10 +73,11 @@ struct FilmFlowPinnedProtocolTests {
         let adapter = FilmFlowPinnedProtocol(request: URLRequest(url: URL(string: "https://other.invalid/api/mcp")!),
             cachedResponse: nil, client: client)
         let fetches = OSAllocatedUnfairLock(initialState: 0)
-        let operation = try #require(adapter.startLoading(fetch: { _ in
+        let pendingOperation = adapter.startLoading(fetch: { _ in
             fetches.withLock { $0 += 1 }
             throw URLError(.unknown)
-        }))
+        })
+        let operation = try #require(pendingOperation)
         await operation.value
         #expect(fetches.withLock { $0 } == 0)
         #expect(client.events == [.failure])

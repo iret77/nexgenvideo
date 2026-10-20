@@ -361,6 +361,7 @@ struct PipelineProductionRoutingTests {
         #expect(!proof.matches(different))
     }
 
+    @MainActor
     private static func adapterSupports(_ requirement: ProductionRequirementV1,
         capabilities: ResolvedVideoOfferingCapabilitiesV1,
         transformFields: ((inout ResolvedCapabilityFieldsV1) -> Void)? = nil) -> Bool {
