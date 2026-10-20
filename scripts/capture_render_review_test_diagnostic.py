@@ -11,6 +11,8 @@ import sys
 import threading
 import time
 
+from verify_swift_test_output import assess_output
+
 
 TARGETS = {
     "PipelineRenderReviewManifestTests.testActualCanonicalSnapshotPreparePublishAndVerify",
@@ -72,8 +74,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
+    parser.add_argument("--swift-testing-runs", required=True, type=int)
+    parser.add_argument("--xctest-runs", required=True, type=int)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if min(args.swift_testing_runs, args.xctest_runs) < 1:
+        parser.error("Both selected framework run counts must be positive")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("The existing swift test command is required")
@@ -159,9 +165,18 @@ def main():
     if sampler is not None:
         # Retain the one owned worker through its bounded ps/sample waits.
         sampler.join()
-    run.update(status="test-process-exited", testExitCode=exit_code, captureAttempted=attempted)
+    effective_exit = exit_code if exit_code >= 0 else 128 - exit_code
+    if exit_code == 0:
+        output_result = assess_output(args.log, swift_testing_runs=args.swift_testing_runs,
+                                      xctest_runs=args.xctest_runs)
+        run["outputCompletion"] = output_result
+        print("Swift test output completion: " + json.dumps(output_result, sort_keys=True), flush=True)
+        if not output_result["passed"]:
+            effective_exit = 1
+    run.update(status="test-process-exited", testExitCode=exit_code,
+               effectiveExitCode=effective_exit, captureAttempted=attempted)
     (args.evidence / "run.json").write_text(json.dumps(run, indent=2) + "\n")
-    return exit_code if exit_code >= 0 else 128 - exit_code
+    return effective_exit
 
 
 if __name__ == "__main__":

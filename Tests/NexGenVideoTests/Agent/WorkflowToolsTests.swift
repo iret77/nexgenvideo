@@ -47,6 +47,24 @@ struct WorkflowToolsTests {
         )
     }
 
+    // This unit fixture isolates Ledger transactions in the unversioned core Bible phase.
+    private func openLedgerFixture(_ h: ToolHarness, savedRoot: URL) throws -> (root: URL, manager: UndoManager) {
+        let store = YAMLArtifactStore(dataRoot: savedRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in coreGatePhases.prefix(while: { $0 != "bible" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let home = FrameInventory.projectHome(of: savedRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        let manager = UndoManager()
+        h.editor.undoManager = manager
+        let root = try #require(h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: root).nextPhase == "bible")
+        return (root, manager)
+    }
+
     private func falRoutingDependencies() -> (
         activation: ProviderActivation,
         candidates: ProductionRouteCandidateProvider
@@ -270,15 +288,16 @@ struct WorkflowToolsTests {
         project: String = "demo",
         keyframeStrategy: KeyframeStrategy = .start,
         productionPlan: ShotProductionPlan? = nil,
-        generator: String = "test"
+        generator: String = "test",
+        duration: Double = 4
     ) throws -> Shotlist {
         let shot = try Shot(
-            id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
+            id: "s001", section: "verse", timeStart: 0.0, timeEnd: duration, durationS: duration,
             type: .performance, description: "d", visualPrompt: "p", mood: "m",
             keyframeStrategy: keyframeStrategy,
             productionPlan: productionPlan
         )
-        let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 4.0)
+        let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: duration)
         return try Shotlist(
             schema_: shotlistSchemaVersion, mode: .section, project: project, song: song,
             generated: "2026-01-01", generator: generator, shots: [shot]
@@ -1447,62 +1466,77 @@ struct WorkflowToolsTests {
 
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")
     func projectFileTools() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let context = try await CurrentMusicvideoFixture.makeScript(beforeDesignWrite: { context in
+            let h = ToolHarness(editor: context.editor, executor: context.executor)
+            let dataRoot = context.dataRoot
+            let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
+            try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
+            try FullflowAcceptanceFixture.writeReference(to: importDir.appendingPathComponent("face.png"))
+            try ConfirmedIdentityAssetStoreV1.recordIntake(
+                role: .character,
+                identityName: "Mouse",
+                identitySlug: "mouse",
+                paths: ["import/characters/mouse/face.png"],
+                dataRoot: dataRoot,
+                confirmedAt: "2026-09-09T00:00:00Z"
+            )
+
+            let list = try #require(try await h.runOK("list_project_files", args: [
+                "project_dir": dataRoot.path, "subdir": "import",
+            ]) as? [String: Any])
+            #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
+
+            let forbiddenStylePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "production_design/refs", leaf: "mouse.png", dataRoot: dataRoot)
+            let identityAsStyle = await h.runRaw("copy_project_file", args: [
+                "project_dir": dataRoot.path,
+                "from": "import/characters/mouse/face.png",
+                "to": forbiddenStylePath,
+            ])
+            #expect(identityAsStyle.isError)
+            #expect(ToolHarness.textOf(identityAsStyle).contains("reserved for Bible identity"))
+
+            let styleURL = dataRoot.appendingPathComponent("import/western.png")
+            try FullflowAcceptanceFixture.writeReference(to: styleURL)
+            let styleBytes = try Data(contentsOf: styleURL)
+            let stylePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "production_design/refs", leaf: "western.png", dataRoot: dataRoot)
+            _ = try await h.runOK("copy_project_file", args: [
+                "project_dir": dataRoot.path,
+                "from": "import/western.png",
+                "to": stylePath,
+            ])
+            #expect(try Data(contentsOf: dataRoot.appendingPathComponent(stylePath)) == styleBytes)
+
+        })
+        defer { context.document.close() }
+        try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        let h = ToolHarness(editor: context.editor, executor: context.executor)
+        let dataRoot = context.dataRoot
+        let cleanup = context.packageURL.deletingLastPathComponent().appendingPathComponent("copy-escape-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try activatePack("musicvideo", dataRoot: dataRoot)
         let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
-        try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: importDir.appendingPathComponent("face.png"))
-        try ConfirmedIdentityAssetStoreV1.recordIntake(
-            role: .character,
-            identityName: "Mouse",
-            identitySlug: "mouse",
-            paths: ["import/characters/mouse/face.png"],
-            dataRoot: dataRoot,
-            confirmedAt: "2026-09-09T00:00:00Z"
-        )
-
-        let list = try #require(try await h.runOK("list_project_files", args: [
-            "project_dir": dataRoot.path, "subdir": "import",
-        ]) as? [String: Any])
-        #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
-
-        let identityAsStyle = await h.runRaw("copy_project_file", args: [
-            "project_dir": dataRoot.path,
-            "from": "import/characters/mouse/face.png",
-            "to": "production_design/refs/mouse.png",
-        ])
-        #expect(identityAsStyle.isError)
-        #expect(ToolHarness.textOf(identityAsStyle).contains("reserved for Bible identity"))
-
-        let styleURL = dataRoot.appendingPathComponent("import/western.png")
-        try Data("style".utf8).write(to: styleURL)
-        _ = try await h.runOK("copy_project_file", args: [
-            "project_dir": dataRoot.path,
-            "from": "import/western.png",
-            "to": "production_design/refs/western.png",
-        ])
-        #expect(try String(
-            contentsOf: dataRoot.appendingPathComponent(
-                "production_design/refs/western.png"
-            ),
-            encoding: .utf8
-        ) == "style")
+        let mousePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/front.png", dataRoot: dataRoot)
+        let variantPath = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse-red/front.png", dataRoot: dataRoot)
 
         let confirmationURL = dataRoot.appendingPathComponent(
             PipelineLayout.confirmedIdentityAssetsFile
         )
         let confirmationBeforeCopy = try Data(contentsOf: confirmationURL)
+        let identityBytes = try Data(contentsOf: importDir.appendingPathComponent("face.png"))
         let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
-            "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
+            "from": "import/characters/mouse/face.png", "to": mousePath,
         ]) as? [String: Any])
         #expect(copy["confirmed_identity_provenance"] as? Bool == true)
-        let copiedURL = dataRoot.appendingPathComponent("bible/refs/mouse/face.png")
-        #expect(try String(contentsOf: copiedURL, encoding: .utf8) == "x")                 // bytes copied
-        #expect(try String(contentsOf: importDir.appendingPathComponent("face.png"), encoding: .utf8) == "x")  // source intact (copy)
+        let copiedURL = dataRoot.appendingPathComponent(mousePath)
+        #expect(try Data(contentsOf: copiedURL) == identityBytes)
+        #expect(try Data(contentsOf: importDir.appendingPathComponent("face.png")) == identityBytes)
         #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
-            "bible/refs/mouse/face.png",
+            mousePath,
             dataRoot: dataRoot
         ))
         #expect(try Data(contentsOf: confirmationURL) == confirmationBeforeCopy)
@@ -1513,7 +1547,7 @@ struct WorkflowToolsTests {
             at: variantImport.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("red-outfit".utf8).write(to: variantImport)
+        try FullflowAcceptanceFixture.writeReference(to: variantImport)
         try ConfirmedIdentityAssetStoreV1.recordIntake(
             role: .character,
             identityName: "Mouse — red outfit",
@@ -1525,7 +1559,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse-red/front.png",
-            "to": "bible/mouse-red/front.png",
+            "to": variantPath,
         ])
         _ = try await h.runOK("write_bible", args: [
             "project_dir": dataRoot.path,
@@ -1541,7 +1575,7 @@ struct WorkflowToolsTests {
                 "reference_images": [],
                 "sheets": [[
                     "view": "front",
-                    "path": "bible/refs/mouse/face.png",
+                    "path": mousePath,
                 ]],
             ], [
                 "id": "mouse_red",
@@ -1554,7 +1588,7 @@ struct WorkflowToolsTests {
                 "reference_images": [],
                 "sheets": [[
                     "view": "front",
-                    "path": "bible/mouse-red/front.png",
+                    "path": variantPath,
                 ]],
             ]],
             "ensembles": [],
@@ -1568,12 +1602,12 @@ struct WorkflowToolsTests {
                     "value": "red waistcoat",
                 ]],
                 "inherited_identity_paths": [
-                    "bible/refs/mouse/face.png",
+                    mousePath,
                 ],
             ]],
         ])
         #expect(try loadBible(dataRoot: dataRoot)?.characters.first?
-            .sheets["front"] == "bible/refs/mouse/face.png")
+            .sheets["front"] == mousePath)
         let variants = try #require(
             try BibleIdentityVariantStoreV1.loadIfPresent(dataRoot: dataRoot)
         )
@@ -1593,24 +1627,30 @@ struct WorkflowToolsTests {
         ])
         #expect(canonicalArtifact.isError == true)
 
+        let canonicalSourceDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/gates.png", dataRoot: dataRoot)
+        let gatesBeforeCanonicalSource = try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile))
         let canonicalSource = await h.runRaw("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": PipelineLayout.gatesFile,
-            "to": "bible/refs/mouse/gates.png",
+            "to": canonicalSourceDestination,
         ])
         #expect(canonicalSource.isError == true)
+        #expect(ToolHarness.textOf(canonicalSource).contains("can stage uploaded files only from import/"))
+        #expect(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(canonicalSourceDestination).path))
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile)) == gatesBeforeCanonicalSource)
 
         // A symlink escaping the project is refused too.
         let outside = cleanup.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let symlinkDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "link/stolen.png", dataRoot: dataRoot)
         try FileManager.default.createSymbolicLink(
-            at: dataRoot.appendingPathComponent("bible/link"),
+            at: dataRoot.appendingPathComponent(symlinkDestination).deletingLastPathComponent(),
             withDestinationURL: outside
         )
         let symlinkEscape = await h.runRaw("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png",
-            "to": "bible/link/stolen.png",
+            "to": symlinkDestination,
         ])
         #expect(symlinkEscape.isError == true)
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
@@ -1772,16 +1812,22 @@ struct WorkflowToolsTests {
 
     @Test("copy_project_file stages generated media with exact pipeline provenance")
     func projectMediaCopyRecordsProvenance() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try activatePack("musicvideo", dataRoot: dataRoot)
+        let context = try await CurrentMusicvideoFixture.makeStoryboard()
+        defer { context.document.close() }
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        let h = ToolHarness(editor: context.editor, executor: context.executor)
+        let dataRoot = context.dataRoot
+        let confirmedDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/confirmed.png", dataRoot: dataRoot)
+        let generatedDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/generated.png", dataRoot: dataRoot)
         let confirmedPath = "import/characters/mouse/front.png"
         let confirmedURL = dataRoot.appendingPathComponent(confirmedPath)
         try FileManager.default.createDirectory(
             at: confirmedURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("confirmed".utf8).write(to: confirmedURL)
+        try FullflowAcceptanceFixture.writeReference(to: confirmedURL)
         try ConfirmedIdentityAssetStoreV1.recordIntake(
             role: .character,
             identityName: "Mouse",
@@ -1793,38 +1839,47 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": confirmedPath,
-            "to": "bible/mouse/front.png",
+            "to": confirmedDestination,
         ])
         #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(
-            "bible/mouse/front.png",
+            confirmedDestination,
             dataRoot: dataRoot
         ) != nil)
         let source = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("sheet.png")
         try addGeneratedImage("sheet-media", at: source, to: h)
+        try FullflowAcceptanceFixture.writeReference(to: source)
+
+        let confirmedBytes = try Data(contentsOf: dataRoot.appendingPathComponent(confirmedDestination))
+        let overwrite = await h.runRaw("copy_project_file", args: [
+            "project_dir": dataRoot.path, "media": "sheet-media", "to": confirmedDestination,
+        ])
+        #expect(overwrite.isError)
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent(confirmedDestination)) == confirmedBytes)
+        #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(confirmedDestination, dataRoot: dataRoot) != nil)
 
         let result = try #require(try await h.runOK(
             "copy_project_file",
             args: [
                 "project_dir": dataRoot.path,
                 "media": "sheet-media",
-                "to": "bible/mouse/front.png",
+                "to": generatedDestination,
             ]
         ) as? [String: Any])
         #expect(result["generated_provenance"] as? Bool == true)
         #expect(try ConfirmedIdentityAssetStoreV1.loadAdoptions(
             dataRoot: dataRoot
-        ).entries["bible/mouse/front.png"] == nil)
+        ).entries[generatedDestination] == nil)
 
         let proof = try loadPipelineAssetProof(
             dataRoot: dataRoot,
             scope: "bible"
         )
         let entry = try #require(
-            proof.entries["bible/mouse/front.png"]
+            proof.entries[generatedDestination]
         )
         let staged = dataRoot.appendingPathComponent(
-            "bible/mouse/front.png"
+            generatedDestination
         )
         #expect(entry.sha256 == (try FileDigest.sha256(of: staged)))
         #expect(entry.generationModel == "image-model")
@@ -2088,16 +2143,13 @@ struct WorkflowToolsTests {
     @Test("an explicit saved-package path is redirected to the open working copy")
     func savedProjectDirCannotBypassWorkingCopy() async throws {
         let (h, savedDataRoot, cleanup) = try scaffold()
-        let home = FrameInventory.projectHome(of: savedDataRoot)
-        try Fixtures.prepareProjectPackage(at: home)
-        h.editor.projectURL = home
         defer {
             h.editor.releaseWorkingCopy()
             try? FileManager.default.removeItem(at: cleanup)
         }
-        let liveDataRoot = try #require(
-            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
-        )
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedDataRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let liveDataRoot = ledgerFixture.root
 
         _ = try await h.runOK("set_ledger_attribute", args: [
             "project_dir": savedDataRoot.path,
@@ -2116,13 +2168,20 @@ struct WorkflowToolsTests {
 
     @Test("ledger set, lock, and remove round-trip; a locked attribute refuses removal")
     func ledgerRoundTrip() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
         let dir = dataRoot.path
 
         let set = try await h.runOK("set_ledger_attribute", args: [
             "project_dir": dir, "kind": "look", "key": "palette", "tag": "warm amber",
         ]) as? [String: Any]
+        #expect(ledgerFixture.manager.canUndo)
         #expect(set?["tag"] as? String == "warm amber")
         #expect(set?["directive"] as? String == "warm amber")  // directive defaults to tag
         #expect(set?["locked"] as? Bool == false)
@@ -2150,18 +2209,43 @@ struct WorkflowToolsTests {
 
     @Test("set_ledger_attribute for an entity kind without object_id errors")
     func ledgerEntityNeedsObjectId() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
+        try YAMLArtifactStore(dataRoot: dataRoot).save(Ledger(), to: PipelineLayout.ledgerFile)
+        let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
+        let gatesURL = PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        let ledgerBefore = try Data(contentsOf: ledgerURL)
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        #expect(!ledgerFixture.manager.canUndo)
         let result = await h.runRaw("set_ledger_attribute", args: [
             "project_dir": dataRoot.path, "kind": "character", "key": "wardrobe", "tag": "red jacket",
         ])
         #expect(result.isError)
+        let message = ToolHarness.textOf(result)
+        #expect(message.contains("Ledger update rejected:"))
+        #expect(message.contains("missingObjectId"))
+        #expect(message.contains("character"))
+        #expect(try Data(contentsOf: ledgerURL) == ledgerBefore)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+        #expect(!ledgerFixture.manager.canUndo)
     }
 
     @Test("ledger mutation refuses and preserves a corrupt ledger")
     func corruptLedgerIsNotOverwritten() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
         let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
         let corrupt = Data("objects: [broken".utf8)
         try corrupt.write(to: ledgerURL)
@@ -2174,7 +2258,7 @@ struct WorkflowToolsTests {
         ])
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("Nothing was written"))
+        #expect(h.editor.undoManager?.canUndo == false)
         #expect(try Data(contentsOf: ledgerURL) == corrupt)
     }
 
@@ -5862,7 +5946,10 @@ extension WorkflowToolsTests {
             try? FileManager.default.removeItem(at: cleanup)
         }
         let plan = try ShotProductionPlan(primaryAction: "Hold the empty stage.", cameraMovement: .static, renderability: .green)
-        _ = try publishExecutionShotlist(try minimalShotlist(keyframeStrategy: .none, productionPlan: plan),
+        let shotlist = try minimalShotlist(keyframeStrategy: .none, productionPlan: plan, duration: 3)
+        let shot = try #require(shotlist.shots.first)
+        #expect(CutHandles.orderableGrossDuration(for: shot, forceAll: true) == 5)
+        _ = try publishExecutionShotlist(shotlist,
             dataRoot: originalRoot, finalResolution: .res720p)
         try Fixtures.prepareProjectPackage(at: home)
         h.editor.projectURL = home

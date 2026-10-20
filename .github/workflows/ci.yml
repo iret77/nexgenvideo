@@ -144,7 +144,8 @@ jobs:
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           python3 scripts/capture_render_review_test_diagnostic.py \
-            --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log -- \
+            --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
+            --swift-testing-runs 2 --xctest-runs 2 -- \
             swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build
 
       - name: Upload render review test diagnosis

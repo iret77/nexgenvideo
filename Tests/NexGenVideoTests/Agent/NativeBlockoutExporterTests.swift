@@ -1,5 +1,7 @@
 import AppKit
 import AVFoundation
+import ImageIO
+import UniformTypeIdentifiers
 import NexGenEngine
 import Testing
 @testable import NexGenVideo
@@ -66,6 +68,12 @@ struct NativeBlockoutExporterTests {
             to: output
         )
 
+        let evidence = ProcessInfo.processInfo.environment["NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let evidence {
+            try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: output, to: evidence.appendingPathComponent("graybox.mov"))
+        }
         let asset = AVURLAsset(url: output)
         let track = try #require(
             try await asset.loadTracks(withMediaType: .video).first
@@ -77,8 +85,16 @@ struct NativeBlockoutExporterTests {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let image = try await generator.image(at: .zero).image
+        if let evidence {
+            let destination = try #require(CGImageDestinationCreateWithURL(
+                evidence.appendingPathComponent("graybox.png") as CFURL,
+                UTType.png.identifier as CFString, 1, nil
+            ))
+            CGImageDestinationAddImage(destination, image, nil)
+            try #require(CGImageDestinationFinalize(destination))
+        }
         let bitmap = NSBitmapImageRep(cgImage: image)
-        let pixel = try #require(bitmap.colorAt(x: image.width / 2, y: image.height / 3))
+        let pixel = try #require(bitmap.colorAt(x: image.width * 3 / 4, y: image.height * 3 / 4))
         #expect(pixel.brightnessComponent > 0.4)
     }
 }

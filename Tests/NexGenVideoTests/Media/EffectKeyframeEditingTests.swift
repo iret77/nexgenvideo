@@ -152,6 +152,21 @@ struct EffectKeyframeEditingTests {
         harness.editor.setEffectParameters(clipIDs: [clip.id], type: "color.wheels", values: ["lift_x": 0.9, "lift_y": 0], commit: true, action: "Wheel")
         #expect(harness.editor.clipFor(id: clip.id) == original)
         #expect(!undo.canUndo)
+        #expect(undo.undoActionName.isEmpty)
+        let originalTimeline = harness.editor.timeline
+        harness.editor.currentFrame = 130
+        harness.editor.setEffectParameter(clipIDs: [clip.id], type: "color.wheels", key: "lift_x", value: 0.9, commit: true, action: "Valid Wheel Edit")
+        let changed = harness.editor.timeline
+        #expect(changed != originalTimeline)
+        #expect(undo.undoActionName == "Valid Wheel Edit")
+        harness.editor.currentFrame = 0
+        harness.editor.setEffectParameters(clipIDs: [clip.id], type: "color.wheels", values: ["lift_x": 0.9, "lift_y": 0], commit: true, action: "Rejected Wheel Edit")
+        #expect(harness.editor.timeline == changed)
+        #expect(undo.undoActionName == "Valid Wheel Edit")
+        undo.undo()
+        #expect(harness.editor.timeline == originalTimeline)
+        undo.redo()
+        #expect(harness.editor.timeline == changed)
     }
 
     private func parameter(_ clip: Clip) -> EffectParam? {

@@ -11,10 +11,7 @@ extension EditorViewModel {
             ClipEffectAnimation.setValues(values, type: type, frame: frame, clip: &clip)
         }
         if commit {
-            undoManager?.beginUndoGrouping()
-            commitClipProperties(clipIds: clipIDs, mutate)
-            undoManager?.setActionName(action)
-            undoManager?.endUndoGrouping()
+            commitClipProperties(clipIds: clipIDs, actionName: action, mutate)
         } else {
             applyClipProperties(clipIds: clipIDs, mutate)
         }

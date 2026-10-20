@@ -412,14 +412,26 @@ extension EditorViewModel {
         }
     }
 
-    func commitClipProperties(clipIds: [String], _ modify: (inout Clip) -> Void) {
+    func commitClipProperties(clipIds: [String], actionName: String? = nil, _ modify: (inout Clip) -> Void) {
         var touchedText = false
         var touchedVisual = false
+        let undo = undoManager
+        var openedGroup = false
+        defer {
+            if openedGroup {
+                if let actionName { undo?.setActionName(actionName) }
+                undo?.endUndoGrouping()
+            }
+        }
         for clipId in clipIds {
             guard let loc = findClip(id: clipId) else { continue }
             var clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
             let before = dragBefore.removeValue(forKey: clipId) ?? clip
             modify(&clip)
+            if before != clip, actionName != nil, !openedGroup, let undo {
+                undo.beginUndoGrouping()
+                openedGroup = true
+            }
             timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = clip
             registerClipPropertySwap(clipId: clipId, undoTarget: before, redoTarget: clip)
             if clip.mediaType == .text {

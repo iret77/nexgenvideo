@@ -29,7 +29,8 @@ struct ClipEnvelopeEffectTests {
         clip = clip.animationWindow(originOffset: 20, duration: 80)
         let before = clip.animationEnvelope
         let harness = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
-        _ = try await harness.runOK("apply_color", args: ["clipIds": ["clip"], "reset": true])
+        let response = await harness.runRaw("apply_color", args: ["clipIds": ["clip"], "reset": true])
+        try #require(!response.isError, Testing.Comment(rawValue: ToolHarness.textOf(response)))
         let result = harness.editor.timeline.tracks[0].clips[0]
         #expect(result.animationEnvelope == before)
         #expect(result.effects?.contains(where: { $0.type.hasPrefix("color.") }) == false)

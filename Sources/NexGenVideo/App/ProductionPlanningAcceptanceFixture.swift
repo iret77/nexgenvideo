@@ -441,11 +441,16 @@ enum ProductionPlanningAcceptanceFixture {
             try await prepareEmptyFrames(in: context)
             diagnosticStage("frames.prepare.after")
             try await approve("frames", in: context)
+            _ = try await waitForNativeReviewInputs(in: context)
             diagnosticStage("before-render-review.callback.before")
             try await beforeRenderReview?(context)
             diagnosticStage("before-render-review.callback.after")
+            let displayedFingerprint = try await waitForNativeReviewInputs(in: context)
             diagnosticStage("native-review.capture.before")
             let review = try await PipelineRenderReviewWriter.capture(editor: context.editor)
+            guard review.fingerprint == displayedFingerprint else {
+                throw GateBlocked("The native input review changed before the acceptance capture.")
+            }
             diagnosticStage("native-review.capture.after")
             diagnosticStage("native-review.record.before")
             _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: review, findings: [], editor: context.editor)
@@ -461,6 +466,39 @@ enum ProductionPlanningAcceptanceFixture {
         }
         ready = true
         return context
+    }
+
+    private static func waitForNativeReviewInputs(in context: Context) async throws -> String {
+        let editor = context.editor
+        let home = editor.workingRoot, project = editor.projectId
+        let key = editor.openWorkingCopyKey, generation = editor.openWorkingCopyGeneration
+        let draft = editor.renderReviewDraft
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        diagnosticStage("native-review.wait-ui.before")
+        while true {
+            try Task.checkCancellation()
+            guard home != nil, project != nil, key != nil, generation != nil,
+                  editor.workingRoot == home, editor.projectId == project,
+                  editor.openWorkingCopyKey == key, editor.openWorkingCopyGeneration == generation,
+                  editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == context.dataRoot,
+                  editor.renderReviewDraft === draft, !draft.hasChanges else {
+                throw GateBlocked("The acceptance review project or draft changed while waiting for its inputs.")
+            }
+            let active = editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot)
+            guard active == nil || active == "Prepare render review" else {
+                throw GateBlocked("Another production job is active before the acceptance input review.")
+            }
+            if active == nil, let fingerprint = draft.fingerprint {
+                diagnosticStage("native-review.wait-ui.after")
+                return fingerprint
+            }
+            guard clock.now < deadline else {
+                diagnosticStage("native-review.wait-ui.timeout")
+                throw GateBlocked("The native input review did not finish preparing within ten seconds.")
+            }
+            try await clock.sleep(for: .milliseconds(25))
+        }
     }
 
     static func makeSourceVideo(durationSeconds: Double = 8) async throws -> URL {

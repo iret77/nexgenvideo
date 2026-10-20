@@ -69,7 +69,9 @@ extension ProjectPluginSettings {
     static func requireProductionContract(projectURL: URL, declared: HostProductionContractBinding?,
                                           declaredPack: String?) throws {
         let expected: ProductionContractResolution = declared.map(ProductionContractResolution.bound) ?? .absent
-        guard productionContractResolution(projectURL: projectURL) == expected,
+        let actual = productionContractResolution(projectURL: projectURL)
+        if actual == .unreadable { throw ProjectFormatSettingsUnavailableError() }
+        guard actual == expected,
               declared == nil || (declared == .current && declaredPack == nil) else {
             throw ProjectFormatSettingsUnavailableError(problem: "do not match the production workflow trusted by this session")
         }

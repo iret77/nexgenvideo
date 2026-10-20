@@ -390,20 +390,27 @@ struct GateApprovalTests {
 
     @Test("a missing project keeps approval open for reopen recovery")
     func missingProjectKeepsApprovalOpen() async throws {
-        let editor = EditorViewModel()
-        let service = editor.agentService
-        let missingRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("missing-gate-root-\(UUID().uuidString)", isDirectory: true)
-
-        _ = try service.requestGateApproval(GateApproval(
+        let (h, savedRoot, cleanup) = try scaffold()
+        let home = FrameInventory.projectHome(of: savedRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let service = h.editor.agentService
+        let liveRoot = try #require(h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
+        let request = try service.requestGateApproval(GateApproval(
             phase: "project_init",
-            dataRoot: missingRoot
+            dataRoot: liveRoot
         ))
+        try FileManager.default.removeItem(at: liveRoot)
         let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(result?.isError == true)
+        #expect(service.pendingGateApproval?.id == request.approval.id)
         #expect(service.pendingGateApproval?.phase == "project_init")
-        #expect(service.gateApprovalError?.isEmpty == false)
+        #expect(service.gateApprovalError?.contains("Reopen") == true)
     }
 
     @Test("a competing approval never records checked for the requested phase")
@@ -469,8 +476,15 @@ struct GateApprovalTests {
 
     @Test("An approved gate cannot resume the agent across a host-owned intake card")
     func approvalDefersFollowUpUntilIntakeCompletes() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        let home = FrameInventory.projectHome(of: savedRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try #require(h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
         let service = h.editor.agentService
         service.newChat()
         service.isStreaming = true

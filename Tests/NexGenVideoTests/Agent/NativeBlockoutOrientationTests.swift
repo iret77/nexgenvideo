@@ -75,8 +75,8 @@ struct NativeBlockoutOrientationTests {
 
     private func markerClusters(_ image: CGImage, index: Int, evidence: URL?) throws -> [CGPoint] {
         var pixels: [CGPoint] = []
-        for y in stride(from: 0, to: image.height, by: 2) {
-            for x in stride(from: 0, to: image.width, by: 2) {
+        for y in 0..<image.height {
+            for x in 0..<image.width {
                 guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { continue }
                 var bytes = [UInt8](repeating: 0, count: 4)
                 try bytes.withUnsafeMutableBytes { memory in

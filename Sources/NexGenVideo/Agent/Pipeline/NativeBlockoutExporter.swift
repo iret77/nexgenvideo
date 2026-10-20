@@ -1,5 +1,7 @@
+import AppKit
 import AVFoundation
 import CoreGraphics
+import CoreText
 import CoreVideo
 import Foundation
 import NexGenEngine
@@ -165,7 +167,12 @@ enum NativeBlockoutExporter {
         }
         context.strokePath()
 
-        let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric)
+        let previewScale = max(1, max(CGFloat(width) / AppTheme.Layout.productionInspectorMin,
+                                      CGFloat(height) / AppTheme.Layout.previewMinHeight))
+        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
+            weight: AppTheme.AppKitFontWeight.semibold) as CTFont
+        let labelHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2
+        let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric, labelHeight: labelHeight)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
         context.setLineWidth(AppTheme.BorderWidth.medium)
         for viewport in viewports.values {
@@ -247,6 +254,37 @@ enum NativeBlockoutExporter {
                 }
             }
         }
+        for viewport in viewports.values {
+            let suffix = viewport.locationNumber.map { " · \($0)" } ?? ""
+            drawLabel("Plan" + suffix, in: viewport.planLabel, font: font, context: context)
+            drawLabel("Elevation" + suffix, in: viewport.elevationLabel, font: font, context: context)
+        }
+    }
+
+    private static func drawLabel(_ text: String, in rect: CGRect, font: CTFont, context: CGContext) {
+        func makeLine(_ font: CTFont) -> CTLine {
+            let attributes: [NSAttributedString.Key: Any] = [
+                kCTFontAttributeName as NSAttributedString.Key: font,
+                kCTForegroundColorAttributeName as NSAttributedString.Key: AppTheme.Text.primary.cgColor,
+            ]
+            return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
+        }
+        let line = makeLine(font)
+        let width = max(0, rect.width - AppTheme.Spacing.xs * 2)
+        let height = max(0, rect.height - AppTheme.Spacing.xxs * 2)
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let textHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
+        let scale = min(1, min(width / max(CGFloat.ulpOfOne, textWidth), height / max(CGFloat.ulpOfOne, textHeight)))
+        let fittedFont = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * scale, nil, nil)
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.clip(to: rect)
+        context.setFillColor(AppTheme.Background.surface.cgColor)
+        context.fill(rect)
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: rect.minX + AppTheme.Spacing.xs,
+            y: rect.midY - (CTFontGetAscent(fittedFont) - CTFontGetDescent(fittedFont)) / 2)
+        CTLineDraw(makeLine(fittedFont), context)
     }
 
     private enum Projection {
@@ -258,12 +296,16 @@ enum NativeBlockoutExporter {
         let layout: SpatialLayoutV1
         let plan: CGRect
         let elevation: CGRect
+        let planLabel: CGRect
+        let elevationLabel: CGRect
+        let locationNumber: Int?
     }
 
     private static func makeViewports(
         layouts: [SpatialLayoutV1],
         bounds: CGRect,
-        metric: Bool
+        metric: Bool,
+        labelHeight: CGFloat
     ) -> [String: Viewport] {
         let ordered = layouts.sorted { $0.locationID < $1.locationID }
         let count = max(1, ordered.count)
@@ -285,31 +327,33 @@ enum NativeBlockoutExporter {
                 dy: AppTheme.Spacing.xs
             )
             let planHeight = cell.height * 0.67
-            result[layout.locationID] = Viewport(
-                layout: layout,
-                plan: CGRect(
-                    x: cell.minX,
-                    y: cell.minY,
-                    width: cell.width,
-                    height: planHeight
-                ),
-                elevation: CGRect(
-                    x: cell.minX,
-                    y: cell.minY + planHeight,
-                    width: cell.width,
-                    height: cell.height - planHeight
+            let markerClearance = max(AppTheme.IconSize.xs / 4, min(cell.width, cell.height) / 36)
+                + AppTheme.BorderWidth.thick / 2
+            func labeled(_ rect: CGRect) -> (plot: CGRect, label: CGRect) {
+                let height = min(labelHeight, rect.height / 2)
+                let gap = min(markerClearance + AppTheme.Spacing.xxs, (rect.height - height) / 3)
+                return (
+                    CGRect(x: rect.minX, y: rect.minY + gap, width: rect.width, height: rect.height - height - gap * 2),
+                    CGRect(x: rect.minX, y: rect.maxY - height, width: rect.width, height: height)
                 )
-            )
-            if metric, let viewport = result[layout.locationID] {
-                let scale = min(viewport.plan.width / layout.widthMeters, viewport.plan.height / layout.depthMeters,
-                                viewport.elevation.width / layout.widthMeters, viewport.elevation.height / layout.heightMeters)
+            }
+            let plan = labeled(CGRect(x: cell.minX, y: cell.minY, width: cell.width, height: planHeight))
+            let elevation = labeled(CGRect(x: cell.minX, y: cell.minY + planHeight,
+                width: cell.width, height: cell.height - planHeight))
+            var planRect = plan.plot
+            var elevationRect = elevation.plot
+            if metric {
+                let scale = min(planRect.width / layout.widthMeters, planRect.height / layout.depthMeters,
+                                elevationRect.width / layout.widthMeters, elevationRect.height / layout.heightMeters)
                 func fitted(_ rect: CGRect, height: Double) -> CGRect {
                     let size = CGSize(width: layout.widthMeters * scale, height: height * scale)
                     return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
                 }
-                result[layout.locationID] = Viewport(layout: layout, plan: fitted(viewport.plan, height: layout.depthMeters),
-                                                    elevation: fitted(viewport.elevation, height: layout.heightMeters))
+                planRect = fitted(planRect, height: layout.depthMeters)
+                elevationRect = fitted(elevationRect, height: layout.heightMeters)
             }
+            result[layout.locationID] = Viewport(layout: layout, plan: planRect, elevation: elevationRect,
+                planLabel: plan.label, elevationLabel: elevation.label, locationNumber: count > 1 ? index + 1 : nil)
         }
         return result
     }

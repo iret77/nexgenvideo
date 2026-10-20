@@ -257,6 +257,7 @@ enum CurrentMusicvideoFixture {
         seedAnalysis: (URL) throws -> Void = { _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: $0, readableTrack: true) },
         finalResolution: VideoResolution = .res1080p,
         stopBeforeBrief: Bool = false,
+        beforeDesignWrite: (@MainActor (ProductionPlanningAcceptanceFixture.Context) async throws -> Void)? = nil,
         makeExecutor: (EditorViewModel) -> ToolExecutor = { ToolExecutor(editor: $0) }
     ) async throws -> ProductionPlanningAcceptanceFixture.Context {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("Current musicvideo \(UUID().uuidString).ngv")
@@ -305,6 +306,7 @@ enum CurrentMusicvideoFixture {
         let reference = "production_design/refs/lighting.png"
         _ = try ProjectLocalFile.ensureDirectory("production_design/refs", dataRoot: working)
         try FullflowAcceptanceFixture.writeReference(to: working.appendingPathComponent(reference))
+        try await beforeDesignWrite?(context)
         try await ProductionPlanningAcceptanceFixture.run("write_production_design", args: [
             "visual_medium": "live_action_realistic", "visual_medium_notes": "",
             "refs": [["path": reference, "note": "A quiet, clearly lit composition."]],

@@ -24,8 +24,20 @@ def workflow_test_run(workflow, name):
     return textwrap.dedent(run.group(1))
 
 
+COMPLETE_OUTPUT = """Test Suite 'All tests' started at 2026-10-20 20:06:53.293.
+Test Case '-[NexGenVideoTests.Example testExample]' passed (0.001 seconds).
+Test Suite 'All tests' passed at 2026-10-20 20:07:18.692.
+Test Suite 'All tests' started at 2026-10-20 20:07:18.843.
+Test Suite 'All tests' passed at 2026-10-20 20:07:18.844.
+◇ Test run started.
+✔ Test sample() passed after 0.001 seconds.
+✔ Test run with 2 tests in 1 suite passed after 0.100 seconds.
+◇ Test run started.
+✔ Test run with 3 tests in 1 suite passed after 0.200 seconds."""
+
+
 class SwiftTestFailurePropagationTests(unittest.TestCase):
-    def test_first_swift_result_is_final_in_both_workflows(self):
+    def test_nonzero_exit_is_final_and_zero_requires_complete_selected_runs(self):
         workflows = (
             ("ci.yml", "Test", "test.log", []),
             (
@@ -37,19 +49,45 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
         )
         for filename, name, log, configuration in workflows:
             run = workflow_test_run(ROOT / ".github/workflows" / filename, name)
-            for code, message in (
-                (139, "error: Exited with unexpected signal code 11"),
-                (0, "All tests passed"),
-                (1, "Test Suite failed"),
-            ):
+            cases = (
+                (139, "error: Exited with unexpected signal code 11", 139),
+                (1, "Test Suite failed", 1),
+                (0, COMPLETE_OUTPUT, 0),
+                (0, "All tests passed", 1),
+                (0, COMPLETE_OUTPUT.replace(
+                    "✔ Test sample() passed after 0.001 seconds.",
+                    "✘ Test sample() recorded an issue at Example.swift:1:1: Expectation failed"), 1),
+                (0, COMPLETE_OUTPUT.replace("passed after 0.100 seconds.",
+                                            "failed after 0.100 seconds with 1 issue."), 1),
+                (0, COMPLETE_OUTPUT.replace(
+                    "✔ Test run with 2 tests in 1 suite passed after 0.100 seconds.\n", ""), 1),
+                (0, COMPLETE_OUTPUT.rsplit("\n", 1)[0], 1),
+                (0, COMPLETE_OUTPUT.rsplit("\n", 2)[0], 1),
+                (0, COMPLETE_OUTPUT.replace(
+                    "Test Suite 'All tests' passed at 2026-10-20 20:07:18.692.\n", ""), 1),
+                (0, COMPLETE_OUTPUT.replace(
+                    "Test Case '-[NexGenVideoTests.Example testExample]' passed (0.001 seconds).",
+                    "Test Case '-[NexGenVideoTests.Example testExample]' failed (0.001 seconds)."), 1),
+                (0, COMPLETE_OUTPUT.replace("◇ Test run started.\n", "", 1), 1),
+                (0, COMPLETE_OUTPUT + "\n◇ Test run started.", 1),
+                (0, COMPLETE_OUTPUT.replace("2 tests in 1 suite", "0 tests in 0 suites"), 1),
+                (0, COMPLETE_OUTPUT.replace(
+                    "✔ Test run with 2 tests in 1 suite passed after 0.100 seconds.",
+                    "━ Test run with 2 tests in 1 suite passed after 0.100 seconds with 1 known issue."), 0),
+                (0, "warning: renderer reported an expected error\n" + COMPLETE_OUTPUT, 0),
+                (0, "\x1b[32m" + COMPLETE_OUTPUT + "\x1b[0m", 0),
+            )
+            for code, message, expected_exit in cases:
                 with self.subTest(workflow=filename, code=code), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     binary = root / "bin"
                     binary.mkdir()
+                    helpers = ["verify_swift_test_output.py"]
                     if filename == "ci.yml":
-                        observer = root / "scripts/capture_render_review_test_diagnostic.py"
-                        observer.parent.mkdir()
-                        observer.write_bytes((ROOT / "scripts/capture_render_review_test_diagnostic.py").read_bytes())
+                        helpers.append("capture_render_review_test_diagnostic.py")
+                    (root / "scripts").mkdir()
+                    for helper in helpers:
+                        (root / "scripts" / helper).write_bytes((ROOT / "scripts" / helper).read_bytes())
                     swift = binary / "swift"
                     swift.write_text(textwrap.dedent("""\
                         #!/bin/bash
@@ -79,7 +117,7 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                         ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
                     )
-                    self.assertEqual(result.returncode, code, result.stdout)
+                    self.assertEqual(result.returncode, expected_exit, result.stdout)
                     self.assertEqual((root / "calls").read_text(), "1\n")
                     self.assertIn(message, result.stdout)
                     self.assertIn(message, (root / log).read_text())

@@ -99,6 +99,6 @@ struct NativeBlockoutPlanProjection: Sendable {
             }
         }
     }
-    private static func coordinate(_ value: SIMD3<Double>, scale: Double) -> SIMD3<Double> { SIMD3(value.x, value.z, -value.y) * scale }
+    private static func coordinate(_ value: SIMD3<Double>, scale: Double) -> SIMD3<Double> { SIMD3(value.x, value.z, value.y) * scale }
     private static func invalid() -> GateBlocked { GateBlocked("The plan/elevation export needs verified mesh geometry and every evaluated object and camera pose.") }
 }
