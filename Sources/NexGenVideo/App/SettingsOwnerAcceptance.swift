@@ -30,7 +30,7 @@ enum SettingsOwnerAcceptance {
         }
     }
 
-    @Observable fileprivate final class LocalState {
+    @MainActor @Observable fileprivate final class LocalState {
         let defaults: UserDefaults
         let directory: URL
         var keys: [String: String] = [:]
