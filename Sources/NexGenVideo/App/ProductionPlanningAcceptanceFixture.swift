@@ -18,10 +18,17 @@ enum ProductionPlanningAcceptanceFixture {
         diagnosticTestName = nil
     }
 
-    static func diagnosticStage(_ stage: String) {
-        guard let test = diagnosticTestName,
-              let data = try? JSONSerialization.data(withJSONObject: ["test": test, "stage": stage,
-                "pid": ProcessInfo.processInfo.processIdentifier, "uptime": ProcessInfo.processInfo.systemUptime], options: [.sortedKeys]),
+    static func diagnosticStage(_ stage: String, error: (any Swift.Error)? = nil) {
+        guard let test = diagnosticTestName else { return }
+        var fields: [String: Any] = ["test": test, "stage": stage,
+            "pid": ProcessInfo.processInfo.processIdentifier, "uptime": ProcessInfo.processInfo.systemUptime]
+        if let error {
+            let native = error as NSError
+            fields["errorType"] = String(reflecting: type(of: error))
+            fields["errorDomain"] = native.domain
+            fields["errorCode"] = native.code
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return }
         FileHandle.standardError.write(Data(("[render-review-test-stage] " + text + "\n").utf8))
     }
@@ -46,12 +53,29 @@ enum ProductionPlanningAcceptanceFixture {
         diagnosticStage("scaffold.before")
         let root = try ProjectScaffold.initProject(home: home, name: projectName, mode: .generic)
         diagnosticStage("scaffold.after")
-        try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
-        try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
-        try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
-        _ = try ProjectIdentity.uuid(for: home)
-        try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
-        try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: HostWorkflowKey.core(.current))
+        do {
+            diagnosticStage("startup.timeline.before")
+            try JSONEncoder().encode(Timeline()).write(to: home.appendingPathComponent(Project.timelineFilename))
+            diagnosticStage("startup.timeline.after")
+            diagnosticStage("startup.media-manifest.before")
+            try JSONEncoder().encode(MediaManifest()).write(to: home.appendingPathComponent(Project.manifestFilename))
+            diagnosticStage("startup.media-manifest.after")
+            diagnosticStage("startup.generation-log.before")
+            try JSONEncoder().encode(GenerationLog()).write(to: home.appendingPathComponent(Project.generationLogFilename))
+            diagnosticStage("startup.generation-log.after")
+            diagnosticStage("startup.project-identity.before")
+            _ = try ProjectIdentity.uuid(for: home)
+            diagnosticStage("startup.project-identity.after")
+            diagnosticStage("startup.production-contract.before")
+            try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
+            diagnosticStage("startup.production-contract.after")
+            diagnosticStage("startup.workflow-state.before")
+            try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: HostWorkflowKey.core(.current))
+            diagnosticStage("startup.workflow-state.after")
+        } catch {
+            diagnosticStage("startup.failed", error: error)
+            throw error
+        }
         diagnosticStage("load.before")
         let document = try await VideoProject.load(from: home, agentService: agentService)
         diagnosticStage("load.after")
@@ -358,9 +382,11 @@ enum ProductionPlanningAcceptanceFixture {
 
     static func prepareEmptyFrames(in context: Context) async throws {
         try await run("run_phase", args: ["phase": "frames"], in: context)
+        diagnosticStage("frames.manifest-check.before")
         guard try loadFramesManifest(dataRoot: context.dataRoot).shots.isEmpty else {
             throw GateBlocked("An imported-only plan must have an actually empty Frames manifest.")
         }
+        diagnosticStage("frames.manifest-check.after")
     }
 
     @discardableResult
@@ -410,14 +436,29 @@ enum ProductionPlanningAcceptanceFixture {
         try await approve("shotlist", in: context)
         try await prepareImportedSanity(in: context)
         try await approve("sanity", in: context)
-        try await prepareEmptyFrames(in: context)
-        try await approve("frames", in: context)
-        try await beforeRenderReview?(context)
-        let review = try await PipelineRenderReviewWriter.capture(editor: context.editor)
-        _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: review, findings: [], editor: context.editor)
-        try await approve("render_review", in: context)
-        _ = try await assembleImported(in: context)
-        try await approve("render", in: context)
+        do {
+            diagnosticStage("frames.prepare.before")
+            try await prepareEmptyFrames(in: context)
+            diagnosticStage("frames.prepare.after")
+            try await approve("frames", in: context)
+            diagnosticStage("before-render-review.callback.before")
+            try await beforeRenderReview?(context)
+            diagnosticStage("before-render-review.callback.after")
+            diagnosticStage("native-review.capture.before")
+            let review = try await PipelineRenderReviewWriter.capture(editor: context.editor)
+            diagnosticStage("native-review.capture.after")
+            diagnosticStage("native-review.record.before")
+            _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: review, findings: [], editor: context.editor)
+            diagnosticStage("native-review.record.after")
+            try await approve("render_review", in: context)
+            diagnosticStage("assembly.before")
+            _ = try await assembleImported(in: context)
+            diagnosticStage("assembly.after")
+            try await approve("render", in: context)
+        } catch {
+            diagnosticStage("makeImportedAssembly.after-frames.failed", error: error)
+            throw error
+        }
         ready = true
         return context
     }
@@ -556,10 +597,18 @@ enum ProductionPlanningAcceptanceFixture {
     }
 
     static func approve(_ phase: String, in context: Context) async throws {
-        guard let home = context.editor.workingRoot else { throw GateBlocked("The acceptance working copy closed.") }
-        try await NativeGateWriter.approve(projectDir: home, phase: phase, declaredPack: context.editor.declaredPluginName,
-            declaredBinding: context.editor.declaredPluginBinding, declaredProductionContract: context.editor.declaredProductionContract, editor: context.editor, executionCoordinator: context.editor.pipelinePhaseRunCoordinator)
-        await context.editor.refreshEngineState()
+        diagnosticStage("approve." + phase + ".before")
+        do {
+            guard let home = context.editor.workingRoot else { throw GateBlocked("The acceptance working copy closed.") }
+            try await NativeGateWriter.approve(projectDir: home, phase: phase, declaredPack: context.editor.declaredPluginName,
+                declaredBinding: context.editor.declaredPluginBinding, declaredProductionContract: context.editor.declaredProductionContract, editor: context.editor, executionCoordinator: context.editor.pipelinePhaseRunCoordinator)
+            diagnosticStage("approve." + phase + ".gate-returned")
+            await context.editor.refreshEngineState()
+            diagnosticStage("approve." + phase + ".after")
+        } catch {
+            diagnosticStage("approve." + phase + ".failed", error: error)
+            throw error
+        }
     }
 
     static func run(_ tool: String, args: [String: Any], in context: Context) async throws {

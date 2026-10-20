@@ -607,10 +607,13 @@ enum NativeGateWriter {
                 }
             }.value
         } catch let blocked as GateBlocked {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: blocked)
             throw WriteError.failed(blocked.message)
         } catch let error as WriteError {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: error)
             throw error
         } catch {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: error)
             throw WriteError.failed(error.localizedDescription)
         }
         try await requireLiveAssembly(projectDir: projectDir, phase: phase, workflow: context.workflow, editor: editor)

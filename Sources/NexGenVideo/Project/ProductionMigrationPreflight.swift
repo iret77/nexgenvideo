@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import CoreFoundation
 import Darwin
 import Foundation
 
@@ -83,34 +84,69 @@ final class ProductionMigrationPreflight: NSObject {
             indicator.widthAnchor.constraint(equalToConstant: AppTheme.ComponentSize.packInstallProgressWindow.width)
         ])
         panel.contentView = content
-        panel.title = "Review Production Upgrade"
+        panel.title = "Verifying Project"
         panel.hidesOnDeactivate = false
     }
 
-    nonisolated static func perform<T: Sendable>(_ operation: @escaping @Sendable (Control) throws -> T) throws -> T {
+    nonisolated static func perform<T: Sendable>(
+        completionDeliveredForTesting: (@MainActor @Sendable () -> Void)? = nil,
+        _ operation: @escaping @Sendable (Control) throws -> T
+    ) throws -> T {
         guard Thread.isMainThread else { return try operation(Control()) }
         return try MainActor.assumeIsolated {
             guard NSApp != nil else { return try operation(Control()) }
             let view = ProductionMigrationPreflight()
             let completion = Completion<T>()
-            let control = Control { completed, count in
-                DispatchQueue.main.async { view.update(completed, total: count) }
+            let control = Control { [weak view] completed, count in
+                deliverToModalLoop { [weak view] in view?.update(completed, total: count) }
             }
             view.control = control
-            DispatchQueue.global(qos: .userInitiated).async {
+            let completionObserver = CFRunLoopObserverCreateWithHandler(nil,
+                CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak view] _, _ in
+                MainActor.assumeIsolated {
+                    if completion.get() != nil { view?.finishIfCurrent() }
+                }
+            }
+            if let completionObserver {
+                CFRunLoopAddObserver(CFRunLoopGetMain(), completionObserver, RunLoop.Mode.modalPanel.rawValue as CFString)
+            }
+            DispatchQueue.global(qos: .userInitiated).async { [weak view] in
                 completion.set(Result { try operation(control) })
-                DispatchQueue.main.async {
-                    view.finished = true
-                    NSApp.stopModal()
-                    view.panel.orderOut(nil)
+                deliverToModalLoop { [weak view] in
+                    guard let view, !view.finished else { return }
+                    completionDeliveredForTesting?()
+                    view.finishIfCurrent()
                 }
             }
             view.panel.setContentSize(view.panel.contentView?.fittingSize ?? .zero)
             view.panel.center()
+            defer {
+                if let completionObserver { CFRunLoopObserverInvalidate(completionObserver) }
+                if !view.finished { control.cancel() }
+                view.finished = true
+                view.control = nil
+                view.panel.orderOut(nil)
+            }
             NSApp.runModal(for: view.panel)
             guard let result = completion.get() else { throw CancellationError() }
             return try result.get()
         }
+    }
+
+    // Modal completion must not depend on reentering the main dispatch queue.
+    nonisolated private static func deliverToModalLoop(_ action: @escaping @MainActor @Sendable () -> Void) {
+        let runLoop = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(runLoop, RunLoop.Mode.modalPanel.rawValue as CFString) {
+            MainActor.assumeIsolated { action() }
+        }
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    private func finishIfCurrent() {
+        guard !finished, NSApp.modalWindow === panel else { return }
+        finished = true
+        NSApp.stopModal()
+        panel.orderOut(nil)
     }
 
     private func update(_ completed: Int, total: Int) {

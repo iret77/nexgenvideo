@@ -18,6 +18,8 @@ TARGETS = {
 }
 CASE = re.compile(r"Test Case '-\[NexGenVideoTests\.(\w+) (\w+)\]' (started|passed|failed)")
 STAGE_PREFIX = "[render-review-test-stage] "
+SAMPLE_SECONDS = 3
+CAPTURE_TIMEOUT_SECONDS = 120
 
 
 def process_tree(root_pid):
@@ -42,15 +44,18 @@ def process_tree(root_pid):
 
 
 def capture(pid_identity, root_pid, evidence, request):
-    receipt = {**request, "target": pid_identity, "status": "capture-unavailable"}
+    command = ["/usr/bin/sample", str(pid_identity["pid"]), str(SAMPLE_SECONDS), "-file", str(evidence / "sample.txt")]
+    receipt = {**request, "target": pid_identity, "status": "capture-unavailable",
+               "requestedSampleCommand": command, "sampleSeconds": SAMPLE_SECONDS,
+               "captureTimeoutSeconds": CAPTURE_TIMEOUT_SECONDS}
     try:
         rows, owned = process_tree(root_pid)
         if pid_identity["pid"] not in owned or rows.get(pid_identity["pid"]) != pid_identity:
             raise RuntimeError("The owned XCTest process identity changed before capture")
         with (evidence / "sample-command.log").open("wb") as log:
             result = subprocess.run(
-                ["/usr/bin/sample", str(pid_identity["pid"]), "3", "-file", str(evidence / "sample.txt")],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=log, timeout=15, check=False,
+                command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                timeout=CAPTURE_TIMEOUT_SECONDS, check=False,
             )
         receipt.update(status="capture-returned", returnCode=result.returncode)
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
@@ -74,7 +79,8 @@ def main():
         parser.error("The existing swift test command is required")
     args.evidence.mkdir(parents=True, exist_ok=False)
     run = {"runID": os.environ.get("GITHUB_RUN_ID"), "sourceSHA": os.environ.get("GITHUB_SHA"),
-           "command": command, "status": "running", "captureLimit": 1, "diagnosticDelaySeconds": 180}
+           "command": command, "status": "running", "captureLimit": 1, "diagnosticDelaySeconds": 180,
+           "sampleSeconds": SAMPLE_SECONDS, "captureTimeoutSeconds": CAPTURE_TIMEOUT_SECONDS}
     state = {"test": None, "lastStage": None, "changed": time.monotonic(), "selfPID": None}
     (args.evidence / "run.json").write_text(json.dumps(run, indent=2) + "\n")
     environment = {**os.environ, "NGV_RENDER_REVIEW_TEST_DIAGNOSTIC": "1"}
@@ -151,6 +157,7 @@ def main():
     process.stdout.close()
     exit_code = process.wait()
     if sampler is not None:
+        # Retain the one owned worker through its bounded ps/sample waits.
         sampler.join()
     run.update(status="test-process-exited", testExitCode=exit_code, captureAttempted=attempted)
     (args.evidence / "run.json").write_text(json.dumps(run, indent=2) + "\n")
