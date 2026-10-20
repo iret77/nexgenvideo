@@ -8,8 +8,8 @@ import Testing
 @Suite("Review images encode the exact supplied bytes")
 struct ReviewImageEncodingTests {
     @Test func smallImagesRetainTheirExactBytesWithoutAPathCache() async throws {
-        let first = try ProductionPlanningAcceptanceFixture.imageBytes(index: 0)
-        let second = try ProductionPlanningAcceptanceFixture.imageBytes(index: 1)
+        let first = try smallImage(red: 0.2)
+        let second = try smallImage(red: 0.8)
         #expect(first != second)
         let firstOutput = await Task.detached { ImageEncoder.encode(data: first) }.value
         let secondOutput = await Task.detached { ImageEncoder.encode(data: second) }.value
@@ -37,5 +37,14 @@ struct ReviewImageEncodingTests {
         let height = try #require(properties[kCGImagePropertyPixelHeight] as? Int)
         #expect(max(width, height) == ImageEncoder.maxLongestEdge)
         #expect(width > 0 && height > 0)
+    }
+
+    private func smallImage(red: CGFloat) throws -> Data {
+        let context = try #require(CGContext(data: nil, width: 320, height: 180, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: red, green: 0.2, blue: 0.6, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        let image = try #require(context.makeImage())
+        return try #require(ImageEncoder.encodePNG(image))
     }
 }
