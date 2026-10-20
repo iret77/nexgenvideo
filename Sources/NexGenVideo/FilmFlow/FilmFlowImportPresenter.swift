@@ -54,7 +54,7 @@ enum FilmFlowImportPresenter {
         controller.open()
     }
 
-    private final class WindowController: NSObject, NSWindowDelegate {
+    @MainActor private final class WindowController: NSObject, NSWindowDelegate {
         weak var editor: EditorViewModel?
         weak var parent: NSWindow?
         let panel: NSPanel
